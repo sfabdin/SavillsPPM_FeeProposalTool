@@ -176,7 +176,7 @@
     // Keep the request under the serverless body limit (~4.5MB): drop trailing
     // page images until the payload fits, rather than 413-ing.
     let imgs = (images || []).slice();
-    const budget = 3_600_000;   // ~3.6MB of base64 image data
+    const budget = 4_000_000;   // ~4MB of base64 image data (fits Vercel's limit)
     const sizeOf = (arr) => arr.reduce((s, d) => s + (d ? d.length : 0), 0);
     while (imgs.length > 1 && sizeOf(imgs) > budget) imgs = imgs.slice(0, imgs.length - 1);
     // 1) Serverless endpoint (production)
@@ -596,7 +596,7 @@
 
   /** Render PDF pages to PNG data-URLs for Claude vision (handles designed/
       tabular proposals that text extraction mangles). Capped for payload size. */
-  async function pdfToImages(file, maxPages = 6) {
+  async function pdfToImages(file, maxPages = 15) {
     const pdfjs = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs');
     pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
     const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
@@ -604,14 +604,14 @@
     const out = [];
     for (let i = 1; i <= n; i++) {
       const page = await doc.getPage(i);
-      // Cap the rendered width so JPEG payloads stay under the serverless limit.
+      // Cap width so JPEG payloads stay small enough to send MANY pages.
       const raw = page.getViewport({ scale: 1 });
-      const scale = Math.min(1.4, 1400 / raw.width);
+      const scale = Math.min(1.3, 1100 / raw.width);
       const vp = page.getViewport({ scale });
       const canvas = document.createElement('canvas');
       canvas.width = vp.width; canvas.height = vp.height;
       await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-      out.push(canvas.toDataURL('image/jpeg', 0.7));   // JPEG ~5-8x smaller than PNG
+      out.push(canvas.toDataURL('image/jpeg', 0.6));
     }
     return out;
   }
