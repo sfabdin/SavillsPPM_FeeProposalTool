@@ -46,15 +46,15 @@ function buildPrompt() {
 }
 
 RULES:
-- phases = the project schedule / timeline. Capture each phase's name, its DURATION in weeks (if stated in months, convert ×4.345), its date span, and its stated fee if the proposal breaks fee out by phase. Order chronologically.
-- people = the staffing roster / fee matrix rows. allocation is a DECIMAL FTE (1 = full-time, 0.5 = half, 0.25 = quarter). Map "hrs/wk" or "% time" to a decimal FTE. rate = hourly USD.
-- If a person's hourly rate isn't shown but a monthly rate or total is, leave rate null (the app will derive it) — do NOT guess.
-- A matrix often has MULTIPLE discount columns (non-discounted, 6%, 9%…). Use the NON-DISCOUNTED / standard hourly rate for "rate".
-- Roster and rates may live on different pages/sheets — correlate by person or by title.
-- If there is NO hourly roster but the proposal names a team, leads, or signatories with titles, include them as people with allocation 0.5 and rate null so staffing can be solved later.
-- staffTitle = the person's professional/HR title as written (e.g. "Senior Project Manager", "Change Management Lead"). projectRole = their role on THIS project if stated separately.
-- team = which workstream/group they sit in (e.g. "Change Management", "PM", "Relocation") if the proposal groups them.
-- Money: strip $ and commas, return plain numbers. Dates: "MON YYYY" like "Jun 2026". Use null when truly unknown. Be thorough — capture EVERY person in the matrix.`;
+- READ EVERY PAGE. Proposals bury the schedule and fee on later pages — look for a "Project Schedule", "Timeline", "Phasing", "Gantt", "Term", or "Fee" page anywhere in the document, not just the first pages.
+- phases = the actual TIME-PHASED PROJECT SCHEDULE, not the scope-of-services outline. A scope list ("Pre-Construction, Construction, Closeout" as service descriptions) is NOT a schedule unless durations or a timeline bar are shown. If you see a Gantt/timeline bar chart, read each phase's span and convert it to a duration in WEEKS (estimate from the bar length against the month/quarter axis). If the proposal gives a project TERM or DURATION (e.g. "12-month engagement", "Q1 2026 – Q4 2026") use it to set startDate/endDate and to size phases.
+- DO NOT FABRICATE. If start/end dates or phase durations are NOT shown, set them to null — never invent an even split or a placeholder year. A wrong schedule is worse than a null one.
+- BUDGET ≠ FEE. A "project budget" / "construction budget" / "project cost" (e.g. "$8.2MM project") is the cost of the WORK, NOT Macro's fee. Never put a construction/project budget in totalFee. totalFee is ONLY Macro's/Savills' professional-services fee. If the fee is a % of project cost, capture the % in narrative but leave totalFee null unless the dollar fee is explicitly stated.
+- people = the staffing roster / fee matrix rows. allocation is a DECIMAL FTE (1 = full-time, 0.5 = half, 0.25 = quarter). Map "hrs/wk" or "% time" to a decimal FTE; if not shown, use null (NOT 0.5).
+- If a person's hourly rate isn't shown but a monthly rate or total is, leave rate null. A matrix with MULTIPLE discount columns → use the NON-DISCOUNTED / standard hourly rate.
+- Roster and rates may live on different pages — correlate by person or title. staffTitle = professional title as written (e.g. "Principal in Charge", "Project Manager"). projectRole = their role on THIS project if stated separately. team = workstream/group if grouped.
+- narrative MUST be honest about what's missing: explicitly say when the period, durations, fee, or rates are NOT stated in the document, rather than implying values. Mention the project budget if given, clearly labeled as budget (not fee).
+- Money: strip $ and commas → plain numbers. Dates: "MON YYYY". Use null when truly unknown. Capture EVERY person.`;
 }
 
 export default async function handler(req, res) {
@@ -68,7 +68,7 @@ export default async function handler(req, res) {
     const content = [];
     // Vision: attach page images first (best for designed/scanned proposals).
     if (Array.isArray(images)) {
-      for (const img of images.slice(0, 12)) {
+      for (const img of images.slice(0, 16)) {
         const m = /^data:(image\/\w+);base64,(.+)$/.exec(img || '');
         if (m) content.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
       }
