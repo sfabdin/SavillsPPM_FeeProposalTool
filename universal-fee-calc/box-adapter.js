@@ -41,7 +41,8 @@
   'use strict';
 
   const BOX_CONFIG = {
-    enabled: false,                       // flip to true once configured
+    enabled: true,                        // Box layer ON
+    testMode: true,                       // dev-token paste flow (no OAuth yet); set false for production
     clientId: 'jujkzyorzo9ttx8vnisaezi43wm3rofc',
     clientSecret: '',                     // NEVER in the browser for prod — use the serverless exchange. Empty here on purpose.
     redirectUri: window.location.origin + '/oauth-callback.html',
@@ -75,11 +76,15 @@
   // ---- Token storage (access token in sessionStorage; short-lived) ----
   const TOK_KEY = 'ufc_box_token_v1';
   const PKCE_KEY = 'ufc_box_pkce_v1';
+  const TEST_TOK_KEY = 'ufc_box_devtoken';
   function getToken() {
-    if (BOX_CONFIG.devToken) return BOX_CONFIG.devToken;   // TEST MODE bypass
+    if (BOX_CONFIG.devToken) return BOX_CONFIG.devToken;          // (left empty in repo on purpose)
+    if (BOX_CONFIG.testMode) { return sessionStorage.getItem(TEST_TOK_KEY) || null; }  // runtime paste — never committed
     try { const t = JSON.parse(sessionStorage.getItem(TOK_KEY)); if (t && t.access_token && t.exp > Date.now()) return t.access_token; } catch (e) {}
     return null;
   }
+  function setTestToken(tok) { sessionStorage.setItem(TEST_TOK_KEY, (tok || '').trim()); }
+  Box.setTestToken = setTestToken;
   function setToken(tok) {
     // Box access tokens last ~60min; refresh requires a token endpoint exchange.
     sessionStorage.setItem(TOK_KEY, JSON.stringify({ access_token: tok.access_token, exp: Date.now() + (tok.expires_in - 60) * 1000, refresh_token: tok.refresh_token }));
@@ -210,7 +215,9 @@
   // ---- Boot: auth → pull → identity → attach push ----
   async function boot() {
     if (!BOX_CONFIG.enabled) return { ok: true, backend: 'local' };
-    if (!getToken()) { return { ok: false, needsLogin: true }; }
+    if (!getToken()) {
+      return BOX_CONFIG.testMode ? { ok: false, needsDevToken: true } : { ok: false, needsLogin: true };
+    }
     // Identity → drives the access wall
     try {
       const me = await getIdentity();

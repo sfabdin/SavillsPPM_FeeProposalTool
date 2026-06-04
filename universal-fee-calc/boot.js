@@ -27,13 +27,38 @@
   async function run() {
     if (!Box || !Box.enabled) return { backend: 'local' };
     const res = await Box.boot();
+    if (res && res.needsDevToken) {
+      renderTokenGate();
+      return new Promise(() => {});       // halt until token entered + reload
+    }
     if (res && res.needsLogin) {
-      // Show a minimal sign-in gate instead of an empty app.
       renderLoginGate();
-      // Never resolves — the gate's button drives the OAuth redirect.
-      return new Promise(() => {});
+      return new Promise(() => {});       // halt until OAuth redirect
     }
     return res;
+  }
+
+  function renderTokenGate() {
+    document.documentElement.style.background = '#f3f3f0';
+    document.body.innerHTML = `
+      <div style="height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#25273a;">
+        <div style="text-align:center;max-width:480px;padding:0 24px;">
+          <div style="font-weight:800;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6b7280;margin-bottom:14px;">Box test mode</div>
+          <div style="font-weight:900;font-size:26px;letter-spacing:-0.01em;margin-bottom:10px;">Paste your Box Developer Token</div>
+          <div style="font-size:13px;line-height:1.6;color:#6b7280;margin-bottom:18px;">From Box → your app → <strong>Developer Token → Copy</strong>. It lasts ~60 min and is stored only in this browser tab — never saved to the code.</div>
+          <input id="ufc-tok" type="password" placeholder="Paste token here" style="width:100%;padding:12px 14px;font-size:14px;border:1px solid #c9c9c4;margin-bottom:12px;box-sizing:border-box;">
+          <button id="ufc-tok-go" style="font-family:system-ui,sans-serif;font-weight:700;font-size:13px;letter-spacing:0.06em;text-transform:uppercase;padding:13px 26px;background:#25273a;color:#fff;border:0;cursor:pointer;width:100%;">Connect to Box</button>
+          <div id="ufc-tok-err" style="color:#ce181e;font-size:12px;margin-top:10px;min-height:16px;"></div>
+        </div>
+      </div>`;
+    const go = () => {
+      const v = document.getElementById('ufc-tok').value.trim();
+      if (!v) { document.getElementById('ufc-tok-err').textContent = 'Paste a token first.'; return; }
+      window.UFC_Box.setTestToken(v);
+      window.location.reload();
+    };
+    document.getElementById('ufc-tok-go').addEventListener('click', go);
+    document.getElementById('ufc-tok').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
   }
 
   function renderLoginGate() {
