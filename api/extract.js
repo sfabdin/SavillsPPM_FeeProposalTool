@@ -10,7 +10,7 @@
 
    SETUP (Vercel → Settings → Environment Variables)
      ANTHROPIC_API_KEY = sk-ant-...           (required)
-     CLAUDE_MODEL      = claude-sonnet-4-20250514   (optional; override if needed)
+     CLAUDE_MODEL      = claude-sonnet-4-6   (optional; override if needed)
 
    REQUEST  (POST JSON)
      { text?: string, images?: ["data:image/png;base64,...", ...] }
@@ -61,7 +61,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') { res.status(405).json({ error: 'method not allowed' }); return; }
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) { res.status(500).json({ error: 'ANTHROPIC_API_KEY not set on the server' }); return; }
-  const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
+  const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
 
   try {
     const { text, images } = req.body || {};
