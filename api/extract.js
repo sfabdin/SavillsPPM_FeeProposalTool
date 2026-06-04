@@ -20,6 +20,9 @@
 
 const SYSTEM = `You are an expert at reading professional-services FEE PROPOSALS and FEE MATRICES (project & program management, change management, relocation, workplace) and turning them into structured data. You are precise with money, dates, durations, and people. You never invent numbers; if something isn't stated, you use null.`;
 
+// Allow larger JSON bodies (page images) up to Vercel's ceiling.
+export const config = { api: { bodyParser: { sizeLimit: '4.5mb' } } };
+
 function buildPrompt() {
   return `Read the attached proposal / fee matrix and extract it. Return ONLY minified JSON (no prose, no code fence) with EXACTLY this shape:
 
