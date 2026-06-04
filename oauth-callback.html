@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Signing in… · Savills PPM</title>
+<style>
+  body { margin:0; height:100vh; display:flex; align-items:center; justify-content:center; background:#f3f3f0; font-family:system-ui,sans-serif; color:#25273a; }
+  .card { text-align:center; }
+  .card .t { font-weight:800; font-size:20px; margin-bottom:8px; }
+  .card .s { color:#6b7280; font-size:14px; }
+  .err { color:#ce181e; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="t" id="t">Signing you in…</div>
+    <div class="s" id="s">Completing Box authentication.</div>
+  </div>
+
+  <!-- store.js then box-adapter.js must load so Box.exchangeCode exists -->
+  <script src="universal-fee-calc/rates-catalog.js"></script>
+  <script src="universal-fee-calc/store.js"></script>
+  <script src="universal-fee-calc/box-adapter.js"></script>
+  <script>
+  (async function () {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const err = params.get('error');
+    const t = document.getElementById('t'), s = document.getElementById('s');
+    if (err) { t.textContent = 'Sign-in failed'; t.className = 'err'; s.textContent = err; return; }
+    if (!code) { t.textContent = 'No authorization code'; t.className = 'err'; s.textContent = 'Open the app and try signing in again.'; return; }
+    try {
+      if (!window.UFC_Box || !window.UFC_Box.exchangeCode) throw new Error('Box adapter not enabled — set BOX_CONFIG.enabled = true.');
+      await window.UFC_Box.exchangeCode(code);
+      // Return to the app (Projects Index). Where the user started can be
+      // stashed in state before login if you want to bounce them back exactly.
+      window.location.replace('Projects Index.html');
+    } catch (e) {
+      t.textContent = 'Sign-in error'; t.className = 'err'; s.textContent = e.message;
+    }
+  })();
+  </script>
+</body>
+</html>

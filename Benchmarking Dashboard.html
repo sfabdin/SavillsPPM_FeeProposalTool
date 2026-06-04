@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills · Benchmarking Dashboard</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  :root { --hair: rgba(37,39,58,0.10); --hair-strong: rgba(37,39,58,0.18); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #f3f3f0; font-family: var(--font-display); color: var(--sav-navy); }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 40px 48px 96px; }
+
+  /* Header */
+  .head { display: grid; grid-template-columns: auto 1fr auto; gap: 28px; align-items: center; padding-bottom: 22px; border-bottom: 4px solid var(--sav-navy); margin-bottom: 26px; }
+  .head .logo { width: 64px; height: 64px; }
+  .head .lbl { font-weight: 700; font-size: 11px; letter-spacing: 0.20em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 6px; }
+  .head .lbl a { color: var(--sav-steel); text-decoration: none; }
+  .head h1 { font-weight: 900; font-size: 30px; line-height: 1.02; letter-spacing: -0.015em; margin: 0; white-space: nowrap; }
+  .head .actions { display: flex; gap: 10px; align-items: center; }
+  .btn { font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; padding: 11px 16px; border: 0; cursor: pointer; background: var(--sav-cream); color: var(--sav-navy); transition: background 120ms ease; text-decoration: none; display: inline-block; }
+  .btn:hover { background: #e6ded6; }
+  .btn-ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--hair-strong); }
+
+  /* KPI strip */
+  .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 26px; }
+  .kpi { background: #fff; border: 1px solid var(--hair); padding: 16px 18px; }
+  .kpi.navy { background: var(--sav-navy); color: #fff; }
+  .kpi.yellow { background: var(--sav-yellow); }
+  .kpi .lbl { font-weight: 700; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 6px; }
+  .kpi.navy .lbl { color: rgba(255,255,255,0.7); }
+  .kpi .val { font-weight: 900; font-size: 27px; line-height: 1; letter-spacing: -0.02em; }
+  .kpi .val .unit { font-size: 14px; color: var(--sav-steel); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 2px; border-bottom: 2px solid var(--sav-navy); margin-bottom: 26px; }
+  .tab { font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: 0.02em; padding: 13px 22px; border: 0; background: transparent; color: var(--sav-steel); cursor: pointer; position: relative; }
+  .tab:hover { color: var(--sav-navy); }
+  .tab.on { color: var(--sav-navy); }
+  .tab.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: -2px; height: 4px; background: var(--sav-yellow); }
+  .panel { display: none; }
+  .panel.on { display: block; }
+
+  /* Generic card */
+  .card { background: #fff; border: 1px solid var(--hair); padding: 24px 26px; margin-bottom: 22px; }
+  .card-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; }
+  .card-head h2 { font-weight: 900; font-size: 19px; margin: 0; }
+  .card-head .hint { margin-left: auto; font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); }
+
+  /* Filters */
+  .filters { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-weight: 700; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--sav-steel); }
+  .field select, .field input { font-family: var(--font-display); font-weight: 600; font-size: 13px; padding: 9px 10px; border: 0; border-bottom: 1px solid var(--sav-navy); background: var(--sav-cream); color: var(--sav-navy); }
+  .field select:focus, .field input:focus { outline: 2px solid var(--sav-navy); background: #fff; }
+
+  /* Stat tiles for filtered comparable set */
+  .compstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+  .compstat { background: var(--sav-cream); padding: 16px 18px; border-left: 4px solid var(--sav-teal); }
+  .compstat .lbl { font-weight: 700; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 6px; }
+  .compstat .val { font-weight: 900; font-size: 26px; line-height: 1; letter-spacing: -0.01em; }
+  .compstat .sub { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); margin-top: 4px; }
+
+  /* Tables */
+  table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.tbl thead th { background: var(--sav-navy); color: #fff; font-weight: 700; font-size: 10px; letter-spacing: 0.10em; text-transform: uppercase; text-align: left; padding: 11px 12px; white-space: nowrap; }
+  table.tbl thead th.num { text-align: right; }
+  table.tbl tbody td { padding: 10px 12px; border-bottom: 1px solid var(--hair); vertical-align: middle; }
+  table.tbl tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.tbl tbody tr:hover { background: var(--sav-cream); }
+  table.tbl tbody tr.below { background: #fff5f4; }
+  table.tbl tbody tr.below:hover { background: #ffeceb; }
+  .tt { font-family: var(--font-display); font-weight: 700; }
+  .muted { color: var(--sav-steel); font-family: var(--font-body); font-size: 12px; }
+  .pill { display: inline-block; font-weight: 700; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 7px; }
+  .pill.below { background: var(--sav-red); color: #fff; }
+  .pill.contracted { background: #d8f0f3; color: var(--sav-navy); }
+  .pill.grid { background: var(--sav-cream); color: var(--sav-steel); }
+  .status-tag { font-weight: 700; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sav-steel); }
+
+  /* Rates explorer range bar */
+  .rangebar { position: relative; height: 26px; background: var(--sav-cream); }
+  .rangebar .floorzone { position: absolute; top: 0; bottom: 0; left: 0; background: repeating-linear-gradient(45deg, #fde8e6, #fde8e6 4px, #fff0ef 4px, #fff0ef 8px); }
+  .rangebar .span { position: absolute; top: 7px; height: 12px; background: var(--sav-navy); opacity: 0.18; }
+  .rangebar .eff { position: absolute; top: 3px; height: 20px; width: 3px; background: var(--sav-teal); }
+  .rangebar .med { position: absolute; top: 1px; height: 24px; width: 3px; background: var(--sav-navy); }
+  .rangebar .racktick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--sav-steel); opacity: 0.5; }
+  .rangelabels { display: flex; justify-content: space-between; font-family: var(--font-body); font-size: 10px; color: var(--sav-steel); margin-top: 3px; }
+
+  /* Project comparison */
+  .projpick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .projchip { font-family: var(--font-display); font-weight: 600; font-size: 12px; padding: 8px 12px; border: 1px solid var(--hair-strong); background: #fff; cursor: pointer; }
+  .projchip.on { background: var(--sav-navy); color: #fff; border-color: var(--sav-navy); }
+  .projchip:hover:not(.on) { background: var(--sav-cream); }
+  .cmp-grid { display: grid; gap: 0; }
+  .cmp-row { display: grid; border-bottom: 1px solid var(--hair); }
+  .cmp-row.head .cmp-cell { background: var(--sav-navy); color: #fff; font-weight: 700; }
+  .cmp-cell { padding: 12px 14px; font-size: 13px; border-left: 1px solid var(--hair); }
+  .cmp-cell:first-child { border-left: 0; font-weight: 700; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--sav-steel); background: var(--sav-cream); }
+  .cmp-row.head .cmp-cell:first-child { background: #1a1c2c; color: rgba(255,255,255,0.7); }
+  .cmp-big { font-weight: 900; font-size: 20px; letter-spacing: -0.01em; }
+
+  .empty { text-align: center; color: var(--sav-steel); font-family: var(--font-body); padding: 50px 20px; }
+  .footnote { font-family: var(--font-body); font-size: 12px; line-height: 1.6; color: var(--sav-steel); margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--hair); }
+  .footnote strong { font-family: var(--font-display); color: var(--sav-navy); }
+  .sample-note { font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); }
+  .sample-note b { color: var(--sav-navy); font-family: var(--font-display); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div>
+      <div class="lbl"><a href="Fee Generator.html">Fee Generator</a> &nbsp;·&nbsp; <a href="Projects Index.html">Projects Index</a> &nbsp;·&nbsp; Benchmarking</div>
+      <h1>What have we charged before?</h1>
+    </div>
+    <div class="actions">
+      <span class="sample-note" id="sample-note"></span>
+      <button class="btn btn-ghost" id="sample-btn">Remove sample data</button>
+      <a class="btn" href="Ingestion Studio.html">Ingest more</a>
+    </div>
+  </header>
+
+  <!-- KPI strip -->
+  <div class="kpis">
+    <div class="kpi"><div class="lbl">Projects</div><div class="val" id="k-projects">0</div></div>
+    <div class="kpi"><div class="lbl">Priced roles</div><div class="val" id="k-roles">0</div></div>
+    <div class="kpi yellow"><div class="lbl">Median PM rate</div><div class="val" id="k-pm">$0</div></div>
+    <div class="kpi navy"><div class="lbl">Total proposed</div><div class="val" id="k-fee">$0</div></div>
+    <div class="kpi"><div class="lbl">Below cost floor</div><div class="val" id="k-below">0<span class="unit"> roles</span></div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab on" data-tab="comp">Comparables finder</button>
+    <button class="tab" data-tab="rates">Rates explorer</button>
+    <button class="tab" data-tab="cmp">Project comparison</button>
+  </div>
+
+  <!-- TAB 1 — Comparables -->
+  <section class="panel on" id="panel-comp">
+    <div class="card">
+      <div class="card-head"><h2>Find comparable rates.</h2><span class="hint">Filter past work, then read the rate spread for the matching roles.</span></div>
+      <div class="filters">
+        <div class="field"><label>Client</label><select id="f-client"></select></div>
+        <div class="field"><label>Industry</label><select id="f-industry"></select></div>
+        <div class="field"><label>Staff title</label><select id="f-title"></select></div>
+        <div class="field"><label>Project size</label><select id="f-size">
+          <option value="">Any size</option>
+          <option value="s">Under $1M</option>
+          <option value="m">$1M – $3M</option>
+          <option value="l">$3M – $6M</option>
+          <option value="xl">Over $6M</option>
+        </select></div>
+        <div class="field"><label>Project role contains</label><input type="search" id="f-role" placeholder="e.g. coordinator"></div>
+      </div>
+      <div class="compstats" id="comp-stats"></div>
+      <table class="tbl">
+        <thead><tr>
+          <th>Staff title</th><th>Project role</th><th>Project / client</th><th>Industry</th>
+          <th class="num">Quoted</th><th class="num">Effective</th><th class="num">Floor</th><th>Source</th>
+        </tr></thead>
+        <tbody id="comp-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TAB 2 — Rates explorer -->
+  <section class="panel" id="panel-rates">
+    <div class="card">
+      <div class="card-head"><h2>Rate spread by staff title.</h2><span class="hint">Quoted = before discount · Effective = what the client paid · hatched zone = below cost floor.</span></div>
+      <table class="tbl">
+        <thead><tr>
+          <th>Staff title</th><th class="num">n</th>
+          <th class="num">Quoted min</th><th class="num">median</th><th class="num">max</th>
+          <th class="num">Eff. median</th><th class="num">Floor</th><th>Spread (eff. range vs. floor → rack)</th><th class="num">Below floor</th>
+        </tr></thead>
+        <tbody id="rates-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TAB 3 — Project comparison -->
+  <section class="panel" id="panel-cmp">
+    <div class="card">
+      <div class="card-head"><h2>Compare projects side by side.</h2><span class="hint">Pick up to three.</span></div>
+      <div class="projpick" id="proj-pick"></div>
+      <div id="cmp-out"></div>
+    </div>
+  </section>
+
+  <div class="footnote" id="footnote"></div>
+
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/bench-data.js"></script>
+<script src="universal-fee-calc/bench.js"></script>
+</body>
+</html>

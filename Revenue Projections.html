@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Savills PPM · Revenue Projections</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  :root { --hair: rgba(37,39,58,0.10); --hair-strong: rgba(37,39,58,0.18); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #f3f3f0; font-family: var(--font-display); color: var(--sav-navy); }
+  .wrap { max-width: 1640px; margin: 0 auto; padding: 40px 40px 90px; }
+
+  .head { display: grid; grid-template-columns: auto 1fr auto; gap: 24px; align-items: end; padding-bottom: 22px; border-bottom: 4px solid var(--sav-navy); margin-bottom: 28px; }
+  .head .logo { width: 64px; height: 64px; }
+  .head .lbl { font-weight: 700; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 8px; }
+  .head .lbl a { color: var(--sav-steel); text-decoration: none; }
+  .head .lbl a:hover { color: var(--sav-red); }
+  .head h1 { font-weight: 900; font-size: 34px; line-height: 1; letter-spacing: -0.015em; margin: 0; }
+  .head .actions { display: flex; gap: 10px; align-items: center; }
+  .btn { font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; padding: 11px 16px; border: 0; cursor: pointer; background: var(--sav-cream); color: var(--sav-navy); text-decoration: none; display: inline-flex; align-items: center; }
+  .btn:hover { background: #e6ded6; }
+  .btn-primary { background: var(--sav-navy); color: var(--sav-yellow); }
+
+  /* KPI strip */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+  .kpi { background: #fff; border: 1px solid var(--hair); padding: 16px 18px; }
+  .kpi.navy { background: var(--sav-navy); }
+  .kpi.teal { background: var(--sav-teal); }
+  .kpi .k-lbl { font-weight: 700; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 8px; }
+  .kpi.navy .k-lbl, .kpi.teal .k-lbl { color: rgba(255,255,255,0.7); }
+  .kpi .k-val { font-weight: 900; font-size: 26px; letter-spacing: -0.01em; color: var(--sav-navy); }
+  .kpi.navy .k-val, .kpi.teal .k-val { color: #fff; }
+  .kpi .k-sub { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); margin-top: 4px; }
+  .kpi.navy .k-sub, .kpi.teal .k-sub { color: rgba(255,255,255,0.65); }
+
+  /* Controls */
+  .controls { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+  .controls .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+  .legend .lg { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); }
+  .legend .dot { width: 10px; height: 10px; display: inline-block; }
+  .ctl-toggle { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-body); font-size: 12px; color: var(--sav-navy); cursor: pointer; }
+  .ctl-toggle input { width: 15px; height: 15px; accent-color: var(--sav-navy); }
+
+  /* Filter bar */
+  .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; background: #fff; border: 1px solid var(--hair); padding: 14px 16px; margin-bottom: 16px; }
+  .filt { display: flex; flex-direction: column; gap: 4px; }
+  .filt label { font-family: var(--font-display); font-weight: 700; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sav-steel); }
+  .filt select { font-family: var(--font-body); font-size: 12px; color: var(--sav-navy); border: 1px solid var(--hair-strong); background: var(--sav-cream); padding: 7px 10px; min-width: 120px; cursor: pointer; }
+  .filt select.active { background: var(--sav-yellow); border-color: var(--sav-navy); font-weight: 600; }
+  .filt.time select { min-width: 86px; }
+  .filters .clear { margin-left: auto; align-self: center; }
+  .filters .clear button { font-family: var(--font-display); font-weight: 700; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding: 9px 14px; border: 1px solid var(--hair-strong); background: #fff; color: var(--sav-navy); cursor: pointer; }
+  .filters .clear button:hover { background: var(--sav-navy); color: #fff; }
+  .filt-count { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); align-self: center; }
+
+  /* Matrix */
+  .matrix-scroll { overflow-x: auto; border: 1px solid var(--hair-strong); background: #fff; }
+  table.proj { border-collapse: collapse; width: 100%; font-family: var(--font-display); }
+  table.proj th, table.proj td { border-bottom: 1px solid var(--hair); border-right: 1px solid var(--hair); white-space: nowrap; }
+  table.proj thead th { background: var(--sav-navy); color: #fff; font-weight: 700; font-size: 11px; letter-spacing: 0.04em; padding: 8px 10px; text-align: right; position: sticky; top: 0; z-index: 3; }
+  table.proj thead tr.years th { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; background: #1a1c2c; border-right: 2px solid #000; text-align: center; }
+  table.proj thead th.corner { text-align: left; position: sticky; left: 0; z-index: 5; background: var(--sav-navy); min-width: 240px; }
+  table.proj thead th.totcol { background: var(--sav-teal); position: sticky; right: 0; z-index: 4; }
+
+  table.proj td.proj-cell { position: sticky; left: 0; z-index: 2; background: #fff; text-align: left; padding: 7px 10px; min-width: 240px; }
+  table.proj td.proj-cell .pname { font-weight: 700; font-size: 13px; color: var(--sav-navy); text-decoration: none; cursor: pointer; }
+  table.proj td.proj-cell a.pname:hover { color: var(--sav-red); text-decoration: underline; }
+  table.proj td.proj-cell .open-link { color: var(--sav-teal); font-weight: 700; opacity: 0; transition: opacity 120ms ease; }
+  table.proj td.proj-cell:hover .open-link { opacity: 1; }
+  tr.excluded td.proj-cell a.pname { color: var(--sav-steel); }
+  table.proj td.proj-cell .pmeta { font-family: var(--font-body); font-size: 10.5px; color: var(--sav-steel); margin-top: 1px; }
+  table.proj td.num { text-align: right; padding: 7px 10px; font-size: 12px; color: var(--sav-navy); font-variant-numeric: tabular-nums; }
+  table.proj td.num.zero { color: var(--sav-steel-30); }
+  table.proj td.rowtot { position: sticky; right: 0; z-index: 2; background: #f3fbfc; font-weight: 700; color: var(--sav-navy); border-left: 2px solid var(--sav-teal); }
+  table.proj td.year-sep { border-right: 2px solid var(--hair-strong); }
+
+  /* Rating ribbon on project cell */
+  td.proj-cell { border-left: 4px solid transparent; }
+  tr.r1 td.proj-cell { border-left-color: #1f8a5b; }
+  tr.r2 td.proj-cell { border-left-color: #3AA95C; }
+  tr.r3 td.proj-cell { border-left-color: var(--sav-yellow); }
+  tr.r4 td.proj-cell { border-left-color: var(--sav-orange); }
+  tr.r5 td.proj-cell, tr.r6 td.proj-cell, tr.r7 td.proj-cell { border-left-color: var(--sav-steel); }
+  .rtag { display: inline-block; font-weight: 700; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 6px; margin-right: 6px; color: #fff; vertical-align: middle; }
+  .rtag.r1 { background: #1f8a5b; } .rtag.r2 { background: #3AA95C; }
+  .rtag.r3 { background: var(--sav-yellow); color: var(--sav-navy); } .rtag.r4 { background: var(--sav-orange); }
+  .rtag.r5, .rtag.r6, .rtag.r7 { background: var(--sav-steel); }
+
+  /* Rating group header rows */
+  tr.group-row td { background: var(--sav-cream); font-weight: 700; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sav-navy); padding: 6px 10px; position: sticky; left: 0; }
+  tr.group-row.excluded td { color: var(--sav-steel); background: #efeeec; }
+
+  /* Excluded (rating > 4) rows — grayed, not in totals */
+  tr.excluded td { color: var(--sav-steel-50); background: #fafafa; }
+  tr.excluded td.proj-cell { background: #fafafa; }
+  tr.excluded td.proj-cell .pname { color: var(--sav-steel); font-weight: 500; }
+  tr.excluded td.rowtot { background: #f4f4f3; color: var(--sav-steel); }
+
+  /* Totals */
+  tr.totals td { background: var(--sav-navy); color: #fff; font-weight: 900; font-size: 13px; padding: 11px 10px; position: sticky; bottom: 0; z-index: 2; }
+  tr.totals td.proj-cell { position: sticky; left: 0; z-index: 4; background: var(--sav-navy); color: var(--sav-yellow); text-align: left; }
+  tr.totals td.rowtot { right: 0; background: var(--sav-teal); color: #fff; }
+  tr.totals.weighted td { background: #34364a; font-weight: 700; font-size: 12px; }
+  tr.totals.weighted td.proj-cell { background: #34364a; color: rgba(255,255,255,0.8); }
+  tr.totals.weighted td.rowtot { background: #1d6b78; }
+  /* Ensure month cells in the totals rows are white (override td.num navy) */
+  table.proj tr.totals td.num { color: #fff; }
+  table.proj tr.totals.weighted td.num { color: rgba(255,255,255,0.9); }
+
+  .empty { padding: 60px; text-align: center; font-family: var(--font-body); color: var(--sav-steel); }
+  .foot { margin-top: 22px; font-family: var(--font-body); font-size: 12px; line-height: 1.6; color: var(--sav-steel); max-width: 95ch; }
+  .foot strong { font-family: var(--font-display); color: var(--sav-navy); }
+</style>
+</head>
+<body class="sav-doc">
+<div class="wrap">
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div>
+      <div class="lbl"><a href="Fee Generator.html">Fee Generator</a> &nbsp;·&nbsp; <a href="Projects Index.html">Projects Index</a> &nbsp;·&nbsp; Revenue Projections</div>
+      <h1>Revenue projections.</h1>
+    </div>
+    <div class="actions">
+      <label class="ctl-toggle"><input type="checkbox" id="show-excluded" checked> Show rated 5–7</label>
+      <a class="btn" href="Fee Generator.html">← Home</a>
+      <button class="btn btn-primary" onclick="window.print()">Print / PDF</button>
+    </div>
+  </header>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="filters" id="filters">
+    <div class="filt"><label for="f-client">Client</label><select id="f-client"></select></div>
+    <div class="filt"><label for="f-leader">Revenue leader · PE / rel. owner</label><select id="f-leader"></select></div>
+    <div class="filt"><label for="f-service">Service line</label><select id="f-service"></select></div>
+    <div class="filt"><label for="f-industry">Industry</label><select id="f-industry"></select></div>
+    <div class="filt time"><label for="f-year">Year</label><select id="f-year"></select></div>
+    <div class="filt time"><label for="f-quarter">Quarter</label><select id="f-quarter"></select></div>
+    <div class="filt time"><label for="f-month">Month</label><select id="f-month"></select></div>
+    <span class="filt-count" id="filt-count"></span>
+    <div class="clear"><button id="clear-filters">Clear filters</button></div>
+  </div>
+
+  <div class="controls">
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <div class="matrix-scroll" id="matrix-scroll">
+    <div class="empty" id="empty" hidden>No projects yet. Build one in the calculator or ingest a proposal.</div>
+    <table class="proj" id="proj-table"></table>
+  </div>
+
+  <div class="foot">
+    <strong>How this is built.</strong> &nbsp; Every project's monthly invoice is computed from its saved fee record — respecting each project's billing mode (by-phase or flatlined), discount, escalation and Rate Lock — and laid out by calendar month. Rows are sorted by the <strong>1–7 projection rating</strong>. <strong>Ratings 1–4 (Booked through 50–74%) are included in the monthly totals</strong> at full invoice value; <strong>ratings 5–7 are shown greyed and excluded</strong> from the totals. The <em>probability-weighted</em> line applies each rating's confidence (95/82/62/37/15%) to every project — a more conservative forecast. This is the first cut of the Phase 5 projections engine: one number, born in the fee matrix, flowing straight to the forecast.
+  </div>
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script>
+(function () {
+  const STORE = window.UFC_Store;
+  const CATALOG = window.RATES_CATALOG;
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const $ = (s) => document.querySelector(s);
+
+  const fmtFull = (n) => (n < 0 ? '-' : '') + '$' + Math.round(Math.abs(n)).toLocaleString();
+  function fmtK(n) {
+    if (!n) return '';
+    const k = n / 1000;
+    if (Math.abs(k) >= 1000) return '$' + (k / 1000).toFixed(1) + 'M';
+    return '$' + (Math.abs(k) >= 100 ? Math.round(k) : k.toFixed(1)) + 'K';
+  }
+
+  let showExcluded = true;
+  let ALL = [];                 // prepared rows (built once)
+  const QUARTERS = { Q1: [1,2,3], Q2: [4,5,6], Q3: [7,8,9], Q4: [10,11,12] };
+
+  function prepData() {
+    const projects = STORE.visibleProjects(STORE.listProjects());
+    ALL = projects.map(p => {
+      const series = STORE.monthlySeries(p, CATALOG);
+      const map = {};
+      let total = 0;
+      series.forEach(s => { const k = s.year + '-' + s.month; map[k] = (map[k] || 0) + s.amount; total += s.amount; });
+      const pj = p.project || {};
+      const leaders = [pj.lead, pj.clientRelOwner].map(x => (x || '').trim()).filter(Boolean);
+      const serviceLines = STORE.projectServiceLines(p);
+      return { p, pj, rating: STORE.ratingFor(p), map, total,
+               client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim() };
+    });
+    populateFilters();
+  }
+
+  function uniqSorted(arr) { return [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+
+  function populateFilters() {
+    const fill = (id, vals, allLabel) => {
+      const sel = $('#' + id);
+      const cur = sel.value;
+      sel.innerHTML = `<option value="">${allLabel}</option>` + vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+      if (vals.includes(cur)) sel.value = cur;
+    };
+    fill('f-client', uniqSorted(ALL.map(r => r.client)), 'All clients');
+    fill('f-leader', uniqSorted(ALL.flatMap(r => r.leaders)), 'All leaders');
+    fill('f-service', uniqSorted(ALL.flatMap(r => r.serviceLines)), 'All service lines');
+    fill('f-industry', uniqSorted(ALL.map(r => r.industry)), 'All industries');
+    // Years from data
+    const years = uniqSorted(ALL.flatMap(r => Object.keys(r.map).map(k => k.split('-')[0])));
+    const ysel = $('#f-year'); const yc = ysel.value;
+    ysel.innerHTML = `<option value="">All years</option>` + years.map(y => `<option value="${y}">${y}</option>`).join('');
+    if (years.includes(yc)) ysel.value = yc;
+    const qsel = $('#f-quarter');
+    if (!qsel.options.length) qsel.innerHTML = `<option value="">All quarters</option>` + Object.keys(QUARTERS).map(q => `<option value="${q}">${q}</option>`).join('');
+    const msel = $('#f-month');
+    if (!msel.options.length) msel.innerHTML = `<option value="">All months</option>` + MONTHS.map((m, i) => `<option value="${i + 1}">${m}</option>`).join('');
+  }
+
+  function currentFilters() {
+    return {
+      client: $('#f-client').value, leader: $('#f-leader').value,
+      service: $('#f-service').value, industry: $('#f-industry').value,
+      year: $('#f-year').value, quarter: $('#f-quarter').value, month: $('#f-month').value,
+    };
+  }
+
+  function build() {
+    if (!ALL.length) { $('#empty').hidden = false; $('#proj-table').innerHTML = ''; $('#kpis').innerHTML = ''; $('#filt-count').textContent = ''; return; }
+    $('#empty').hidden = true;
+    const f = currentFilters();
+
+    // mark active filter selects
+    ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => {
+      $('#' + id).classList.toggle('active', !!$('#' + id).value);
+    });
+
+    // Row filters
+    let rows = ALL.filter(r => {
+      if (f.client && r.client !== f.client) return false;
+      if (f.leader && !r.leaders.includes(f.leader)) return false;
+      if (f.service && !r.serviceLines.includes(f.service)) return false;
+      if (f.industry && r.industry !== f.industry) return false;
+      return true;
+    });
+    // When a service line is selected, slice each project to only that line's fees.
+    if (f.service) {
+      rows = rows.map(r => {
+        const series = STORE.monthlySeries(r.p, CATALOG, { serviceLine: f.service });
+        const map = {}; let total = 0;
+        series.forEach(s => { const k = s.year + '-' + s.month; map[k] = (map[k] || 0) + s.amount; total += s.amount; });
+        return Object.assign({}, r, { map, total });
+      }).filter(r => r.total > 0.5);
+    }
+    $('#filt-count').textContent = `${rows.length} of ${ALL.length} projects` + (f.service ? ` · ${f.service} only` : '');
+
+    // Column (time) filter predicate
+    const monthAllowed = (y, m) => {
+      if (f.year && String(y) !== f.year) return false;
+      if (f.quarter && !QUARTERS[f.quarter].includes(m)) return false;
+      if (f.month && m !== parseInt(f.month)) return false;
+      return true;
+    };
+
+    if (!rows.length) {
+      $('#proj-table').innerHTML = '';
+      $('#empty').hidden = false; $('#empty').textContent = 'No projects match these filters.';
+      $('#kpis').innerHTML = '';
+      return;
+    }
+
+    // Global month range across filtered rows
+    let minY = Infinity, minM = 1, maxY = -Infinity, maxM = 12, any = false;
+    rows.forEach(r => Object.keys(r.map).forEach(k => {
+      const [yy, mm] = k.split('-').map(Number); any = true;
+      if (minY === Infinity || yy < minY || (yy === minY && mm < minM)) { minY = yy; minM = mm; }
+      if (maxY === -Infinity || yy > maxY || (yy === maxY && mm > maxM)) { maxY = yy; maxM = mm; }
+    }));
+    if (!any) { minY = new Date().getFullYear(); minM = 1; maxY = minY; maxM = 12; }
+
+    // Build the ordered list of month columns, applying the time filter
+    const cols = [];
+    let y = minY, m = minM;
+    while (y < maxY || (y === maxY && m <= maxM)) {
+      if (monthAllowed(y, m)) cols.push({ y, m, key: y + '-' + m });
+      m++; if (m > 12) { m = 1; y++; }
+      if (cols.length > 240) break;
+    }
+    // Year spans
+    const years = [];
+    cols.forEach(c => { const last = years[years.length - 1]; if (last && last.y === c.y) last.span++; else years.push({ y: c.y, span: 1 }); });
+
+    // Sort: rating asc, then total desc
+    rows.sort((a, b) => a.rating - b.rating || b.total - a.total);
+
+    // ---- Header ----
+    let html = '<thead>';
+    html += '<tr class="years"><th class="corner" rowspan="2">Project · ' + rows.length + '</th>';
+    years.forEach((yr, i) => { html += `<th colspan="${yr.span}">${yr.y}</th>`; });
+    html += '<th class="totcol" rowspan="2">Total</th></tr>';
+    html += '<tr>';
+    cols.forEach((c, i) => {
+      const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
+      html += `<th class="${sep.trim()}">${MONTHS[c.m - 1]}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    // Column totals (ratings 1–4 only) + weighted (all, × confidence)
+    const colTot = {}, colWt = {};
+    cols.forEach(c => { colTot[c.key] = 0; colWt[c.key] = 0; });
+    let grandTot = 0, grandWt = 0;
+
+    let lastRating = null;
+    rows.forEach(r => {
+      const excluded = r.rating > 4;
+      const meta = STORE.ratingMeta(r.rating);
+
+      // Skip hidden excluded rows BEFORE emitting a group header, so a fully
+      // hidden rating group leaves no orphan header. (Weighted totals are
+      // computed in a separate pass below, so skipping here is safe.)
+      if (excluded && !showExcluded) return;
+
+      // Group header when rating changes (only for groups that will render)
+      if (r.rating !== lastRating) {
+        lastRating = r.rating;
+        const gExcl = r.rating > 4 ? ' excluded' : '';
+        const colspan = cols.length + 2;
+        html += `<tr class="group-row${gExcl}"><td colspan="${colspan}">${r.rating} · ${meta.label}${r.rating > 4 ? ' — excluded from totals' : ''}</td></tr>`;
+      }
+
+      const pj = r.p.project || {};
+      html += `<tr class="r${r.rating}${excluded ? ' excluded' : ''}">`;
+      html += `<td class="proj-cell"><span class="rtag r${r.rating}">${r.rating}</span><a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a><div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}<span class="open-link"> · open →</span></div></td>`;
+      let rvt = 0;
+      cols.forEach((c, i) => {
+        const v = r.map[c.key] || 0;
+        rvt += v;
+        const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
+        html += `<td class="num${v ? '' : ' zero'}${sep}">${v ? fmtK(v) : '·'}</td>`;
+        if (!excluded) { colTot[c.key] += v; grandTot += v; }
+      });
+      html += `<td class="rowtot num">${fmtK(rvt)}</td>`;
+      html += '</tr>';
+    });
+
+    // Probability-weighted totals — every pursuit × its rating confidence (visible cols only).
+    cols.forEach(c => { colWt[c.key] = 0; });
+    rows.forEach(r => { const w = STORE.ratingMeta(r.rating).weight; cols.forEach(c => { const v = (r.map[c.key] || 0); colWt[c.key] += v * w; grandWt += v * w; }); });
+
+    // ---- Totals rows ----
+    html += '<tr class="totals"><td class="proj-cell">Projected (rated 1–4)</td>';
+    cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; html += `<td class="num${sep}">${colTot[c.key] ? fmtK(colTot[c.key]) : '·'}</td>`; });
+    html += `<td class="rowtot num">${fmtK(grandTot)}</td></tr>`;
+
+    html += '<tr class="totals weighted"><td class="proj-cell">Probability-weighted (all)</td>';
+    cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; html += `<td class="num${sep}">${colWt[c.key] ? fmtK(colWt[c.key]) : '·'}</td>`; });
+    html += `<td class="rowtot num">${fmtK(grandWt)}</td></tr>`;
+
+    html += '</tbody>';
+    $('#proj-table').innerHTML = html;
+
+    // ---- KPIs (over filtered rows + visible columns) ----
+    const visTotal = (r) => cols.reduce((s, c) => s + (r.map[c.key] || 0), 0);
+    const booked = rows.filter(r => r.rating === 1).reduce((s, r) => s + visTotal(r), 0);
+    const pipeline14 = rows.filter(r => r.rating >= 2 && r.rating <= 4).reduce((s, r) => s + visTotal(r), 0);
+    const longshot = rows.filter(r => r.rating >= 5 && r.rating <= 6).reduce((s, r) => s + visTotal(r), 0);
+    $('#kpis').innerHTML = `
+      <div class="kpi navy"><div class="k-lbl">Booked (rated 1)</div><div class="k-val">${fmtFull(booked)}</div><div class="k-sub">Signed / active revenue</div></div>
+      <div class="kpi"><div class="k-lbl">Pipeline (rated 2–4)</div><div class="k-val">${fmtFull(pipeline14)}</div><div class="k-sub">≥ 50% confidence</div></div>
+      <div class="kpi teal"><div class="k-lbl">Projected total (1–4)</div><div class="k-val">${fmtFull(grandTot)}</div><div class="k-sub">What rolls into the forecast</div></div>
+      <div class="kpi"><div class="k-lbl">Probability-weighted</div><div class="k-val">${fmtFull(grandWt)}</div><div class="k-sub">All pursuits × confidence · incl. ${fmtFull(longshot)} long-shot</div></div>
+    `;
+
+    // ---- Legend ----
+    $('#legend').innerHTML = STORE.RATINGS.map(r => {
+      const c = { 1:'#1f8a5b',2:'#3AA95C',3:'var(--sav-yellow)',4:'var(--sav-orange)',5:'var(--sav-steel)',6:'var(--sav-steel)',7:'var(--sav-steel)' }[r.n];
+      return `<span class="lg"><span class="dot" style="background:${c}"></span>${r.n} ${r.label}</span>`;
+    }).join('');
+  }
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+
+  $('#show-excluded').addEventListener('change', e => { showExcluded = e.target.checked; build(); });
+  ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => {
+    $('#' + id).addEventListener('change', () => { $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.'; build(); });
+  });
+  $('#clear-filters').addEventListener('click', () => {
+    ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => { $('#' + id).value = ''; });
+    $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.';
+    build();
+  });
+  function boot() { prepData(); build(); }
+  if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
+})();
+</script>
+</body>
+</html>

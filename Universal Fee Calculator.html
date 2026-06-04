@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills · Universal Fee Calculator</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ========== Header ========== -->
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div class="title-block">
+      <div class="lbl">
+        <a href="Fee Generator.html" style="color: var(--sav-steel); text-decoration: none; letter-spacing: 0.20em;">Fee Generator</a>
+        &nbsp; · &nbsp; <a href="Projects Index.html" style="color: var(--sav-steel); text-decoration: none; letter-spacing: 0.20em;">Projects Index</a>
+        &nbsp; · &nbsp; Fee Calculator
+      </div>
+      <h1 id="hdr-project">Untitled project</h1>
+      <div class="project-id">
+        <span id="hdr-client"></span> <span id="hdr-status"></span>
+        <span id="hdr-saved" style="margin-left: 12px; font-size: 11px; color: var(--sav-teal); letter-spacing: 0.12em; text-transform: uppercase;"></span>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-ghost" id="reset-btn">Reset</button>
+      <button class="btn btn-secondary" id="save-btn">Save</button>
+      <button class="btn btn-primary" id="xlsx-btn">Download Excel</button>
+      <button class="btn btn-ghost" id="print-btn">Print / PDF</button>
+    </div>
+  </header>
+
+  <!-- ========== Cover / Setup ========== -->
+  <section class="cover-pane" id="cover-pane">
+    <header class="cover-head">
+      <span class="ix">Setup</span>
+      <h2>Configure project · timeline · team.</h2>
+      <span class="hint">Changes flow live into the matrix below.</span>
+      <button class="toggle" id="cover-toggle">Hide setup</button>
+    </header>
+    <div class="cover-body">
+
+      <!-- Project info -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">01 · Project</span>
+          <h3>Project information.</h3>
+          <span class="hint">Prints on header, Excel cover sheet, and exports. Drives the Projects Index database.</span>
+        </div>
+        <div class="field-grid cols-5">
+          <div class="field">
+            <label for="pm-name">Project name</label>
+            <input type="text" id="pm-name" placeholder="e.g. 383 Madison Migration ’27">
+          </div>
+          <div class="field">
+            <label for="pm-client">Client</label>
+            <input type="text" id="pm-client" placeholder="e.g. JPMorgan Chase">
+          </div>
+          <div class="field">
+            <label for="pm-lead">Savills lead (PE)</label>
+            <select id="pm-lead"></select>
+          </div>
+          <div class="field">
+            <label for="pm-status">Status</label>
+            <select id="pm-status"></select>
+            <div class="field-hint" id="status-hint"></div>
+          </div>
+          <div class="field">
+            <label for="pm-rating">Projection rating</label>
+            <select id="pm-rating"></select>
+            <div class="field-hint" id="rating-hint"></div>
+          </div>
+          <div class="field">
+            <label for="pm-industry">Industry</label>
+            <select id="pm-industry"></select>
+          </div>
+        </div>
+        <div class="field-grid cols-5" style="margin-top: 18px;">
+          <div class="field">
+            <label for="pm-date">Proposal date</label>
+            <input type="date" id="pm-date">
+          </div>
+          <div class="field">
+            <label for="pm-firstProposal">First proposal date</label>
+            <input type="date" id="pm-firstProposal">
+          </div>
+          <div class="field">
+            <label for="pm-signed">Signed contract date</label>
+            <input type="date" id="pm-signed">
+          </div>
+          <div class="field">
+            <label for="pm-clientContact">Client contact</label>
+            <input type="text" id="pm-clientContact" placeholder="Name · role">
+          </div>
+          <div class="field">
+            <label for="pm-clientRel">Client relationship owner</label>
+            <select id="pm-clientRel"></select>
+          </div>
+        </div>
+        <div class="field-grid" style="grid-template-columns: 1fr; margin-top: 18px; max-width: 600px;">
+          <div class="field">
+            <label for="pm-location">Location</label>
+            <input type="text" id="pm-location" placeholder="e.g. New York, NY">
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">02 · Timeline</span>
+          <h3>Project period.</h3>
+          <span class="hint">Sets the calendar window the matrix covers.</span>
+        </div>
+        <div class="field-grid" style="grid-template-columns: repeat(4, 1fr); max-width: 720px;">
+          <div class="field">
+            <label for="tl-start-month">Start month</label>
+            <select id="tl-start-month">
+              <option value="1">January</option><option value="2">February</option>
+              <option value="3">March</option><option value="4">April</option>
+              <option value="5">May</option><option value="6">June</option>
+              <option value="7">July</option><option value="8">August</option>
+              <option value="9">September</option><option value="10">October</option>
+              <option value="11">November</option><option value="12">December</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="tl-start-year">Start year</label>
+            <input type="number" id="tl-start-year" min="2020" max="2040" step="1">
+          </div>
+          <div class="field">
+            <label for="tl-end-month">End month</label>
+            <select id="tl-end-month">
+              <option value="1">January</option><option value="2">February</option>
+              <option value="3">March</option><option value="4">April</option>
+              <option value="5">May</option><option value="6">June</option>
+              <option value="7">July</option><option value="8">August</option>
+              <option value="9">September</option><option value="10">October</option>
+              <option value="11">November</option><option value="12">December</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="tl-end-year">End year</label>
+            <input type="number" id="tl-end-year" min="2020" max="2040" step="1">
+          </div>
+        </div>
+        <div class="timeline-info">
+          <span class="ti-lbl">Duration</span>
+          <span class="ti-val" id="tl-count">—</span>
+          <span class="ti-lbl">Window</span>
+          <span class="ti-val" id="tl-range">—</span>
+        </div>
+      </div>
+
+      <!-- Phases -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">03 · Phases</span>
+          <h3>Define phases &amp; assign months.</h3>
+          <span class="hint">Adjust phase lengths with ± steppers. The last phase auto-absorbs the remainder.</span>
+        </div>
+        <div class="phases-wrap">
+          <table class="phases-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Phase name</th>
+                <th class="num">Length (mo)</th>
+                <th>Date range</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="phases-list"></tbody>
+          </table>
+          <button class="add-btn" id="phase-add">+ Add phase</button>
+        </div>
+        <div class="phase-strip-wrap">
+          <div class="phase-strip" id="phase-strip"></div>
+          <div class="phase-strip-months" id="phase-strip-months"></div>
+        </div>
+      </div>
+
+      <!-- Groups -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">04 · Groups</span>
+          <h3>Team groupings for the monthly schedule.</h3>
+          <span class="hint">Roles are assigned to a group, which then drives the columns in the Monthly Schedule below.</span>
+        </div>
+        <ul class="groups-list" id="groups-list"></ul>
+        <button class="add-btn" id="group-add">+ Add group</button>
+      </div>
+
+      <!-- Rates catalog -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">05 · Team</span>
+          <h3>Pick titles from the rates catalog.</h3>
+          <span class="hint">Check a title to add one instance · click +Add to add more (e.g. 5× Tactical Execution Mgr).</span>
+        </div>
+        <div class="catalog-grid" id="catalog-grid"></div>
+
+        <div style="margin-top: 28px;">
+          <div class="roles-head">
+            <h4>Selected roles</h4>
+            <span class="count" id="roles-count">0 roles</span>
+          </div>
+          <div class="roles-list" id="roles-list"></div>
+        </div>
+      </div>
+
+      <!-- Assumptions -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">06 · Assumptions</span>
+          <h3>Global assumptions.</h3>
+          <span class="hint">Catalog base year: <strong id="a-catbase">2025</strong>. Escalation compounds from there.</span>
+        </div>
+        <div class="field-grid" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="field">
+            <label for="a-hrs">Hours per FTE / month</label>
+            <input type="number" id="a-hrs" step="0.01">
+            <div class="hint">Standard 2,080 ÷ 12 = 173.33</div>
+          </div>
+          <div class="field">
+            <label for="a-esc">YoY escalation %</label>
+            <input type="number" id="a-esc" step="0.1">
+            <div class="hint">Compounded annually from catalog base year.</div>
+          </div>
+          <div class="field">
+            <label for="a-ind">Industry standard adjustment %</label>
+            <input type="number" id="a-ind" step="0.5">
+            <div class="hint">Trims the high Macro rack rates to a competitive baseline. Changes every displayed rate — floors are unaffected.</div>
+          </div>
+          <div class="field">
+            <label for="a-disc">Client discount %</label>
+            <input type="number" id="a-disc" step="0.1">
+            <div class="hint">Client / fixed-fee discount, applied to gross at total-fee level.</div>
+          </div>
+          <div class="field">
+            <label>Rate Lock</label>
+            <label class="toggle-label" for="a-lock">
+              <input type="checkbox" id="a-lock">
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-text">Hold start-year rate<span class="toggle-sub">Credit shown at bottom</span></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ========== Summary cards ========== -->
+  <div class="section-title">
+    <span class="ix">Live result</span>
+    <h2>Headline totals.</h2>
+    <span class="hint">Updates as you adjust setup &amp; FTE %.</span>
+  </div>
+  <div class="summary-row">
+    <div class="sum-card">
+      <div class="lbl">Total FTE months</div>
+      <div class="val" id="sum-fte">0.0<span class="unit">fte-mo</span></div>
+      <div class="delta">Sum of FTE % × months across all roles &amp; phases.</div>
+    </div>
+    <div class="sum-card">
+      <div class="lbl">Gross fee · adjusted</div>
+      <div class="val" id="sum-gross">$0</div>
+      <div class="delta">At industry-adjusted rates, before client discount.</div>
+    </div>
+    <div class="sum-card" id="sum-lock-card">
+      <div class="lbl">Less Rate Lock credit</div>
+      <div class="val" id="sum-lock">$0</div>
+      <div class="delta" id="sum-lock-detail">Off — escalation applied.</div>
+    </div>
+    <div class="sum-card is-yellow">
+      <div class="lbl">Less client discount</div>
+      <div class="val" id="sum-discount">$0</div>
+      <div class="delta" id="sum-discount-pct">0% — applied at total.</div>
+    </div>
+    <div class="sum-card is-navy">
+      <div class="lbl">Net proposed fee</div>
+      <div class="val" id="sum-total">$0</div>
+      <div class="delta">Net of all credits — what client pays.</div>
+    </div>
+  </div>
+
+  <!-- ========== Cost-rate floor banner ========== -->
+  <div class="floor-banner" id="floor-banner" hidden></div>
+
+  <!-- ========== Reconcile to proposal ========== -->
+  <div class="reconcile" id="reconcile-panel" hidden>
+    <div class="rc-left">
+      <div class="rc-lbl">Reconcile to proposal</div>
+      <div class="rc-fields">
+        <div class="rc-field">
+          <label for="fit-target">Target fee</label>
+          <div class="rc-money"><span>$</span><input id="fit-target" type="text" inputmode="numeric" placeholder="0"></div>
+        </div>
+        <div class="rc-field">
+          <label>Current net</label>
+          <div class="rc-current" id="rc-current">$0</div>
+        </div>
+        <div class="rc-field">
+          <label>Delta</label>
+          <div class="rc-delta" id="rc-delta">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="rc-right">
+      <button class="btn btn-primary" id="fit-btn" type="button">Fit to target</button>
+      <div class="rc-note" id="rc-note">Holds the proposal's staffing &amp; rates fixed and solves the client discount to hit the target.</div>
+    </div>
+  </div>
+
+  <!-- ========== Matrix ========== -->
+  <div class="matrix-wrap">
+    <div class="section-title">
+      <span class="ix">Detailed</span>
+      <h2>FTE allocation matrix.</h2>
+      <span class="hint">Click any FTE % cell. Phase fees update live.</span>
+    </div>
+    <table class="matrix-table" id="matrix-table">
+      <thead id="matrix-thead"></thead>
+      <tbody id="matrix-tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- ========== Monthly cashflow ========== -->
+  <div class="monthly">
+    <div class="section-title">
+      <span class="ix">Cashflow</span>
+      <h2>Monthly fee schedule.</h2>
+      <span class="hint">By group, ready for invoicing.</span>
+      <div class="monthly-toggle" role="group" aria-label="Billing mode">
+        <button type="button" class="bm-btn on" id="bm-phase" data-bm="phase">By phase (as accrued)</button>
+        <button type="button" class="bm-btn" id="bm-flat" data-bm="flatline">Flatlined monthly</button>
+      </div>
+      <div class="monthly-toggle" role="group" aria-label="Discount view" id="disc-toggle">
+        <button type="button" class="mt-btn on" id="mt-bottom" data-mode="bottom">Discount at bottom</button>
+        <button type="button" class="mt-btn" id="mt-spread" data-mode="spread">Spread across months</button>
+      </div>
+      <label class="fee-share-ctl" id="fee-share-ctl">
+        <input type="checkbox" id="fs-on">
+        <span class="fs-text">Fee share</span>
+        <span class="fs-pct"><input type="number" id="fs-pct" min="0" max="100" step="1" value="10">%</span>
+        <span class="fs-hint">to broker · off revenue</span>
+      </label>
+    </div>
+    <table class="monthly-table" id="monthly-table">
+      <thead id="monthly-thead"></thead>
+      <tbody id="monthly-tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="footnote">
+    <strong>How this works.</strong> &nbsp; The rates catalog (<code>universal-fee-calc/rates-catalog.js</code>) is the production <strong>Macro 2024 Hourly Rate Grid</strong> — the single source of truth for titles and rates. Each title family's <strong>Col B rack rate</strong> is the <strong>Mid</strong> billable tier; <strong>High</strong> and <strong>Low</strong> are ±10% off Mid. Rates are anchored at catalog base year <strong>2024</strong> and escalation compounds forward to each project year. Rate Lock holds rates at the project start year; the would-be escalation is credited at the bottom of the schedule. <br><br>
+    <strong>Cost-rate floor.</strong> &nbsp; <strong>Col E (PowerBI)</strong> — falling back to <strong>Col G (Clockify)</strong> where blank — is the cost rate for each tier. The calculator compares every role's effective billed rate (escalated to start year, net of the client discount) against that floor; any role priced below it is flagged as <em>potentially unprofitable</em> but is <strong>allowed through</strong> — the schedule still exports. These cost rates also drive the later planned-vs-actual margin comparison against Clockify. <br><br>
+    <strong>Staff title vs. project role.</strong> &nbsp; Each line carries a <em>staff title</em> (the rate-grid level that sets the rate &amp; floor) and a free-text <em>project role</em>. The grid's page-2 Title→Rate mapping (57 HR titles) is stored as catalog data for normalising arbitrary titles back to a billable level. <br><br>
+    <strong>Grid vs. contracted rates.</strong> &nbsp; Each role defaults to <em>Grid</em> (tier rate − industry adjustment, escalated). Flip a role to <em>Contracted</em> to type a pre-negotiated client rate: it <strong>bypasses the industry adjustment</strong>, still escalates year-over-year, and the client discount still applies. The staff title/tier stays attached so the cost-floor advisory continues to work. Ingested proposals land as contracted at their observed rate. <br><br>
+    <strong>Reconcile to proposal.</strong> &nbsp; When a record carries a proposal total, the <em>Reconcile to proposal</em> bar back-solves to it by adjusting <strong>only the client discount</strong> — staffing allocations and per-role rates are held to the proposal (they're real). If the target sits above what current rates can bill, it flags the gap to close by raising rates rather than touching allocations. The cost-floor advisory still fires on any role pushed below cost. <br><br>
+    <strong>Export.</strong> &nbsp; Excel export produces three sheets — Setup &amp; Summary, Phase Matrix, Monthly Schedule — with live formulas so procurement can interrogate every number.
+  </div>
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/app.js"></script>
+<script src="universal-fee-calc/export-excel.js"></script>
+</body>
+</html>

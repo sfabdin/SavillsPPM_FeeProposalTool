@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Savills PPM · Enterprise Migration Guide</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  :root { --hair: rgba(37,39,58,0.10); --hair-strong: rgba(37,39,58,0.18); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #f3f3f0; font-family: var(--font-display); color: var(--sav-navy); }
+  a { color: inherit; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 52px 60px 110px; }
+  @media (max-width: 900px) { .wrap { padding: 30px 20px 80px; } }
+
+  /* Header */
+  .head { display: grid; grid-template-columns: auto 1fr auto; gap: 28px; align-items: end; padding-bottom: 24px; border-bottom: 4px solid var(--sav-navy); margin-bottom: 40px; }
+  .head .logo { width: 70px; height: 70px; }
+  .head .lbl { font-weight: 700; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 9px; }
+  .head .lbl a { color: var(--sav-steel); text-decoration: none; }
+  .head .lbl a:hover { color: var(--sav-red); }
+  .head h1 { font-weight: 900; font-size: 44px; line-height: 1; letter-spacing: -0.02em; margin: 0 0 10px; }
+  .head h1 .em { color: var(--sav-red); }
+  .head .sub { font-family: var(--font-body); font-size: 15px; color: var(--sav-steel); max-width: 680px; line-height: 1.5; }
+  .head .meta { text-align: right; font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); line-height: 1.6; white-space: nowrap; }
+  .head .meta strong { font-family: var(--font-display); color: var(--sav-navy); }
+  @media (max-width: 900px) { .head { grid-template-columns: 1fr; gap: 14px; } .head .meta { text-align: left; } .head h1 { font-size: 32px; } }
+
+  section { margin-bottom: 56px; }
+  .sec-head { display: flex; align-items: baseline; gap: 15px; margin-bottom: 22px; padding-bottom: 11px; border-bottom: 2px solid var(--sav-navy); }
+  .sec-head .ix { font-weight: 700; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--sav-teal); }
+  .sec-head h2 { font-weight: 900; font-size: 25px; margin: 0; letter-spacing: -0.01em; }
+
+  .lede { font-family: var(--font-body); font-size: 15px; line-height: 1.65; color: var(--sav-navy); max-width: 86ch; }
+  .lede strong { font-family: var(--font-display); }
+  .lede.muted { color: var(--sav-steel); }
+
+  /* TL;DR architecture band */
+  .arch-band { background: var(--sav-navy); color: #fff; padding: 32px 38px; }
+  .arch-band h3 { font-weight: 900; font-size: 19px; margin: 0 0 18px; }
+  .arch-flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+  .af-node { flex: 1; min-width: 150px; padding: 0 18px; position: relative; }
+  .af-node:not(:last-child)::after { content: "→"; position: absolute; right: -8px; top: 26px; font-size: 20px; color: var(--sav-yellow); font-weight: 700; }
+  .af-tool { font-weight: 900; font-size: 13px; letter-spacing: 0.04em; color: var(--sav-yellow); margin-bottom: 7px; text-transform: uppercase; }
+  .af-role { font-family: var(--font-body); font-size: 13px; line-height: 1.5; color: rgba(255,255,255,0.82); }
+  .af-ms { font-family: var(--font-body); font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 6px; font-style: italic; }
+  @media (max-width: 900px) { .af-node { flex-basis: 100%; padding: 0 0 16px; } .af-node:not(:last-child)::after { content: "↓"; right: auto; left: 0; top: auto; bottom: -2px; } }
+
+  /* Lists table */
+  .lists { display: flex; flex-direction: column; gap: 22px; }
+  .list-card { background: #fff; border: 1px solid var(--hair); }
+  .list-top { display: flex; align-items: baseline; gap: 14px; padding: 16px 22px; background: var(--sav-cream); border-bottom: 1px solid var(--hair); }
+  .list-top .ln { font-weight: 900; font-size: 17px; color: var(--sav-navy); }
+  .list-top .lk { font-weight: 700; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; padding: 3px 8px; background: var(--sav-navy); color: #fff; }
+  .list-top .lk.child { background: var(--sav-teal); }
+  .list-top .ldesc { font-family: var(--font-body); font-size: 12.5px; color: var(--sav-steel); margin-left: auto; text-align: right; }
+  table.cols { width: 100%; border-collapse: collapse; font-family: var(--font-body); }
+  table.cols th { text-align: left; font-family: var(--font-display); font-weight: 700; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sav-steel); padding: 9px 22px; border-bottom: 1px solid var(--hair); }
+  table.cols td { font-size: 12.5px; color: var(--sav-navy); padding: 7px 22px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  table.cols tr:last-child td { border-bottom: 0; }
+  table.cols td.cname { font-family: var(--font-display); font-weight: 700; white-space: nowrap; }
+  table.cols td.ctype { color: var(--sav-teal); font-family: var(--font-display); font-weight: 700; font-size: 11px; white-space: nowrap; }
+  table.cols td.cnote { color: var(--sav-steel); }
+  .pill { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 6px; background: var(--sav-yellow); color: var(--sav-navy); margin-left: 6px; }
+
+  /* Steps */
+  .steps { counter-reset: step; display: flex; flex-direction: column; gap: 0; }
+  .step { display: grid; grid-template-columns: 54px 1fr; gap: 20px; padding: 22px 0; border-bottom: 1px solid var(--hair); }
+  .step:last-child { border-bottom: 0; }
+  .step .sn { counter-increment: step; }
+  .step .sn::before { content: counter(step, decimal-leading-zero); font-family: var(--font-display); font-weight: 900; font-size: 22px; color: var(--sav-red); }
+  .step h4 { font-weight: 900; font-size: 17px; margin: 0 0 8px; }
+  .step .body { font-family: var(--font-body); font-size: 13.5px; line-height: 1.6; color: var(--sav-navy); }
+  .step .body p { margin: 0 0 10px; }
+  .step .body ul { margin: 6px 0 10px; padding-left: 18px; }
+  .step .body li { margin-bottom: 5px; }
+  .step .body strong { font-family: var(--font-display); }
+  .step .body code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; background: var(--sav-cream); padding: 1px 5px; color: var(--sav-navy); }
+  .effort { display: inline-flex; gap: 8px; align-items: center; margin-top: 4px; font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); }
+  .effort .tag { font-family: var(--font-display); font-weight: 700; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 7px; background: var(--sav-cream); color: var(--sav-navy); }
+  .effort .tag.you { background: #e3f3ee; color: #1f6f52; }
+  .effort .tag.dev { background: #fde9d9; color: #9a5418; }
+
+  .callout { background: #fff; border-left: 4px solid var(--sav-yellow); padding: 16px 20px; font-family: var(--font-body); font-size: 13px; line-height: 1.6; color: var(--sav-navy); margin: 4px 0; }
+  .callout strong { font-family: var(--font-display); }
+  .callout.teal { border-left-color: var(--sav-teal); }
+  .callout.red { border-left-color: var(--sav-red); }
+
+  /* Path comparison */
+  .paths { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .paths { grid-template-columns: 1fr; } }
+  .path { background: #fff; border: 1px solid var(--hair); padding: 22px 24px; }
+  .path.rec { border: 2px solid var(--sav-navy); box-shadow: inset 4px 0 0 0 var(--sav-yellow); }
+  .path .ph { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+  .path h4 { font-weight: 900; font-size: 17px; margin: 0; }
+  .path .rec-tag { font-weight: 700; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 8px; background: var(--sav-navy); color: var(--sav-yellow); }
+  .path .psub { font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); margin-bottom: 14px; }
+  .path .pros, .path .cons { font-family: var(--font-body); font-size: 12.5px; line-height: 1.5; margin: 0 0 10px; padding-left: 16px; }
+  .path .pros li { color: #1f6f52; } .path .cons li { color: var(--sav-steel); }
+  .path .lbl { font-family: var(--font-display); font-weight: 700; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sav-steel); margin: 4px 0; }
+
+  .foot { margin-top: 30px; font-family: var(--font-body); font-size: 12px; line-height: 1.6; color: var(--sav-steel); }
+  .foot strong { font-family: var(--font-display); color: var(--sav-navy); }
+</style>
+</head>
+<body class="sav-doc">
+<div class="wrap">
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div>
+      <div class="lbl"><a href="Fee Generator.html">Fee Generator</a> &nbsp;·&nbsp; Enterprise migration</div>
+      <h1>Running it for <span class="em">the whole team.</span></h1>
+      <div class="sub">How to take the Fee Generator from a browser prototype to a shared, online system — keeping the app and all its logic exactly as-is. Lightest path: your existing <strong>Box</strong> tenant for data + <strong>Vercel</strong> for hosting. Microsoft / Fabric route documented too.</div>
+    </div>
+    <div class="meta">
+      <strong>For</strong> &nbsp; PPM Leadership / IT<br>
+      <strong>Stack</strong> &nbsp; M365 · Fabric<br>
+      <strong>Updated</strong> &nbsp; June 2026
+    </div>
+  </header>
+
+  <!-- TL;DR -->
+  <section>
+    <div class="arch-band">
+      <h3>The shape of it — you only change where data is stored.</h3>
+      <div class="arch-flow">
+        <div class="af-node">
+          <div class="af-tool">Author</div>
+          <div class="af-role">Build or ingest a fee — the calculator we already have, unchanged.</div>
+          <div class="af-ms">This HTML app</div>
+        </div>
+        <div class="af-node">
+          <div class="af-tool">Host</div>
+          <div class="af-role">Put it online at a URL the team opens.</div>
+          <div class="af-ms">Vercel</div>
+        </div>
+        <div class="af-node">
+          <div class="af-tool">Store</div>
+          <div class="af-role">One shared set of projects everyone reads &amp; writes.</div>
+          <div class="af-ms">Box (or Airtable / SharePoint)</div>
+        </div>
+        <div class="af-node">
+          <div class="af-tool">Report</div>
+          <div class="af-role">Projections &amp; flash — already built into the app.</div>
+          <div class="af-ms">In-app (or Power BI later)</div>
+        </div>
+      </div>
+    </div>
+    <p class="lede" style="margin-top:20px;">The app is already split into three clean layers — <strong>data</strong> (one JSON file), <strong>rate engine</strong> (pure calculation functions), and <strong>UI</strong>. That separation is the whole point: to go live you swap only the data layer. The Box path below keeps client fee data inside Savills' existing tenant with the least work; Airtable and SharePoint are documented as alternatives.</p>
+  </section>
+
+  <!-- Schema -->
+  <section>
+    <header class="sec-head"><span class="ix">Part 1</span><h2>The data model.</h2></header>
+    <p class="lede muted" style="margin-bottom:24px;">However you store it, the data has the same shape — it's the record the calculator already saves. In <strong>Box</strong> it's one JSON file holding all of this; in <strong>Airtable / SharePoint</strong> it becomes four related tables. <strong>ProjectId</strong> ties Roles and Phases back to their Project. (Table/column view shown for the relational options.)</p>
+
+    <div class="lists">
+
+      <!-- Projects -->
+      <div class="list-card">
+        <div class="list-top"><span class="ln">Projects</span><span class="lk">Parent</span><span class="ldesc">One row per project · the master record</span></div>
+        <table class="cols">
+          <thead><tr><th style="width:200px;">Column</th><th style="width:130px;">Type</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="cname">ProjectId <span class="pill">key</span></td><td class="ctype">Text</td><td class="cnote">Stable id (e.g. <code>proj_ab12cd34</code>). Use as the lookup key from child lists.</td></tr>
+            <tr><td class="cname">Title</td><td class="ctype">Text</td><td class="cnote">Project name — SharePoint's built-in Title column.</td></tr>
+            <tr><td class="cname">Client</td><td class="ctype">Text</td><td class="cnote">Client / account name.</td></tr>
+            <tr><td class="cname">Industry</td><td class="ctype">Choice</td><td class="cnote">From the controlled industry list.</td></tr>
+            <tr><td class="cname">Status</td><td class="ctype">Choice</td><td class="cnote">Draft · Submitted · Negotiation · Won · Active · Hold · Lost · Closed.</td></tr>
+            <tr><td class="cname">Rating</td><td class="ctype">Number</td><td class="cnote">1–7 projection rating. Drives the forecast roll-up.</td></tr>
+            <tr><td class="cname">Lead / RelOwner</td><td class="ctype">Person</td><td class="cnote">PE / relationship owner — Person columns enable security &amp; filtering.</td></tr>
+            <tr><td class="cname">StartYear / StartMonth</td><td class="ctype">Number</td><td class="cnote">Timeline start. EndYear / EndMonth for the close.</td></tr>
+            <tr><td class="cname">BillingMode</td><td class="ctype">Choice</td><td class="cnote"><code>phase</code> (as accrued) or <code>flatline</code> (even monthly).</td></tr>
+            <tr><td class="cname">Discount</td><td class="ctype">Number</td><td class="cnote">Client / fixed-fee discount %.</td></tr>
+            <tr><td class="cname">IndustryAdj / Escalation</td><td class="ctype">Number</td><td class="cnote">Industry-standard adjustment % and annual escalation %.</td></tr>
+            <tr><td class="cname">RateLock</td><td class="ctype">Yes/No</td><td class="cnote">Hold rates at start year.</td></tr>
+            <tr><td class="cname">FeeShareOn / FeeSharePct</td><td class="ctype">Yes/No · Number</td><td class="cnote">Broker referral cut off revenue.</td></tr>
+            <tr><td class="cname">ExtractedTotalFee</td><td class="ctype">Currency</td><td class="cnote">Proposal total captured at ingest — the reconcile target.</td></tr>
+            <tr><td class="cname">SourceJson</td><td class="ctype">Multiline</td><td class="cnote"><em>Optional</em> escape hatch — store the full original record JSON for round-tripping.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Roles -->
+      <div class="list-card">
+        <div class="list-top"><span class="ln">Roles</span><span class="lk child">Child → Projects</span><span class="ldesc">One row per staffed role</span></div>
+        <table class="cols">
+          <thead><tr><th style="width:200px;">Column</th><th style="width:130px;">Type</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="cname">ProjectId <span class="pill">lookup</span></td><td class="ctype">Lookup</td><td class="cnote">Ties the role to its Project.</td></tr>
+            <tr><td class="cname">Resource</td><td class="ctype">Text</td><td class="cnote">Named person or "TBD".</td></tr>
+            <tr><td class="cname">TitleId</td><td class="ctype">Choice</td><td class="cnote">Rate-grid family (e.g. <code>senior-pm</code>) — sets rate &amp; cost floor.</td></tr>
+            <tr><td class="cname">TierId</td><td class="ctype">Choice</td><td class="cnote">High / Mid / Low within the family.</td></tr>
+            <tr><td class="cname">ProjectRole</td><td class="ctype">Text</td><td class="cnote">Free-text project-role label (vs. the rate-grid staff title).</td></tr>
+            <tr><td class="cname">RateSource</td><td class="ctype">Choice</td><td class="cnote"><code>grid</code> or <code>contracted</code>.</td></tr>
+            <tr><td class="cname">ContractedRate</td><td class="ctype">Currency</td><td class="cnote">Negotiated hourly rate when contracted.</td></tr>
+            <tr><td class="cname">ServiceLine</td><td class="ctype">Choice</td><td class="cnote">Revenue attribution: P&amp;PM · Change Mgmt · Workplace · Relocation · Other Savills.</td></tr>
+            <tr><td class="cname">FteByPhase</td><td class="ctype">Multiline (JSON)</td><td class="cnote">Map of phaseId → FTE %. <em>Or</em> normalize into a 5th Allocations list if you want it fully relational.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Phases -->
+      <div class="list-card">
+        <div class="list-top"><span class="ln">Phases</span><span class="lk child">Child → Projects</span><span class="ldesc">Project schedule</span></div>
+        <table class="cols">
+          <thead><tr><th style="width:200px;">Column</th><th style="width:130px;">Type</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="cname">ProjectId <span class="pill">lookup</span></td><td class="ctype">Lookup</td><td class="cnote">Ties the phase to its Project.</td></tr>
+            <tr><td class="cname">PhaseId</td><td class="ctype">Text</td><td class="cnote">Stable id referenced by Roles' FteByPhase.</td></tr>
+            <tr><td class="cname">Name</td><td class="ctype">Text</td><td class="cnote">Phase name.</td></tr>
+            <tr><td class="cname">Length</td><td class="ctype">Number</td><td class="cnote">Whole-month duration (the billing granularity).</td></tr>
+            <tr><td class="cname">Weeks</td><td class="ctype">Number</td><td class="cnote">Original stated duration (reference).</td></tr>
+            <tr><td class="cname">TargetFee</td><td class="ctype">Currency</td><td class="cnote">Stated per-phase fee from the proposal (reference).</td></tr>
+            <tr><td class="cname">SortOrder</td><td class="ctype">Number</td><td class="cnote">Chronological order.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Rates Catalog -->
+      <div class="list-card">
+        <div class="list-top"><span class="ln">RatesCatalog</span><span class="lk">Reference</span><span class="ldesc">The Macro 2024 grid — edit here, not in code</span></div>
+        <table class="cols">
+          <thead><tr><th style="width:200px;">Column</th><th style="width:130px;">Type</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="cname">TitleId</td><td class="ctype">Text</td><td class="cnote">Family id (e.g. <code>director</code>).</td></tr>
+            <tr><td class="cname">TitleName</td><td class="ctype">Text</td><td class="cnote">Display name.</td></tr>
+            <tr><td class="cname">RackRate</td><td class="ctype">Currency</td><td class="cnote">Col B — 2024 base / Mid tier.</td></tr>
+            <tr><td class="cname">HighRate / LowRate</td><td class="ctype">Currency</td><td class="cnote">±10% off rack (or store all three explicitly).</td></tr>
+            <tr><td class="cname">CostFloor_High/Mid/Low</td><td class="ctype">Currency</td><td class="cnote">Col E / G cost-rate floors per tier.</td></tr>
+            <tr><td class="cname">BaseYear</td><td class="ctype">Number</td><td class="cnote">Catalog vintage (2024). Add rows for future years.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <div class="callout teal" style="margin-top:20px;"><strong>Why this shape.</strong> It's the exact record the calculator already produces — so the existing JSON export becomes the import file (Step 4). Keeping <code>FteByPhase</code> as JSON inside the Roles list is the pragmatic choice; promote it to a fully relational <strong>Allocations</strong> list only if you need Power BI to slice billings by individual phase-month at the role level (most reporting doesn't).</p></div>
+  </section>
+
+  <!-- Backend options -->
+  <section>
+    <header class="sec-head"><span class="ix">Part 2</span><h2>Where the data lives — three backends.</h2></header>
+    <p class="lede muted" style="margin-bottom:22px;">The app and its reporting stay exactly as they are in every option. The <em>only</em> code that changes is the storage layer — <code>store.js</code>, the one file that today reads and writes the browser. Point it somewhere shared and the whole team works off one set of projects. Here's how the realistic choices compare for PPM.</p>
+    <div class="paths">
+
+      <div class="path rec">
+        <div class="ph"><h4>Box + Vercel</h4><span class="rec-tag">Best fit</span></div>
+        <div class="psub">Data stays in Savills' existing Box tenant; app hosted on Vercel.</div>
+        <div class="lbl">How it works</div>
+        <ul class="pros">
+          <li>The whole database is already one JSON file (that's what <strong>Export DB</strong> produces). It lives as <code>projects.json</code> in a shared Box folder.</li>
+          <li><code>store.js</code> pulls it from Box on load, writes it back on save — via the Box API.</li>
+          <li>Reporting (Projections, etc.) stays right here in the app.</li>
+        </ul>
+        <div class="lbl">Why it wins for you</div>
+        <ul class="pros">
+          <li><strong>Governance already sorted</strong> — client fee data never leaves your tenant.</li>
+          <li>No new SaaS subscription or IT onboarding.</li>
+        </ul>
+        <div class="lbl">The one guardrail</div>
+        <ul class="cons">
+          <li>It's a whole-file store, so simultaneous saves can clobber. Needs a <strong>light save protocol</strong> (pull-merge-write with a timestamp/lock check) — small addition, removes the only real risk. Fine for a small team of occasional editors.</li>
+        </ul>
+      </div>
+
+      <div class="path">
+        <div class="ph"><h4>Airtable + Vercel</h4></div>
+        <div class="psub">A true shared database; app hosted on Vercel.</div>
+        <div class="lbl">How it works</div>
+        <ul class="pros">
+          <li>The four tables (Projects, Roles, Phases, Rates) live as Airtable records.</li>
+          <li><code>store.js</code> calls the Airtable API — row-level, so no clobbering.</li>
+          <li>Non-technical folks can browse/edit records in Airtable's grid directly.</li>
+        </ul>
+        <div class="lbl">Cost</div>
+        <ul class="cons">
+          <li>A SaaS subscription, and it lives <strong>outside</strong> Savills' Microsoft/Box estate — worth a governance check for client data.</li>
+        </ul>
+      </div>
+
+      <div class="path">
+        <div class="ph"><h4>SharePoint + Fabric</h4></div>
+        <div class="psub">Native M365; heaviest but most powerful.</div>
+        <div class="lbl">How it works</div>
+        <ul class="pros">
+          <li>Four SharePoint Lists (Part 1) as the database; <code>store.js</code> calls Graph/REST.</li>
+          <li>Power BI / Fabric does enterprise reporting + Clockify P&amp;L (Part 3).</li>
+        </ul>
+        <div class="lbl">Cost</div>
+        <ul class="cons">
+          <li>Most build effort; rate math has to be re-expressed in DAX for Power BI (Part 4).</li>
+          <li>Worth it only if you want firm-wide BI + automation, not just a shared app.</li>
+        </ul>
+      </div>
+
+    </div>
+    <div class="callout" style="margin-top:18px;"><strong>Common thread:</strong> all three are the <em>same</em> <code>store.js</code> swap — the calculator, ingestion, reconcile, floor checks, and Revenue Projections are untouched in every case. You're only choosing where the records live. <strong>Box + Vercel</strong> is the lightest path that keeps data in your tenant; the SharePoint/Fabric detail below is there if you later want native BI.</div>
+
+    <div style="margin-top:22px;">
+      <p class="lede"><strong>About Vercel (the hosting piece).</strong> Vercel just puts these HTML files online at a URL the team opens — it replaces "double-click the file." It is not a database, which is why it pairs with Box or Airtable for shared data. Lowest-effort hosting there is; could be live the same day. (You could also host on Box's own web hosting or an internal server — Vercel is just the easy default.)</p>
+    </div>
+  </section>
+
+  <!-- SharePoint/PowerApps detail (only relevant for Path C) -->
+  <section>
+    <header class="sec-head"><span class="ix">Part 2b</span><h2>If you go SharePoint — app options.</h2></header>
+    <p class="lede muted" style="margin-bottom:22px;">Only relevant if you choose the Microsoft route. Two ways to run the authoring screens on it.</p>
+    <div class="paths">
+      <div class="path rec">
+        <div class="ph"><h4>Keep the HTML app</h4><span class="rec-tag">Recommended</span></div>
+        <div class="psub">Host as-is; swap only the storage layer to SharePoint.</div>
+        <div class="lbl">Why</div>
+        <ul class="pros">
+          <li>Rate engine, floor checks, reconcile, projections — all carry over untouched.</li>
+          <li>Only <code>store.js</code> changes (localStorage → Graph/REST calls).</li>
+          <li>Fastest route to multi-user; weeks not months.</li>
+        </ul>
+        <div class="lbl">Cost</div>
+        <ul class="cons">
+          <li>Hosted as a SharePoint page, SPFx web part, or Azure Static Web App.</li>
+        </ul>
+      </div>
+      <div class="path">
+        <div class="ph"><h4>Rebuild in Power Apps</h4></div>
+        <div class="psub">Canvas app over the same lists, logic re-expressed in Power Fx.</div>
+        <div class="lbl">Why</div>
+        <ul class="pros">
+          <li>Fully native, governed, mobile, in the M365 admin estate.</li>
+        </ul>
+        <div class="lbl">Cost</div>
+        <ul class="cons">
+          <li>Re-creating the calculator logic in Power Fx is real work.</li>
+          <li>Complex grid/matrix UIs are harder in canvas apps.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- Step by step -->
+  <section>
+    <header class="sec-head"><span class="ix">Part 3</span><h2>Step by step to live.</h2></header>
+    <p class="lede muted" style="margin-bottom:22px;">Steps 1–4 get you shared &amp; online on the <strong>Box + Vercel</strong> path — a coherent v1 in roughly 2–3 weeks of focused dev. Steps 5–7 only apply if you take the Microsoft / Fabric route for enterprise BI.</p>
+    <div class="steps">
+
+      <div class="step"><div class="sn"></div><div>
+        <h4>Pick your backend &amp; set it up</h4>
+        <div class="effort"><span class="tag you">You / IT</span> half a day</div>
+        <div class="body">
+          <p><strong>Box (recommended):</strong> create a shared folder (e.g. <em>PPM / Fee Generator</em>) and a Box app/API token so the web app can read &amp; write a <code>projects.json</code> there. Set folder permissions for who can edit.</p>
+          <ul>
+            <li><strong>Airtable:</strong> create a base with the four tables from Part 1.</li>
+            <li><strong>SharePoint:</strong> create the four Lists with the columns &amp; Lookups from Part 1; turn on versioning.</li>
+          </ul>
+        </div>
+      </div></div>
+
+      <div class="step"><div class="sn"></div><div>
+        <h4>Host the app on Vercel</h4>
+        <div class="effort"><span class="tag you">You / Dev</span> 1 hour</div>
+        <div class="body"><p>Push this folder of HTML files to Vercel (or any static host). You get a URL the team opens — it replaces “double-click the file.” Nothing about the app changes for this step; it's purely putting it online.</p></div>
+      </div></div>
+
+      <div class="step"><div class="sn"></div><div>
+        <h4>Point the storage layer at your backend</h4>
+        <div class="effort"><span class="tag dev">Dev</span> 2–4 days</div>
+        <div class="body">
+          <p>Replace the body of <code>store.js</code> — the only file that touches storage — so <code>listProjects / getProject / saveProject / deleteProject</code> read &amp; write your backend instead of <code>localStorage</code>. Everything downstream (calculator, ingestion, projections, reconcile) keeps working because they only ever call those functions.</p>
+          <ul>
+            <li><strong>Box:</strong> pull <code>projects.json</code> on load, write it back on save, with a <strong>pull-merge-write + timestamp check</strong> so simultaneous edits warn instead of clobbering.</li>
+            <li><strong>Airtable / SharePoint:</strong> map a record → rows across the tables on save; reassemble on load. Row-level writes, no clobber risk.</li>
+            <li>Auth via your provider's OAuth (Box / Microsoft) for governed, per-user access.</li>
+          </ul>
+        </div>
+      </div></div>
+
+      <div class="step"><div class="sn"></div><div>
+        <h4>Load the Rates Catalog &amp; migrate existing projects</h4>
+        <div class="effort"><span class="tag you">You</span> <span class="tag dev">+ Dev</span> 1 day</div>
+        <div class="body"><p>Seed the rate grid (the Macro 2024 catalog), then use the app's <strong>Export DB → JSON</strong> to move everything built so far into the shared backend. For Box that's literally uploading the exported file as <code>projects.json</code>; for Airtable/SharePoint, a one-time import fans each record into the tables. From here the browser copy is retired.</p></div>
+      </div></div>
+
+      <div class="step"><div class="sn"></div><div>
+        <h4>Stand up the Fabric Lakehouse <span style="font-weight:400;color:var(--sav-steel);font-size:13px;">— SharePoint route only</span></h4>
+        <div class="effort"><span class="tag dev">Dev / Data</span> 1–2 days</div>
+        <div class="body">
+          <p>In Fabric, create a Lakehouse and a <strong>Dataflow Gen2</strong> (or Data Pipeline) that pulls the four SharePoint lists on a schedule. This gives Power BI a clean, modeled source and keeps heavy queries off SharePoint.</p>
+          <ul>
+            <li>Model relationships: Projects 1→N Roles, 1→N Phases.</li>
+            <li>Build the <strong>monthly billing series</strong> as a DAX measure (the same logic as our <code>monthlySeries</code>): rate × FTE × hours per phase-month, net of discount, by billing mode.</li>
+          </ul>
+        </div>
+      </div></div>
+
+      <div class="step"><div class="sn"></div><div>
+        <h4>Rebuild the reports in Power BI <span style="font-weight:400;color:var(--sav-steel);font-size:13px;">— SharePoint route only</span></h4>
+        <div class="effort"><span class="tag dev">Data</span> 3–5 days</div>
+        <div class="body">
+          <p>Recreate what we prototyped as proper Power BI visuals — now refreshing live and shareable firm-wide:</p>
+          <ul>
+            <li><strong>Revenue Projections matrix</strong> — months across, projects down, sliced by the 1–7 rating, service line, client, leader, year/quarter/month.</li>
+            <li><strong>Rating-weighted forecast</strong> — probability × billings as a measure.</li>
+            <li><strong>Flash report &amp; accruals</strong> — the monthly outputs, generated from the same model.</li>
+          </ul>
+          <p>The rating weights, service-line tags, and billing modes we designed all become slicers and measures.</p>
+        </div>
+      </div></div>
+
+      <div class="step"><div class="sn"></div><div>
+        <h4>Wire the automations <span style="font-weight:400;color:var(--sav-steel);font-size:13px;">— any route</span></h4>
+        <div class="effort"><span class="tag dev">Dev</span> ongoing</div>
+        <div class="body">
+          <ul>
+            <li><strong>Clockify → Fabric:</strong> a scheduled pipeline pulls weekly time entries into the Lakehouse, joined to projects/roles by the mapping we built — that's planned-vs-actual P&amp;L in Power BI.</li>
+            <li><strong>Won → Salesforce:</strong> a Power Automate flow fires when a project's Status flips to Won, drafting the intake / schedule of values.</li>
+            <li><strong>Aging:</strong> a scheduled flow flips Active projects to Closed once last-billing is &gt;60 days past (the rule we already defined).</li>
+          </ul>
+        </div>
+      </div></div>
+
+    </div>
+  </section>
+
+  <!-- Reality check -->
+  <section>
+    <header class="sec-head"><span class="ix">Part 4</span><h2>What to know before you commit.</h2></header>
+    <div class="callout teal"><strong>Box keeps it simplest.</strong> Because the whole database is one JSON file, the Box path is the closest thing to “what you have now, but shared.” The only engineering nuance is the save protocol (pull-merge-write) so two people saving at once don't overwrite each other — a small, well-understood pattern.</div>
+    <div class="callout red" style="margin-top:14px;"><strong>DAX caveat — SharePoint/Fabric route only.</strong> If you go the Power BI way, the rate math (today in JavaScript) must be re-expressed in DAX. Simplest fix: store the computed monthly billing series on save so Power BI just reads it. The Box/Airtable paths keep reporting in-app and avoid this entirely.</div>
+    <div class="callout" style="margin-top:14px;"><strong>Start narrow.</strong> Box + Vercel + the reporting already in the app is a complete, shareable v1 — pilotable in ~2–3 weeks. Clockify and Salesforce automations layer on after, without rework.</div>
+  </section>
+
+  <div class="foot">
+    <strong>Next concrete step.</strong> &nbsp; When you've picked a backend (leaning Box), I can write the <strong>new <code>store.js</code></strong> against it plus a short field-mapping note — that's the one file that turns this plan into a working shared app. &nbsp;·&nbsp; <a href="Fee Generator.html" style="color:var(--sav-navy);">← Back to the Fee Generator</a>
+  </div>
+
+</div>
+</body>
+</html>

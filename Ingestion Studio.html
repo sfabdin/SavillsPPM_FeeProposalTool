@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills · Ingestion Studio</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  :root { --hair: rgba(37,39,58,0.10); --hair-strong: rgba(37,39,58,0.18); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #f3f3f0; font-family: var(--font-display); color: var(--sav-navy); }
+  .wrap { max-width: 1360px; margin: 0 auto; padding: 40px 48px 96px; }
+
+  /* Header */
+  .head { display: grid; grid-template-columns: auto 1fr auto; gap: 28px; align-items: center; padding-bottom: 22px; border-bottom: 4px solid var(--sav-navy); margin-bottom: 28px; }
+  .head .logo { width: 64px; height: 64px; }
+  .head .lbl { font-weight: 700; font-size: 11px; letter-spacing: 0.20em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 6px; }
+  .head .lbl a { color: var(--sav-steel); text-decoration: none; }
+  .head h1 { font-weight: 900; font-size: 34px; line-height: 1; letter-spacing: -0.015em; margin: 0; }
+  .head .actions { display: flex; gap: 10px; }
+  .btn { font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: 0.10em; text-transform: uppercase; padding: 12px 18px; border: 0; cursor: pointer; background: var(--sav-cream); color: var(--sav-navy); transition: background 120ms ease; }
+  .btn:hover { background: #e6ded6; }
+  .btn-primary { background: var(--sav-navy); color: var(--sav-yellow); }
+  .btn-primary:hover { background: #1a1c2c; }
+  .btn-yellow { background: var(--sav-yellow); color: var(--sav-navy); }
+  .btn-yellow:hover { background: var(--sav-yellow-press, #e6c900); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .intro { font-family: var(--font-body); font-size: 14px; line-height: 1.55; color: var(--sav-steel); max-width: 920px; margin-bottom: 28px; }
+  .intro strong { font-family: var(--font-display); color: var(--sav-navy); }
+
+  /* Cards */
+  .card { background: #fff; border: 1px solid var(--hair); padding: 24px 26px; margin-bottom: 22px; }
+  .card-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 16px; }
+  .card-head .ix { font-weight: 700; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--sav-teal); }
+  .card-head h2 { font-weight: 900; font-size: 19px; margin: 0; }
+  .card-head .hint { margin-left: auto; font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); }
+
+  textarea#src { width: 100%; min-height: 150px; resize: vertical; font-family: var(--font-body); font-size: 13px; line-height: 1.5; padding: 14px 16px; border: 1px solid var(--hair-strong); background: var(--sav-cream); color: var(--sav-navy); }
+  textarea#src:focus { outline: 2px solid var(--sav-navy); background: #fff; }
+  .src-actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
+  .src-status { font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); margin-left: 4px; }
+  .src-status.busy { color: var(--sav-teal); }
+  .src-status.bad { color: var(--sav-red); }
+
+  /* Dropzone */
+  .dropzone { border: 2px dashed var(--hair-strong); background: var(--sav-cream); padding: 22px 24px; margin-bottom: 14px; cursor: pointer; transition: border-color 120ms ease, background 120ms ease; }
+  .dropzone:hover { border-color: var(--sav-navy); }
+  .dropzone.drag { border-color: var(--sav-teal); border-style: solid; background: #eef8f9; }
+  .dz-inner { display: flex; align-items: center; gap: 18px; }
+  .dz-icon { font-size: 30px; line-height: 1; color: var(--sav-teal); flex: none; }
+  .dz-text { display: flex; flex-direction: column; gap: 2px; }
+  .dz-text strong { font-weight: 700; font-size: 14px; }
+  .dz-text span { font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); }
+  .dz-inner .btn { margin-left: auto; flex: none; }
+
+  /* Project meta grid */
+  .meta-grid { display: grid; grid-template-columns: 2fr 2fr 1.4fr 1fr 1fr 1.2fr; gap: 16px; }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field label { font-weight: 700; font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sav-steel); }
+  .field input, .field select { font-family: var(--font-display); font-weight: 600; font-size: 13px; padding: 7px 9px; border: 0; border-bottom: 1px solid var(--sav-navy); background: var(--sav-cream); color: var(--sav-navy); width: 100%; }
+  .field input:focus, .field select:focus { outline: 2px solid var(--sav-navy); background: #fff; }
+  .field .src-name { font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); padding-top: 8px; }
+
+  /* Summary strip */
+  .sumrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 22px; }
+  .sumcard { background: #fff; border: 1px solid var(--hair); padding: 18px 20px; }
+  .sumcard .lbl { font-weight: 700; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 6px; }
+  .sumcard .val { font-weight: 900; font-size: 34px; line-height: 1; letter-spacing: -0.02em; }
+  .sumcard.ok .val { color: var(--sav-teal); }
+  .sumcard.warn .val { color: #b8860b; }
+  .sumcard.bad .val { color: var(--sav-red); }
+
+  /* Roster table */
+  .roster-card { padding: 0; overflow: hidden; }
+  .roster-card .card-head { padding: 22px 26px 0; }
+  table.roster { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 14px; }
+  table.roster thead th { background: var(--sav-navy); color: #fff; font-weight: 700; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; text-align: left; padding: 12px 10px; }
+  table.roster thead th.num { text-align: right; }
+  table.roster tbody td { padding: 8px 10px; border-bottom: 1px solid var(--hair); vertical-align: middle; }
+  table.roster tbody td.ix { color: var(--sav-steel); font-weight: 700; font-size: 12px; width: 28px; }
+  table.roster tbody tr.bad { background: #fff5f4; }
+  table.roster tbody tr.warn { background: #fffaf0; }
+  .cell { font-family: var(--font-display); font-weight: 600; font-size: 13px; padding: 6px 7px; border: 0; border-bottom: 1px solid var(--hair-strong); background: var(--sav-cream); color: var(--sav-navy); width: 100%; }
+  .cell:focus { outline: 2px solid var(--sav-navy); background: #fff; }
+  td.num { text-align: right; white-space: nowrap; }
+  td.num .cell { width: 64px; display: inline-block; text-align: right; }
+  .dollar { color: var(--sav-steel); font-size: 12px; }
+  .raw { display: block; font-family: var(--font-body); font-size: 10px; color: var(--sav-steel); margin-top: 3px; font-style: italic; }
+  .vcell { min-width: 230px; }
+  .vcell .tier { margin-bottom: 6px; }
+  .vwrap { display: flex; flex-direction: column; gap: 3px; }
+  .vb { display: inline-block; font-weight: 700; font-size: 9px; letter-spacing: 0.10em; text-transform: uppercase; padding: 3px 7px; width: fit-content; }
+  .vb-ok { background: #d8f0f3; color: var(--sav-navy); }
+  .vb-warn { background: #fff0c2; color: #7a5b00; }
+  .vb-bad { background: var(--sav-red); color: #fff; }
+  .vb-muted { background: var(--sav-cream); color: var(--sav-steel); }
+  .vdetails { display: flex; flex-direction: column; gap: 1px; }
+  .vd { font-family: var(--font-body); font-size: 10px; color: var(--sav-steel); }
+  .vd-bad { color: var(--sav-red); font-weight: 600; }
+  .vd-warn { color: #b8860b; }
+  .row-rm { margin-top: 6px; border: 0; background: transparent; color: var(--sav-steel); font-size: 18px; cursor: pointer; line-height: 1; padding: 0; }
+  .row-rm:hover { color: var(--sav-red); }
+  td.empty { text-align: center; color: var(--sav-steel); font-family: var(--font-body); padding: 40px; }
+
+  /* Footer create bar */
+  .createbar { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; background: var(--sav-navy); color: #fff; padding: 24px 30px; }
+  .createbar .note { font-family: var(--font-body); font-size: 14px; line-height: 1.5; color: rgba(255,255,255,0.85); }
+  .createbar .note strong { font-family: var(--font-display); color: var(--sav-yellow); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div>
+      <div class="lbl">
+        <a href="Fee Generator.html">Fee Generator</a> &nbsp;·&nbsp; <a href="Projects Index.html">Projects Index</a> &nbsp;·&nbsp; Ingestion Studio
+      </div>
+      <h1>Ingest a historical proposal.</h1>
+    </div>
+    <div class="actions">
+      <a class="btn" href="Universal Fee Calculator.html">Open calculator</a>
+    </div>
+  </header>
+
+  <p class="intro">
+    Paste a fee matrix or proposal, or pull one in with <strong>Claude</strong>. The studio extracts the roster, normalises each
+    <strong>staff title</strong> to a Macro-grid rate family, and validates every rate against the grid band
+    <strong>[Col E cost floor ↔ Col B rack]</strong>. Where a rate sits below a title's cost floor it flags it and tells you which
+    title the rate actually implies — then saves the lot as a project record you can open in the calculator.
+  </p>
+
+  <!-- Source -->
+  <section class="card">
+    <div class="card-head">
+      <span class="ix">01 · Source</span>
+      <h2>Drop a file or paste the fee matrix.</h2>
+      <span class="hint">.xlsx · .csv · .pdf — parsed in your browser, nothing uploaded.</span>
+    </div>
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="file-input" accept=".xlsx,.xls,.csv,.pdf,.txt" hidden>
+      <div class="dz-inner">
+        <div class="dz-icon">⤓</div>
+        <div class="dz-text"><strong>Drop a fee matrix or proposal here</strong><span>.xlsx / .csv parses straight to a roster · .pdf is read for Claude to extract · or just paste below</span></div>
+        <button class="btn" type="button" id="choose-btn">Choose file</button>
+      </div>
+    </div>
+    <textarea id="src" placeholder="…or paste a roster table (Name | Savills Title | Project Role | Team | Allocation | Rate) — or proposal text and use “Extract with Claude”."></textarea>
+    <div class="src-actions">
+      <button class="btn btn-yellow" id="example-btn">Load M Moser example</button>
+      <button class="btn btn-primary" id="parse-btn">Parse table</button>
+      <button class="btn" id="extract-btn">Extract with Claude</button>
+      <button class="btn" id="clear-btn">Clear</button>
+      <span class="src-status" id="src-status"></span>
+    </div>
+  </section>
+
+  <!-- Project meta -->
+  <section class="card">
+    <div class="card-head">
+      <span class="ix">02 · Project</span>
+      <h2>Project details.</h2>
+      <span class="hint">Source: <span id="p-source">—</span></span>
+    </div>
+    <div class="meta-grid">
+      <div class="field"><label for="p-name">Project name</label><input id="p-name" type="text" placeholder="Project name"></div>
+      <div class="field"><label for="p-client">Client</label><input id="p-client" type="text" placeholder="Client"></div>
+      <div class="field"><label for="p-industry">Industry</label><select id="p-industry"></select></div>
+      <div class="field"><label for="p-start">Start</label><input id="p-start" type="text" placeholder="Jun 2026"></div>
+      <div class="field"><label for="p-end">End</label><input id="p-end" type="text" placeholder="Dec 2031"></div>
+      <div class="field"><label for="p-fee">Extracted total fee</label><input id="p-fee" type="text" readonly placeholder="—"></div>
+    </div>
+    <div class="phases-panel" id="phases-panel" hidden>
+      <div class="phases-head">
+        <span class="ph-lbl">Phase schedule</span>
+        <span class="ph-note" id="phases-note"></span>
+      </div>
+      <div class="phases-list" id="phases-list"></div>
+    </div>
+  </section>
+
+  <!-- Summary -->
+  <div class="sumrow">
+    <div class="sumcard"><div class="lbl">Roles parsed</div><div class="val" id="sum-total">0</div></div>
+    <div class="sumcard ok"><div class="lbl">In range</div><div class="val" id="sum-ok">0</div></div>
+    <div class="sumcard warn"><div class="lbl">Needs review</div><div class="val" id="sum-warn">0</div></div>
+    <div class="sumcard bad"><div class="lbl">Potentially unprofitable</div><div class="val" id="sum-bad">0</div></div>
+  </div>
+
+  <!-- Roster -->
+  <section class="card roster-card">
+    <div class="card-head">
+      <span class="ix">03 · Review</span>
+      <h2>Roster &amp; rate validation.</h2>
+      <span class="hint">Staff title sets the rate &amp; floor · project role is free text · edit any cell.</span>
+    </div>
+    <table class="roster">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Name / resource</th>
+          <th>Staff title (grid)</th>
+          <th>Project role</th>
+          <th>Team</th>
+          <th class="num">Alloc</th>
+          <th class="num">Rate</th>
+          <th>Tier &amp; grid check</th>
+        </tr>
+      </thead>
+      <tbody id="roster-tbody"></tbody>
+    </table>
+  </section>
+
+  <!-- Create -->
+  <div class="createbar">
+    <div class="note" id="create-note">Load or paste a roster to begin.</div>
+    <button class="btn btn-yellow" id="create-btn" disabled>Create project record →</button>
+  </div>
+
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/ingest.js"></script>
+</body>
+</html>

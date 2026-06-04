@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Projects Index</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<style>
+  /* ===== Index-specific styles ===== */
+  .head .title-block h1 a { color: inherit; text-decoration: none; }
+
+  /* KPI strip */
+  .kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+  .kpi-card {
+    background: #fff;
+    border: 1px solid rgba(37,39,58,0.10);
+    padding: 20px 22px;
+  }
+  .kpi-card .lbl {
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--sav-steel);
+    margin-bottom: 8px;
+  }
+  .kpi-card .val {
+    font-weight: 900;
+    font-size: 26px;
+    line-height: 1;
+    letter-spacing: -0.01em;
+    color: var(--sav-navy);
+    font-variant-numeric: tabular-nums;
+  }
+  .kpi-card .val .unit {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sav-steel);
+    margin-left: 4px;
+  }
+  .kpi-card.is-navy { background: var(--sav-navy); border-color: var(--sav-navy); }
+  .kpi-card.is-navy .lbl { color: var(--sav-yellow); }
+  .kpi-card.is-navy .val { color: #fff; }
+  .kpi-card.is-yellow { background: var(--sav-yellow); border-color: var(--sav-navy); }
+  .kpi-card.is-yellow .lbl,
+  .kpi-card.is-yellow .val { color: var(--sav-navy); }
+  @media (max-width: 1200px) {
+    .kpi-strip { grid-template-columns: repeat(3, 1fr); }
+  }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+  .toolbar .grow { flex: 1; min-width: 240px; }
+  .toolbar input[type="search"], .toolbar select {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 10px 14px;
+    border: 0;
+    border-bottom: 2px solid var(--sav-navy);
+    background: #fff;
+    color: var(--sav-navy);
+    border-radius: 0;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .toolbar input[type="search"]:focus, .toolbar select:focus {
+    outline: 2px solid var(--sav-navy);
+    outline-offset: 2px;
+  }
+  .toolbar .filter-chip {
+    flex: 0 0 auto;
+    min-width: 160px;
+  }
+  .toolbar .actions-group {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+  .toolbar .btn { font-size: 11px; }
+  .file-input { display: none; }
+
+  /* Identity / access bar */
+  .identity-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    flex-wrap: wrap;
+    background: var(--sav-navy); color: #fff;
+    padding: 12px 18px; margin-bottom: 16px;
+  }
+  .identity-bar .id-who { display: flex; align-items: center; gap: 10px; }
+  .identity-bar .id-icon { color: #6ee7a8; font-size: 11px; }
+  .identity-bar .id-label { font-family: var(--font-display); font-weight: 700; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.6); }
+  .identity-bar select {
+    font-family: var(--font-display); font-weight: 700; font-size: 13px;
+    background: #fff; color: var(--sav-navy); border: 0; padding: 6px 10px; cursor: pointer;
+  }
+  .identity-bar .id-role {
+    font-family: var(--font-display); font-weight: 700; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 3px 9px;
+  }
+  .identity-bar .id-role.admin { background: var(--sav-yellow); color: var(--sav-navy); }
+  .identity-bar .id-role.member { background: var(--sav-teal); color: #fff; }
+  .identity-bar .id-note { font-family: var(--font-body); font-size: 12px; color: rgba(255,255,255,0.7); }
+  .identity-bar .id-note strong { font-family: var(--font-display); color: #fff; }
+
+  /* Table */
+  .projects-wrap {
+    background: #fff;
+    border: 1px solid rgba(37,39,58,0.10);
+    margin-bottom: 36px;
+    overflow-x: auto;
+  }
+  .projects-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-display);
+    min-width: 1100px;
+  }
+  .projects-table thead th {
+    background: var(--sav-navy);
+    color: #fff;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 14px 14px;
+    text-align: left;
+    border-right: 1px solid #14152a;
+    cursor: pointer;
+    user-select: none;
+    transition: background 150ms ease;
+  }
+  .projects-table thead th:hover { background: #14152a; }
+  .projects-table thead th.num { text-align: right; }
+  .projects-table thead th .sort-arrow {
+    font-size: 10px;
+    color: var(--sav-yellow);
+    margin-left: 4px;
+    opacity: 0;
+  }
+  .projects-table thead th.sorted .sort-arrow { opacity: 1; }
+  .projects-table tbody tr {
+    cursor: pointer;
+    transition: background 150ms ease;
+  }
+  .projects-table tbody tr:hover {
+    background: var(--sav-cream);
+  }
+  .projects-table tbody td {
+    padding: 14px 14px;
+    border-bottom: 1px solid rgba(37,39,58,0.06);
+    border-right: 1px solid rgba(37,39,58,0.04);
+    vertical-align: middle;
+    font-size: 13px;
+    color: var(--sav-navy);
+  }
+  .projects-table tbody td:last-child { border-right: 0; }
+  .projects-table tbody td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .pname {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--sav-navy);
+    line-height: 1.25;
+  }
+  .pname .pname-sub {
+    display: block;
+    font-weight: 400;
+    font-size: 10px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--sav-steel);
+    margin-top: 2px;
+  }
+  .pclient {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--sav-navy);
+  }
+  .pclient-sub {
+    display: block;
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--sav-steel);
+    margin-top: 2px;
+  }
+  .pfee {
+    font-weight: 900;
+    font-size: 15px;
+    color: var(--sav-navy);
+  }
+  .pfee-sub {
+    display: block;
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--sav-steel);
+    margin-top: 2px;
+  }
+
+  /* Status pills */
+  .pill {
+    display: inline-block;
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    background: var(--sav-cream);
+    color: var(--sav-navy);
+    border-left: 3px solid var(--sav-steel);
+    white-space: nowrap;
+  }
+  .pill.status-draft       { border-left-color: var(--sav-steel); }
+  .pill.status-submitted   { border-left-color: var(--sav-teal); background: #d8f0f3; }
+  .pill.status-negotiation { border-left-color: var(--sav-yellow); background: #fff6b8; }
+  .pill.status-won         { border-left-color: #1f8a5b; background: #dff5e8; color: #145a3c; }
+  .pill.status-lost        { border-left-color: var(--sav-red); background: #fde6e6; color: var(--sav-red); }
+  .pill.status-active      { border-left-color: var(--sav-navy); background: var(--sav-navy); color: var(--sav-yellow); }
+  .pill.status-closed      { border-left-color: var(--sav-steel); background: #ecebe6; }
+  .pill.status-hold        { border-left-color: var(--sav-red); background: var(--sav-cream); color: var(--sav-red); }
+
+  .row-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+  .row-actions .icon-btn {
+    font-size: 14px;
+    color: var(--sav-steel);
+  }
+  .row-actions .icon-btn:hover { background: var(--sav-red); color: #fff; }
+
+  /* Empty state */
+  .empty-state {
+    padding: 80px 60px;
+    text-align: center;
+    background: #fff;
+    border: 1px solid rgba(37,39,58,0.10);
+    margin-bottom: 36px;
+  }
+  .empty-state h3 {
+    font-weight: 900;
+    font-size: 22px;
+    margin: 0 0 8px;
+    color: var(--sav-navy);
+  }
+  .empty-state p {
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--sav-steel);
+    margin: 0 auto 24px;
+    max-width: 540px;
+  }
+  .empty-state .actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  /* System navigation */
+  .system-nav {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+  .sys-link {
+    background: #fff;
+    border: 1px solid rgba(37,39,58,0.10);
+    padding: 18px 22px;
+    text-decoration: none;
+    color: var(--sav-navy);
+    transition: all 150ms ease;
+    display: block;
+  }
+  .sys-link:hover {
+    background: var(--sav-cream);
+    border-color: var(--sav-navy);
+  }
+  .sys-link.is-phase-future { opacity: 0.55; pointer-events: none; }
+  .sys-link .sl-ix {
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--sav-teal);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .sys-link .sl-name {
+    font-weight: 900;
+    font-size: 16px;
+    color: var(--sav-navy);
+    margin-bottom: 2px;
+  }
+  .sys-link .sl-desc {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--sav-steel);
+    line-height: 1.45;
+  }
+  .sys-link.is-phase-future .sl-ix { color: var(--sav-steel); }
+  .sys-link .sl-status {
+    display: inline-block;
+    font-weight: 700;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    margin-top: 6px;
+  }
+  .sl-status.live { background: var(--sav-yellow); color: var(--sav-navy); }
+  .sl-status.soon { background: var(--sav-cream); color: var(--sav-steel); }
+
+  @media (max-width: 900px) {
+    .system-nav { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ===== Header ===== -->
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div class="title-block">
+      <div class="lbl">Savills PPM · Fee System</div>
+      <h1>Projects Index.</h1>
+      <div class="project-id">Every fee Savills PPM has proposed — searchable, benchmarkable, exportable.</div>
+    </div>
+    <div class="actions">
+      <input type="file" class="file-input" id="import-input" accept="application/json">
+      <button class="btn btn-ghost" id="import-btn">Import JSON</button>
+      <button class="btn btn-ghost" id="export-btn">Export DB</button>
+      <a class="btn btn-ghost" href="Ingestion Studio.html">Ingest proposal</a>
+      <button class="btn btn-primary" id="new-btn">+ New project</button>
+    </div>
+  </header>
+
+  <!-- ===== System nav ===== -->
+  <div class="system-nav">
+    <a href="Fee Generator.html" class="sys-link" style="background: var(--sav-navy); border-color: var(--sav-navy);">
+      <div class="sl-ix" style="color: var(--sav-yellow);">Home</div>
+      <div class="sl-name" style="color: #fff;">Fee Generator</div>
+      <div class="sl-desc" style="color: rgba(255,255,255,0.7);">Overview, manual &amp; all modules.</div>
+      <span class="sl-status live">Cover</span>
+    </a>
+    <a href="Ingestion Studio.html" class="sys-link">
+      <div class="sl-ix">Phase 2</div>
+      <div class="sl-name">Ingestion Studio</div>
+      <div class="sl-desc">Paste a fee matrix → validate rates → record.</div>
+      <span class="sl-status live">Open</span>
+    </a>
+    <a href="Benchmarking Dashboard.html" class="sys-link">
+      <div class="sl-ix">Phase 3</div>
+      <div class="sl-name">Benchmarking Dashboard</div>
+      <div class="sl-desc">Comparables, rates spread, project comparison.</div>
+      <span class="sl-status live">Open</span>
+    </a>
+    <a href="Revenue Projections.html" class="sys-link">
+      <div class="sl-ix">Phase 5 · new</div>
+      <div class="sl-name">Revenue Projections</div>
+      <div class="sl-desc">Billings by month, rated 1–7, weighted forecast.</div>
+      <span class="sl-status live">Open</span>
+    </a>
+    <a href="Fee System Roadmap.html" class="sys-link">
+      <div class="sl-ix">Strategy</div>
+      <div class="sl-name">Roadmap</div>
+      <div class="sl-desc">Phased plan for the full system.</div>
+      <span class="sl-status live">View</span>
+    </a>
+  </div>
+
+  <!-- ===== KPI strip ===== -->
+  <div class="kpi-strip">
+    <div class="kpi-card">
+      <div class="lbl">Projects</div>
+      <div class="val" id="kpi-count">0</div>
+    </div>
+    <div class="kpi-card">
+      <div class="lbl">Pipeline fee</div>
+      <div class="val" id="kpi-pipeline">$0</div>
+    </div>
+    <div class="kpi-card is-yellow">
+      <div class="lbl">Won fee</div>
+      <div class="val" id="kpi-won">$0</div>
+    </div>
+    <div class="kpi-card">
+      <div class="lbl">Active fee</div>
+      <div class="val" id="kpi-active">$0</div>
+    </div>
+    <div class="kpi-card">
+      <div class="lbl">Win rate</div>
+      <div class="val" id="kpi-winrate">—<span class="unit">%</span></div>
+    </div>
+    <div class="kpi-card is-navy">
+      <div class="lbl">Total all-time</div>
+      <div class="val" id="kpi-total">$0</div>
+    </div>
+  </div>
+
+  <!-- ===== Identity / access bar ===== -->
+  <div class="identity-bar" id="identity-bar">
+    <div class="id-who">
+      <span class="id-icon">●</span>
+      <span class="id-label">Viewing as</span>
+      <select id="id-user"></select>
+      <span class="id-role" id="id-role"></span>
+    </div>
+    <div class="id-note" id="id-note"></div>
+  </div>
+
+  <!-- ===== Toolbar / filters ===== -->
+  <div class="toolbar">
+    <div class="grow">
+      <input type="search" id="search-input" placeholder="Search by project, client, lead…">
+    </div>
+    <select class="filter-chip" id="filter-status">
+      <option value="">All statuses</option>
+    </select>
+    <select class="filter-chip" id="filter-industry">
+      <option value="">All industries</option>
+    </select>
+    <select class="filter-chip" id="filter-lead">
+      <option value="">All leads</option>
+    </select>
+    <div class="actions-group">
+      <button class="btn btn-ghost" id="seed-btn" title="Add a demo 383M project to see the system populated">Seed demo data</button>
+      <button class="btn btn-ghost" id="clear-btn" title="Clear all filters">Clear filters</button>
+    </div>
+  </div>
+
+  <!-- ===== Projects table / empty state ===== -->
+  <div id="table-host"></div>
+
+  <div class="footnote">
+    <strong>Storage.</strong> &nbsp; Projects live in your browser's localStorage (Phase 1). Export your DB regularly until we migrate to Airtable in Phase 5. <a href="Fee System Roadmap.html" style="color: var(--sav-navy);">Read the roadmap →</a><br><br>
+    <strong>Adding projects.</strong> &nbsp; Click <em>+ New project</em> for a blank calculator. Phase 2 will add LLM-powered ingestion: upload a signed PSA or pitch deck and Claude pre-fills the calculator for you to review. <br><br>
+    <strong>Sharing.</strong> &nbsp; Use <em>Export DB</em> to back up all projects to a JSON file. Share that file (email, OneDrive) and the recipient can <em>Import JSON</em> to load it.
+  </div>
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script>
+(function () {
+  'use strict';
+  const STORE = window.UFC_Store;
+  const CATALOG = window.RATES_CATALOG;
+
+  /* ---------- State ---------- */
+  let filters = {
+    search: '',
+    status: '',
+    industry: '',
+    lead: '',
+  };
+  let sort = { col: 'updatedAt', dir: 'desc' };
+
+  /* ---------- Helpers ---------- */
+  function $(s, r = document) { return r.querySelector(s); }
+  function $$(s, r = document) { return [...r.querySelectorAll(s)]; }
+  function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function fmtMoney(n) {
+    if (!n || Math.abs(n) < 0.5) return '$0';
+    if (Math.abs(n) >= 1e6) return '$' + (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M';
+    if (Math.abs(n) >= 1e3) return '$' + (n/1e3).toFixed(0) + 'K';
+    return '$' + Math.round(n).toLocaleString();
+  }
+  function fmtMoneyFull(n) {
+    if (!n) return '$0';
+    return '$' + Math.round(n).toLocaleString();
+  }
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d)) return '—';
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function fmtRelative(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    const diff = Date.now() - d.getTime();
+    const days = Math.floor(diff / 86400000);
+    if (days < 1) return 'today';
+    if (days < 2) return 'yesterday';
+    if (days < 7) return days + ' days ago';
+    if (days < 30) return Math.floor(days / 7) + 'w ago';
+    if (days < 365) return Math.floor(days / 30) + 'mo ago';
+    return Math.floor(days / 365) + 'y ago';
+  }
+  function fmtPeriod(p) {
+    if (!p.timeline) return '—';
+    const t = p.timeline;
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${monthNames[t.startMonth-1]} ’${String(t.startYear).slice(-2)} → ${monthNames[t.endMonth-1]} ’${String(t.endYear).slice(-2)}`;
+  }
+
+  function projectFee(p) {
+    return STORE.projectFinancials(p, r => STORE.getTierRateFromCatalog(r, CATALOG, p));
+  }
+
+  /* ---------- Populate filter dropdowns ---------- */
+  function populateFilters(projects) {
+    const statusSel = $('#filter-status');
+    const indSel = $('#filter-industry');
+    const leadSel = $('#filter-lead');
+
+    // Build options (preserve current selections)
+    const curStatus = filters.status, curInd = filters.industry, curLead = filters.lead;
+    statusSel.innerHTML = '<option value="">All statuses</option>' +
+      STORE.STATUSES.map(s => `<option value="${s}" ${s===curStatus?'selected':''}>${STORE.STATUS_LABELS[s]}</option>`).join('');
+
+    const industries = [...new Set(projects.map(p => p.project?.industry).filter(Boolean))].sort();
+    indSel.innerHTML = '<option value="">All industries</option>' +
+      industries.map(i => `<option value="${esc(i)}" ${i===curInd?'selected':''}>${esc(i)}</option>`).join('');
+
+    const leads = [...new Set(projects.map(p => p.project?.lead).filter(Boolean))].sort();
+    leadSel.innerHTML = '<option value="">All leads</option>' +
+      leads.map(l => `<option value="${esc(l)}" ${l===curLead?'selected':''}>${esc(l)}</option>`).join('');
+  }
+
+  /* ---------- Identity / access wall ---------- */
+  function buildIdentityBar(allProjects) {
+    const sel = $('#id-user');
+    const cur = STORE.getCurrentUser();
+    // Everyone who leads/owns a project becomes a switchable identity (member role),
+    // plus a leadership "All projects" admin view. In production this list comes
+    // from your directory and the current user is fixed by login.
+    const leads = [...new Set(allProjects.map(p => p.project?.lead).filter(Boolean))].sort();
+    const opts = [`<option value="__admin__">Leadership / Ops — all projects</option>`]
+      .concat(leads.map(l => `<option value="${esc(l)}">${esc(l)}</option>`));
+    sel.innerHTML = opts.join('');
+    sel.value = cur.role === 'admin' ? '__admin__' : esc(cur.name);
+    if (!sel.value) sel.value = '__admin__';
+    updateIdentityMeta();
+  }
+  function updateIdentityMeta() {
+    const cur = STORE.getCurrentUser();
+    const roleEl = $('#id-role'), noteEl = $('#id-note');
+    if (cur.role === 'admin') {
+      roleEl.textContent = 'Admin · sees all';
+      roleEl.className = 'id-role admin';
+      noteEl.innerHTML = `Full portfolio visibility. Switch to a person to preview their <strong>restricted</strong> view.`;
+    } else {
+      roleEl.textContent = 'Member · own projects';
+      roleEl.className = 'id-role member';
+      noteEl.innerHTML = `Showing only projects led or owned by <strong>${esc(cur.name)}</strong>. Other teams' fees are hidden.`;
+    }
+  }
+  function applyFilters(projects) {
+    return projects.filter(p => {
+      const pj = p.project || {};
+      if (filters.status && pj.status !== filters.status) return false;
+      if (filters.industry && pj.industry !== filters.industry) return false;
+      if (filters.lead && pj.lead !== filters.lead) return false;
+      if (filters.search) {
+        const q = filters.search.toLowerCase();
+        const hay = [pj.name, pj.client, pj.lead, pj.location, pj.clientContact, pj.clientRelOwner]
+          .filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }
+
+  function applySort(projects) {
+    const dir = sort.dir === 'desc' ? -1 : 1;
+    return [...projects].sort((a, b) => {
+      let av, bv;
+      switch (sort.col) {
+        case 'name': av = a.project?.name || ''; bv = b.project?.name || ''; break;
+        case 'client': av = a.project?.client || ''; bv = b.project?.client || ''; break;
+        case 'status': av = a.project?.status || ''; bv = b.project?.status || ''; break;
+        case 'industry': av = a.project?.industry || ''; bv = b.project?.industry || ''; break;
+        case 'lead': av = a.project?.lead || ''; bv = b.project?.lead || ''; break;
+        case 'fee': av = projectFee(a).net; bv = projectFee(b).net; break;
+        case 'updatedAt':
+        default: av = a.updatedAt || ''; bv = b.updatedAt || '';
+      }
+      if (typeof av === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }
+
+  /* ---------- KPI rollup ---------- */
+  function renderKpis(allProjects) {
+    const fees = allProjects.map(p => ({ p, fin: projectFee(p) }));
+    const total = fees.reduce((s, x) => s + x.fin.net, 0);
+    const pipeline = fees.filter(x => ['draft','submitted','negotiation'].includes(x.p.project?.status))
+                        .reduce((s, x) => s + x.fin.net, 0);
+    const won = fees.filter(x => ['won','active','closed'].includes(x.p.project?.status))
+                   .reduce((s, x) => s + x.fin.net, 0);
+    const active = fees.filter(x => x.p.project?.status === 'active')
+                      .reduce((s, x) => s + x.fin.net, 0);
+    const wonCount = allProjects.filter(p => ['won','active','closed'].includes(p.project?.status)).length;
+    const lostCount = allProjects.filter(p => p.project?.status === 'lost').length;
+    const decided = wonCount + lostCount;
+    const wr = decided ? Math.round((wonCount / decided) * 100) : null;
+
+    $('#kpi-count').textContent = allProjects.length;
+    $('#kpi-pipeline').textContent = fmtMoney(pipeline);
+    $('#kpi-won').textContent = fmtMoney(won);
+    $('#kpi-active').textContent = fmtMoney(active);
+    $('#kpi-winrate').innerHTML = wr !== null ? `${wr}<span class="unit">%</span>` : '—';
+    $('#kpi-total').textContent = fmtMoney(total);
+  }
+
+  /* ---------- Render ---------- */
+  function render() {
+    const everything = STORE.listProjects();
+    buildIdentityBar(everything);
+    // Apply the access wall FIRST — members never see other teams' projects.
+    const all = STORE.visibleProjects(everything);
+    populateFilters(all);
+    renderKpis(all);
+    const filtered = applySort(applyFilters(all));
+
+    const host = $('#table-host');
+    if (!all.length) {
+      host.innerHTML = `
+        <div class="empty-state">
+          <h3>Your project database is empty.</h3>
+          <p>Start by creating a new proposal in the calculator, importing a JSON backup of an existing database, or seeding a demo project (the 383M migration) to see the system populated.</p>
+          <div class="actions">
+            <button class="btn btn-primary" onclick="document.getElementById('new-btn').click()">+ Create first project</button>
+            <button class="btn btn-ghost" onclick="document.getElementById('seed-btn').click()">Seed demo data</button>
+            <button class="btn btn-ghost" onclick="document.getElementById('import-btn').click()">Import JSON</button>
+          </div>
+        </div>`;
+      return;
+    }
+    if (!filtered.length) {
+      host.innerHTML = `
+        <div class="empty-state">
+          <h3>No projects match these filters.</h3>
+          <p>Adjust the filters or clear them to see all ${all.length} project${all.length === 1 ? '' : 's'}.</p>
+          <div class="actions">
+            <button class="btn btn-ghost" onclick="document.getElementById('clear-btn').click()">Clear filters</button>
+          </div>
+        </div>`;
+      return;
+    }
+
+    const cols = [
+      { key: 'name',      label: 'Project' },
+      { key: 'client',    label: 'Client · location' },
+      { key: 'status',    label: 'Status' },
+      { key: 'industry',  label: 'Industry' },
+      { key: 'lead',      label: 'Lead PE' },
+      { key: 'period',    label: 'Period', sortable: false },
+      { key: 'fee',       label: 'Net fee', num: true },
+      { key: 'updatedAt', label: 'Last updated' },
+      { key: 'actions',   label: '', sortable: false },
+    ];
+
+    const headHtml = cols.map(c => {
+      const sortable = c.sortable !== false;
+      const isSorted = sort.col === c.key;
+      const arrow = isSorted ? (sort.dir === 'desc' ? '↓' : '↑') : '↕';
+      const cls = (c.num ? 'num ' : '') + (isSorted ? 'sorted' : '');
+      return sortable
+        ? `<th class="${cls}" data-col="${c.key}">${c.label}<span class="sort-arrow">${arrow}</span></th>`
+        : `<th class="${cls}">${c.label}</th>`;
+    }).join('');
+
+    const rowsHtml = filtered.map(p => {
+      const pj = p.project || {};
+      const fin = projectFee(p);
+      const statusKey = pj.status || 'draft';
+      const statusLabel = STORE.STATUS_LABELS[statusKey] || statusKey;
+      return `<tr data-id="${p.id}">
+        <td>
+          <div class="pname">${esc(pj.name || 'Untitled')}<span class="pname-sub">${esc(pj.industry || '—')}</span></div>
+        </td>
+        <td>
+          <div class="pclient">${esc(pj.client || '—')}</div>
+          <div class="pclient-sub">${esc(pj.location || '')}</div>
+        </td>
+        <td><span class="pill status-${statusKey}">${esc(statusLabel)}</span></td>
+        <td>${esc(pj.industry || '—')}</td>
+        <td>${esc(pj.lead || '—')}</td>
+        <td style="font-family: var(--font-body); color: var(--sav-steel); font-size: 12px;">${fmtPeriod(p)}</td>
+        <td class="num">
+          <div class="pfee">${fmtMoneyFull(fin.net)}</div>
+          <div class="pfee-sub">${fin.fteMonths.toFixed(1)} fte-mo</div>
+        </td>
+        <td style="font-family: var(--font-body); color: var(--sav-steel); font-size: 12px;">${fmtRelative(p.updatedAt)}</td>
+        <td>
+          <div class="row-actions">
+            <button class="icon-btn duplicate" data-id="${p.id}" title="Duplicate">⎘</button>
+            <button class="icon-btn delete" data-id="${p.id}" title="Delete">×</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    host.innerHTML = `
+      <div class="projects-wrap">
+        <table class="projects-table">
+          <thead><tr>${headHtml}</tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>`;
+
+    // Wire row clicks → open calculator
+    $$('.projects-table tbody tr').forEach(tr => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('.row-actions')) return;
+        const id = tr.dataset.id;
+        window.location.href = 'Universal Fee Calculator.html?id=' + encodeURIComponent(id);
+      });
+    });
+    // Sort
+    $$('.projects-table thead th[data-col]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (sort.col === col) {
+          sort.dir = sort.dir === 'desc' ? 'asc' : 'desc';
+        } else {
+          sort.col = col;
+          sort.dir = (col === 'fee' || col === 'updatedAt') ? 'desc' : 'asc';
+        }
+        render();
+      });
+    });
+    // Delete
+    $$('.row-actions .delete').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = e.target.dataset.id;
+      const p = STORE.getProject(id);
+      if (!confirm(`Delete project "${p?.project?.name || 'Untitled'}"? This cannot be undone.`)) return;
+      STORE.deleteProject(id);
+      render();
+    }));
+    // Duplicate
+    $$('.row-actions .duplicate').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = e.target.dataset.id;
+      const p = STORE.getProject(id);
+      if (!p) return;
+      const dup = JSON.parse(JSON.stringify(p));
+      dup.id = null;
+      dup.createdAt = null;
+      dup.updatedAt = null;
+      dup.project.name = (dup.project.name || 'Untitled') + ' (copy)';
+      dup.project.status = 'draft';
+      STORE.saveProject(dup);
+      render();
+    }));
+  }
+
+  /* ---------- Toolbar wiring ---------- */
+  $('#search-input').addEventListener('input', e => { filters.search = e.target.value; render(); });
+  $('#id-user').addEventListener('change', e => {
+    const v = e.target.value;
+    if (v === '__admin__') STORE.setCurrentUser({ name: 'Leadership', role: 'admin' });
+    else STORE.setCurrentUser({ name: v, role: 'member' });
+    // reset filters so a stale lead filter doesn't compound with the wall
+    filters = { search: '', status: '', industry: '', lead: '' };
+    $('#search-input').value = '';
+    render();
+  });
+  $('#filter-status').addEventListener('change', e => { filters.status = e.target.value; render(); });
+  $('#filter-industry').addEventListener('change', e => { filters.industry = e.target.value; render(); });
+  $('#filter-lead').addEventListener('change', e => { filters.lead = e.target.value; render(); });
+  $('#clear-btn').addEventListener('click', () => {
+    filters = { search: '', status: '', industry: '', lead: '' };
+    $('#search-input').value = '';
+    render();
+  });
+
+  /* ---------- Header actions ---------- */
+  $('#new-btn').addEventListener('click', () => {
+    window.location.href = 'Universal Fee Calculator.html';
+  });
+  $('#export-btn').addEventListener('click', () => {
+    const json = STORE.exportDb();
+    const date = new Date().toISOString().slice(0, 10);
+    STORE.downloadJson(`savills-ppm-fee-db-${date}.json`, json);
+  });
+  $('#import-btn').addEventListener('click', () => $('#import-input').click());
+  $('#import-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const mode = confirm('Merge with existing projects? (Cancel = replace entirely.)') ? 'merge' : 'replace';
+        const n = STORE.importDb(reader.result, mode);
+        alert(`Imported ${n} project${n === 1 ? '' : 's'}.`);
+        render();
+      } catch (err) {
+        alert('Import failed: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  $('#seed-btn').addEventListener('click', () => {
+    seedDemoData();
+    render();
+  });
+
+  /* ---------- Demo seed ---------- */
+  function seedDemoData() {
+    const demos = buildDemoProjects();
+    demos.forEach(p => STORE.saveProject(p));
+  }
+
+  function buildDemoProjects() {
+    const mkFte = (phases, vals) => {
+      const out = {};
+      phases.forEach((p, i) => out[p.id] = vals[i] || 0);
+      return out;
+    };
+    const p1Phases = [
+      { id: 'p1a', name: 'Ramp-up',  length: 1 },
+      { id: 'p1b', name: 'Kickoff',  length: 2 },
+      { id: 'p1c', name: 'Planning', length: 6 },
+      { id: 'p1d', name: 'Execution',length: 3 },
+      { id: 'p1e', name: 'Closeout', length: 2 },
+    ];
+    const p1 = {
+      project: {
+        name: '383 Madison Migration ’27',
+        client: 'JPMorgan Chase',
+        lead: 'Kathy Spiegel',
+        proposalDate: '2026-04-15',
+        location: 'New York, NY',
+        status: 'won',
+        industry: 'Financial Services',
+        firstProposalDate: '2026-03-01',
+        signedContractDate: '2026-05-20',
+        clientContact: 'M. Roberts · Real Estate',
+        clientRelOwner: 'Hoffman',
+      },
+      timeline: { startMonth: 1, startYear: 2027, endMonth: 2, endYear: 2028 },
+      phases: p1Phases,
+      groups: [
+        { id: 'core',  name: 'Core team' },
+        { id: 'field', name: 'Field team' },
+        { id: 'pic',   name: 'PIC / Advisory' },
+      ],
+      roles: [
+        { id: 'r1', titleId: 'pe',     tierId: 'sr',  resource: 'Kathy Spiegel',  groupId: 'core', fte: mkFte(p1Phases, [50,75,75,100,50]) },
+        { id: 'r2', titleId: 'pm',     tierId: 'mid', resource: 'Sarah Alim',     groupId: 'core', fte: mkFte(p1Phases, [50,100,100,100,75]) },
+        { id: 'r3', titleId: 'lf',     tierId: 'sr',  resource: 'Mike DiLeo',     groupId: 'core', fte: mkFte(p1Phases, [25,50,75,100,50]) },
+        { id: 'r4', titleId: 'tem',    tierId: 'std', resource: 'TBD 2Q ’27',     groupId: 'field',fte: mkFte(p1Phases, [0,0,0,100,0]) },
+        { id: 'r5', titleId: 'tem',    tierId: 'std', resource: 'TBD 2Q ’27',     groupId: 'field',fte: mkFte(p1Phases, [0,0,0,100,0]) },
+        { id: 'r6', titleId: 'tem',    tierId: 'std', resource: 'TBD 2Q ’27',     groupId: 'field',fte: mkFte(p1Phases, [0,0,0,100,0]) },
+        { id: 'r7', titleId: 'pic',    tierId: 'std', resource: 'Hoffman/Santoro',groupId: 'pic',  fte: mkFte(p1Phases, [10,10,10,10,10]) },
+      ],
+      assumptions: { hrsPerMo: 173.33, escalation: 3.0, discount: 0, rateLock: false, catalogBaseYear: 2025 },
+    };
+
+    const p2Phases = [
+      { id: 'p2a', name: 'Mobilization', length: 1 },
+      { id: 'p2b', name: 'Delivery',     length: 4 },
+      { id: 'p2c', name: 'Closeout',     length: 1 },
+    ];
+    const p2 = {
+      project: {
+        name: 'Hudson Yards Build-out',
+        client: 'Pfizer',
+        lead: 'Michael Glatt',
+        proposalDate: '2026-02-10',
+        location: 'New York, NY',
+        status: 'active',
+        industry: 'Life Sciences',
+        firstProposalDate: '2026-01-15',
+        signedContractDate: '2026-03-05',
+        clientContact: 'J. Chen · Facilities',
+        clientRelOwner: 'Glatt',
+      },
+      timeline: { startMonth: 4, startYear: 2026, endMonth: 9, endYear: 2026 },
+      phases: p2Phases,
+      groups: [
+        { id: 'core',  name: 'Core team' },
+        { id: 'field', name: 'Field team' },
+      ],
+      roles: [
+        { id: 'r1', titleId: 'pe',  tierId: 'sr',  resource: 'Michael Glatt', groupId: 'core', fte: mkFte(p2Phases, [50,50,25]) },
+        { id: 'r2', titleId: 'pm',  tierId: 'sr',  resource: 'Jess White',    groupId: 'core', fte: mkFte(p2Phases, [75,100,50]) },
+        { id: 'r3', titleId: 'bc',  tierId: 'sr',  resource: 'TBD',            groupId: 'core', fte: mkFte(p2Phases, [50,75,25]) },
+        { id: 'r4', titleId: 'tem', tierId: 'std', resource: 'TBD',            groupId: 'field',fte: mkFte(p2Phases, [0,100,25]) },
+      ],
+      assumptions: { hrsPerMo: 173.33, escalation: 3.0, discount: 5, rateLock: false, catalogBaseYear: 2025 },
+    };
+
+    const p3Phases = [
+      { id: 'p3a', name: 'Discovery', length: 2 },
+      { id: 'p3b', name: 'Design',    length: 3 },
+      { id: 'p3c', name: 'Build',     length: 4 },
+      { id: 'p3d', name: 'Closeout',  length: 1 },
+    ];
+    const p3 = {
+      project: {
+        name: 'Tech Campus Phase 2',
+        client: 'Meta Platforms',
+        lead: 'Hudson Grieve',
+        proposalDate: '2026-05-01',
+        location: 'Menlo Park, CA',
+        status: 'submitted',
+        industry: 'TAMI',
+        firstProposalDate: '2026-04-10',
+        signedContractDate: '',
+        clientContact: 'K. Patel · Workplace',
+        clientRelOwner: 'Grieve',
+      },
+      timeline: { startMonth: 7, startYear: 2026, endMonth: 4, endYear: 2027 },
+      phases: p3Phases,
+      groups: [
+        { id: 'core',  name: 'Core team' },
+        { id: 'field', name: 'Field team' },
+      ],
+      roles: [
+        { id: 'r1', titleId: 'pe',  tierId: 'sr',  resource: 'Hudson Grieve', groupId: 'core', fte: mkFte(p3Phases, [50,75,100,50]) },
+        { id: 'r2', titleId: 'pm',  tierId: 'sr',  resource: 'TBD',            groupId: 'core', fte: mkFte(p3Phases, [75,100,100,75]) },
+        { id: 'r3', titleId: 'cm',  tierId: 'sr',  resource: 'TBD',            groupId: 'core', fte: mkFte(p3Phases, [25,75,100,25]) },
+        { id: 'r4', titleId: 'tem', tierId: 'std', resource: 'TBD',            groupId: 'field',fte: mkFte(p3Phases, [0,0,100,0]) },
+      ],
+      assumptions: { hrsPerMo: 173.33, escalation: 3.0, discount: 0, rateLock: true, catalogBaseYear: 2025 },
+    };
+
+    const p4Phases = [
+      { id: 'p4a', name: 'Owner Rep', length: 8 },
+    ];
+    const p4 = {
+      project: {
+        name: 'Park Avenue HQ Refit',
+        client: 'Citi',
+        lead: 'Kathy Spiegel',
+        proposalDate: '2025-11-20',
+        location: 'New York, NY',
+        status: 'lost',
+        industry: 'Financial Services',
+        firstProposalDate: '2025-10-15',
+        signedContractDate: '',
+        clientContact: 'A. Brown · Corporate RE',
+        clientRelOwner: 'Spiegel',
+      },
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 8, endYear: 2026 },
+      phases: p4Phases,
+      groups: [{ id: 'core', name: 'Core team' }],
+      roles: [
+        { id: 'r1', titleId: 'pe', tierId: 'sr', resource: 'Kathy Spiegel', groupId: 'core', fte: mkFte(p4Phases, [50]) },
+        { id: 'r2', titleId: 'pm', tierId: 'mid', resource: 'TBD',           groupId: 'core', fte: mkFte(p4Phases, [100]) },
+      ],
+      assumptions: { hrsPerMo: 173.33, escalation: 3.0, discount: 10, rateLock: false, catalogBaseYear: 2025 },
+    };
+
+    return [p1, p2, p3, p4];
+  }
+
+  // Wait for the data layer (instant on localStorage; pulls from Box when enabled).
+  if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(render); } else { render(); }
+})();
+</script>
+</body>
+</html>
