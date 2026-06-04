@@ -29,9 +29,6 @@
     $('#k-pm').textContent = pm.length ? rate(BENCH.median(pm)) : '—';
     $('#k-fee').textContent = money(PROJFACTS.reduce((s, p) => s + (p.net || 0), 0));
     $('#k-below').innerHTML = FACTS.filter(f => f.belowFloor).length + '<span class="unit"> roles</span>';
-    const nSample = PROJFACTS.filter(p => p.isSample).length;
-    $('#sample-note').innerHTML = nSample ? `<b>${nSample}</b> sample projects loaded` : '';
-    $('#sample-btn').style.display = nSample ? '' : 'none';
   }
 
   /* ============================================================
@@ -204,7 +201,7 @@
   }
 
   function boot() {
-    BENCH.ensureSamples();   // seed a realistic dataset on first run if none exists
+    if (BENCH.removeSamples) BENCH.removeSamples();   // purge any previously-seeded sample projects
     load();
     renderKpis();
     fillFilterOptions();
@@ -216,12 +213,6 @@
     initTabs();
     ['#f-client', '#f-industry', '#f-title', '#f-size', '#f-role'].forEach(s =>
       $(s).addEventListener('input', renderComp));
-    $('#sample-btn').addEventListener('click', () => {
-      if (!confirm('Remove all seeded sample projects? Your ingested/real projects are kept.')) return;
-      BENCH.removeSamples();
-      picked = [];
-      load(); renderKpis(); fillFilterOptions(); renderComp(); renderRates(); renderPick(); renderCmp();
-    });
   }
 
   document.addEventListener('DOMContentLoaded', boot);

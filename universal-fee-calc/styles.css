@@ -1179,6 +1179,18 @@ html, body {
 .monthly-table tbody tr.credit-row td.month-col { color: var(--sav-red); }
 
 /* ===== Ingestion: extracted phases panel ===== */
+.story-panel {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: var(--sav-navy); color: #fff;
+  padding: 18px 22px; margin-bottom: 18px;
+}
+.story-panel .story-icon {
+  font-family: var(--font-display); font-weight: 900; font-size: 30px;
+  color: var(--sav-yellow); line-height: 0.7; flex: none;
+}
+.story-panel .story-text {
+  font-family: var(--font-body); font-size: 14.5px; line-height: 1.6; color: #fff;
+}
 .phases-panel {
   margin-top: 18px;
   padding-top: 16px;

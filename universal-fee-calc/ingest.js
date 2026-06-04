@@ -25,6 +25,7 @@
   let state = {
     project: { name:'', client:'', industry:'', startMonth:1, startYear:2026, endMonth:12, endYear:2026, totalFee:null, oneTimeDiscount:null, billingMode:'phase', sourceName:'' },
     phases: [],
+    narrative: '',
     rows: [],   // { id, name, staffTitleRaw, titleId, tierId, projectRole, team, allocation, rate }
   };
 
@@ -168,23 +169,49 @@
     };
   }
 
-  /** Claude-powered extraction for prose proposals / messy text. */
-  async function extractWithClaude(text) {
-    if (!window.claude || !window.claude.complete) throw new Error('Claude helper unavailable in this environment — use “Parse table”.');
-    const prompt =
-      'Extract this consulting fee proposal into MINIFIED JSON only — no prose, no code fence.\n' +
-      'Schema: {"project":{"name":string,"client":string,"startDate":"MON YYYY","endDate":"MON YYYY","totalFee":number|null,"oneTimeDiscount":number|null,"billing":"flat"|"phase"|null},' +
-      '"phases":[{"name":string,"weeks":number|null,"startDate":"MON YYYY"|null,"endDate":"MON YYYY"|null,"fee":number|null}],' +
-      '"people":[{"name":string,"staffTitle":string,"projectRole":string,"team":string,"allocation":number,"rate":number|null}]}\n' +
-      'phases: the project schedule / phase table — each phase\'s name, its DURATION in weeks (convert months→weeks ×4.345 if stated in months), date span, and its stated fee if given. Order them chronologically.\n' +
-      'oneTimeDiscount: any one-time / lump discount in USD (e.g. "One-Time Discount: $25,000"). billing: "flat" if the proposal states a fixed equal monthly fee for the whole term, else "phase".\n' +
-      'people: the staffing roster. If the proposal has NO hourly roster but names contacts, leads, or signatories with titles (e.g. in a Contacts or signature block), include THEM as people with allocation 0.5 and rate null so the owner can solve their staffing against grid rates.\n' +
-      'allocation is a decimal FTE (1=full-time, 0.5=half). rate is hourly USD. Source may have MULTIPLE sheets/scenarios — the roster sheet may lack rates while a separate fee/scenario sheet has them; correlate by person/title. If several discount columns exist, use the NON-DISCOUNTED / standard hourly rate. Use null if unknown. Keep it compact.\n\nSOURCE:\n' + text.slice(0, 16000);
-    const raw = await window.claude.complete({ messages: [{ role: 'user', content: prompt }] });
-    let jsonStr = String(raw).trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
-    const first = jsonStr.indexOf('{'), last = jsonStr.lastIndexOf('}');
-    if (first >= 0 && last >= 0) jsonStr = jsonStr.slice(first, last + 1);
-    const data = JSON.parse(jsonStr);
+  /** Call the extractor: prefer the deployed serverless endpoint (works on the
+      live site with the API key), fall back to window.claude in the Anthropic
+      preview. Accepts text and/or page images (for vision on designed PDFs). */
+  async function callExtractor({ text, images }) {
+    // 1) Serverless endpoint (production)
+    try {
+      const res = await fetch('/api/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text || '', images: images || [] }),
+      });
+      if (res.ok) return await res.json();
+      // If the function exists but errored, surface it (don't silently fall back to a worse path)
+      if (res.status !== 404) { const e = await res.json().catch(() => ({})); throw new Error(e.error || ('extract failed: ' + res.status)); }
+    } catch (e) {
+      if (!/Failed to fetch|NetworkError|404/.test(String(e.message))) throw e;
+      // else: endpoint not present (e.g. local preview) → fall through to window.claude
+    }
+    // 2) Preview fallback — text only (no vision)
+    if (window.claude && window.claude.complete) {
+      const prompt = buildTextPrompt(text || '');
+      const raw = await window.claude.complete({ messages: [{ role: 'user', content: prompt }] });
+      let s = String(raw).trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+      const a = s.indexOf('{'), b = s.lastIndexOf('}'); if (a >= 0 && b >= 0) s = s.slice(a, b + 1);
+      return JSON.parse(s);
+    }
+    throw new Error('No extractor available. On the live site set ANTHROPIC_API_KEY; in preview use Parse table.');
+  }
+
+  function buildTextPrompt(text) {
+    return 'Read this fee proposal / matrix and return ONLY minified JSON (no prose, no fence) with shape '
+      + '{"narrative":string,"project":{"name":string,"client":string,"startDate":"MON YYYY"|null,"endDate":"MON YYYY"|null,"totalFee":number|null,"oneTimeDiscount":number|null,"billing":"flat"|"phase"|null},'
+      + '"phases":[{"name":string,"weeks":number|null,"startDate":"MON YYYY"|null,"endDate":"MON YYYY"|null,"fee":number|null}],'
+      + '"people":[{"name":string,"staffTitle":string,"projectRole":string,"team":string,"allocation":number,"rate":number|null}]}. '
+      + 'narrative = 2-4 sentences telling the story (client, period, headcount, structure, total fee, billing). '
+      + 'phases = schedule; weeks duration (months×4.345); per-phase fee if shown. people = roster; allocation is decimal FTE; rate hourly USD; use the NON-DISCOUNTED rate when multiple discount columns exist; correlate rates across sheets; null when unknown; capture EVERY person.\n\nSOURCE:\n'
+      + text.slice(0, 20000);
+  }
+
+  /** Apply an extraction result to state; returns roster rows. */
+  function applyExtraction(data) {
+    if (!data) return [];
+    state.narrative = data.narrative || '';
     if (data.project) {
       if (data.project.name)   state.project.name = data.project.name;
       if (data.project.client) state.project.client = data.project.client;
@@ -201,6 +228,12 @@
       name: p.name, staffTitle: p.staffTitle, projectRole: p.projectRole,
       team: p.team, allocation: p.allocation, rate: p.rate,
     }));
+  }
+
+  /** Back-compat: text-only extraction entry. */
+  async function extractWithClaude(text) {
+    const data = await callExtractor({ text });
+    return applyExtraction(data);
   }
 
   /** Convert extracted phases into engine-ready phases. Keeps the original
@@ -303,6 +336,11 @@
     $('#p-end').value = p.endYear ? `${MONTHS[p.endMonth-1]} ${p.endYear}` : '';
     $('#p-fee').value = p.totalFee != null ? money(p.totalFee) : '';
     $('#p-source').textContent = p.sourceName || 'manual / pasted';
+    const sp = $('#story-panel'), st = $('#story-text');
+    if (sp && st) {
+      if (state.narrative) { sp.hidden = false; st.textContent = state.narrative; }
+      else { sp.hidden = true; st.textContent = ''; }
+    }
     renderPhasesPanel();
     const indSel = $('#p-industry');
     if (!indSel.options.length) {
@@ -550,7 +588,27 @@
     return res.text || '';
   }
 
+  /** Render PDF pages to PNG data-URLs for Claude vision (handles designed/
+      tabular proposals that text extraction mangles). Capped for payload size. */
+  async function pdfToImages(file, maxPages = 8) {
+    const pdfjs = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const n = Math.min(doc.numPages, maxPages);
+    const out = [];
+    for (let i = 1; i <= n; i++) {
+      const page = await doc.getPage(i);
+      const vp = page.getViewport({ scale: 1.6 });
+      const canvas = document.createElement('canvas');
+      canvas.width = vp.width; canvas.height = vp.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+      out.push(canvas.toDataURL('image/png'));
+    }
+    return out;
+  }
+
   let lastWorkbookText = '';   // full multi-sheet dump for Claude when a workbook is uploaded
+  let lastImages = [];         // PDF page images for vision extraction
 
   async function handleFile(file) {
     if (!file) return;
@@ -582,7 +640,9 @@
         const text = await pdfToText(file);
         $('#src').value = text;
         renderProject();
-        if (!text.trim()) { setStatus('No text found in PDF (it may be scanned). Paste manually.', 'bad'); return; }
+        setStatus(`Reading ${file.name} pages for Claude vision…`, 'busy');
+        try { lastImages = await pdfToImages(file); } catch (e) { lastImages = []; }
+        if (!text.trim() && !lastImages.length) { setStatus('Could not read this PDF. Paste the content manually.', 'bad'); return; }
         setStatus(`Read ${file.name} — extracting with Claude…`, 'busy');
         await runClaudeExtract();
       } else {
@@ -611,10 +671,15 @@
     const btn = $('#extract-btn'), o = btn.textContent;
     btn.textContent = 'Extracting…'; btn.disabled = true;
     try {
-      const rows = await extractWithClaude(lastWorkbookText || $('#src').value);
-      if (!rows.length) throw new Error('No people found in the text.');
+      const data = await callExtractor({ text: lastWorkbookText || $('#src').value, images: lastImages });
+      const rows = applyExtraction(data);
+      renderProject();
+      if (!rows.length && !state.narrative) throw new Error('Nothing recognized in the document.');
       state.rows = rows; renderAll();
-      setStatus(`Extracted ${rows.length} role${rows.length===1?'':'s'} with Claude. Review below.`, '');
+      const bits = [`${rows.length} role${rows.length===1?'':'s'}`];
+      if (state.phases.length) bits.push(`${state.phases.length} phases`);
+      if (state.project.totalFee) bits.push(money(state.project.totalFee));
+      setStatus(`Extracted ${bits.join(' · ')}. Review the story & roster below.`, '');
     } catch (e) {
       setStatus('Extraction failed: ' + e.message, 'bad');
     } finally {
@@ -626,6 +691,7 @@
      BOOT
      ============================================================ */
   document.addEventListener('DOMContentLoaded', () => {
+    const startStudio = () => {
     $('#example-btn').addEventListener('click', loadExample);
     $('#parse-btn').addEventListener('click', () => {
       const rows = parseTable($('#src').value);
@@ -658,5 +724,7 @@
     $('#p-end').addEventListener('change', e => applyDate(e.target.value, 'end'));
 
     renderAll();
+    };
+    if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(startStudio); } else { startStudio(); }
   });
 })();
