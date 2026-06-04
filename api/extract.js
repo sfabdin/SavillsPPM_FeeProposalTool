@@ -26,8 +26,16 @@ export const config = { api: { bodyParser: { sizeLimit: '4.5mb' } } };
 function buildPrompt() {
   return `Read the attached proposal / fee matrix and extract it. Return ONLY minified JSON (no prose, no code fence) with EXACTLY this shape:
 
+CRITICAL — ANTI-FABRICATION (highest priority):
+- Extract ONLY values that are EXPLICITLY VISIBLE in the document. If a value is not clearly shown, return null. NEVER estimate, infer, guess, average, or fill a gap. Many fields being null is CORRECT and expected.
+- A proposal's COVER/SIGNATURE DATE is NOT the project start date. Only set startDate/endDate if an actual project term/schedule is shown.
+- Do NOT invent phase durations, an even split, or a 12-month default. If durations aren't shown, leave weeks null.
+- Only include people whose names are actually printed. Do NOT add placeholder team members.
+- If you are unsure whether something is the fee vs. a budget vs. a rate, leave it null rather than risk a wrong number.
+- It is far better to return null than a plausible-but-unverified value. Accuracy over completeness, always.
+
 {
- "narrative": string,            // 2-4 plain sentences telling the story: the client & project, the period (start–end), how many people, the team structure, the total fee, and how it's billed. Write it like a deal summary a principal would skim.
+ "narrative": string,            // 2-4 plain sentences. Tell the story from ONLY what's shown: client & project, the period IF stated, headcount, team structure, total fee IF stated, billing. EXPLICITLY say which of {period, durations, fee, rates} are NOT stated in the document. Never imply a value you didn't extract.
  "project": {
    "name": string,
    "client": string,
@@ -51,6 +59,7 @@ RULES:
 - DO NOT FABRICATE. If start/end dates or phase durations are NOT shown, set them to null — never invent an even split or a placeholder year. A wrong schedule is worse than a null one.
 - BUDGET ≠ FEE. A "project budget" / "construction budget" / "project cost" (e.g. "$8.2MM project") is the cost of the WORK, NOT Macro's fee. Never put a construction/project budget in totalFee. totalFee is ONLY Macro's/Savills' professional-services fee. If the fee is a % of project cost, capture the % in narrative but leave totalFee null unless the dollar fee is explicitly stated.
 - people = the staffing roster / fee matrix rows. allocation is a DECIMAL FTE (1 = full-time, 0.5 = half, 0.25 = quarter). Map "hrs/wk" or "% time" to a decimal FTE; if not shown, use null (NOT 0.5).
+- staffTitle MUST carry the person's REAL professional title / SENIORITY exactly as written next to their name — e.g. "Principal in Charge", "Partner", "Executive Director", "Senior Director", "Project Manager", "Project Support", "Project Coordinator", "Analyst". DO NOT flatten everyone to "Project Manager". A leader / "in charge" / "principal" / "partner" is senior; a "support" / "coordinator" / "assistant" / "analyst" is junior. Preserve those seniority words — the app maps them to a rate level, so getting the title right is critical.
 - If a person's hourly rate isn't shown but a monthly rate or total is, leave rate null. A matrix with MULTIPLE discount columns → use the NON-DISCOUNTED / standard hourly rate.
 - Roster and rates may live on different pages — correlate by person or title. staffTitle = professional title as written (e.g. "Principal in Charge", "Project Manager"). projectRole = their role on THIS project if stated separately. team = workstream/group if grouped.
 - narrative MUST be honest about what's missing: explicitly say when the period, durations, fee, or rates are NOT stated in the document, rather than implying values. Mention the project budget if given, clearly labeled as budget (not fee).
