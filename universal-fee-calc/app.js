@@ -569,6 +569,8 @@
         </td>
         <td class="ph-range">${phaseDateRange(p, idx)}</td>
         <td class="actions-cell">
+          <button class="icon-btn ph-up" data-id="${p.id}" title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button class="icon-btn ph-down" data-id="${p.id}" title="Move down" ${idx === state.phases.length - 1 ? 'disabled' : ''}>↓</button>
           <button class="icon-btn ph-rm" data-id="${p.id}" title="Remove phase" ${state.phases.length === 1 ? 'disabled' : ''}>×</button>
         </td>
       `;
@@ -608,6 +610,8 @@
       renderAll();
       markDirty();
     }));
+    $$('.ph-up').forEach(b => b.addEventListener('click', e => { reorderById(state.phases, e.target.dataset.id, -1); renderAll(); markDirty(); }));
+    $$('.ph-down').forEach(b => b.addEventListener('click', e => { reorderById(state.phases, e.target.dataset.id, 1); renderAll(); markDirty(); }));
     $$('.ph-rm').forEach(b => b.addEventListener('click', e => {
       const id = e.target.dataset.id;
       const idx = state.phases.findIndex(p => p.id === id);
@@ -859,6 +863,10 @@
           <label>Group</label>
           <select class="rr-group" data-id="${r.id}">${groupOptions}</select>
         </div>
+        <div class="rr-reorder">
+          <button class="icon-btn rr-up" data-id="${r.id}" title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button class="icon-btn rr-down" data-id="${r.id}" title="Move down" ${idx === state.roles.length - 1 ? 'disabled' : ''}>↓</button>
+        </div>
         <button class="icon-btn rr-rm" data-id="${r.id}" title="Remove role">×</button>
         ${floorHtml}
       `;
@@ -922,6 +930,17 @@
       renderAll();
       markDirty();
     }));
+    $$('.rr-up').forEach(b => b.addEventListener('click', e => { reorderById(state.roles, e.target.dataset.id, -1); renderAll(); markDirty(); }));
+    $$('.rr-down').forEach(b => b.addEventListener('click', e => { reorderById(state.roles, e.target.dataset.id, 1); renderAll(); markDirty(); }));
+  }
+
+  /** Move the item with `id` up (dir -1) or down (dir +1) within arr, in place. */
+  function reorderById(arr, id, dir) {
+    const i = arr.findIndex(x => x.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= arr.length) return;
+    const [item] = arr.splice(i, 1);
+    arr.splice(j, 0, item);
   }
 
   /* ----- Assumptions ----- */
