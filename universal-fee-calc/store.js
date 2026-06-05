@@ -163,6 +163,44 @@
     return JSON.stringify(readDb(), null, 2);
   }
 
+  /* ============================================================
+     FLASH SNAPSHOTS — point-in-time captures of monthly projections
+     ------------------------------------------------------------
+     Each snapshot freezes, for a billing period (YYYY-MM), every
+     project's projected revenue for that month, tagged with a label
+     (#1 FLASH / #2 FINAL / #3 EOM) and an as-of date. The flash
+     export diffs these so you can see how the number moved between
+     submissions. Stored in the db under `snapshots`.
+       db.snapshots = { "2026-04": { "#1 FLASH": {asOf, rows:{pid:{...}}}, ... } }
+     ============================================================ */
+  const FLASH_LABELS = ['#1 FLASH', '#2 FINAL', '#3 EOM'];
+  function periodKey(year, month) { return year + '-' + String(month).padStart(2, '0'); }
+
+  /** Capture the current projection for a period under a label. `rowsFor` is a
+      function(project) → { projId, name, client, rating, amount } for the month. */
+  function captureSnapshot(year, month, label, projects, rowsFor) {
+    const db = readDb();
+    db.snapshots = db.snapshots || {};
+    const pk = periodKey(year, month);
+    db.snapshots[pk] = db.snapshots[pk] || {};
+    const rows = {};
+    projects.forEach(p => { const r = rowsFor(p); if (r) rows[p.id] = r; });
+    db.snapshots[pk][label] = { asOf: new Date().toISOString(), rows };
+    writeDb(db);
+    return db.snapshots[pk][label];
+  }
+  function getSnapshots(year, month) {
+    const db = readDb();
+    return (db.snapshots && db.snapshots[periodKey(year, month)]) || {};
+  }
+  function deleteSnapshot(year, month, label) {
+    const db = readDb();
+    if (db.snapshots && db.snapshots[periodKey(year, month)]) {
+      delete db.snapshots[periodKey(year, month)][label];
+      writeDb(db);
+    }
+  }
+
   function importDb(jsonStr, mode = 'merge') {
     const incoming = JSON.parse(jsonStr);
     if (!incoming.projects) throw new Error('Invalid file — no projects key.');
@@ -302,7 +340,8 @@
       const phId = phaseOfMonth[m.year + '-' + m.month];
       let gross = 0, lockC = 0;
       roles.forEach(r => {
-        const fte = (r.fte?.[phId] || 0) / 100;
+        const mk = m.year + '-' + m.month;
+        const fte = ((r.fteMonthly && r.fteMonthly[mk] != null ? r.fteMonthly[mk] : (r.fte?.[phId] || 0)) || 0) / 100;
         if (!fte) return;
         const { base, anchorYear } = resolveRoleRate(r, catalog, p);
         if (!base) return;
@@ -500,6 +539,7 @@
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject,
     exportDb, importDb, downloadJson,
+    FLASH_LABELS, captureSnapshot, getSnapshots, deleteSnapshot, periodKey,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, setCurrentUser, isAdmin, userOwnsProject, visibleProjects,

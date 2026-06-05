@@ -986,6 +986,13 @@ html, body {
   padding: 1px 5px;
   margin-top: 3px;
 }
+.ph-toggle { cursor: pointer; display: inline-block; font-size: 11px; color: var(--sav-yellow); padding: 0 3px; user-select: none; }
+.ph-toggle:hover { color: #fff; }
+.matrix-table thead th.ph-grouphead { background: #1a1c2c; border-left: 2px solid var(--sav-yellow); }
+.matrix-table thead tr.month-subhead th { background: #34364a; font-weight: 600; font-size: 10px; padding: 4px 6px; }
+.matrix-table thead tr.month-subhead th.mcol { color: var(--sav-yellow); }
+.matrix-table td.fte.mcol input { width: 38px; }
+.matrix-table td.mcol { border-left: 1px solid var(--hairline); }
 .matrix-table tbody td {
   padding: 6px 4px;
   border-bottom: 1px solid var(--hairline);
@@ -1331,6 +1338,20 @@ html, body {
 }
 .reconcile .rc-note strong { font-family: var(--font-display); color: #fff; }
 .reconcile .rc-warn { color: var(--sav-yellow); font-weight: 600; }
+
+/* ===== Cost-rate floor banner ===== */
+.proj-flag {
+  display: flex; align-items: flex-start; gap: 14px;
+  background: #fff8ec; border-left: 5px solid var(--sav-yellow);
+  padding: 14px 18px; margin-bottom: 16px;
+}
+.proj-flag[hidden] { display: none; }
+.proj-flag .pf-icon { font-size: 22px; line-height: 1; flex: none; }
+.proj-flag .pf-body { flex: 1; }
+.proj-flag .pf-title { font-family: var(--font-display); font-weight: 800; font-size: 14px; color: var(--sav-navy); margin-bottom: 3px; }
+.proj-flag .pf-detail { font-family: var(--font-body); font-size: 12.5px; line-height: 1.5; color: var(--sav-steel); }
+.proj-flag .pf-clear { flex: none; align-self: center; font-family: var(--font-display); font-weight: 700; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding: 8px 12px; border: 1px solid var(--sav-navy); background: #fff; color: var(--sav-navy); cursor: pointer; }
+.proj-flag .pf-clear:hover { background: var(--sav-navy); color: #fff; }
 
 /* ===== Cost-rate floor banner ===== */
 .floor-banner {

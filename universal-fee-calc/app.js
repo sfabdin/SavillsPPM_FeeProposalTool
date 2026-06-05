@@ -215,9 +215,26 @@
     return base * Math.pow(1 + esc, year - anchorYear);
   }
 
-  /** Fee for one role for one month, given the role's FTE % in that month's phase. */
+  /** Per-month FTE override key. */
+  function monthKey(monthObj) { return monthObj.year + '-' + monthObj.month; }
+  /** Effective FTE % for a role in a given month: a per-month override wins over
+      the phase-level value. role.fteMonthly = { "YYYY-M": pct }. */
+  function effectiveFte(role, monthObj, phaseId) {
+    const mk = monthKey(monthObj);
+    if (role.fteMonthly && role.fteMonthly[mk] != null) return role.fteMonthly[mk];
+    return role.fte[phaseId] || 0;
+  }
+  /** Recompute a phase's stored fte as the average of its months' effective FTE
+      (called after a per-month edit, so the collapsed phase reflects the months). */
+  function recomputePhaseAvg(role, phase) {
+    const months = getMonthsByPhase().find(x => x.phase.id === phase.id)?.months || [];
+    if (!months.length) return;
+    const sum = months.reduce((s, m) => s + effectiveFte(role, m, phase.id), 0);
+    role.fte[phase.id] = Math.round((sum / months.length) * 10) / 10;
+  }
+
   function monthlyFee(role, monthObj, phaseId) {
-    const fte = (role.fte[phaseId] || 0) / 100;
+    const fte = effectiveFte(role, monthObj, phaseId) / 100;
     if (!fte) return 0;
     const rate = rateForYear(role, monthObj.year);
     return fte * rate * state.assumptions.hrsPerMo;
@@ -226,7 +243,7 @@
   /** Rate Lock credit = (unlocked - locked) × hours × FTE, per role per month. Always positive when lock is on. */
   function monthlyLockCredit(role, monthObj, phaseId) {
     if (!state.assumptions.rateLock) return 0;
-    const fte = (role.fte[phaseId] || 0) / 100;
+    const fte = effectiveFte(role, monthObj, phaseId) / 100;
     if (!fte) return 0;
     const diff = unlockedRateForYear(role, monthObj.year) - rateForYear(role, monthObj.year);
     return Math.max(0, diff) * fte * state.assumptions.hrsPerMo;
@@ -315,6 +332,7 @@
     rebalancePhases();
     reconcileRoleFte();
     renderProjectMeta();
+    renderProjFlag();
     renderTimeline();
     renderPhases();
     renderGroups();
@@ -937,6 +955,28 @@
     const now = new Date();
     return (now.getFullYear() - t.endYear) * 12 + (now.getMonth() + 1 - t.endMonth);
   }
+  /** Flag when Revenue Projections has manual overrides on this record that
+      diverge from the calculator's computed fee — prompting a reconcile. */
+  function renderProjFlag() {
+    const el = $('#proj-flag');
+    if (!el) return;
+    const ov = state.monthlyOverrides;
+    if (!ov || !Object.keys(ov).length) { el.hidden = true; el.innerHTML = ''; return; }
+    const n = Object.keys(ov).length;
+    el.hidden = false;
+    el.innerHTML = `<div class="pf-icon">⚖</div>
+      <div class="pf-body">
+        <div class="pf-title">${n} month${n===1?' was':'s were'} manually overridden in Revenue Projections.</div>
+        <div class="pf-detail">The projected billings for this project no longer match the calculator's computed fee. Reconcile the staffing/discount here, or clear the overrides to revert to the computed schedule.</div>
+      </div>
+      <button class="pf-clear" id="pf-clear" type="button">Clear overrides</button>`;
+    $('#pf-clear').addEventListener('click', () => {
+      delete state.monthlyOverrides;
+      renderProjFlag();
+      markDirty();
+    });
+  }
+
   /** Show the intake button on Won/Active; re-flag if fee/schedule drifted since last intake. */
   function updateIntakeButton() {
     const btn = $('#intake-btn');
@@ -1018,6 +1058,20 @@
   }
 
   /* ----- Matrix ----- */
+  let expandedPhases = new Set();
+  /** Flat list of matrix columns: a phase, or (if expanded) its months. */
+  function matrixColumns() {
+    const cols = [];
+    state.phases.forEach(p => {
+      if (expandedPhases.has(p.id)) {
+        const months = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
+        months.forEach(m => cols.push({ type: 'month', phase: p, month: m, key: monthKey(m) }));
+      } else {
+        cols.push({ type: 'phase', phase: p });
+      }
+    });
+    return cols;
+  }
   function renderMatrix() {
     const tbody = $('#matrix-tbody');
     const thead = $('#matrix-thead');
@@ -1029,14 +1083,30 @@
     // Header
     let hdr = `<tr>
       <th class="role-col">Role · Resource</th>`;
+    const cols = matrixColumns();
     state.phases.forEach(p => {
-      const slice = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
-      const range = slice.length ? `${slice[0].label}${slice.length > 1 ? ' – ' + slice[slice.length-1].label : ''}` : '—';
-      const wk = (p.weeks != null) ? `${p.weeks} wk · ` : '';
-      const tgt = (p.targetFee != null) ? `<span class="ph-target" title="Stated fee from the proposal — reference only; staffing drives the live fee">target ${fmtMoneySmall(p.targetFee)}</span>` : '';
-      hdr += `<th>${escapeHtml(p.name)}<span class="sub">${range}</span><span class="months">${wk}${p.length} mo</span>${tgt}</th>`;
+      if (expandedPhases.has(p.id)) {
+        const months = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
+        hdr += `<th class="ph-grouphead" colspan="${months.length}"><span class="ph-toggle" data-toggle="${p.id}" title="Collapse to phase">▾</span> ${escapeHtml(p.name)} <span class="months">${p.length} mo · by month</span></th>`;
+      } else {
+        const slice = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
+        const range = slice.length ? `${slice[0].label}${slice.length > 1 ? ' – ' + slice[slice.length-1].label : ''}` : '—';
+        const wk = (p.weeks != null) ? `${p.weeks} wk · ` : '';
+        const tgt = (p.targetFee != null) ? `<span class="ph-target" title="Stated fee from the proposal — reference only">target ${fmtMoneySmall(p.targetFee)}</span>` : '';
+        const canExpand = p.length > 1 ? `<span class="ph-toggle" data-toggle="${p.id}" title="Expand into months">▸</span>` : '';
+        hdr += `<th>${canExpand} ${escapeHtml(p.name)}<span class="sub">${range}</span><span class="months">${wk}${p.length} mo</span>${tgt}</th>`;
+      }
     });
     hdr += `<th class="fee-col">Role total</th></tr>`;
+    // Second header row with month labels for expanded phases
+    if (cols.some(c => c.type === 'month')) {
+      let sub = `<tr class="month-subhead"><th class="role-col"></th>`;
+      cols.forEach(c => {
+        sub += c.type === 'month' ? `<th class="mcol">${c.month.label}</th>` : `<th></th>`;
+      });
+      sub += `<th></th></tr>`;
+      hdr += sub;
+    }
     thead.innerHTML = hdr;
 
     tbody.innerHTML = '';
@@ -1046,7 +1116,7 @@
       if (!rolesInGroup.length) return;
       const ghdr = document.createElement('tr');
       ghdr.className = 'group-head';
-      ghdr.innerHTML = `<td colspan="${state.phases.length + 2}">${escapeHtml(g.name)}</td>`;
+      ghdr.innerHTML = `<td colspan="${matrixColumns().length + 2}">${escapeHtml(g.name)}</td>`;
       tbody.appendChild(ghdr);
       rolesInGroup.forEach(r => {
         const title = getTitle(r.titleId);
@@ -1061,10 +1131,21 @@
           <div class="role-resource">${escapeHtml(projRole ? projRole + ' · ' : '')}${escapeHtml(r.resource || 'TBD')}${viol ? ' <span class="role-floor-flag">below cost</span>' : ''}</div>
         </td>`;
         state.phases.forEach(p => {
-          const v = r.fte[p.id] || 0;
-          html += `<td class="fte ${v === 0 ? 'zero' : ''}">
-            <input type="number" data-role="${r.id}" data-phase="${p.id}" value="${v}" min="0" max="200" step="5">%
-          </td>`;
+          if (expandedPhases.has(p.id)) {
+            const months = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
+            months.forEach(m => {
+              const mk = monthKey(m);
+              const v = (r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte[p.id] || 0);
+              html += `<td class="fte mcol ${v === 0 ? 'zero' : ''}">
+                <input type="number" data-role="${r.id}" data-month="${mk}" data-phase="${p.id}" value="${v}" min="0" max="200" step="5">%
+              </td>`;
+            });
+          } else {
+            const v = r.fte[p.id] || 0;
+            html += `<td class="fte ${v === 0 ? 'zero' : ''}">
+              <input type="number" data-role="${r.id}" data-phase="${p.id}" value="${v}" min="0" max="200" step="5">%
+            </td>`;
+          }
         });
         const rt = roleTotal(r);
         html += `<td class="fee role-fee ${rt === 0 ? 'zero' : ''}">${fmtMoneySmall(rt)}</td>`;
@@ -1080,16 +1161,38 @@
     $$('#matrix-tbody input[data-role][data-phase]').forEach(i => {
       i.addEventListener('input', e => {
         const role = state.roles.find(r => r.id === e.target.dataset.role);
-        if (role) role.fte[e.target.dataset.phase] = parseFloat(e.target.value) || 0;
+        const val = parseFloat(e.target.value) || 0;
+        const mk = e.target.dataset.month;
+        if (role && mk) {
+          // Per-month edit → store override + recompute the phase average.
+          role.fteMonthly = role.fteMonthly || {};
+          role.fteMonthly[mk] = val;
+          const phase = state.phases.find(p => p.id === e.target.dataset.phase);
+          if (phase) recomputePhaseAvg(role, phase);
+        } else if (role) {
+          // Phase-level edit → set phase value AND clear any month overrides in it
+          // so the phase rate applies uniformly again.
+          role.fte[e.target.dataset.phase] = val;
+          if (role.fteMonthly) {
+            const months = getMonthsByPhase().find(x => x.phase.id === e.target.dataset.phase)?.months || [];
+            months.forEach(m => { delete role.fteMonthly[monthKey(m)]; });
+            if (!Object.keys(role.fteMonthly).length) delete role.fteMonthly;
+          }
+        }
         const td = e.target.closest('td.fte');
-        if (td) td.classList.toggle('zero', !(parseFloat(e.target.value) > 0));
+        if (td) td.classList.toggle('zero', !(val > 0));
         refreshMatrixDerived(e.target.dataset.role);
         renderSummary(); renderMonthly();
         markDirty();
       });
-      // Select-all on focus so you can overtype quickly.
       i.addEventListener('focus', e => e.target.select());
     });
+    // Expand / collapse phase columns
+    $$('#matrix-thead .ph-toggle').forEach(t => t.addEventListener('click', e => {
+      const pid = e.target.dataset.toggle;
+      if (expandedPhases.has(pid)) expandedPhases.delete(pid); else expandedPhases.add(pid);
+      renderMatrix();
+    }));
   }
 
   /** Recompute the editable matrix's derived cells (role totals + all
@@ -1114,26 +1217,35 @@
   }
 
   /** Append the FTE / gross / credit / net / grand-total summary rows. */
+  function colFteSum(col) {
+    if (col.type === 'month') return state.roles.reduce((s, r) => s + effectiveFte(r, col.month, col.phase.id) / 100, 0);
+    return state.roles.reduce((s, r) => s + (r.fte[col.phase.id] || 0) / 100, 0);
+  }
+  function colGross(col) {
+    if (col.type === 'month') return state.roles.reduce((s, r) => s + monthlyFee(r, col.month, col.phase.id), 0);
+    return phaseTotal(col.phase);
+  }
+  function colLockCredit(col) {
+    if (col.type === 'month') return state.roles.reduce((s, r) => s + monthlyLockCredit(r, col.month, col.phase.id), 0);
+    return phaseLockCredit(col.phase);
+  }
   function appendMatrixSubtotals(tbody) {
+    const cols = matrixColumns();
+    const discPct = state.assumptions.discount || 0;
     // FTEs
     const trFte = document.createElement('tr');
     trFte.className = 'subtotal';
     let fteHtml = `<td class="role">Total FTEs</td>`;
-    state.phases.forEach(p => {
-      const fte = state.roles.reduce((s, r) => s + (r.fte[p.id] || 0) / 100, 0);
-      fteHtml += `<td>${fte.toFixed(1)}</td>`;
-    });
+    cols.forEach(c => { fteHtml += `<td>${colFteSum(c).toFixed(1)}</td>`; });
     fteHtml += `<td class="fee">${totalFteMonths().toFixed(1)} fte-mo</td>`;
     trFte.innerHTML = fteHtml;
     tbody.appendChild(trFte);
 
-    // Gross by phase
+    // Gross
     const trGross = document.createElement('tr');
     trGross.className = 'subtotal';
-    let grossHtml = `<td class="role">Phase fee · gross (published)</td>`;
-    state.phases.forEach(p => {
-      grossHtml += `<td>${fmtMoneySmall(phaseTotal(p))}</td>`;
-    });
+    let grossHtml = `<td class="role">${cols.some(c=>c.type==='month') ? 'Month' : 'Phase'} fee · gross (published)</td>`;
+    cols.forEach(c => { grossHtml += `<td>${fmtMoneySmall(colGross(c))}</td>`; });
     grossHtml += `<td class="fee">${fmtMoneySmall(grossTotal())}</td>`;
     trGross.innerHTML = grossHtml;
     tbody.appendChild(trGross);
@@ -1143,41 +1255,29 @@
       const trLock = document.createElement('tr');
       trLock.className = 'subtotal credit';
       let lockHtml = `<td class="role">Less Rate Lock (waive escalation)</td>`;
-      state.phases.forEach(p => {
-        const c = phaseLockCredit(p);
-        lockHtml += `<td>${c > 0.5 ? '−' + fmtMoneySmall(c) : '—'}</td>`;
-      });
+      cols.forEach(c => { const v = colLockCredit(c); lockHtml += `<td>${v > 0.5 ? '−' + fmtMoneySmall(v) : '—'}</td>`; });
       lockHtml += `<td class="fee">−${fmtMoneySmall(lockCredit())}</td>`;
       trLock.innerHTML = lockHtml;
       tbody.appendChild(trLock);
     }
 
-    // Discount per phase
-    const discPct = state.assumptions.discount || 0;
+    // Discount
     if (discPct > 0) {
       const trDisc = document.createElement('tr');
       trDisc.className = 'subtotal credit';
       let discHtml = `<td class="role">Less ${discPct}% client discount</td>`;
-      state.phases.forEach(p => {
-        const dShown = phaseTotal(p) * (discPct / 100);
-        discHtml += `<td>${dShown > 0.5 ? '−' + fmtMoneySmall(dShown) : '—'}</td>`;
-      });
+      cols.forEach(c => { const d = colGross(c) * (discPct / 100); discHtml += `<td>${d > 0.5 ? '−' + fmtMoneySmall(d) : '—'}</td>`; });
       discHtml += `<td class="fee">−${fmtMoneySmall(discountAmt())}</td>`;
       trDisc.innerHTML = discHtml;
       tbody.appendChild(trDisc);
     }
 
-    // Net per phase
+    // Net
     if (state.assumptions.rateLock || discPct > 0) {
       const trNet = document.createElement('tr');
       trNet.className = 'subtotal';
-      let netHtml = `<td class="role">Phase fee · net (after credits)</td>`;
-      state.phases.forEach(p => {
-        const phaseGross = phaseTotal(p);
-        const phaseLock = phaseLockCredit(p);
-        const phaseDisc = phaseGross * (discPct / 100);
-        netHtml += `<td>${fmtMoneySmall(phaseGross - phaseLock - phaseDisc)}</td>`;
-      });
+      let netHtml = `<td class="role">${cols.some(c=>c.type==='month') ? 'Month' : 'Phase'} fee · net (after credits)</td>`;
+      cols.forEach(c => { const g = colGross(c); netHtml += `<td>${fmtMoneySmall(g - colLockCredit(c) - g * (discPct / 100))}</td>`; });
       netHtml += `<td class="fee">${fmtMoneySmall(netTotal())}</td>`;
       trNet.innerHTML = netHtml;
       tbody.appendChild(trNet);
@@ -1193,7 +1293,7 @@
       ? `Total proposed fee · NET (after ${parts.join(' + ')})`
       : `Total proposed fee · published rates`;
     let gHtml = `<td class="role">${label}</td>`;
-    for (let i = 0; i < state.phases.length; i++) gHtml += `<td>&nbsp;</td>`;
+    for (let i = 0; i < matrixColumns().length; i++) gHtml += `<td>&nbsp;</td>`;
     gHtml += `<td class="fee">${fmtMoney(netTotal())}</td>`;
     trGrand.innerHTML = gHtml;
     tbody.appendChild(trGrand);
