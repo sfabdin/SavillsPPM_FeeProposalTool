@@ -956,18 +956,37 @@
     return (now.getFullYear() - t.endYear) * 12 + (now.getMonth() + 1 - t.endMonth);
   }
   /** Flag when Revenue Projections has manual overrides on this record that
-      diverge from the calculator's computed fee — prompting a reconcile. */
+      diverge from the calculator's computed fee — prompting a reconcile.
+      Names the specific months and shows override vs. computed. */
   function renderProjFlag() {
     const el = $('#proj-flag');
     if (!el) return;
     const ov = state.monthlyOverrides;
     if (!ov || !Object.keys(ov).length) { el.hidden = true; el.innerHTML = ''; return; }
-    const n = Object.keys(ov).length;
+    const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    // Computed (pre-override) monthly net, to show the delta per month.
+    const computed = {};
+    try {
+      const series = (window.UFC_Store.monthlySeries(JSON.parse(JSON.stringify(state)), CATALOG) || []);
+      // re-run WITHOUT overrides for the comparison
+      const bare = JSON.parse(JSON.stringify(state)); delete bare.monthlyOverrides;
+      (window.UFC_Store.monthlySeries(bare, CATALOG) || []).forEach(s => { computed[s.year + '-' + s.month] = s.amount; });
+    } catch (e) {}
+    const keys = Object.keys(ov).sort();
+    const chips = keys.map(k => {
+      const [y, m] = k.split('-').map(Number);
+      const oVal = ov[k], cVal = computed[k];
+      const delta = (cVal != null) ? oVal - cVal : null;
+      const dtxt = (delta != null && Math.abs(delta) > 0.5) ? ` (${delta > 0 ? '+' : '−'}${fmtMoneySmall(Math.abs(delta))})` : '';
+      return `<span class="pf-chip">${MN[m-1]} ${y}: <strong>${fmtMoneySmall(oVal)}</strong>${dtxt}</span>`;
+    }).join('');
+    const n = keys.length;
     el.hidden = false;
     el.innerHTML = `<div class="pf-icon">⚖</div>
       <div class="pf-body">
-        <div class="pf-title">${n} month${n===1?' was':'s were'} manually overridden in Revenue Projections.</div>
-        <div class="pf-detail">The projected billings for this project no longer match the calculator's computed fee. Reconcile the staffing/discount here, or clear the overrides to revert to the computed schedule.</div>
+        <div class="pf-title">${n} month${n===1?' was':'s were'} overridden in Revenue Projections — reconcile here.</div>
+        <div class="pf-detail">These months are billed at a manual figure that no longer matches the computed schedule. Adjust staffing (expand the phase to edit by month) or the discount to make the computed fee match, then the override can be cleared.</div>
+        <div class="pf-chips">${chips}</div>
       </div>
       <button class="pf-clear" id="pf-clear" type="button">Clear overrides</button>`;
     $('#pf-clear').addEventListener('click', () => {

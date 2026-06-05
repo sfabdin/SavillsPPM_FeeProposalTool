@@ -1352,6 +1352,9 @@ html, body {
 .proj-flag .pf-detail { font-family: var(--font-body); font-size: 12.5px; line-height: 1.5; color: var(--sav-steel); }
 .proj-flag .pf-clear { flex: none; align-self: center; font-family: var(--font-display); font-weight: 700; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding: 8px 12px; border: 1px solid var(--sav-navy); background: #fff; color: var(--sav-navy); cursor: pointer; }
 .proj-flag .pf-clear:hover { background: var(--sav-navy); color: #fff; }
+.proj-flag .pf-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.proj-flag .pf-chip { font-family: var(--font-body); font-size: 11px; background: #fff; border: 1px solid var(--sav-yellow); padding: 3px 8px; color: var(--sav-navy); }
+.proj-flag .pf-chip strong { font-family: var(--font-display); }
 
 /* ===== Cost-rate floor banner ===== */
 .floor-banner {
