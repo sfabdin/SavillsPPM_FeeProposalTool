@@ -364,6 +364,34 @@
     if (noteOverride) $('#rc-note').innerHTML = noteOverride;
   }
 
+  /** Seed FTE allocations to hit a target fee when the matrix is blank.
+      Loads every billable role to 100% across all phases, measures that net,
+      then scales all allocations by the ratio that lands net == target (at the
+      current discount). Caps at 100%; reports a shortfall if even full load
+      can't reach it. */
+  function seedAllocationsToTarget(target) {
+    const billable = state.roles.filter(r => { const t = getTier(r.titleId, r.tierId); return t && !t.isNoCharge; });
+    if (!billable.length) { renderReconcile('<span class="rc-warn">No billable roles to allocate. Add staff or set rates first.</span>'); return; }
+    state.roles.forEach(r => state.phases.forEach(p => { r.fte[p.id] = 100; }));
+    const gross100 = grossTotal();
+    const lock100 = lockCredit();
+    const d = (state.assumptions.discount || 0) / 100;
+    const net100 = (gross100 - lock100) - gross100 * d;
+    if (net100 <= 0.5) { renderReconcile('<span class="rc-warn">Roles have no billable rate — can\'t solve allocations. Check tiers/rates.</span>'); return; }
+    let k = target / net100, capped = false;
+    if (k > 1) { k = 1; capped = true; }
+    const pct = Math.round(100 * k * 10) / 10;   // one-decimal FTE → lands close to target
+    state.roles.forEach(r => state.phases.forEach(p => { const t = getTier(r.titleId, r.tierId); r.fte[p.id] = (t && t.isNoCharge) ? 0 : pct; }));
+    renderAll();
+    let msg = capped
+      ? `<span class="rc-warn">Loaded all roles at 100% — the most this team can bill is <strong>${fmtMoney(netTotal())}</strong>, under the <strong>${fmtMoney(target)}</strong> target. Add people, extend the term, or raise rates.</span>`
+      : `<strong>Allocations seeded to ${fmtMoney(target)}.</strong> Every role set to <strong>${pct}%</strong> across all phases as a starting point — now redistribute per phase in the matrix to match the real plan.`;
+    const viol = floorViolations().length;
+    if (viol) msg += ` <span class="rc-warn">${viol} role${viol === 1 ? '' : 's'} below cost floor (advisory).</span>`;
+    renderReconcile(msg);
+    markDirty();
+  }
+
   /** Back-solve to the target by adjusting ONLY the client discount — staffing
       allocations and per-role rates are held fixed (they come from the actual
       proposal). net = gross − lockCredit − discount×gross, so for a target net
@@ -386,8 +414,10 @@
     const lock = lockCredit();
     const maxNet = grossNow - lock;            // net with 0% discount — the ceiling
 
+    // No allocations loaded (e.g. an ingested proposal with a fee but a blank
+    // matrix) → SEED allocations to hit the target instead of failing.
     if (grossNow <= 0.5) {
-      renderReconcile('<span class="rc-warn">No billable staffing loaded — set FTE in the matrix first.</span>');
+      seedAllocationsToTarget(target);
       return;
     }
 
@@ -907,7 +937,21 @@
     const now = new Date();
     return (now.getFullYear() - t.endYear) * 12 + (now.getMonth() + 1 - t.endMonth);
   }
+  /** Show the intake button on Won/Active; re-flag if fee/schedule drifted since last intake. */
+  function updateIntakeButton() {
+    const btn = $('#intake-btn');
+    if (!btn || !window.UFC_Intake) return;
+    const eligible = ['won', 'active'].includes(state.project.status);
+    btn.style.display = eligible ? '' : 'none';
+    if (!eligible) return;
+    const sig = window.UFC_Intake.intakeSignature(state, netTotal());
+    const drifted = state.intakeSnapshot && state.intakeSnapshot !== sig;
+    btn.textContent = drifted ? '⚠ Re-submit Intake (changed) →' : 'Salesforce Intake →';
+    btn.classList.toggle('intake-drift', !!drifted);
+  }
+
   function updateStatusRatingHints() {
+    updateIntakeButton();
     const rh = $('#rating-hint');
     if (rh) rh.textContent = ratingGuidanceText(state.project.status);
     const sh = $('#status-hint');
@@ -1492,6 +1536,20 @@
       window.print();
     });
     $('#xlsx-btn').addEventListener('click', exportExcel);
+    $('#intake-btn').addEventListener('click', () => {
+      const leadObj = STORE.resolveLeader(state.project.leadId || state.project.lead);
+      window.UFC_Intake.openIntake(state, {
+        netFee: netTotal(),
+        serviceLines: STORE.projectServiceLines ? STORE.projectServiceLines(state) : [],
+        leadName: leadObj ? leadObj.displayName : (state.project.lead || ''),
+        statusLabel: STORE.STATUS_LABELS[state.project.status] || '',
+        reflag: !!(state.intakeSnapshot && state.intakeSnapshot !== window.UFC_Intake.intakeSignature(state, netTotal())),
+      });
+      // Snapshot the fee+schedule so future drift re-flags the button.
+      state.intakeSnapshot = window.UFC_Intake.intakeSignature(state, netTotal());
+      updateIntakeButton();
+      markDirty();
+    });
 
     // Cover collapse
     $('#cover-toggle').addEventListener('click', () => {

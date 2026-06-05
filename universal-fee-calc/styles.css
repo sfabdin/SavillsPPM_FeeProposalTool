@@ -74,6 +74,8 @@ html, body {
 .btn-primary:hover { background: var(--sav-yellow-press); }
 .btn-secondary { background: var(--sav-navy); color: #fff; }
 .btn-secondary:hover { background: #14152a; }
+.btn.intake-drift { background: var(--sav-red); color: #fff; }
+.btn.intake-drift:hover { background: #a50f14; }
 .btn-ghost { background: transparent; color: var(--sav-navy); border: 2px solid var(--sav-navy); padding: 10px 16px; }
 .btn-ghost:hover { background: var(--sav-navy); color: #fff; }
 
@@ -1239,6 +1241,8 @@ html, body {
   background: #d8f0f3;
   padding: 2px 8px;
 }
+.phase-chip.is-needs { box-shadow: inset 3px 0 0 0 var(--sav-red); }
+.phase-chip .pc-needs { color: var(--sav-red); font-style: italic; }
   color: var(--sav-steel);
   line-height: 1.6;
   border-top: 1px solid var(--hairline-strong);
