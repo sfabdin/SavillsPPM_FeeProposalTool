@@ -321,11 +321,24 @@
       // Flatline distributes the project's net evenly; a service-line slice gets
       // its proportional share of each flat month.
       const flat = months.length ? net / months.length : 0;
-      if (!slFilter) return rows.map(r => ({ year: r.year, month: r.month, amount: flat }));
+      if (!slFilter) return applyOverrides(rows.map(r => ({ year: r.year, month: r.month, amount: flat })), p, slFilter);
       const sliceGross = totalGross || 1;
       return rows.map(r => ({ year: r.year, month: r.month, amount: flat * (r.gross / sliceGross) }));
     }
-    return rows.map(r => ({ year: r.year, month: r.month, amount: r.gross * (1 - discPct) - r.lockC }));
+    let series = rows.map(r => ({ year: r.year, month: r.month, amount: r.gross * (1 - discPct) - r.lockC }));
+    return applyOverrides(series, p, slFilter);
+  }
+
+  /** Manual monthly overrides (set in Revenue Projections) replace the computed
+      amount for that month. Stored as p.monthlyOverrides = { "YYYY-M": number }.
+      Only applied to the whole-project view, not service-line slices. */
+  function applyOverrides(series, p, slFilter) {
+    const ov = p.monthlyOverrides;
+    if (slFilter || !ov) return series;
+    return series.map(s => {
+      const k = s.year + '-' + s.month;
+      return (ov[k] != null && !isNaN(ov[k])) ? { ...s, amount: Number(ov[k]), overridden: true } : s;
+    });
   }
 
   /** Resolve a role's base rate AND its escalation anchor year, matching the
