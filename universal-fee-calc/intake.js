@@ -85,11 +85,12 @@
         + `</tr>`;
     });
     const reflag = opts.reflag ? `<p style="color:#CE181E;font-weight:bold;">NOTE: fee or schedule CHANGED since the last intake — please process as a change order.</p>` : '';
-    return `<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#25273A;">`
+    const FF = "'Gotham','Montserrat',Tahoma,Arial,sans-serif";
+    return `<div style="font-family:${FF};font-size:13px;color:#25273A;">`
       + `<p>PPM Project Intake — <b>${esc(p.name || 'New Project')}</b>${p.client ? ' · ' + esc(p.client) : ''}</p>`
       + `<p style="color:#79828c;">Yellow cells need to be completed/confirmed by the submitter before sending.</p>`
       + reflag
-      + `<table style="border-collapse:collapse;border:1px solid #c9c9c4;width:100%;max-width:760px;">`
+      + `<table style="border-collapse:collapse;border:1px solid #c9c9c4;width:100%;max-width:760px;font-family:${FF};">`
       + `<tr><td style="background:#25273A;color:#fff;font-weight:bold;padding:6px 8px;border:1px solid #c9c9c4;width:32px;">#</td>`
       + `<td style="background:#25273A;color:#fff;font-weight:bold;padding:6px 8px;border:1px solid #c9c9c4;">Inquiry</td>`
       + `<td style="background:#25273A;color:#fff;font-weight:bold;padding:6px 8px;border:1px solid #c9c9c4;">Response</td></tr>`
@@ -155,17 +156,17 @@
       <div style="background:#fff;max-width:840px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 24px 60px rgba(0,0,0,0.3);">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 22px;border-bottom:1px solid #e6e2dc;position:sticky;top:0;background:#fff;">
           <div>
-            <div style="font-family:'Savills Display',Georgia,serif;font-weight:800;font-size:18px;color:#25273A;">Project Intake — ready to send</div>
-            <div style="font-family:Calibri,Arial,sans-serif;font-size:12px;color:#79828c;margin-top:3px;">To: <b>${INTAKE_TO}</b> &nbsp;·&nbsp; Subject: <b>${esc(subject)}</b></div>
+            <div style="font-family:var(--font-display),'Gotham',Arial,sans-serif;font-weight:900;font-size:18px;color:#25273A;">Project Intake — ready to send</div>
+            <div style="font-family:var(--font-body),'Gotham',Arial,sans-serif;font-size:12px;color:#79828c;margin-top:3px;">To: <b>${INTAKE_TO}</b> &nbsp;·&nbsp; Subject: <b>${esc(subject)}</b></div>
           </div>
           <div style="display:flex;gap:8px;">
-            <button id="ufc-intake-copy" style="font-family:'Savills Display',Arial,sans-serif;font-weight:700;font-size:12px;letter-spacing:0.06em;text-transform:uppercase;padding:11px 16px;border:0;background:#25273A;color:#fff;cursor:pointer;">${copied ? '✓ Copied — paste into email' : 'Copy table'}</button>
-            <button id="ufc-intake-mailto" style="font-family:'Savills Display',Arial,sans-serif;font-weight:700;font-size:12px;letter-spacing:0.06em;text-transform:uppercase;padding:11px 16px;border:2px solid #25273A;background:#fff;color:#25273A;cursor:pointer;">Open blank email</button>
+            <button id="ufc-intake-copy" style="font-family:var(--font-display),'Gotham',Arial,sans-serif;font-weight:700;font-size:12px;letter-spacing:0.06em;text-transform:uppercase;padding:11px 16px;border:0;background:#25273A;color:#fff;cursor:pointer;">${copied ? '✓ Copied — paste into email' : 'Copy table'}</button>
+            <button id="ufc-intake-mailto" style="font-family:var(--font-display),'Gotham',Arial,sans-serif;font-weight:700;font-size:12px;letter-spacing:0.06em;text-transform:uppercase;padding:11px 16px;border:2px solid #25273A;background:#fff;color:#25273A;cursor:pointer;">Open blank email</button>
             <button id="ufc-intake-close" style="font-size:20px;border:0;background:transparent;cursor:pointer;color:#79828c;">×</button>
           </div>
         </div>
         <div style="padding:22px;">
-          <div style="font-family:Calibri,Arial,sans-serif;font-size:12px;color:#79828c;margin-bottom:12px;">The table below is selected and ready. Click <b>Copy table</b> (or just press Ctrl/Cmd+C), then <b>Open blank email</b> and paste (Ctrl/Cmd+V) — it pastes as a formatted table. Yellow cells need completing before you send.</div>
+          <div style="font-family:var(--font-body),'Gotham',Arial,sans-serif;font-size:12px;color:#79828c;margin-bottom:12px;">The table below is selected and ready. Click <b>Copy table</b> (or just press Ctrl/Cmd+C), then <b>Open blank email</b> and paste (Ctrl/Cmd+V) — it pastes as a formatted table. Yellow cells need completing before you send.</div>
           ${html}
         </div>
       </div>`;
