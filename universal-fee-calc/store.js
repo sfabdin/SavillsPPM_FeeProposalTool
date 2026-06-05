@@ -90,6 +90,7 @@
     'Life Sciences',
     'Healthcare',
     'Industrial',
+    'General Office Fitout',
     'Public Sector',
     'Education',
     'Hospitality',
