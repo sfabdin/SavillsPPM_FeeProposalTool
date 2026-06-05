@@ -73,6 +73,16 @@
   table.proj td.num { text-align: right; padding: 7px 10px; font-size: 12px; color: var(--sav-navy); font-variant-numeric: tabular-nums; }
   table.proj td.num.zero { color: var(--sav-steel-30); }
   table.proj td.rowtot { position: sticky; right: 0; z-index: 2; background: #f3fbfc; font-weight: 700; color: var(--sav-navy); border-left: 2px solid var(--sav-teal); }
+  table.proj td.editable { background: #fffdf2; cursor: text; outline: none; }
+  table.proj td.editable:focus { background: #fff; box-shadow: inset 0 0 0 2px var(--sav-navy); }
+  table.proj td.overridden { color: var(--sav-red); font-weight: 700; }
+  table.proj td.overridden::after { content: "•"; color: var(--sav-red); margin-left: 3px; }
+  .matrix-scroll.editing { box-shadow: 0 0 0 2px var(--sav-yellow); }
+  select.rtag-edit { font-family: var(--font-display); font-weight: 700; font-size: 11px; border: 0; padding: 2px 4px; margin-right: 6px; color: #fff; cursor: pointer; }
+  select.rtag-edit.r1 { background: #1f8a5b; } select.rtag-edit.r2 { background: #3AA95C; }
+  select.rtag-edit.r3 { background: var(--sav-yellow); color: var(--sav-navy); } select.rtag-edit.r4 { background: var(--sav-orange); }
+  select.rtag-edit.r5, select.rtag-edit.r6, select.rtag-edit.r7 { background: var(--sav-steel); }
+  .btn.on { background: var(--sav-navy); color: var(--sav-yellow); }
   table.proj td.year-sep { border-right: 2px solid var(--hair-strong); }
 
   /* Rating ribbon on project cell */
@@ -123,6 +133,7 @@
     </div>
     <div class="actions">
       <label class="ctl-toggle"><input type="checkbox" id="show-excluded" checked> Show rated 5–7</label>
+      <button class="btn" id="edit-toggle" title="Edit ratings and override monthly billings">✎ Edit</button>
       <a class="btn" href="Fee Generator.html">← Home</a>
       <button class="btn btn-primary" onclick="window.print()">Print / PDF</button>
     </div>
@@ -176,6 +187,7 @@
   }
 
   let showExcluded = true;
+  let editMode = false;
   let ALL = [];                 // prepared rows (built once)
   const QUARTERS = { Q1: [1,2,3], Q2: [4,5,6], Q3: [7,8,9], Q4: [10,11,12] };
 
@@ -189,7 +201,7 @@
       const pj = p.project || {};
       const leaders = [pj.lead, pj.clientRelOwner].map(x => (x || '').trim()).filter(Boolean);
       const serviceLines = STORE.projectServiceLines(p);
-      return { p, pj, rating: STORE.ratingFor(p), map, total,
+      return { p, pj, rating: STORE.ratingFor(p), map, total, ov: p.monthlyOverrides || null,
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim() };
     });
     populateFilters();
@@ -332,13 +344,21 @@
 
       const pj = r.p.project || {};
       html += `<tr class="r${r.rating}${excluded ? ' excluded' : ''}">`;
-      html += `<td class="proj-cell"><span class="rtag r${r.rating}">${r.rating}</span><a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a><div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}<span class="open-link"> · open →</span></div></td>`;
+      const ratingCell = editMode
+        ? `<select class="rtag-edit r${r.rating}" data-pid="${r.p.id}" title="Projection rating">${STORE.RATINGS.map(rt => `<option value="${rt.n}" ${rt.n===r.rating?'selected':''}>${rt.n}</option>`).join('')}</select>`
+        : `<span class="rtag r${r.rating}">${r.rating}</span>`;
+      html += `<td class="proj-cell">${ratingCell}<a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a><div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}<span class="open-link"> · open →</span></div></td>`;
       let rvt = 0;
       cols.forEach((c, i) => {
         const v = r.map[c.key] || 0;
         rvt += v;
         const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
-        html += `<td class="num${v ? '' : ' zero'}${sep}">${v ? fmtK(v) : '·'}</td>`;
+        const isOv = r.ov && r.ov[c.key] != null;
+        if (editMode) {
+          html += `<td class="num editable${isOv ? ' overridden' : ''}${sep}" contenteditable="true" data-pid="${r.p.id}" data-key="${c.key}">${v ? Math.round(v) : ''}</td>`;
+        } else {
+          html += `<td class="num${v ? '' : ' zero'}${isOv ? ' overridden' : ''}${sep}">${v ? fmtK(v) : '·'}</td>`;
+        }
         if (!excluded) { colTot[c.key] += v; grandTot += v; }
       });
       html += `<td class="rowtot num">${fmtK(rvt)}</td>`;
@@ -360,6 +380,7 @@
 
     html += '</tbody>';
     $('#proj-table').innerHTML = html;
+    if (editMode) wireEditing();
 
     // ---- KPIs (over filtered rows + visible columns) ----
     const visTotal = (r) => cols.reduce((s, c) => s + (r.map[c.key] || 0), 0);
@@ -382,6 +403,40 @@
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 
+  /** Commit a manual monthly override (or rating) and persist to the project. */
+  function wireEditing() {
+    document.querySelectorAll('#proj-table td.editable').forEach(td => {
+      td.addEventListener('blur', () => {
+        const pid = td.dataset.pid, key = td.dataset.key;
+        const rec = STORE.getProject(pid); if (!rec) return;
+        rec.monthlyOverrides = rec.monthlyOverrides || {};
+        const raw = td.textContent.replace(/[$,\s]/g, '').trim();
+        if (raw === '') { delete rec.monthlyOverrides[key]; }   // empty = revert to computed
+        else { const n = parseFloat(raw); if (!isNaN(n)) rec.monthlyOverrides[key] = n; }
+        if (!Object.keys(rec.monthlyOverrides).length) delete rec.monthlyOverrides;
+        STORE.saveProject(rec);
+        prepData(); build();
+      });
+      td.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); td.blur(); } });
+    });
+    document.querySelectorAll('#proj-table select.rtag-edit').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const rec = STORE.getProject(sel.dataset.pid); if (!rec) return;
+        rec.project = rec.project || {};
+        rec.project.rating = parseInt(sel.value) || null;
+        STORE.saveProject(rec);
+        prepData(); build();
+      });
+    });
+  }
+
+  $('#edit-toggle').addEventListener('click', () => {
+    editMode = !editMode;
+    $('#edit-toggle').classList.toggle('on', editMode);
+    $('#edit-toggle').textContent = editMode ? '✓ Done editing' : '✎ Edit';
+    document.getElementById('matrix-scroll').classList.toggle('editing', editMode);
+    build();
+  });
   $('#show-excluded').addEventListener('change', e => { showExcluded = e.target.checked; build(); });
   ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => {
     $('#' + id).addEventListener('change', () => { $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.'; build(); });
