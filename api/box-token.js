@@ -25,7 +25,33 @@ export default async function handler(req, res) {
     return;
   }
   try {
-    const { code, code_verifier, redirect_uri } = req.body || {};
+    const { code, code_verifier, redirect_uri, grant_type, refresh_token } = req.body || {};
+
+    // --- Refresh grant: swap a refresh token for a fresh access token ---
+    if (grant_type === 'refresh_token') {
+      if (!refresh_token) { res.status(400).json({ error: 'missing refresh_token' }); return; }
+      const rbody = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token,
+        client_id: process.env.BOX_CLIENT_ID,
+        client_secret: process.env.BOX_CLIENT_SECRET,
+      });
+      const rRes = await fetch('https://api.box.com/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: rbody,
+      });
+      const rData = await rRes.json();
+      if (!rRes.ok) { res.status(rRes.status).json(rData); return; }
+      res.status(200).json({
+        access_token: rData.access_token,
+        expires_in: rData.expires_in,
+        refresh_token: rData.refresh_token,
+      });
+      return;
+    }
+
+    // --- Authorization-code grant (initial sign-in) ---
     if (!code) { res.status(400).json({ error: 'missing code' }); return; }
 
     const body = new URLSearchParams({
