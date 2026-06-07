@@ -48,8 +48,8 @@
     redirectUri: window.location.origin + '/oauth-callback.html',
     tokenExchangeUrl: '/api/box-token',   // your Vercel serverless function (holds the secret)
     dataFileId: '2265137344562',          // projects.json in Box
-    ratesFileId: '2269177726984',   // rates.json in Box (the confidential rate grid) — upload rates.json, paste its file id here
-    folderId: '387228486391',          // used only to (re)create the file if missing
+    ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
+    folderId: '387228486391',             // used only to (re)create the file if missing
     pushDebounceMs: 1500,
 
     /* TEST MODE — paste a Box Developer Token here to validate read/write of

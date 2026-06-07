@@ -235,10 +235,14 @@
     role.fte[phase.id] = Math.round((sum / months.length) * 10) / 10;
   }
 
+  /** Published (list) monthly fee — ALWAYS at the full escalated rate, never the
+      locked rate. Rate Lock is NOT baked in here; it surfaces once as the Rate
+      Lock credit line (gross − credit = what the client actually pays). Using
+      the locked rate here AND subtracting the credit would double-remove it. */
   function monthlyFee(role, monthObj, phaseId) {
     const fte = effectiveFte(role, monthObj, phaseId) / 100;
     if (!fte) return 0;
-    const rate = rateForYear(role, monthObj.year);
+    const rate = unlockedRateForYear(role, monthObj.year);
     return fte * rate * state.assumptions.hrsPerMo;
   }
 
@@ -1202,9 +1206,14 @@
         const viol = roleFloorViolation(r);
         if (viol) tr.className = 'row-violation';
         const projRole = (r.projectRole || '').trim();
+        const staffName = title?.name || '—';
+        const headline = projRole || staffName;                 // bold top = the project role you typed
+        const subBits = [];
+        if (projRole) subBits.push(staffName);                  // staff title moves to the line below
+        subBits.push(r.resource || 'TBD');
         let html = `<td class="role">
-          <div class="role-name">${escapeHtml(title?.name || '—')}<span class="role-tier">${escapeHtml(tier?.label || '')}</span></div>
-          <div class="role-resource">${escapeHtml(projRole ? projRole + ' · ' : '')}${escapeHtml(r.resource || 'TBD')}${viol ? ' <span class="role-floor-flag">below cost</span>' : ''}</div>
+          <div class="role-name">${escapeHtml(headline)}<span class="role-tier">${escapeHtml(tier?.label || '')}</span></div>
+          <div class="role-resource">${escapeHtml(subBits.join(' · '))}${viol ? ' <span class="role-floor-flag">below cost</span>' : ''}</div>
         </td>`;
         state.phases.forEach(p => {
           if (expandedPhases.has(p.id)) {

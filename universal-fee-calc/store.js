@@ -244,9 +244,8 @@
         if (!fte) return phSum;
         const tierRate = r.__rate ?? 0;  // expected to be set externally
         return phSum + slice.reduce((s, m) => {
-          const rate = p.assumptions?.rateLock
-            ? tierRate * Math.pow(1 + esc, startYear - baseYear)
-            : tierRate * Math.pow(1 + esc, m.year - baseYear);
+          // Published (unlocked) rate. Rate Lock is shown as a credit, never baked into gross.
+          const rate = tierRate * Math.pow(1 + esc, m.year - baseYear);
           return s + fte * rate * hrs;
         }, 0);
       }, 0);
@@ -300,8 +299,9 @@
         slice.forEach(mObj => {
           const unlocked = tierRate * Math.pow(1 + esc, mObj.year - baseYear);
           const locked   = tierRate * Math.pow(1 + esc, startYear - baseYear);
-          const rate = lockOn ? locked : unlocked;
-          gross += fte * rate * hrs;
+          // Gross at the PUBLISHED (unlocked) rate; Rate Lock surfaces once as lockCredit.
+          // Using the locked rate here AND subtracting the credit would double-remove it.
+          gross += fte * unlocked * hrs;
           if (lockOn) lockCredit += Math.max(0, (unlocked - locked) * fte * hrs);
         });
       });
@@ -348,8 +348,8 @@
         if (!base) return;
         const unlocked = base * Math.pow(1 + esc, m.year - anchorYear);
         const locked = base * Math.pow(1 + esc, startYear - anchorYear);
-        const rate = lockOn ? locked : unlocked;
-        gross += fte * rate * hrs;
+        // Published (unlocked) gross; Rate Lock surfaces once as lockC below.
+        gross += fte * unlocked * hrs;
         if (lockOn) lockC += Math.max(0, (unlocked - locked) * fte * hrs);
       });
       totalGross += gross; totalLock += lockC;
