@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Vercel
+.vercel/
+
+# Confidential — the rate grid lives in Box, never in the repo
+rates.json
+
+# Confidential source material
+research/
+
+# OS / editor cruft
+.DS_Store
+*.log
+
+# Working backups / scratch
+_changed*/
+_export_github/
+screenshots/
+uploads/

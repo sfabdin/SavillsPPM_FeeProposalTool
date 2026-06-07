@@ -83,6 +83,13 @@
   select.rtag-edit.r3 { background: var(--sav-yellow); color: var(--sav-navy); } select.rtag-edit.r4 { background: var(--sav-orange); }
   select.rtag-edit.r5, select.rtag-edit.r6, select.rtag-edit.r7 { background: var(--sav-steel); }
   .btn.on { background: var(--sav-navy); color: var(--sav-yellow); }
+  .flash-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: #fff; border: 1px solid var(--hair-strong); padding: 12px 16px; margin-bottom: 16px; }
+  .flash-bar .fb-left, .flash-bar .fb-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .flash-bar .fb-title { font-family: var(--font-display); font-weight: 900; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sav-navy); }
+  .flash-bar .fb-fld { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); display: inline-flex; align-items: center; gap: 6px; }
+  .flash-bar select { font-family: var(--font-display); font-weight: 700; font-size: 12px; border: 1px solid var(--hair-strong); background: var(--sav-cream); color: var(--sav-navy); padding: 5px 8px; }
+  .snap-chip { font-family: var(--font-body); font-size: 11px; background: var(--sav-navy); color: #fff; padding: 3px 8px; margin-right: 4px; }
+  .snap-none { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); font-style: italic; }
   table.proj td.year-sep { border-right: 2px solid var(--hair-strong); }
 
   /* Rating ribbon on project cell */
@@ -157,6 +164,27 @@
     <div class="legend" id="legend"></div>
   </div>
 
+  <!-- Flash report -->
+  <div class="flash-bar" id="flash-bar">
+    <div class="fb-left">
+      <span class="fb-title">Monthly Flash</span>
+      <label class="fb-fld">Period
+        <select id="flash-month"></select>
+        <select id="flash-year"></select>
+      </label>
+      <span class="fb-snaps" id="flash-snaps"></span>
+    </div>
+    <div class="fb-right">
+      <select id="flash-label">
+        <option value="#1 FLASH">#1 FLASH</option>
+        <option value="#2 FINAL">#2 FINAL</option>
+        <option value="#3 EOM">#3 EOM</option>
+      </select>
+      <button class="btn" id="flash-capture">Capture snapshot</button>
+      <button class="btn btn-primary" id="flash-export">Export Flash (Excel)</button>
+    </div>
+  </div>
+
   <div class="matrix-scroll" id="matrix-scroll">
     <div class="empty" id="empty" hidden>No projects yet. Build one in the calculator or ingest a proposal.</div>
     <table class="proj" id="proj-table"></table>
@@ -167,10 +195,12 @@
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
 <script>
 (function () {
   const STORE = window.UFC_Store;
@@ -430,6 +460,115 @@
     });
   }
 
+  /* ---------- Flash report: snapshots + Excel export ---------- */
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function initFlash() {
+    const now = new Date();
+    const ysel = $('#flash-year'), msel = $('#flash-month');
+    const yNow = now.getFullYear();
+    for (let y = yNow - 2; y <= yNow + 4; y++) ysel.insertAdjacentHTML('beforeend', `<option value="${y}">${y}</option>`);
+    MONTH_NAMES.forEach((m, i) => msel.insertAdjacentHTML('beforeend', `<option value="${i+1}">${m}</option>`));
+    // default to the prior month (flash is usually "for work performed last month")
+    const prev = new Date(yNow, now.getMonth() - 1, 1);
+    ysel.value = prev.getFullYear(); msel.value = prev.getMonth() + 1;
+    ysel.addEventListener('change', renderFlashSnaps);
+    msel.addEventListener('change', renderFlashSnaps);
+    $('#flash-capture').addEventListener('click', captureFlash);
+    $('#flash-export').addEventListener('click', exportFlash);
+    renderFlashSnaps();
+  }
+  function flashPeriod() { return { year: +$('#flash-year').value, month: +$('#flash-month').value }; }
+  function monthRevenueFor(p, year, month) {
+    const series = STORE.monthlySeries(p, CATALOG);
+    const hit = series.find(s => s.year === year && s.month === month);
+    return hit ? hit.amount : 0;
+  }
+  function renderFlashSnaps() {
+    const { year, month } = flashPeriod();
+    const snaps = STORE.getSnapshots(year, month);
+    const taken = STORE.FLASH_LABELS.filter(l => snaps[l]);
+    $('#flash-snaps').innerHTML = taken.length
+      ? taken.map(l => { const d = new Date(snaps[l].asOf); return `<span class="snap-chip">${l} · ${d.toLocaleDateString()}</span>`; }).join('')
+      : '<span class="snap-none">no snapshots captured yet</span>';
+  }
+  function captureFlash() {
+    const { year, month } = flashPeriod();
+    const label = $('#flash-label').value;
+    const projects = STORE.visibleProjects(STORE.listProjects());
+    STORE.captureSnapshot(year, month, label, projects, (p) => {
+      const pj = p.project || {};
+      return {
+        projId: pj.projectId365 || pj.salesforceId || '',
+        name: pj.name || 'Untitled',
+        client: pj.client || '',
+        rating: STORE.ratingFor(p),
+        amount: monthRevenueFor(p, year, month),
+      };
+    });
+    renderFlashSnaps();
+    alert(`Captured "${label}" snapshot for ${MONTH_NAMES[month-1]} ${year}.`);
+  }
+  async function exportFlash() {
+    if (typeof ExcelJS === 'undefined') { alert('Excel library not loaded.'); return; }
+    const { year, month } = flashPeriod();
+    const snaps = STORE.getSnapshots(year, month);
+    const labels = STORE.FLASH_LABELS;
+    const projects = STORE.visibleProjects(STORE.listProjects());
+    // Union of projects across live + all snapshots
+    const live = {};
+    projects.forEach(p => { const pj = p.project || {}; live[p.id] = { projId: pj.projectId365 || '', name: pj.name || 'Untitled', client: pj.client || '', rating: STORE.ratingFor(p), amount: monthRevenueFor(p, year, month) }; });
+    const ids = new Set(Object.keys(live));
+    labels.forEach(l => { if (snaps[l]) Object.keys(snaps[l].rows).forEach(id => ids.add(id)); });
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(`${MONTH_NAMES[month-1]} ${year} Flash`);
+    const NAVY = 'FF25273A', YEL = 'FFFFDF00', RED = 'FFCE181E', GRN = 'FF1F8A5B';
+    // Title
+    ws.mergeCells('A1:H1');
+    ws.getCell('A1').value = `Macro / Savills PPM — Monthly Flash · ${MONTH_NAMES[month-1]} ${year} (Work Performed)`;
+    ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
+    ws.getCell('A2').value = `Exported ${new Date().toLocaleString()}`;
+    ws.getCell('A2').font = { italic: true, size: 10, color: { argb: 'FF79828C' } };
+
+    const header = ['Project ID', 'Project Name', 'Client', 'Rating', ...labels, 'Variance (latest − #1)'];
+    const hr = ws.addRow([]); // spacer
+    const head = ws.addRow(header);
+    head.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; c.alignment = { horizontal: 'center' }; });
+    head.getCell(1).alignment = head.getCell(2).alignment = head.getCell(3).alignment = { horizontal: 'left' };
+
+    const fmt = '"$"#,##0';
+    let totals = { live: 0 }; labels.forEach(l => totals[l] = 0);
+    [...ids].map(id => {
+      const base = live[id] || (function(){ for (const l of labels) if (snaps[l] && snaps[l].rows[id]) return snaps[l].rows[id]; return {}; })();
+      const cells = [base.projId || '', base.name || '', base.client || '', base.rating || ''];
+      const vals = labels.map(l => (snaps[l] && snaps[l].rows[id]) ? snaps[l].rows[id].amount : (l === labels[0] ? null : null));
+      // If no snapshot for a label, show the LIVE amount only in the last (latest) col context
+      return { id, cells, vals, liveAmt: live[id] ? live[id].amount : 0, sort: base.rating || 9 };
+    }).sort((a,b)=> a.sort - b.sort).forEach(rowObj => {
+      // latest known = last non-null snapshot, else live
+      let latest = null; for (let i = labels.length - 1; i >= 0; i--) if (rowObj.vals[i] != null) { latest = rowObj.vals[i]; break; }
+      if (latest == null) latest = rowObj.liveAmt;
+      const first = rowObj.vals[0] != null ? rowObj.vals[0] : null;
+      const variance = (first != null) ? (latest - first) : null;
+      const row = ws.addRow([...rowObj.cells, ...rowObj.vals.map(v => v == null ? '' : v), variance == null ? '' : variance]);
+      labels.forEach((l, i) => { const c = row.getCell(5 + i); c.numFmt = fmt; if (snaps[l] && snaps[l].rows[rowObj.id]) totals[l] += rowObj.vals[i] || 0; });
+      const vc = row.getCell(5 + labels.length); vc.numFmt = fmt;
+      if (variance != null && Math.abs(variance) > 0.5) vc.font = { bold: true, color: { argb: variance < 0 ? RED : GRN } };
+    });
+    // Totals row
+    const tot = ws.addRow(['', 'TOTAL', '', '', ...labels.map(l => totals[l]), '']);
+    tot.eachCell(c => { c.font = { bold: true, color: { argb: NAVY } }; });
+    labels.forEach((l, i) => { tot.getCell(5 + i).numFmt = fmt; tot.getCell(5 + i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } }; });
+    ws.columns.forEach((c, i) => { c.width = i === 1 ? 40 : (i === 2 ? 24 : 16); });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `Savills PPM Flash ${year}-${String(month).padStart(2,'0')}.xlsx`;
+    a.click();
+  }
+
   $('#edit-toggle').addEventListener('click', () => {
     editMode = !editMode;
     $('#edit-toggle').classList.toggle('on', editMode);
@@ -446,7 +585,7 @@
     $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.';
     build();
   });
-  function boot() { prepData(); build(); }
+  function boot() { prepData(); build(); initFlash(); }
   if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
 })();
 </script>

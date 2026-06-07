@@ -34,6 +34,20 @@
     </div>
   </header>
 
+  <!-- ========== Booked → Salesforce intake callout ========== -->
+  <div class="intake-callout" id="intake-callout" hidden>
+    <div class="ic-mark" id="ic-mark">⚑</div>
+    <div class="ic-body">
+      <div class="ic-title" id="ic-title">This project is booked — submit the Salesforce intake.</div>
+      <div class="ic-detail" id="ic-detail"></div>
+      <label class="ic-confirm" for="pm-intake-sent">
+        <input type="checkbox" id="pm-intake-sent">
+        <span class="ic-check"></span>
+        <span class="ic-confirm-text">I’ve sent the intake email</span>
+      </label>
+    </div>
+  </div>
+
   <!-- ========== Cover / Setup ========== -->
   <section class="cover-pane" id="cover-pane">
     <header class="cover-head">
@@ -105,6 +119,13 @@
           <div class="field">
             <label for="pm-location">Location</label>
             <input type="text" id="pm-location" placeholder="e.g. New York, NY">
+          </div>
+        </div>
+        <div class="field-grid" id="sf-id-row" style="grid-template-columns: 1fr; margin-top: 18px; max-width: 600px;" hidden>
+          <div class="field">
+            <label for="pm-sfid">Salesforce ID</label>
+            <input type="text" id="pm-sfid" placeholder="Paste the Salesforce opportunity ID">
+            <span class="hint">Appears once the project is booked. Bridges this record to Salesforce → Clockify for reporting. Not required to save.</span>
           </div>
         </div>
       </div>
@@ -374,6 +395,7 @@
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
 <script src="universal-fee-calc/intake.js"></script>
 <script src="universal-fee-calc/app.js"></script>
 <script src="universal-fee-calc/export-excel.js"></script>
