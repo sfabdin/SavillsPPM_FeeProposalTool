@@ -215,5 +215,7 @@
       $(s).addEventListener('input', renderComp));
   }
 
-  document.addEventListener('DOMContentLoaded', boot);
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
+  });
 })();

@@ -41,6 +41,8 @@
       signedContractDate: '',
       clientContact: '',
       clientRelOwner: '',
+      salesforceId: '',   // pasted in once Booked — bridges to Salesforce → Clockify reporting
+      intakeSent: false,  // user-confirmed the intake email actually went out (clicking ≠ sent)
     },
     timeline: {
       startMonth: 1,   // 1..12
@@ -518,6 +520,7 @@
 
     $('#pm-firstProposal').value = f.firstProposalDate || '';
     $('#pm-signed').value = f.signedContractDate || '';
+    const sfidEl = $('#pm-sfid'); if (sfidEl) sfidEl.value = f.salesforceId || '';
     $('#pm-clientContact').value = f.clientContact || '';
     const relSel = $('#pm-clientRel');
     if (relSel && relSel.tagName === 'SELECT') {
@@ -1028,8 +1031,43 @@
     btn.classList.toggle('intake-drift', !!drifted);
   }
 
+  /** Booked-state callout: drives the intake action, owns SF ID visibility + "sent" confirmation. */
+  function updateIntakeCallout() {
+    const callout = $('#intake-callout');
+    const sfRow = $('#sf-id-row');
+    const eligible = ['won', 'active'].includes(state.project.status);
+    if (sfRow) sfRow.hidden = !eligible;
+    if (!callout) return;
+    callout.hidden = !eligible;
+    if (!eligible) return;
+
+    const sent = !!state.project.intakeSent;
+    const sig = window.UFC_Intake ? window.UFC_Intake.intakeSignature(state, netTotal()) : '';
+    const drifted = !!(state.intakeSnapshot && sig && state.intakeSnapshot !== sig);
+    const cb = $('#pm-intake-sent'); if (cb) cb.checked = sent;
+    const mark = $('#ic-mark'), title = $('#ic-title'), detail = $('#ic-detail');
+
+    if (sent && !drifted) {
+      callout.classList.add('confirmed');
+      if (mark) mark.textContent = '✓';
+      if (title) title.textContent = 'Intake submitted for this booked project.';
+      if (detail) detail.innerHTML = 'Logged as sent. Change the fee or schedule and you’ll be prompted to re-submit. Make sure the <strong>Salesforce ID</strong> below is filled in so reporting can link this project to Clockify.';
+    } else {
+      callout.classList.remove('confirmed');
+      if (mark) mark.textContent = '⚑';
+      if (drifted && sent) {
+        if (title) title.textContent = 'Fee or schedule changed — re-submit the Salesforce intake.';
+        if (detail) detail.innerHTML = 'Something changed since the last intake. Press <strong>⚠ Re-submit Intake →</strong> in the top bar, re-send the email, then re-confirm below — or process it as a change order.';
+      } else {
+        if (title) title.textContent = 'This project is booked — submit the Salesforce intake.';
+        if (detail) detail.innerHTML = 'Press <strong>Salesforce Intake →</strong> in the top bar to generate the intake email, send it from your mailbox, then confirm below. Paste the <strong>Salesforce ID</strong> into the project record once the opportunity exists.';
+      }
+    }
+  }
+
   function updateStatusRatingHints() {
     updateIntakeButton();
+    updateIntakeCallout();
     const rh = $('#rating-hint');
     if (rh) rh.textContent = ratingGuidanceText(state.project.status);
     const sh = $('#status-hint');
@@ -1630,6 +1668,10 @@
     if (ratingSelEl) ratingSelEl.addEventListener('change', e => { state.project.rating = parseInt(e.target.value) || null; updateStatusRatingHints(); markDirty(); });
     $('#pm-firstProposal').addEventListener('input', e => { state.project.firstProposalDate = e.target.value; markDirty(); });
     $('#pm-signed').addEventListener('input', e => { state.project.signedContractDate = e.target.value; markDirty(); });
+    const sfidInput = $('#pm-sfid');
+    if (sfidInput) sfidInput.addEventListener('input', e => { state.project.salesforceId = e.target.value; markDirty(); });
+    const intakeSentInput = $('#pm-intake-sent');
+    if (intakeSentInput) intakeSentInput.addEventListener('change', e => { state.project.intakeSent = e.target.checked; updateIntakeCallout(); markDirty(); });
     $('#pm-clientContact').addEventListener('input', e => { state.project.clientContact = e.target.value; markDirty(); });
     $('#pm-clientRel').addEventListener('change', e => {
       const l = STORE.leaderById(e.target.value);
@@ -1676,16 +1718,20 @@
     $('#xlsx-btn').addEventListener('click', exportExcel);
     $('#intake-btn').addEventListener('click', () => {
       const leadObj = STORE.resolveLeader(state.project.leadId || state.project.lead);
+      const wasReflag = !!(state.intakeSnapshot && state.intakeSnapshot !== window.UFC_Intake.intakeSignature(state, netTotal()));
       window.UFC_Intake.openIntake(state, {
         netFee: netTotal(),
         serviceLines: STORE.projectServiceLines ? STORE.projectServiceLines(state) : [],
         leadName: leadObj ? leadObj.displayName : (state.project.lead || ''),
         statusLabel: STORE.STATUS_LABELS[state.project.status] || '',
-        reflag: !!(state.intakeSnapshot && state.intakeSnapshot !== window.UFC_Intake.intakeSignature(state, netTotal())),
+        reflag: wasReflag,
       });
       // Snapshot the fee+schedule so future drift re-flags the button.
       state.intakeSnapshot = window.UFC_Intake.intakeSignature(state, netTotal());
+      // A re-submit (drift) demands a fresh "sent" confirmation — clicking ≠ sending.
+      if (wasReflag) state.project.intakeSent = false;
       updateIntakeButton();
+      updateIntakeCallout();
       markDirty();
     });
 

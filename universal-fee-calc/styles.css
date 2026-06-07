@@ -1358,6 +1358,56 @@ html, body {
 .proj-flag .pf-chip { font-family: var(--font-body); font-size: 11px; background: #fff; border: 1px solid var(--sav-yellow); padding: 3px 8px; color: var(--sav-navy); }
 .proj-flag .pf-chip strong { font-family: var(--font-display); }
 
+/* ===== Booked → Salesforce intake callout ===== */
+.intake-callout {
+  display: flex; align-items: flex-start; gap: 16px;
+  margin: 0 0 28px;
+  padding: 20px 26px;
+  background: var(--sav-red);
+  color: #fff;
+  border-left: 6px solid var(--sav-red-press);
+}
+.intake-callout[hidden] { display: none; }
+.intake-callout .ic-mark { font-size: 26px; line-height: 1; flex: none; }
+.intake-callout .ic-body { flex: 1; }
+.intake-callout .ic-title {
+  font-family: var(--font-display); font-weight: 900; font-size: 17px;
+  letter-spacing: -0.005em; margin-bottom: 5px;
+}
+.intake-callout .ic-detail {
+  font-family: var(--font-body); font-size: 13.5px; line-height: 1.55;
+  color: rgba(255,255,255,0.92); max-width: 780px;
+}
+.intake-callout .ic-detail strong { font-family: var(--font-display); color: #fff; }
+.intake-callout .ic-confirm {
+  display: inline-flex; align-items: center; gap: 10px;
+  margin-top: 14px; cursor: pointer; user-select: none;
+}
+.intake-callout .ic-confirm input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.intake-callout .ic-check {
+  width: 20px; height: 20px; flex: none;
+  border: 2px solid #fff; background: transparent; position: relative;
+}
+.intake-callout .ic-confirm input:checked + .ic-check::after {
+  content: ''; position: absolute; left: 5px; top: 1px;
+  width: 6px; height: 11px; border: solid #fff; border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.intake-callout .ic-confirm-text {
+  font-family: var(--font-display); font-weight: 700; font-size: 12px;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+.intake-callout .ic-confirm:hover .ic-check { border-color: var(--sav-yellow); }
+/* Confirmed (sent + no drift) — calm down to navy with a teal accent */
+.intake-callout.confirmed {
+  background: var(--sav-navy); border-left-color: var(--sav-teal);
+}
+.intake-callout.confirmed .ic-check { border-color: var(--sav-teal); }
+.intake-callout.confirmed .ic-confirm input:checked + .ic-check { background: var(--sav-teal); }
+.intake-callout.confirmed .ic-confirm input:checked + .ic-check::after { border-color: var(--sav-navy); }
+.intake-callout.confirmed .ic-confirm:hover .ic-check { border-color: var(--sav-yellow); }
+
+
 /* ===== Cost-rate floor banner ===== */
 .floor-banner {
   display: flex;
