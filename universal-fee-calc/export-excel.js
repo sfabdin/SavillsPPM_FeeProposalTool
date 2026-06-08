@@ -520,21 +520,22 @@ window.UFC_buildAndDownloadExcel = async function () {
   s2.getRow(netRow).height = 26;
 
   /* ============================================================
-     SHEET 3 · Monthly Detail (role × month, LIVE formulas)
-     Each month cell = FTE% × adjusted rate × escalation factor × hours.
-     FTE references the Phase Matrix; rate references Setup & Summary;
-     escalation references the per-month factor row. Fully auditable.
+     SHEET 3 · Monthly Detail — TWO stacked sections:
+       SECTION A (top)    = ALLOCATION %  · editable per-month inputs
+       SECTION B (bottom) = FEE $         · formulas that read Section A
+     Edit any % in Section A and the $ below recomputes. Both grids share
+     the same month columns so references line up cleanly.
      ============================================================ */
   const s3 = wb.addWorksheet('Monthly Detail', {
     pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
-    views: [{ showGridLines: false, state: 'frozen', xSplit: 4, ySplit: 7 }],
+    views: [{ showGridLines: false, state: 'frozen', xSplit: 4, ySplit: 6 }],
   });
 
   // Flatten months in phase order; remember each month's phase + year.
   const monthCols = [];
   byPhase.forEach(bucket => bucket.months.forEach(m => monthCols.push({ m, phaseId: bucket.phase.id })));
   const nMonths = monthCols.length;
-  const mCol = (i) => colLetter(5 + i);          // month i → column letter
+  const mCol = (i) => colLetter(5 + i);          // month i → column letter (E, F, …)
   const totCol = colLetter(5 + nMonths);          // role-total column
 
   s3.columns = [
@@ -545,61 +546,153 @@ window.UFC_buildAndDownloadExcel = async function () {
 
   // Title
   s3.mergeCells(`A1:${totCol}1`);
-  s3.getCell('A1').value = 'Monthly Detail · fee by role by month';
+  s3.getCell('A1').value = 'Monthly Detail · allocation % (top) drives fee $ (bottom)';
   s3.getCell('A1').font = { name: 'Calibri', bold: true, size: 18, color: { argb: NAVY } };
   s3.getRow(1).height = 28;
   s3.mergeCells(`A2:${totCol}2`);
-  s3.getCell('A2').value = 'Each cell = FTE% × adjusted rate × escalation factor × hours/month. Click any cell to read the formula.';
+  s3.getCell('A2').value = 'Edit any allocation % in the top section — the matching $ cell below recalculates (= alloc% × rate × escalation × hours).';
   s3.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
 
-  // Row 4 — phase bands across the month columns
-  {
+  // Helper: phase bands across the month columns on a given row.
+  const phaseBands = (rowNum) => {
     let ci = 0;
     byPhase.forEach(bucket => {
       const len = bucket.months.length;
       if (!len) return;
-      s3.mergeCells(`${mCol(ci)}4:${mCol(ci + len - 1)}4`);
-      const c = s3.getCell(`${mCol(ci)}4`);
+      s3.mergeCells(`${mCol(ci)}${rowNum}:${mCol(ci + len - 1)}${rowNum}`);
+      const c = s3.getCell(`${mCol(ci)}${rowNum}`);
       c.value = bucket.phase.name;
       c.font = { name: 'Calibri', bold: true, size: 10, color: { argb: NAVY } };
       c.alignment = { horizontal: 'center' };
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YELLOW } };
       ci += len;
     });
-  }
+  };
+  const sectionBanner = (rowNum, text, sub) => {
+    s3.mergeCells(`A${rowNum}:${totCol}${rowNum}`);
+    const c = s3.getCell(`A${rowNum}`);
+    c.value = { richText: [
+      { text: text, font: { name: 'Calibri', bold: true, size: 12, color: { argb: WHITE } } },
+      ...(sub ? [{ text: '   ' + sub, font: { name: 'Calibri', size: 10, italic: true, color: { argb: 'FFE9D9CF' } } }] : []),
+    ] };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+    c.alignment = { horizontal: 'left', vertical: 'middle' };
+    s3.getRow(rowNum).height = 22;
+  };
 
-  // Rows 5/6/7 — column headers, year, rate factor
-  const hLabel = 5, hYear = 6, hFactor = 7;
-  ['Role', 'Tier', 'Resource', 'Adj rate'].forEach((h, i) => {
-    const c = s3.getRow(hLabel).getCell(i + 1);
-    c.value = h; styleHeader(c, { align: i === 3 ? 'right' : 'left' });
+  /* ---------- SECTION A · ALLOCATION % (editable) ---------- */
+  const aBanner = 4;
+  sectionBanner(aBanner, 'A · ALLOCATION %', 'editable — change any month, the $ section recalculates');
+  const aPhase = 5;
+  phaseBands(aPhase);
+  const aLabel = 6;
+  ['Role', 'Tier', 'Resource', 'Avg %'].forEach((h, i) => {
+    const c = s3.getRow(aLabel).getCell(i + 1);
+    c.value = h; styleHeader(c, { align: i >= 3 ? 'right' : 'left' });
   });
-  s3.getCell(`${totCol}${hLabel}`).value = 'Role total';
-  styleHeader(s3.getCell(`${totCol}${hLabel}`), { align: 'right' });
-  s3.getRow(hLabel).height = 26;
+  s3.getCell(`${totCol}${aLabel}`).value = 'FTE-mo';
+  styleHeader(s3.getCell(`${totCol}${aLabel}`), { align: 'right' });
+  monthCols.forEach((mc, i) => {
+    const lc = s3.getCell(`${mCol(i)}${aLabel}`);
+    lc.value = mc.m.label; styleHeader(lc, { align: 'center' });
+  });
+  s3.getRow(aLabel).height = 24;
 
-  s3.mergeCells(`A${hYear}:D${hYear}`);
-  s3.getCell(`A${hYear}`).value = 'Year →';
-  s3.getCell(`A${hYear}`).font = { name: 'Calibri', size: 9, italic: true, color: { argb: STEEL } };
-  s3.getCell(`A${hYear}`).alignment = { horizontal: 'right' };
-  s3.mergeCells(`A${hFactor}:D${hFactor}`);
-  s3.getCell(`A${hFactor}`).value = 'Rate factor (grid) →';
-  s3.getCell(`A${hFactor}`).font = { name: 'Calibri', size: 9, italic: true, color: { argb: STEEL } };
-  s3.getCell(`A${hFactor}`).alignment = { horizontal: 'right' };
-
+  let ar = 7;
+  const allocRowByRoleId = {};
+  groups.forEach(g => {
+    const inGroup = roles.filter(r => r.groupId === g.id);
+    if (!inGroup.length) return;
+    s3.mergeCells(`A${ar}:${totCol}${ar}`);
+    const gh = s3.getCell(`A${ar}`);
+    gh.value = '  ' + g.name.toUpperCase();
+    gh.font = { name: 'Calibri', bold: true, color: { argb: NAVY }, size: 10 };
+    gh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
+    ar++;
+    inGroup.forEach(r => {
+      allocRowByRoleId[r.id] = ar;
+      const tier = S.getTier(r.titleId, r.tierId);
+      s3.getCell(`A${ar}`).value = roleLabelRich(r);
+      s3.getCell(`A${ar}`).alignment = { vertical: 'middle', wrapText: true };
+      s3.getCell(`B${ar}`).value = tier?.label || '';
+      s3.getCell(`B${ar}`).font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
+      s3.getCell(`C${ar}`).value = r.resource || 'TBD';
+      s3.getCell(`C${ar}`).font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
+      // Editable per-month allocation % (literal inputs the user can fiddle).
+      monthCols.forEach((mc, i) => {
+        const col = mCol(i);
+        const v = S.effectiveFte(r, mc.m, mc.phaseId) || 0;
+        const c = s3.getCell(`${col}${ar}`);
+        c.value = v; c.numFmt = '0"%"';
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: v > 0 ? YEL_TINT : 'FFFAFAF7' } };
+        c.font = { name: 'Calibri', color: { argb: v > 0 ? NAVY : STEEL }, bold: v > 0 };
+        c.alignment = { horizontal: 'center' };
+      });
+      // Avg % across the engagement
+      const avg = s3.getCell(`D${ar}`);
+      avg.value = { formula: `AVERAGE(${mCol(0)}${ar}:${mCol(nMonths - 1)}${ar})` };
+      avg.numFmt = '0"%"';
+      avg.font = { name: 'Calibri', color: { argb: STEEL } };
+      avg.alignment = { horizontal: 'right' };
+      // FTE-months = sum of months / 100
+      const fm = s3.getCell(`${totCol}${ar}`);
+      fm.value = { formula: `SUM(${mCol(0)}${ar}:${mCol(nMonths - 1)}${ar})/100` };
+      fm.numFmt = '0.0';
+      fm.font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+      fm.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
+      fm.alignment = { horizontal: 'right' };
+      s3.getRow(ar).height = (r.projectRole && r.projectRole.trim()) ? 28 : 18;
+      ar++;
+    });
+  });
+  // Total allocation (FTE count) per month
+  const aTotRow = ar;
+  s3.mergeCells(`A${aTotRow}:D${aTotRow}`);
+  s3.getCell(`A${aTotRow}`).value = 'Total FTE (headcount) →';
+  s3.getCell(`A${aTotRow}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+  s3.getCell(`A${aTotRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YELLOW } };
+  s3.getCell(`A${aTotRow}`).alignment = { horizontal: 'right' };
+  const allocRows = Object.values(allocRowByRoleId);
+  const aFirst = allocRows.length ? Math.min(...allocRows) : aTotRow;
+  const aLast = allocRows.length ? Math.max(...allocRows) : aTotRow;
   monthCols.forEach((mc, i) => {
     const col = mCol(i);
-    const lc = s3.getCell(`${col}${hLabel}`);
-    lc.value = mc.m.label;
-    styleHeader(lc, { align: 'center' });
-    const yc = s3.getCell(`${col}${hYear}`);
-    yc.value = mc.m.year; yc.numFmt = '0';
-    yc.font = { name: 'Calibri', size: 9, color: { argb: STEEL }, bold: true };
-    yc.alignment = { horizontal: 'center' };
-    yc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
-    // Published (unlocked) escalation factor for grid roles, anchored at the
-    // catalog base year. Rate Lock is NOT applied here — it deducts once below.
+    const c = s3.getCell(`${col}${aTotRow}`);
+    c.value = { formula: `SUM(${col}${aFirst}:${col}${aLast})/100` };
+    c.numFmt = '0.0';
+    c.font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YELLOW } };
+    c.alignment = { horizontal: 'center' };
+  });
+  s3.getRow(aTotRow).height = 20;
+
+  /* ---------- SECTION B · FEE $ (formulas → Section A) ---------- */
+  let dr = aTotRow + 2;
+  const bBanner = dr++;
+  sectionBanner(bBanner, 'B · FEE $', '= allocation % (above) × adjusted rate × escalation factor × hours/month');
+  // header row: phase bands reminder + labels
+  const bLabel = dr++;
+  ['Role', 'Tier', 'Resource', 'Adj rate'].forEach((h, i) => {
+    const c = s3.getRow(bLabel).getCell(i + 1);
+    c.value = h; styleHeader(c, { align: i === 3 ? 'right' : 'left' });
+  });
+  s3.getCell(`${totCol}${bLabel}`).value = 'Role total';
+  styleHeader(s3.getCell(`${totCol}${bLabel}`), { align: 'right' });
+  monthCols.forEach((mc, i) => {
+    const lc = s3.getCell(`${mCol(i)}${bLabel}`);
+    lc.value = mc.m.label; styleHeader(lc, { align: 'center' });
+  });
+  s3.getRow(bLabel).height = 24;
+  // rate factor row
+  const hFactor = dr++;
+  s3.mergeCells(`A${hFactor}:D${hFactor}`);
+  s3.getCell(`A${hFactor}`).value = 'Rate factor (year escalation) →';
+  s3.getCell(`A${hFactor}`).font = { name: 'Calibri', size: 9, italic: true, color: { argb: STEEL } };
+  s3.getCell(`A${hFactor}`).alignment = { horizontal: 'right' };
+  monthCols.forEach((mc, i) => {
+    const col = mCol(i);
     const fc = s3.getCell(`${col}${hFactor}`);
+    // Published (unlocked) escalation factor, anchored at catalog base year.
     fc.value = { formula: `POWER(1+escalation_pct/100, ${mc.m.year}-catalog_base_year)` };
     fc.numFmt = '0.0000';
     fc.font = { name: 'Calibri', size: 9, color: { argb: STEEL }, bold: true };
@@ -607,8 +700,6 @@ window.UFC_buildAndDownloadExcel = async function () {
     fc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
   });
 
-  // Data rows — grouped, each with a per-group subtotal row
-  let dr = 8;
   const groupSubRows = [];
   groups.forEach(g => {
     const inGroup = roles.filter(r => r.groupId === g.id);
@@ -624,6 +715,7 @@ window.UFC_buildAndDownloadExcel = async function () {
       const ratesR = ratesRowByRoleId[r.id];
       const contracted = r.rateSource === 'contracted';
       const tier = S.getTier(r.titleId, r.tierId);
+      const aRow = allocRowByRoleId[r.id];   // matching allocation row in Section A
       s3.getCell(`A${dr}`).value = roleLabelRich(r);
       s3.getCell(`A${dr}`).alignment = { vertical: 'middle', wrapText: true };
       s3.getCell(`B${dr}`).value = tier?.label || '';
@@ -637,21 +729,15 @@ window.UFC_buildAndDownloadExcel = async function () {
       monthCols.forEach((mc, i) => {
         const col = mCol(i);
         const c = s3.getCell(`${col}${dr}`);
-        // FTE: per-month override (literal) else reference the live Phase Matrix FTE cell.
-        const mk = mc.m.year + '-' + mc.m.month;
-        const hasOverride = r.fteMonthly && r.fteMonthly[mk] != null;
-        const fteRef = hasOverride
-          ? String(r.fteMonthly[mk] || 0)
-          : ((fteCellRef[r.id] && fteCellRef[r.id][mc.phaseId]) || '0');
+        // $ = allocation% (Section A, same column) /100 × adj rate × factor × hrs
         if (contracted) {
-          // anchor = project start year; published (unlocked) escalation
-          c.value = { formula: `${fteRef}/100*D${dr}*POWER(1+escalation_pct/100,${mc.m.year}-project_start_year)*hrs_per_mo` };
+          c.value = { formula: `${col}${aRow}/100*D${dr}*POWER(1+escalation_pct/100,${mc.m.year}-project_start_year)*hrs_per_mo` };
         } else {
-          c.value = { formula: `${fteRef}/100*D${dr}*${col}$${hFactor}*hrs_per_mo` };
+          c.value = { formula: `${col}${aRow}/100*D${dr}*${col}$${hFactor}*hrs_per_mo` };
         }
         c.numFmt = '"$"#,##0';
         c.alignment = { horizontal: 'right' };
-        const fteVal = hasOverride ? r.fteMonthly[mk] : (r.fte[mc.phaseId] || 0);
+        const fteVal = S.effectiveFte(r, mc.m, mc.phaseId);
         if (!fteVal) c.font = { name: 'Calibri', color: { argb: 'FFC9CCD6' } };
       });
       const tc = s3.getCell(`${totCol}${dr}`);
@@ -664,7 +750,6 @@ window.UFC_buildAndDownloadExcel = async function () {
       dr++;
     });
     const lastRoleRow = dr - 1;
-    // Per-group subtotal
     s3.mergeCells(`A${dr}:D${dr}`);
     s3.getCell(`A${dr}`).value = '  ' + g.name + ' — subtotal';
     s3.getCell(`A${dr}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
@@ -690,7 +775,7 @@ window.UFC_buildAndDownloadExcel = async function () {
     dr++;
   });
 
-  // Monthly total (all roles) = sum of the group subtotals
+  // Monthly total (all roles, gross)
   dr++;
   const monthTotRow = dr;
   s3.mergeCells(`A${monthTotRow}:D${monthTotRow}`);
@@ -731,7 +816,7 @@ window.UFC_buildAndDownloadExcel = async function () {
     c.alignment = { horizontal: 'right' };
   });
 
-  // Waterfall (gross → net) in the role-total column
+  // Waterfall (gross → net)
   dr += 2;
   const wGross = dr++, wLock = dr++, wDisc = dr++, wNet = dr++;
   const wLabel = (row, text, color) => {
@@ -765,6 +850,7 @@ window.UFC_buildAndDownloadExcel = async function () {
   s3.getRow(wNet).height = 26;
 
   // Fee share / revenue
+  let s3NetRow = wNet;
   const fsX = state.assumptions.feeShare;
   if (fsX && fsX.enabled) {
     const pct = parseFloat(fsX.pct) || 0;
@@ -779,6 +865,147 @@ window.UFC_buildAndDownloadExcel = async function () {
     const rc = wVal(revRow, `${totCol}${wNet}+${totCol}${fRow}`, WHITE, 12);
     rc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
     s3.getRow(revRow).height = 24;
+  }
+
+  /* ============================================================
+     SHEET 4 · Monthly Billing Summary
+     What the client is invoiced each month — nets to the total
+     proposed fee. Two modes (from the project's billing setting):
+       • Resource-loaded (accrued) — tracks the monthly fee curve,
+         scaled so it sums to NET (gross→net ratio applied evenly).
+       • Flatline — NET ÷ months, an equal amount every month.
+     All formulas reference Sheet 3 so it stays live.
+     ============================================================ */
+  const flatBilling = state.assumptions.billingMode === 'flatline';
+  const s4 = wb.addWorksheet('Billing Summary', {
+    pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 1 },
+    views: [{ showGridLines: false, state: 'frozen', ySplit: 5 }],
+  });
+  s4.columns = [{ width: 18 }, { width: 9 }, { width: 22 }, { width: 18 }, { width: 18 }, { width: 13 }];
+
+  s4.mergeCells('A1:F1');
+  s4.getCell('A1').value = 'Monthly Billing Summary';
+  s4.getCell('A1').font = { name: 'Calibri', bold: true, size: 18, color: { argb: NAVY } };
+  s4.getRow(1).height = 28;
+  s4.mergeCells('A2:F2');
+  s4.getCell('A2').value = flatBilling
+    ? 'Billing mode: FLATLINE — net total ÷ months, an equal amount invoiced every month.'
+    : 'Billing mode: RESOURCE-LOADED — tracks the monthly fee curve, scaled so it sums to the net total.';
+  s4.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
+  s4.mergeCells('A3:F3');
+  s4.getCell('A3').value = 'Invoiced amount nets to the Total proposed fee. Figures are live — change allocations or assumptions and this updates.';
+  s4.getCell('A3').font = { name: 'Calibri', italic: true, size: 9, color: { argb: STEEL } };
+
+  const bs = `'Monthly Detail'!`;
+  const netRef = `${bs}${totCol}${wNet}`;     // net total on Sheet 3
+  const grossRef = `${bs}${totCol}${wGross}`;  // gross total on Sheet 3
+
+  // Header
+  const bhead = 5;
+  ['Month', 'Year', 'Phase', 'Invoiced this month', 'Cumulative', '% of total'].forEach((h, i) => {
+    const c = s4.getRow(bhead).getCell(i + 1);
+    c.value = h; styleHeader(c, { align: i >= 3 ? 'right' : 'left' });
+  });
+  s4.getRow(bhead).height = 26;
+
+  // Map each month to its phase name for the Phase column
+  const phaseNameByIndex = [];
+  byPhase.forEach(bucket => bucket.months.forEach(() => phaseNameByIndex.push(bucket.phase.name)));
+
+  let br = bhead + 1;
+  const firstBillRow = br;
+  monthCols.forEach((mc, i) => {
+    const col = mCol(i);
+    const row = s4.getRow(br);
+    row.getCell(1).value = mc.m.longLabel || mc.m.label;
+    row.getCell(1).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    row.getCell(2).value = mc.m.year; row.getCell(2).numFmt = '0';
+    row.getCell(2).font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
+    row.getCell(2).alignment = { horizontal: 'center' };
+    row.getCell(3).value = phaseNameByIndex[i] || '';
+    row.getCell(3).font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
+    // Invoiced this month
+    const inv = row.getCell(4);
+    if (flatBilling) {
+      inv.value = { formula: `${netRef}/${nMonths}` };
+    } else {
+      // gross month × (net / gross) → tracks the curve, sums to net
+      inv.value = { formula: `${bs}${col}${monthTotRow}*IF(${grossRef}=0,0,${netRef}/${grossRef})` };
+    }
+    inv.numFmt = '"$"#,##0';
+    inv.font = { name: 'Calibri', color: { argb: NAVY } };
+    inv.alignment = { horizontal: 'right' };
+    // Cumulative
+    const cum = row.getCell(5);
+    cum.value = { formula: i === 0 ? `D${br}` : `E${br - 1}+D${br}` };
+    cum.numFmt = '"$"#,##0';
+    cum.font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
+    cum.alignment = { horizontal: 'right' };
+    // % of total
+    const pc = row.getCell(6);
+    pc.value = { formula: `IF(${netRef}=0,0,D${br}/${netRef})` };
+    pc.numFmt = '0.0%';
+    pc.font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
+    pc.alignment = { horizontal: 'right' };
+    br++;
+  });
+  const lastBillRow = br - 1;
+
+  // Total billed (should equal net)
+  const billTotRow = br;
+  s4.getCell(`A${billTotRow}`).value = 'Total invoiced';
+  s4.mergeCells(`A${billTotRow}:C${billTotRow}`);
+  s4.getCell(`A${billTotRow}`).font = { name: 'Calibri', bold: true, color: { argb: YELLOW }, size: 12 };
+  s4.getCell(`A${billTotRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  s4.getCell(`A${billTotRow}`).alignment = { horizontal: 'right' };
+  const bt = s4.getCell(`D${billTotRow}`);
+  bt.value = { formula: `SUM(D${firstBillRow}:D${lastBillRow})` };
+  bt.numFmt = '"$"#,##0';
+  bt.font = { name: 'Calibri', bold: true, color: { argb: YELLOW }, size: 12 };
+  bt.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  bt.alignment = { horizontal: 'right' };
+  const be = s4.getCell(`E${billTotRow}`);
+  be.value = { formula: `E${lastBillRow}` };
+  be.numFmt = '"$"#,##0';
+  be.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+  be.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  be.alignment = { horizontal: 'right' };
+  const bp = s4.getCell(`F${billTotRow}`);
+  bp.value = { formula: `SUM(F${firstBillRow}:F${lastBillRow})` };
+  bp.numFmt = '0.0%';
+  bp.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+  bp.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  bp.alignment = { horizontal: 'right' };
+  s4.getRow(billTotRow).height = 24;
+
+  // Reconciliation note: ties back to the net on Sheet 3
+  const reconRow = billTotRow + 1;
+  s4.mergeCells(`A${reconRow}:C${reconRow}`);
+  s4.getCell(`A${reconRow}`).value = 'Ties to Total proposed fee (Monthly Detail) →';
+  s4.getCell(`A${reconRow}`).font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
+  s4.getCell(`A${reconRow}`).alignment = { horizontal: 'right' };
+  const rc2 = s4.getCell(`D${reconRow}`);
+  rc2.value = { formula: netRef };
+  rc2.numFmt = '"$"#,##0';
+  rc2.font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
+  rc2.alignment = { horizontal: 'right' };
+
+  // Fee-share revenue line (optional) — what Savills keeps
+  if (fsX && fsX.enabled) {
+    const pct = parseFloat(fsX.pct) || 0;
+    const revRow = reconRow + 1;
+    s4.mergeCells(`A${revRow}:C${revRow}`);
+    s4.getCell(`A${revRow}`).value = `Revenue net of ${pct}% fee share →`;
+    s4.getCell(`A${revRow}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+    s4.getCell(`A${revRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+    s4.getCell(`A${revRow}`).alignment = { horizontal: 'right' };
+    const rv = s4.getCell(`D${revRow}`);
+    rv.value = { formula: `${netRef}*(1-${pct}/100)` };
+    rv.numFmt = '"$"#,##0';
+    rv.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+    rv.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+    rv.alignment = { horizontal: 'right' };
+    s4.getRow(revRow).height = 22;
   }
 
   /* Download */

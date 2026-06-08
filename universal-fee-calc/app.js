@@ -1759,6 +1759,7 @@
     getMonthsByPhase,
     rateForYear,
     unlockedRateForYear,
+    effectiveFte,
     monthlyFee,
     monthlyLockCredit,
     rolePhaseFee,
