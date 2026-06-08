@@ -542,30 +542,58 @@
   /* ---------- Identity / access wall ---------- */
   function buildIdentityBar(allProjects) {
     const sel = $('#id-user');
+    const label = document.querySelector('.identity-bar .id-label');
     const cur = STORE.getCurrentUser();
-    // Everyone who leads/owns a project becomes a switchable identity (member role),
-    // plus a leadership "All projects" admin view. In production this list comes
-    // from your directory and the current user is fixed by login.
-    const leads = [...new Set(allProjects.map(p => p.project?.lead).filter(Boolean))].sort();
-    const opts = [`<option value="__admin__">Leadership / Ops — all projects</option>`]
-      .concat(leads.map(l => `<option value="${esc(l)}">${esc(l)}</option>`));
+
+    // Only the SUPERUSER (Salim) gets the impersonation switcher. Everyone else
+    // sees a static, read-only identity — no way to assume another person's view.
+    if (!STORE.canImpersonate()) {
+      if (sel) sel.style.display = 'none';
+      if (label) label.textContent = 'Signed in as';
+      let nameEl = document.getElementById('id-static-name');
+      if (!nameEl && sel) {
+        nameEl = document.createElement('span');
+        nameEl.id = 'id-static-name';
+        nameEl.style.cssText = 'font-family:var(--font-display);font-weight:700;font-size:13px;color:#fff;margin:0 4px;';
+        sel.parentNode.insertBefore(nameEl, sel.nextSibling);
+      }
+      if (nameEl) nameEl.textContent = cur.name || '(unrecognized)';
+      updateIdentityMeta();
+      return;
+    }
+
+    // SUPERUSER: full switcher to preview anyone's restricted view.
+    if (label) label.textContent = 'Viewing as';
+    if (sel) sel.style.display = '';
+    const roster = STORE.impersonationRoster();
+    const imp = STORE.getImpersonation();
+    const opts = [`<option value="__me__">Me — Salim (admin · all projects)</option>`]
+      .concat(roster.map(r => `<option value="${esc(r.username)}">${esc(r.name)} · ${r.role}</option>`))
+      .concat([`<option value="__custom__">Custom email…</option>`]);
     sel.innerHTML = opts.join('');
-    sel.value = cur.role === 'admin' ? '__admin__' : esc(cur.name);
-    if (!sel.value) sel.value = '__admin__';
+    sel.value = imp ? esc(imp) : '__me__';
+    if (sel.selectedIndex < 0) sel.value = '__me__';
     updateIdentityMeta();
   }
   function updateIdentityMeta() {
     const cur = STORE.getCurrentUser();
     const roleEl = $('#id-role'), noteEl = $('#id-note');
+    const previewing = !!cur.impersonating;
     if (cur.role === 'admin') {
       roleEl.textContent = 'Admin · sees all';
       roleEl.className = 'id-role admin';
-      noteEl.innerHTML = `Full portfolio visibility. Switch to a person to preview their <strong>restricted</strong> view.`;
+      noteEl.innerHTML = previewing
+        ? `<strong>Previewing</strong> ${esc(cur.name)} (admin). <a href="#" id="id-exit" style="color:#fff;">← back to me</a>`
+        : `Full portfolio visibility. Use <strong>Viewing as</strong> to preview a restricted view.`;
     } else {
       roleEl.textContent = 'Member · own projects';
       roleEl.className = 'id-role member';
-      noteEl.innerHTML = `Showing only projects led or owned by <strong>${esc(cur.name)}</strong>. Other teams' fees are hidden.`;
+      noteEl.innerHTML = previewing
+        ? `<strong>Previewing</strong> ${esc(cur.name || 'this person')} — only their projects show. <a href="#" id="id-exit" style="color:#fff;">← back to me</a>`
+        : `Showing only projects led or owned by <strong>${esc(cur.name || '—')}</strong>. Other teams' fees are hidden.`;
     }
+    const exit = document.getElementById('id-exit');
+    if (exit) exit.addEventListener('click', (e) => { e.preventDefault(); STORE.clearImpersonation(); filters = { search: '', status: '', industry: '', lead: '' }; render(); });
   }
   function applyFilters(projects) {
     return projects.filter(p => {
@@ -770,36 +798,43 @@
   }
 
   /* ---------- Toolbar wiring ---------- */
-  $('#search-input').addEventListener('input', e => { filters.search = e.target.value; render(); });
-  $('#id-user').addEventListener('change', e => {
+  $('#search-input')?.addEventListener('input', e => { filters.search = e.target.value; render(); });
+  $('#id-user')?.addEventListener('change', e => {
     const v = e.target.value;
-    if (v === '__admin__') STORE.setCurrentUser({ name: 'Leadership', role: 'admin' });
-    else STORE.setCurrentUser({ name: v, role: 'member' });
+    if (v === '__me__') {
+      STORE.clearImpersonation();
+    } else if (v === '__custom__') {
+      const email = (prompt('Preview as which Box login (email)?') || '').trim();
+      if (email) STORE.setImpersonation(email);
+      else { STORE.clearImpersonation(); }
+    } else {
+      STORE.setImpersonation(v);
+    }
     // reset filters so a stale lead filter doesn't compound with the wall
     filters = { search: '', status: '', industry: '', lead: '' };
     $('#search-input').value = '';
     render();
   });
-  $('#filter-status').addEventListener('change', e => { filters.status = e.target.value; render(); });
-  $('#filter-industry').addEventListener('change', e => { filters.industry = e.target.value; render(); });
-  $('#filter-lead').addEventListener('change', e => { filters.lead = e.target.value; render(); });
-  $('#clear-btn').addEventListener('click', () => {
+  $('#filter-status')?.addEventListener('change', e => { filters.status = e.target.value; render(); });
+  $('#filter-industry')?.addEventListener('change', e => { filters.industry = e.target.value; render(); });
+  $('#filter-lead')?.addEventListener('change', e => { filters.lead = e.target.value; render(); });
+  $('#clear-btn')?.addEventListener('click', () => {
     filters = { search: '', status: '', industry: '', lead: '' };
     $('#search-input').value = '';
     render();
   });
 
   /* ---------- Header actions ---------- */
-  $('#new-btn').addEventListener('click', () => {
+  $('#new-btn')?.addEventListener('click', () => {
     window.location.href = 'Universal Fee Calculator.html';
   });
-  $('#export-btn').addEventListener('click', () => {
+  $('#export-btn')?.addEventListener('click', () => {
     const json = STORE.exportDb();
     const date = new Date().toISOString().slice(0, 10);
     STORE.downloadJson(`savills-ppm-fee-db-${date}.json`, json);
   });
-  $('#import-btn').addEventListener('click', () => $('#import-input').click());
-  $('#import-input').addEventListener('change', (e) => {
+  $('#import-btn')?.addEventListener('click', () => $('#import-input').click());
+  $('#import-input')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -817,7 +852,7 @@
     e.target.value = '';
   });
 
-  $('#seed-btn').addEventListener('click', () => {
+  $('#seed-btn')?.addEventListener('click', () => {
     seedDemoData();
     render();
   });
