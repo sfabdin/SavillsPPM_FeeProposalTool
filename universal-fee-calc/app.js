@@ -1249,10 +1249,21 @@
         const val = parseFloat(e.target.value) || 0;
         const mk = e.target.dataset.month;
         if (role && mk) {
-          // Per-month edit → store override + recompute the phase average.
+          // Per-month edit. FIRST pin every month in this phase to its current
+          // effective value (explicit overrides), so changing ONE month never
+          // drags the others toward an average. Then apply just this month.
           role.fteMonthly = role.fteMonthly || {};
-          role.fteMonthly[mk] = val;
           const phase = state.phases.find(p => p.id === e.target.dataset.phase);
+          if (phase) {
+            const months = getMonthsByPhase().find(x => x.phase.id === phase.id)?.months || [];
+            months.forEach(m => {
+              const k = monthKey(m);
+              if (role.fteMonthly[k] == null) role.fteMonthly[k] = (role.fte[phase.id] || 0);
+            });
+          }
+          role.fteMonthly[mk] = val;                 // this month's new value
+          // Phase cell now just DISPLAYS the calculated average of the months —
+          // it no longer feeds the other months, so they stay put.
           if (phase) recomputePhaseAvg(role, phase);
         } else if (role) {
           // Phase-level edit → set phase value AND clear any month overrides in it

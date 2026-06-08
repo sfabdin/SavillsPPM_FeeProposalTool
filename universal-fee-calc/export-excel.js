@@ -701,6 +701,8 @@ window.UFC_buildAndDownloadExcel = async function () {
   });
 
   const groupSubRows = [];
+  const groupSubRowById = {};
+  const groupOrder = [];
   groups.forEach(g => {
     const inGroup = roles.filter(r => r.groupId === g.id);
     if (!inGroup.length) return;
@@ -771,6 +773,8 @@ window.UFC_buildAndDownloadExcel = async function () {
     gtc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
     gtc.alignment = { horizontal: 'right' };
     groupSubRows.push(dr);
+    groupSubRowById[g.id] = dr;
+    groupOrder.push(g);
     s3.getRow(dr).height = 20;
     dr++;
   });
@@ -868,144 +872,193 @@ window.UFC_buildAndDownloadExcel = async function () {
   }
 
   /* ============================================================
-     SHEET 4 · Monthly Billing Summary
-     What the client is invoiced each month — nets to the total
-     proposed fee. Two modes (from the project's billing setting):
-       • Resource-loaded (accrued) — tracks the monthly fee curve,
-         scaled so it sums to NET (gross→net ratio applied evenly).
-       • Flatline — NET ÷ months, an equal amount every month.
-     All formulas reference Sheet 3 so it stays live.
+     SHEET 4 · Billing Summary — BY GROUP, by month
+     Group gross rows (Core / Field / Advisory) reference Sheet 3's
+     Section B group subtotals. Client discount and Rate-Lock credit
+     are shown as their OWN deduction rows (separated out, not hidden),
+     netting to the monthly invoice. Respects the billing mode.
      ============================================================ */
   const flatBilling = state.assumptions.billingMode === 'flatline';
   const s4 = wb.addWorksheet('Billing Summary', {
-    pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 1 },
-    views: [{ showGridLines: false, state: 'frozen', ySplit: 5 }],
+    pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+    views: [{ showGridLines: false, state: 'frozen', xSplit: 1, ySplit: 6 }],
   });
-  s4.columns = [{ width: 18 }, { width: 9 }, { width: 22 }, { width: 18 }, { width: 18 }, { width: 13 }];
-
-  s4.mergeCells('A1:F1');
-  s4.getCell('A1').value = 'Monthly Billing Summary';
-  s4.getCell('A1').font = { name: 'Calibri', bold: true, size: 18, color: { argb: NAVY } };
-  s4.getRow(1).height = 28;
-  s4.mergeCells('A2:F2');
-  s4.getCell('A2').value = flatBilling
-    ? 'Billing mode: FLATLINE — net total ÷ months, an equal amount invoiced every month.'
-    : 'Billing mode: RESOURCE-LOADED — tracks the monthly fee curve, scaled so it sums to the net total.';
-  s4.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
-  s4.mergeCells('A3:F3');
-  s4.getCell('A3').value = 'Invoiced amount nets to the Total proposed fee. Figures are live — change allocations or assumptions and this updates.';
-  s4.getCell('A3').font = { name: 'Calibri', italic: true, size: 9, color: { argb: STEEL } };
+  const m4 = (i) => colLetter(2 + i);             // month i → column (B, C, …)
+  const tot4 = colLetter(2 + nMonths);             // group-total column
+  s4.columns = [{ width: 24 }, ...Array(nMonths).fill({ width: 11 }), { width: 15 }];
 
   const bs = `'Monthly Detail'!`;
-  const netRef = `${bs}${totCol}${wNet}`;     // net total on Sheet 3
-  const grossRef = `${bs}${totCol}${wGross}`;  // gross total on Sheet 3
+  const netRef = `${bs}${totCol}${wNet}`;          // net total on Sheet 3
+  const grossRef = `${bs}${totCol}${wGross}`;       // gross total on Sheet 3
+  const lockConst = S.lockCredit().toFixed(2);
 
-  // Header
-  const bhead = 5;
-  ['Month', 'Year', 'Phase', 'Invoiced this month', 'Cumulative', '% of total'].forEach((h, i) => {
-    const c = s4.getRow(bhead).getCell(i + 1);
-    c.value = h; styleHeader(c, { align: i >= 3 ? 'right' : 'left' });
-  });
-  s4.getRow(bhead).height = 26;
+  // Title
+  s4.mergeCells(`A1:${tot4}1`);
+  s4.getCell('A1').value = 'Billing Summary · invoiced by group, by month';
+  s4.getCell('A1').font = { name: 'Calibri', bold: true, size: 18, color: { argb: NAVY } };
+  s4.getRow(1).height = 28;
+  s4.mergeCells(`A2:${tot4}2`);
+  s4.getCell('A2').value = flatBilling
+    ? 'Billing mode: FLATLINE — the net invoice is split evenly across the months. Group rows show the underlying gross staffing.'
+    : 'Billing mode: RESOURCE-LOADED — invoiced as the work is delivered. Discount and Rate-Lock credit are shown as separate lines.';
+  s4.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
 
-  // Map each month to its phase name for the Phase column
-  const phaseNameByIndex = [];
-  byPhase.forEach(bucket => bucket.months.forEach(() => phaseNameByIndex.push(bucket.phase.name)));
-
-  let br = bhead + 1;
-  const firstBillRow = br;
+  // Phase bands (row 4) + header (row 5) + year (row 6)
+  {
+    let ci = 0;
+    byPhase.forEach(bucket => {
+      const len = bucket.months.length; if (!len) return;
+      s4.mergeCells(`${m4(ci)}4:${m4(ci + len - 1)}4`);
+      const c = s4.getCell(`${m4(ci)}4`);
+      c.value = bucket.phase.name;
+      c.font = { name: 'Calibri', bold: true, size: 10, color: { argb: NAVY } };
+      c.alignment = { horizontal: 'center' };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YELLOW } };
+      ci += len;
+    });
+  }
+  const h4 = 5;
+  s4.getCell(`A${h4}`).value = 'Group'; styleHeader(s4.getCell(`A${h4}`), { align: 'left' });
+  s4.getCell(`${tot4}${h4}`).value = 'Total'; styleHeader(s4.getCell(`${tot4}${h4}`), { align: 'right' });
   monthCols.forEach((mc, i) => {
-    const col = mCol(i);
-    const row = s4.getRow(br);
-    row.getCell(1).value = mc.m.longLabel || mc.m.label;
-    row.getCell(1).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
-    row.getCell(2).value = mc.m.year; row.getCell(2).numFmt = '0';
-    row.getCell(2).font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
-    row.getCell(2).alignment = { horizontal: 'center' };
-    row.getCell(3).value = phaseNameByIndex[i] || '';
-    row.getCell(3).font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
-    // Invoiced this month
-    const inv = row.getCell(4);
-    if (flatBilling) {
-      inv.value = { formula: `${netRef}/${nMonths}` };
-    } else {
-      // gross month × (net / gross) → tracks the curve, sums to net
-      inv.value = { formula: `${bs}${col}${monthTotRow}*IF(${grossRef}=0,0,${netRef}/${grossRef})` };
-    }
-    inv.numFmt = '"$"#,##0';
-    inv.font = { name: 'Calibri', color: { argb: NAVY } };
-    inv.alignment = { horizontal: 'right' };
-    // Cumulative
-    const cum = row.getCell(5);
-    cum.value = { formula: i === 0 ? `D${br}` : `E${br - 1}+D${br}` };
-    cum.numFmt = '"$"#,##0';
-    cum.font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
-    cum.alignment = { horizontal: 'right' };
-    // % of total
-    const pc = row.getCell(6);
-    pc.value = { formula: `IF(${netRef}=0,0,D${br}/${netRef})` };
-    pc.numFmt = '0.0%';
-    pc.font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
-    pc.alignment = { horizontal: 'right' };
-    br++;
+    const c = s4.getCell(`${m4(i)}${h4}`); c.value = mc.m.label; styleHeader(c, { align: 'center' });
   });
-  const lastBillRow = br - 1;
+  s4.getRow(h4).height = 24;
+  s4.getCell(`A6`).value = 'Year →';
+  s4.getCell(`A6`).font = { name: 'Calibri', size: 9, italic: true, color: { argb: STEEL } };
+  s4.getCell(`A6`).alignment = { horizontal: 'right' };
+  monthCols.forEach((mc, i) => {
+    const c = s4.getCell(`${m4(i)}6`); c.value = mc.m.year; c.numFmt = '0';
+    c.font = { name: 'Calibri', size: 9, bold: true, color: { argb: STEEL } };
+    c.alignment = { horizontal: 'center' };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
+  });
 
-  // Total billed (should equal net)
-  const billTotRow = br;
-  s4.getCell(`A${billTotRow}`).value = 'Total invoiced';
-  s4.mergeCells(`A${billTotRow}:C${billTotRow}`);
-  s4.getCell(`A${billTotRow}`).font = { name: 'Calibri', bold: true, color: { argb: YELLOW }, size: 12 };
-  s4.getCell(`A${billTotRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-  s4.getCell(`A${billTotRow}`).alignment = { horizontal: 'right' };
-  const bt = s4.getCell(`D${billTotRow}`);
-  bt.value = { formula: `SUM(D${firstBillRow}:D${lastBillRow})` };
-  bt.numFmt = '"$"#,##0';
-  bt.font = { name: 'Calibri', bold: true, color: { argb: YELLOW }, size: 12 };
-  bt.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-  bt.alignment = { horizontal: 'right' };
-  const be = s4.getCell(`E${billTotRow}`);
-  be.value = { formula: `E${lastBillRow}` };
-  be.numFmt = '"$"#,##0';
-  be.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
-  be.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-  be.alignment = { horizontal: 'right' };
-  const bp = s4.getCell(`F${billTotRow}`);
-  bp.value = { formula: `SUM(F${firstBillRow}:F${lastBillRow})` };
-  bp.numFmt = '0.0%';
-  bp.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
-  bp.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-  bp.alignment = { horizontal: 'right' };
-  s4.getRow(billTotRow).height = 24;
+  // ---- NET FEE BY GROUP (client discount + Rate-Lock credit baked in) ----
+  // Each group's monthly figure already reflects the reductions: we scale the
+  // group's gross by the portfolio net/gross ratio, so the rows sum to the net
+  // invoice with nothing shown separately. A small bridge at the bottom keeps
+  // it auditable.
+  const netRatio = `IF(${grossRef}=0,0,${netRef}/${grossRef})`;
+  let b4 = 7;
+  s4.mergeCells(`A${b4}:${tot4}${b4}`);
+  s4.getCell(`A${b4}`).value = '  NET FEE BY GROUP  ·  discount & rate-lock credit included';
+  s4.getCell(`A${b4}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE }, size: 10 };
+  s4.getCell(`A${b4}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  b4++;
+  const groupNetRows = [];
+  groupOrder.forEach(g => {
+    const subRow = groupSubRowById[g.id];
+    s4.getCell(`A${b4}`).value = g.name;
+    s4.getCell(`A${b4}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    monthCols.forEach((mc, i) => {
+      const c = s4.getCell(`${m4(i)}${b4}`);
+      if (flatBilling) {
+        // group's net total spread evenly across the months
+        c.value = { formula: `${bs}${totCol}${subRow}*${netRatio}/${nMonths}` };
+      } else {
+        // group's gross this month, scaled to net (discount + credit baked in)
+        c.value = { formula: `${bs}${mCol(i)}${subRow}*${netRatio}` };
+      }
+      c.numFmt = '"$"#,##0';
+      c.alignment = { horizontal: 'right' };
+      c.font = { name: 'Calibri', color: { argb: NAVY } };
+    });
+    const tc = s4.getCell(`${tot4}${b4}`);
+    tc.value = { formula: `SUM(${m4(0)}${b4}:${m4(nMonths - 1)}${b4})` };
+    tc.numFmt = '"$"#,##0';
+    tc.font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    tc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
+    tc.alignment = { horizontal: 'right' };
+    groupNetRows.push(b4);
+    b4++;
+  });
 
-  // Reconciliation note: ties back to the net on Sheet 3
-  const reconRow = billTotRow + 1;
-  s4.mergeCells(`A${reconRow}:C${reconRow}`);
-  s4.getCell(`A${reconRow}`).value = 'Ties to Total proposed fee (Monthly Detail) →';
-  s4.getCell(`A${reconRow}`).font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
-  s4.getCell(`A${reconRow}`).alignment = { horizontal: 'right' };
-  const rc2 = s4.getCell(`D${reconRow}`);
-  rc2.value = { formula: netRef };
-  rc2.numFmt = '"$"#,##0';
-  rc2.font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
-  rc2.alignment = { horizontal: 'right' };
+  // Net invoiced (all groups)
+  const netRow4 = b4;
+  s4.getCell(`A${netRow4}`).value = flatBilling ? 'Net invoiced (flat monthly)' : 'Net invoiced this month';
+  s4.getCell(`A${netRow4}`).font = { name: 'Calibri', bold: true, color: { argb: YELLOW }, size: 12 };
+  s4.getCell(`A${netRow4}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  monthCols.forEach((mc, i) => {
+    const col = m4(i);
+    const c = s4.getCell(`${col}${netRow4}`);
+    c.value = { formula: groupNetRows.length ? groupNetRows.map(rw => `${col}${rw}`).join('+') : '0' };
+    c.numFmt = '"$"#,##0';
+    c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+    c.alignment = { horizontal: 'right' };
+  });
+  const ntc = s4.getCell(`${tot4}${netRow4}`);
+  ntc.value = { formula: `SUM(${m4(0)}${netRow4}:${m4(nMonths - 1)}${netRow4})` };
+  ntc.numFmt = '"$"#,##0';
+  ntc.font = { name: 'Calibri', bold: true, color: { argb: YELLOW } };
+  ntc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  ntc.alignment = { horizontal: 'right' };
+  s4.getRow(netRow4).height = 22;
+  b4++;
+  // Cumulative
+  const cum4 = b4;
+  s4.getCell(`A${cum4}`).value = 'Cumulative invoiced →';
+  s4.getCell(`A${cum4}`).font = { name: 'Calibri', italic: true, color: { argb: STEEL } };
+  s4.getCell(`A${cum4}`).alignment = { horizontal: 'right' };
+  monthCols.forEach((mc, i) => {
+    const col = m4(i);
+    const c = s4.getCell(`${col}${cum4}`);
+    c.value = { formula: i === 0 ? `${col}${netRow4}` : `${m4(i - 1)}${cum4}+${col}${netRow4}` };
+    c.numFmt = '"$"#,##0'; c.font = { name: 'Calibri', size: 9, color: { argb: STEEL } };
+    c.alignment = { horizontal: 'right' };
+  });
+  b4++;
+  // % of total
+  const pct4 = b4;
+  s4.getCell(`A${pct4}`).value = '% of total →';
+  s4.getCell(`A${pct4}`).font = { name: 'Calibri', italic: true, color: { argb: STEEL } };
+  s4.getCell(`A${pct4}`).alignment = { horizontal: 'right' };
+  monthCols.forEach((mc, i) => {
+    const col = m4(i);
+    const c = s4.getCell(`${col}${pct4}`);
+    c.value = { formula: `IF(${netRef}=0,0,${col}${netRow4}/${netRef})` };
+    c.numFmt = '0.0%'; c.font = { name: 'Calibri', size: 9, color: { argb: STEEL } };
+    c.alignment = { horizontal: 'right' };
+  });
 
-  // Fee-share revenue line (optional) — what Savills keeps
+  // ---- Reconciliation bridge (totals only, for reference) ----
+  b4 += 2;
+  const brLabel = (row, text, color) => {
+    s4.mergeCells(`A${row}:${colLetter(1 + nMonths)}${row}`);
+    const c = s4.getCell(`A${row}`);
+    c.value = text; c.font = { name: 'Calibri', italic: true, color: { argb: color } };
+    c.alignment = { horizontal: 'right' };
+  };
+  const brVal = (row, formula, color) => {
+    const c = s4.getCell(`${tot4}${row}`);
+    c.value = { formula }; c.numFmt = '"$"#,##0';
+    c.font = { name: 'Calibri', color: { argb: color } };
+    c.alignment = { horizontal: 'right' };
+  };
+  s4.mergeCells(`A${b4}:${tot4}${b4}`);
+  s4.getCell(`A${b4}`).value = '  HOW THIS NETS  (for reference — already baked into the rows above)';
+  s4.getCell(`A${b4}`).font = { name: 'Calibri', bold: true, color: { argb: STEEL }, size: 9 };
+  b4++;
+  brLabel(b4, 'Gross fee (all groups)', NAVY); brVal(b4, grossRef, NAVY); b4++;
+  if (parseFloat(lockConst) > 0.5) { brLabel(b4, 'Less Rate-Lock credit', RED); brVal(b4, `-${lockConst}*rate_lock`, RED); b4++; }
+  brLabel(b4, 'Less client discount', RED); brVal(b4, `-${grossRef}*(discount_pct/100)`, RED); b4++;
+  brLabel(b4, 'Net invoiced (ties to row above)', NAVY); brVal(b4, netRef, NAVY); b4++;
+
+  // Fee-share revenue (optional)
   if (fsX && fsX.enabled) {
-    const pct = parseFloat(fsX.pct) || 0;
-    const revRow = reconRow + 1;
-    s4.mergeCells(`A${revRow}:C${revRow}`);
-    s4.getCell(`A${revRow}`).value = `Revenue net of ${pct}% fee share →`;
-    s4.getCell(`A${revRow}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
-    s4.getCell(`A${revRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
-    s4.getCell(`A${revRow}`).alignment = { horizontal: 'right' };
-    const rv = s4.getCell(`D${revRow}`);
-    rv.value = { formula: `${netRef}*(1-${pct}/100)` };
-    rv.numFmt = '"$"#,##0';
-    rv.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
-    rv.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
-    rv.alignment = { horizontal: 'right' };
-    s4.getRow(revRow).height = 22;
+    const pctv = parseFloat(fsX.pct) || 0;
+    b4 += 2;
+    s4.getCell(`A${b4}`).value = `Revenue net of ${pctv}% fee share`;
+    s4.getCell(`A${b4}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+    s4.getCell(`A${b4}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+    const rc = s4.getCell(`${tot4}${b4}`);
+    rc.value = { formula: `${netRef}*(1-${pctv}/100)` };
+    rc.numFmt = '"$"#,##0';
+    rc.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+    rc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+    rc.alignment = { horizontal: 'right' };
+    s4.getRow(b4).height = 22;
   }
 
   /* Download */
