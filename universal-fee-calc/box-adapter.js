@@ -160,7 +160,13 @@
     url.searchParams.set('state', randomStr(12));
     window.location.assign(url.toString());
   }
-  function logout() { clearToken(); Store.setCurrentUser(null); }
+  function logout() {
+    clearToken();
+    try { Store.setRealIdentity(null); } catch (e) {}
+    try { Store.clearImpersonation(); } catch (e) {}
+    // Clear the local project cache so no fee data lingers on a shared machine.
+    try { localStorage.removeItem('savills-ppm-fee-db:v1'); } catch (e) {}
+  }
 
   /* Exchange the ?code from the redirect for a token. Call this from
      oauth-callback.html. PKCE means no client secret is exposed; the
@@ -303,15 +309,11 @@
       emitSync('signedout', 'Not signed in');
       return BOX_CONFIG.testMode ? { ok: false, needsDevToken: true } : { ok: false, needsLogin: true };
     }
-    // Identity → drives the access wall
+    // Identity → drives the access wall. The role is decided by the admin
+    // allowlist in store.js (fail-closed); unknown logins see only their own.
     try {
       const me = await getIdentity();
-      const leader = Store.resolveLeader(me.login) || Store.resolveLeader(me.name);
-      // Anyone in the leaders directory is a 'member' (sees own); everyone else
-      // is treated as admin/ops by default — flip this rule to your policy.
-      Store.setCurrentUser(leader
-        ? { name: leader.displayName, username: me.login, role: 'member' }
-        : { name: me.name, username: me.login, role: 'admin' });
+      Store.setRealIdentity({ username: me.login, name: me.name });
     } catch (e) { console.warn('identity failed', e); }
     // Pull remote → local
     try {

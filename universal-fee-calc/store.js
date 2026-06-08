@@ -433,6 +433,33 @@
      relationship owner, or appears on the project's team list.
      ============================================================ */
   const SESSION_KEY = 'ufc_session_v1';
+  const REAL_KEY = 'ufc_real_identity_v1';     // the TRUE Box SSO identity this session
+  const IMP_KEY  = 'ufc_impersonate_v1';       // (Salim-only) identity being previewed
+
+  /* ============================================================
+     ADMIN ALLOWLIST  (fail-CLOSED)
+     ------------------------------------------------------------
+     These logins see ALL projects. Everyone else is a MEMBER who
+     sees only the projects they lead/own. An unrecognized login is
+     a member who owns nothing → sees nothing (no accidental admin).
+     Match is on the Box SSO login (email), case-insensitive.
+     Edit this list to grant/revoke all-access.                  */
+  const ADMINS = new Set([
+    'salim@savills.us',      // Salim — owner
+    'esobel@savills.us',     // Emily Sobel
+    'jsantoro@savills.us',   // Jeff Santoro
+    'mhadim@savills.us',     // Maria Hadim
+    'kspiegel@savills.us',   // Kathy Spiegel
+    'eglatt@savills.us',     // Emily Glatt
+  ].map(s => s.toLowerCase()));
+
+  /* Only this login may use the "Viewing as" impersonation switch to preview
+     other people's restricted views. Everyone else never sees the control. */
+  const SUPERUSER = 'salim@savills.us';
+
+  function roleFor(login) {
+    return ADMINS.has(String(login || '').trim().toLowerCase()) ? 'admin' : 'member';
+  }
 
   /* ============================================================
      REVENUE LEADERS DIRECTORY
@@ -484,21 +511,77 @@
   }
   function leaderDisplay(value) { const l = resolveLeader(value); return l ? l.displayName : (value || ''); }
 
-  function getCurrentUser() {
+  /* The TRUE signed-in identity for this session (set once at boot from Box SSO).
+     Kept in-memory + a localStorage mirror so page navigations preserve it. */
+  let _realIdentity = null;
+  function setRealIdentity(u) {
+    _realIdentity = (u && u.username) ? { username: String(u.username).trim(), name: u.name || '' } : null;
     try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (raw) { const u = JSON.parse(raw); if (u && u.name) return u; }
+      if (_realIdentity) localStorage.setItem(REAL_KEY, JSON.stringify(_realIdentity));
+      else localStorage.removeItem(REAL_KEY);
     } catch (e) {}
-    // Default: an admin "viewer" so a fresh install sees everything.
-    return { name: '', role: 'admin' };
+    return getCurrentUser();
   }
+  function getRealIdentity() {
+    if (_realIdentity) return _realIdentity;
+    try { const r = JSON.parse(localStorage.getItem(REAL_KEY)); if (r && r.username) { _realIdentity = r; return r; } } catch (e) {}
+    return null;
+  }
+
+  /* Impersonation — ONLY the SUPERUSER may preview another person's view. */
+  function canImpersonate() {
+    const r = getRealIdentity();
+    return !!r && r.username.toLowerCase() === SUPERUSER;
+  }
+  function getImpersonation() {
+    if (!canImpersonate()) return null;          // hard gate: ignored for everyone else
+    try { return sessionStorage.getItem(IMP_KEY) || null; } catch (e) { return null; }
+  }
+  function setImpersonation(login) {
+    if (!canImpersonate()) return;
+    try { if (login) sessionStorage.setItem(IMP_KEY, login); else sessionStorage.removeItem(IMP_KEY); } catch (e) {}
+  }
+  function clearImpersonation() { try { sessionStorage.removeItem(IMP_KEY); } catch (e) {} }
+
+  /* Build a user object for a login: display name from the leaders directory
+     (else the login), role from the admin allowlist. */
+  function identityFor(login, fallbackName) {
+    const leader = resolveLeader(login);
+    return {
+      username: login,
+      name: leader ? leader.displayName : (fallbackName || login),
+      role: roleFor(login),
+    };
+  }
+
+  function getCurrentUser() {
+    // Salim-only impersonation wins (for testing restricted views).
+    const imp = getImpersonation();
+    if (imp) return { ...identityFor(imp), impersonating: true };
+    const real = getRealIdentity();
+    if (real) return identityFor(real.username, real.name);
+    // FAIL-CLOSED: an unidentified session is a member that owns nothing → sees nothing.
+    return { username: '', name: '', role: 'member' };
+  }
+  /* Back-compat shim: the Projects Index switcher routes through here. For the
+     SUPERUSER it sets/clears impersonation; for anyone else it is a no-op. */
   function setCurrentUser(user) {
-    if (!user || !user.name) { localStorage.removeItem(SESSION_KEY); return getCurrentUser(); }
-    const u = { name: String(user.name).trim(), role: user.role === 'member' ? 'member' : 'admin' };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(u));
-    return u;
+    if (!user || (!user.username && !user.name)) { clearImpersonation(); return getCurrentUser(); }
+    if (!canImpersonate()) return getCurrentUser();
+    if (user.role === 'admin' && !user.username) { clearImpersonation(); return getCurrentUser(); }
+    const login = user.username || (resolveLeader(user.name)?.username) || user.name;
+    setImpersonation(login);
+    return getCurrentUser();
   }
   function isAdmin(user) { return (user || getCurrentUser()).role === 'admin'; }
+
+  /* People the SUPERUSER can impersonate: every leader + every admin (deduped). */
+  function impersonationRoster() {
+    const seen = new Set(); const list = [];
+    REVENUE_LEADERS.forEach(l => { const k = l.username.toLowerCase(); seen.add(k); list.push({ username: l.username, name: l.displayName, role: roleFor(l.username) }); });
+    ADMINS.forEach(email => { if (!seen.has(email)) { seen.add(email); list.push({ username: email, name: email, role: 'admin' }); } });
+    return list.sort((a, b) => a.name.localeCompare(b.name));
+  }
 
   /** Normalize a name for tolerant matching ("Kathy Spiegel" ~ "Spiegel"). */
   function nameKey(s) { return String(s || '').trim().toLowerCase(); }
@@ -544,6 +627,7 @@
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, setCurrentUser, isAdmin, userOwnsProject, visibleProjects,
+    setRealIdentity, getRealIdentity, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
     REVENUE_LEADERS, leaderById, resolveLeader, leaderDisplay,
     attachRemote, hydrateFromRemote, defaultDb,
   };
