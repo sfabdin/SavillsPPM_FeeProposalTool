@@ -436,13 +436,19 @@
   /** Commit a manual monthly override (or rating) and persist to the project. */
   function wireEditing() {
     document.querySelectorAll('#proj-table td.editable').forEach(td => {
+      // Remember the value shown when editing starts, so a no-op click that just
+      // focuses/blurs the cell never gets recorded as a manual override.
+      td.addEventListener('focus', () => { td.dataset.orig = td.textContent.replace(/[$,\s]/g, '').trim(); });
       td.addEventListener('blur', () => {
         const pid = td.dataset.pid, key = td.dataset.key;
         const rec = STORE.getProject(pid); if (!rec) return;
-        rec.monthlyOverrides = rec.monthlyOverrides || {};
         const raw = td.textContent.replace(/[$,\s]/g, '').trim();
-        if (raw === '') { delete rec.monthlyOverrides[key]; }   // empty = revert to computed
-        else { const n = parseFloat(raw); if (!isNaN(n)) rec.monthlyOverrides[key] = n; }
+        const orig = td.dataset.orig != null ? td.dataset.orig : raw;
+        // Unchanged → do nothing. No write, no save, no red flag.
+        if (raw === orig) return;
+        rec.monthlyOverrides = rec.monthlyOverrides || {};
+        if (raw === '') { delete rec.monthlyOverrides[key]; }   // cleared = revert to computed
+        else { const n = parseFloat(raw); if (!isNaN(n)) rec.monthlyOverrides[key] = n; else return; }
         if (!Object.keys(rec.monthlyOverrides).length) delete rec.monthlyOverrides;
         STORE.saveProject(rec);
         prepData(); build();
@@ -569,19 +575,19 @@
     a.click();
   }
 
-  $('#edit-toggle').addEventListener('click', () => {
+  $('#edit-toggle')?.addEventListener('click', () => {
     editMode = !editMode;
     $('#edit-toggle').classList.toggle('on', editMode);
     $('#edit-toggle').textContent = editMode ? '✓ Done editing' : '✎ Edit';
     document.getElementById('matrix-scroll').classList.toggle('editing', editMode);
     build();
   });
-  $('#show-excluded').addEventListener('change', e => { showExcluded = e.target.checked; build(); });
+  $('#show-excluded')?.addEventListener('change', e => { showExcluded = e.target.checked; build(); });
   ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => {
-    $('#' + id).addEventListener('change', () => { $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.'; build(); });
+    $('#' + id)?.addEventListener('change', () => { $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.'; build(); });
   });
-  $('#clear-filters').addEventListener('click', () => {
-    ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => { $('#' + id).value = ''; });
+  $('#clear-filters')?.addEventListener('click', () => {
+    ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
     $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.';
     build();
   });
