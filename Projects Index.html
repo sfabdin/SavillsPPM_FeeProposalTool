@@ -53,6 +53,25 @@
     .kpi-strip { grid-template-columns: repeat(3, 1fr); }
   }
 
+  /* Client rollup */
+  .client-rollup { margin: 0 0 22px; border: 1px solid var(--hairline); background: #fff; }
+  .client-rollup summary {
+    cursor: pointer; padding: 13px 18px; font-family: var(--font-display);
+    font-weight: 700; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--sav-navy); list-style: none; display: flex; align-items: center; gap: 10px;
+  }
+  .client-rollup summary::-webkit-details-marker { display: none; }
+  .client-rollup .cr-caret { color: var(--sav-teal); transition: transform .15s; display: inline-block; }
+  .client-rollup[open] .cr-caret { transform: rotate(90deg); }
+  .client-rollup .cr-hint { font-family: var(--font-body); font-weight: 400; font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--sav-steel); }
+  .cr-body { padding: 0 18px 14px; }
+  .cr-table { width: 100%; border-collapse: collapse; }
+  .cr-table th, .cr-table td { text-align: left; padding: 8px 10px; font-size: 12px; border-top: 1px solid var(--hairline); }
+  .cr-table th { font-family: var(--font-display); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sav-steel); border-top: 0; }
+  .cr-table td.num, .cr-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .cr-table .cr-client { font-weight: 700; color: var(--sav-navy); }
+  .cr-table .cr-co { color: var(--sav-teal); font-size: 11px; }
+
   /* Toolbar */
   .toolbar {
     display: flex;
@@ -415,6 +434,12 @@
     </div>
   </div>
 
+  <!-- ===== Client rollup ===== -->
+  <details class="client-rollup" id="client-rollup">
+    <summary><span class="cr-caret">▸</span> By client <span class="cr-hint" id="cr-hint"></span></summary>
+    <div class="cr-body" id="cr-body"></div>
+  </details>
+
   <!-- ===== Identity / access bar ===== -->
   <div class="identity-bar" id="identity-bar">
     <div class="id-who">
@@ -632,25 +657,54 @@
 
   /* ---------- KPI rollup ---------- */
   function renderKpis(allProjects) {
-    const fees = allProjects.map(p => ({ p, fin: projectFee(p) }));
-    const total = fees.reduce((s, x) => s + x.fin.net, 0);
+    // Parents only — change orders fold into their parent's revised contract.
+    const parents = allProjects.filter(p => !STORE.isChangeOrder(p));
+    const fees = parents.map(p => {
+      const rc = STORE.revisedContract(p.id);
+      const net = rc.coCount ? rc.revisedNet : projectFee(p).net;
+      return { p, net };
+    });
+    const total = fees.reduce((s, x) => s + x.net, 0);
     const pipeline = fees.filter(x => ['draft','submitted','negotiation'].includes(x.p.project?.status))
-                        .reduce((s, x) => s + x.fin.net, 0);
+                        .reduce((s, x) => s + x.net, 0);
     const won = fees.filter(x => ['won','active','closed'].includes(x.p.project?.status))
-                   .reduce((s, x) => s + x.fin.net, 0);
+                   .reduce((s, x) => s + x.net, 0);
     const active = fees.filter(x => x.p.project?.status === 'active')
-                      .reduce((s, x) => s + x.fin.net, 0);
-    const wonCount = allProjects.filter(p => ['won','active','closed'].includes(p.project?.status)).length;
-    const lostCount = allProjects.filter(p => p.project?.status === 'lost').length;
+                      .reduce((s, x) => s + x.net, 0);
+    const wonCount = parents.filter(p => ['won','active','closed'].includes(p.project?.status)).length;
+    const lostCount = parents.filter(p => p.project?.status === 'lost').length;
     const decided = wonCount + lostCount;
     const wr = decided ? Math.round((wonCount / decided) * 100) : null;
 
-    $('#kpi-count').textContent = allProjects.length;
+    $('#kpi-count').textContent = parents.length;
     $('#kpi-pipeline').textContent = fmtMoney(pipeline);
     $('#kpi-won').textContent = fmtMoney(won);
     $('#kpi-active').textContent = fmtMoney(active);
     $('#kpi-winrate').innerHTML = wr !== null ? `${wr}<span class="unit">%</span>` : '—';
     $('#kpi-total').textContent = fmtMoney(total);
+  }
+
+  /* ---------- Client rollup ---------- */
+  function renderClientRollup(allProjects) {
+    const parents = allProjects.filter(p => !STORE.isChangeOrder(p));
+    const rows = STORE.clientRollup(parents);
+    const hint = $('#cr-hint'), body = $('#cr-body');
+    if (!rows.length) { if (hint) hint.textContent = ''; if (body) body.innerHTML = ''; return; }
+    if (hint) hint.textContent = `${rows.length} client${rows.length === 1 ? '' : 's'}`;
+    body.innerHTML = `<table class="cr-table">
+      <thead><tr><th>Client</th><th class="num">Projects</th><th class="num">Original</th><th class="num">Change orders</th><th class="num">Revised contract</th></tr></thead>
+      <tbody>${rows.map(r => {
+        const coDelta = r.revised - r.baseline;
+        const coTxt = r.coCount ? `<span class="cr-co">${coDelta >= 0 ? '+' : '−'}${fmtMoneyFull(Math.abs(coDelta))} · ${r.coCount}</span>` : '—';
+        return `<tr>
+          <td class="cr-client">${esc(r.client)}</td>
+          <td class="num">${r.projects}</td>
+          <td class="num">${fmtMoneyFull(r.baseline)}</td>
+          <td class="num">${coTxt}</td>
+          <td class="num"><strong>${fmtMoneyFull(r.revised)}</strong></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
   }
 
   /* ---------- Render ---------- */
@@ -661,6 +715,7 @@
     const all = STORE.visibleProjects(everything);
     populateFilters(all);
     renderKpis(all);
+    renderClientRollup(all);
     const filtered = applySort(applyFilters(all));
 
     const host = $('#table-host');
@@ -711,14 +766,25 @@
         : `<th class="${cls}">${c.label}</th>`;
     }).join('');
 
-    const rowsHtml = filtered.map(p => {
+    const rowsHtml = filtered.filter(p => !STORE.isChangeOrder(p)).map(p => {
       const pj = p.project || {};
       const fin = projectFee(p);
+      const rc = STORE.revisedContract(p.id);
+      const hasCOs = rc.coCount > 0;
       const statusKey = pj.status || 'draft';
       const statusLabel = STORE.STATUS_LABELS[statusKey] || statusKey;
+      const coSign = rc.coNetSum >= 0 ? '+' : '−';
+      const feeCell = hasCOs
+        ? `<div class="pfee">${fmtMoneyFull(rc.revisedNet)}</div>
+           <div class="pfee-sub">${fmtMoneyFull(rc.baselineNet)} ${coSign} ${rc.coCount} CO${rc.coCount === 1 ? '' : 's'}</div>`
+        : `<div class="pfee">${fmtMoneyFull(fin.net)}</div>
+           <div class="pfee-sub">${fin.fteMonths.toFixed(1)} fte-mo</div>`;
+      const nameSub = hasCOs
+        ? `<span class="pname-sub">${esc(pj.industry || '—')} · revised contract</span>`
+        : `<span class="pname-sub">${esc(pj.industry || '—')}</span>`;
       return `<tr data-id="${p.id}">
         <td>
-          <div class="pname">${esc(pj.name || 'Untitled')}<span class="pname-sub">${esc(pj.industry || '—')}</span></div>
+          <div class="pname">${esc(pj.name || 'Untitled')}${nameSub}</div>
         </td>
         <td>
           <div class="pclient">${esc(pj.client || '—')}</div>
@@ -728,10 +794,7 @@
         <td>${esc(pj.industry || '—')}</td>
         <td>${esc(pj.lead || '—')}</td>
         <td style="font-family: var(--font-body); color: var(--sav-steel); font-size: 12px;">${fmtPeriod(p)}</td>
-        <td class="num">
-          <div class="pfee">${fmtMoneyFull(fin.net)}</div>
-          <div class="pfee-sub">${fin.fteMonths.toFixed(1)} fte-mo</div>
-        </td>
+        <td class="num">${feeCell}</td>
         <td style="font-family: var(--font-body); color: var(--sav-steel); font-size: 12px;">${fmtRelative(p.updatedAt)}</td>
         <td>
           <div class="row-actions">

@@ -141,6 +141,7 @@
     <div class="actions">
       <label class="ctl-toggle"><input type="checkbox" id="show-excluded" checked> Show rated 5–7</label>
       <button class="btn" id="edit-toggle" title="Edit ratings and override monthly billings">✎ Edit</button>
+      <button class="btn" id="xlsx-export" title="Download the matrix exactly as shown">⤓ Excel</button>
       <a class="btn" href="Fee Generator.html">← Home</a>
       <button class="btn btn-primary" onclick="window.print()">Print / PDF</button>
     </div>
@@ -219,19 +220,32 @@
   let showExcluded = true;
   let editMode = false;
   let ALL = [];                 // prepared rows (built once)
+  let LAST_VIEW = null;         // last rendered model, for Excel export
   const QUARTERS = { Q1: [1,2,3], Q2: [4,5,6], Q3: [7,8,9], Q4: [10,11,12] };
 
   function prepData() {
-    const projects = STORE.visibleProjects(STORE.listProjects());
+    // Change orders fold into their parent's revised curve — exclude as rows.
+    const parents = STORE.listProjects().filter(p => !STORE.isChangeOrder(p));
+    const projects = STORE.visibleProjects(parents);
     ALL = projects.map(p => {
       const series = STORE.monthlySeries(p, CATALOG);
       const map = {};
       let total = 0;
       series.forEach(s => { const k = s.year + '-' + s.month; map[k] = (map[k] || 0) + s.amount; total += s.amount; });
+      // Add each approved change order's incremental curve on top of the baseline.
+      const cos = STORE.approvedChangeOrders ? STORE.approvedChangeOrders(p.id) : [];
+      cos.forEach(co => {
+        STORE.changeOrderDelta(co).byMonth.forEach(x => {
+          const [y, m] = x.ym.split('-').map(Number);
+          const k = y + '-' + m;
+          map[k] = (map[k] || 0) + x.net; total += x.net;
+        });
+      });
       const pj = p.project || {};
       const leaders = [pj.lead, pj.clientRelOwner].map(x => (x || '').trim()).filter(Boolean);
       const serviceLines = STORE.projectServiceLines(p);
       return { p, pj, rating: STORE.ratingFor(p), map, total, ov: p.monthlyOverrides || null,
+               coCount: cos.length,
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim() };
     });
     populateFilters();
@@ -377,7 +391,8 @@
       const ratingCell = editMode
         ? `<select class="rtag-edit r${r.rating}" data-pid="${r.p.id}" title="Projection rating">${STORE.RATINGS.map(rt => `<option value="${rt.n}" ${rt.n===r.rating?'selected':''}>${rt.n}</option>`).join('')}</select>`
         : `<span class="rtag r${r.rating}">${r.rating}</span>`;
-      html += `<td class="proj-cell">${ratingCell}<a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a><div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}<span class="open-link"> · open →</span></div></td>`;
+      const coMeta = r.coCount ? ` · <span style="color:var(--sav-teal);">incl. ${r.coCount} CO${r.coCount === 1 ? '' : 's'}</span>` : '';
+      html += `<td class="proj-cell">${ratingCell}<a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a><div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}${coMeta}<span class="open-link"> · open →</span></div></td>`;
       let rvt = 0;
       cols.forEach((c, i) => {
         const v = r.map[c.key] || 0;
@@ -424,6 +439,10 @@
       <div class="kpi"><div class="k-lbl">Probability-weighted</div><div class="k-val">${fmtFull(grandWt)}</div><div class="k-sub">All pursuits × confidence · incl. ${fmtFull(longshot)} long-shot</div></div>
     `;
 
+    // Capture the exact rendered model for the Excel export.
+    LAST_VIEW = { rows, cols, years, colTot, colWt, grandTot, grandWt,
+                  booked, pipeline14, longshot, filters: f, showExcluded };
+
     // ---- Legend ----
     $('#legend').innerHTML = STORE.RATINGS.map(r => {
       const c = { 1:'#1f8a5b',2:'#3AA95C',3:'var(--sav-yellow)',4:'var(--sav-orange)',5:'var(--sav-steel)',6:'var(--sav-steel)',7:'var(--sav-steel)' }[r.n];
@@ -432,6 +451,172 @@
   }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+
+  /* ---------- Excel export — mirrors the matrix exactly as viewed ---------- */
+  async function exportProjections() {
+    if (typeof ExcelJS === 'undefined') { alert('Excel library not loaded.'); return; }
+    if (!LAST_VIEW || !LAST_VIEW.rows.length) { alert('Nothing to export — adjust the filters so projects are visible.'); return; }
+    const V = LAST_VIEW;
+    const NAVY='FF25273A', YEL='FFFFDF00', TEAL='FF0E7C7B', CREAM='FFEEE8E3', STEEL='FF79828C', WHITE='FFFFFFFF', HAIR='FFE2DFDA';
+    const RCOL = { 1:'FF1F8A5B', 2:'FF3AA95C', 3:'FFD9A300', 4:'FFD2691E', 5:STEEL, 6:STEEL, 7:STEEL };
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Savills PPM';
+    const ws = wb.addWorksheet('Revenue Projections', {
+      views: [{ state: 'frozen', xSplit: 1, ySplit: 5 }],
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+    });
+    const nCols = V.cols.length;
+    const lastCol = 2 + nCols;               // A label + months + total
+    const colL = (i) => { let s=''; i++; while(i>0){ s=String.fromCharCode(65+(i-1)%26)+s; i=Math.floor((i-1)/26);} return s; };
+    ws.getColumn(1).width = 34;
+    for (let i=0;i<nCols;i++) ws.getColumn(2+i).width = 10;
+    ws.getColumn(lastCol).width = 14;
+
+    const money = (n) => Math.round(n);
+    const setMoney = (cell, n, opts={}) => {
+      cell.value = n ? money(n) : (opts.dash ? '·' : null);
+      cell.numFmt = '#,##0';
+      cell.alignment = { horizontal: 'right' };
+      if (opts.font) cell.font = opts.font;
+      if (opts.fill) cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:opts.fill} };
+    };
+
+    // ----- Title + KPI band (rows 1-3) -----
+    ws.mergeCells(1,1,1,lastCol);
+    const t = ws.getCell('A1');
+    t.value = 'Revenue Projections';
+    t.font = { name:'Calibri', bold:true, size:18, color:{argb:NAVY} };
+    ws.getRow(1).height = 26;
+    const fbits = [];
+    const f = V.filters;
+    if (f.client) fbits.push('Client: '+f.client);
+    if (f.leader) fbits.push('Leader: '+f.leader);
+    if (f.service) fbits.push('Service: '+f.service);
+    if (f.industry) fbits.push('Industry: '+f.industry);
+    if (f.year) fbits.push('Year: '+f.year);
+    if (f.quarter) fbits.push(f.quarter);
+    if (f.month) fbits.push('Month: '+MONTHS[parseInt(f.month)-1]);
+    ws.mergeCells(2,1,2,lastCol);
+    const sub = ws.getCell('A2');
+    sub.value = `${V.rows.length} projects · as of ${new Date().toLocaleDateString()}` + (fbits.length ? '  ·  '+fbits.join('  ·  ') : '  ·  all projects') + (V.showExcluded ? '' : '  ·  rated 1–4 only');
+    sub.font = { name:'Calibri', italic:true, size:10, color:{argb:STEEL} };
+    // KPI cells (row 4)
+    const kpis = [
+      ['Booked (rated 1)', V.booked, NAVY, WHITE],
+      ['Pipeline (2–4)', V.pipeline14, CREAM, NAVY],
+      ['Projected total (1–4)', V.grandTot, TEAL, WHITE],
+      ['Probability-weighted', V.grandWt, CREAM, NAVY],
+    ];
+    let kc = 1;
+    const kpiSpan = Math.max(2, Math.floor((lastCol) / 4));
+    kpis.forEach((k, idx) => {
+      const c0 = kc, c1 = (idx === 3) ? lastCol : Math.min(lastCol, kc + kpiSpan - 1);
+      ws.mergeCells(4, c0, 4, c1);
+      const cell = ws.getCell(4, c0);
+      cell.value = `${k[0]}:  ${fmtFull(k[1])}`;
+      cell.font = { name:'Calibri', bold:true, size:11, color:{argb:k[3]} };
+      cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:k[2]} };
+      cell.alignment = { horizontal:'left', vertical:'middle', indent:1 };
+      kc = c1 + 1;
+    });
+    ws.getRow(4).height = 22;
+
+    // ----- Header: year spans (row 5) + months (row 6) -----
+    const yearRow = 5, monRow = 6;
+    ws.getCell(yearRow,1).value = `Project · ${V.rows.length}`;
+    ws.getCell(yearRow,1).font = { name:'Calibri', bold:true, color:{argb:WHITE} };
+    ws.getCell(yearRow,1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
+    ws.getCell(yearRow,1).alignment = { vertical:'middle' };
+    ws.mergeCells(yearRow,1,monRow,1);
+    let ci = 2;
+    V.years.forEach(yr => {
+      ws.mergeCells(yearRow, ci, yearRow, ci + yr.span - 1);
+      const yc = ws.getCell(yearRow, ci);
+      yc.value = yr.y;
+      yc.font = { name:'Calibri', bold:true, color:{argb:NAVY} };
+      yc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:YEL} };
+      yc.alignment = { horizontal:'center' };
+      ci += yr.span;
+    });
+    ws.mergeCells(yearRow, lastCol, monRow, lastCol);
+    const tc = ws.getCell(yearRow, lastCol);
+    tc.value = 'Total';
+    tc.font = { name:'Calibri', bold:true, color:{argb:WHITE} };
+    tc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
+    tc.alignment = { horizontal:'right', vertical:'middle' };
+    V.cols.forEach((c, i) => {
+      const cell = ws.getCell(monRow, 2 + i);
+      cell.value = MONTHS[c.m - 1];
+      cell.font = { name:'Calibri', size:9, bold:true, color:{argb:STEEL} };
+      cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:CREAM} };
+      cell.alignment = { horizontal:'center' };
+    });
+
+    // ----- Body: rating groups + project rows -----
+    let r = monRow + 1;
+    let lastRating = null;
+    V.rows.forEach(row => {
+      const excluded = row.rating > 4;
+      if (excluded && !V.showExcluded) return;
+      const meta = STORE.ratingMeta(row.rating);
+      if (row.rating !== lastRating) {
+        lastRating = row.rating;
+        ws.mergeCells(r, 1, r, lastCol);
+        const g = ws.getCell(r, 1);
+        g.value = `  ${row.rating} · ${meta.label}${excluded ? ' — excluded from totals' : ''}`;
+        g.font = { name:'Calibri', bold:true, size:10, color:{argb: excluded ? STEEL : NAVY} };
+        g.fill = { type:'pattern', pattern:'solid', fgColor:{argb: excluded ? 'FFF4F4F3' : 'FFF0EFEC'} };
+        ws.getRow(r).height = 18;
+        r++;
+      }
+      const pj = row.p.project || {};
+      const nm = ws.getCell(r, 1);
+      nm.value = { richText: [
+        { text: (pj.name || 'Untitled'), font: { name:'Calibri', bold:true, size:11, color:{argb: excluded ? STEEL : NAVY} } },
+        { text: '   '+[pj.client, STORE.STATUS_LABELS[pj.status]].filter(Boolean).join(' · ') + (row.coCount ? '  (incl. '+row.coCount+' CO'+(row.coCount===1?'':'s')+')' : ''), font: { name:'Calibri', size:9, color:{argb:STEEL} } },
+      ] };
+      nm.alignment = { vertical:'middle' };
+      // rating chip color as a left accent via font color on the row total later
+      let rvt = 0;
+      V.cols.forEach((c, i) => {
+        const v = row.map[c.key] || 0; rvt += v;
+        const isOv = row.ov && row.ov[c.key] != null;
+        const cell = ws.getCell(r, 2 + i);
+        setMoney(cell, v, { dash:true, font:{ name:'Calibri', size:10, color:{argb: isOv ? TEAL : (excluded ? STEEL : NAVY)}, bold: !!isOv } });
+      });
+      setMoney(ws.getCell(r, lastCol), rvt, { font:{ name:'Calibri', bold:true, color:{argb: RCOL[row.rating] || NAVY} } });
+      r++;
+    });
+
+    // ----- Totals rows -----
+    const totRow = r + 1;
+    ws.getCell(totRow,1).value = 'Projected (rated 1–4)';
+    ws.getCell(totRow,1).font = { name:'Calibri', bold:true, color:{argb:WHITE} };
+    ws.getCell(totRow,1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
+    V.cols.forEach((c, i) => setMoney(ws.getCell(totRow, 2+i), V.colTot[c.key], { dash:true, font:{name:'Calibri', bold:true, color:{argb:WHITE}}, fill:NAVY }));
+    setMoney(ws.getCell(totRow, lastCol), V.grandTot, { font:{name:'Calibri', bold:true, color:{argb:YEL}}, fill:NAVY });
+    ws.getRow(totRow).height = 20;
+
+    const wtRow = totRow + 1;
+    ws.getCell(wtRow,1).value = 'Probability-weighted (all)';
+    ws.getCell(wtRow,1).font = { name:'Calibri', bold:true, color:{argb:NAVY} };
+    ws.getCell(wtRow,1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:CREAM} };
+    V.cols.forEach((c, i) => setMoney(ws.getCell(wtRow, 2+i), V.colWt[c.key], { dash:true, font:{name:'Calibri', color:{argb:NAVY}}, fill:CREAM }));
+    setMoney(ws.getCell(wtRow, lastCol), V.grandWt, { font:{name:'Calibri', bold:true, color:{argb:NAVY}}, fill:CREAM });
+
+    // borders on the matrix
+    for (let rr = yearRow; rr <= wtRow; rr++) for (let cc = 1; cc <= lastCol; cc++) {
+      ws.getCell(rr, cc).border = { bottom:{style:'thin', color:{argb:HAIR}}, right:{style:'thin', color:{argb:HAIR}} };
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `Revenue Projections ${new Date().toISOString().slice(0,10)}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
 
   /** Commit a manual monthly override (or rating) and persist to the project. */
   function wireEditing() {
@@ -487,7 +672,15 @@
   function monthRevenueFor(p, year, month) {
     const series = STORE.monthlySeries(p, CATALOG);
     const hit = series.find(s => s.year === year && s.month === month);
-    return hit ? hit.amount : 0;
+    let amt = hit ? hit.amount : 0;
+    // Roll up approved change orders' incremental for this month.
+    (STORE.approvedChangeOrders ? STORE.approvedChangeOrders(p.id) : []).forEach(co => {
+      STORE.changeOrderDelta(co).byMonth.forEach(x => {
+        const [y, m] = x.ym.split('-').map(Number);
+        if (y === year && m === month) amt += x.net;
+      });
+    });
+    return amt;
   }
   function renderFlashSnaps() {
     const { year, month } = flashPeriod();
@@ -500,7 +693,7 @@
   function captureFlash() {
     const { year, month } = flashPeriod();
     const label = $('#flash-label').value;
-    const projects = STORE.visibleProjects(STORE.listProjects());
+    const projects = STORE.visibleProjects(STORE.listProjects().filter(p => !STORE.isChangeOrder(p)));
     STORE.captureSnapshot(year, month, label, projects, (p) => {
       const pj = p.project || {};
       return {
@@ -519,7 +712,7 @@
     const { year, month } = flashPeriod();
     const snaps = STORE.getSnapshots(year, month);
     const labels = STORE.FLASH_LABELS;
-    const projects = STORE.visibleProjects(STORE.listProjects());
+    const projects = STORE.visibleProjects(STORE.listProjects().filter(p => !STORE.isChangeOrder(p)));
     // Union of projects across live + all snapshots
     const live = {};
     projects.forEach(p => { const pj = p.project || {}; live[p.id] = { projId: pj.projectId365 || '', name: pj.name || 'Untitled', client: pj.client || '', rating: STORE.ratingFor(p), amount: monthRevenueFor(p, year, month) }; });
@@ -583,6 +776,7 @@
     build();
   });
   $('#show-excluded')?.addEventListener('change', e => { showExcluded = e.target.checked; build(); });
+  $('#xlsx-export')?.addEventListener('click', exportProjections);
   ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => {
     $('#' + id)?.addEventListener('change', () => { $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.'; build(); });
   });

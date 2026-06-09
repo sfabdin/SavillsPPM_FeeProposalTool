@@ -1,8 +1,11 @@
-# Savills PPM · Fee Proposal Tool
+# Savills PPM · Fee Proposal Generator
 
-A multi-page, Box-backed system for building, storing, and reporting on fee
-proposals. Pure static front-end (HTML + vanilla JS) plus two Vercel
+A multi-page, Box-backed system for building, pricing, storing, and reporting on
+fee proposals. Pure static front-end (HTML + vanilla JS) plus two Vercel
 serverless functions. No build step.
+
+**Read `Maintainers Runbook.html` first** — it documents the architecture, the
+calculation pipeline, caveats, config, deploy steps, and known limits in full.
 
 ---
 
@@ -11,30 +14,29 @@ serverless functions. No build step.
 ```
 /
 ├── Fee Generator.html            ← HOME / hub (links to everything below)
-├── Universal Fee Calculator.html ← build a proposal (the core tool)
+├── Universal Fee Calculator.html ← build & price a proposal (the core tool)
 ├── Projects Index.html           ← the project database (all records)
+├── Revenue Projections.html      ← pipeline / revenue forecast
 ├── Ingestion Studio.html         ← import a historical proposal (uses Claude)
 ├── Benchmarking Dashboard.html   ← "what have we charged before?"
-├── Revenue Projections.html      ← pipeline / revenue forecast view
-├── Enterprise Migration Guide.html ← internal doc: going live / hosting
-├── Fee System Roadmap.html       ← internal doc: phased roadmap
+├── Enterprise Migration Guide.html · Fee System Roadmap.html  ← internal docs
+├── Maintainers Runbook.html      ← THE handoff doc (architecture + math + ops)
 ├── oauth-callback.html           ← Box OAuth redirect target (REQUIRED)
 │
 ├── api/                          ← Vercel serverless functions
 │   ├── box-token.js              ← Box OAuth token exchange + refresh (holds the secret)
-│   └── extract.js                ← proposal extraction via Claude (Ingestion Studio)
+│   └── extract.js                ← proposal extraction via Claude (Ingestion)
 │
 ├── universal-fee-calc/           ← the application code (shared by every page)
 │   ├── rates-catalog.js          ← rate ENGINE only — NO confidential numbers
-│   ├── store.js                  ← localStorage data layer + access rules
-│   ├── box-adapter.js            ← Box sync layer (auth, pull/push, rates pull)
+│   ├── store.js                  ← data layer, access rules, financials snapshot
+│   ├── box-adapter.js            ← Box sync (auth, pull/push, rates pull, config)
 │   ├── boot.js                   ← gates each page on auth + data load
 │   ├── sync-status.js            ← the on-page "Synced to Box" indicator
-│   ├── app.js                    ← the calculator
+│   ├── app.js                    ← the calculator engine + UI
 │   ├── intake.js                 ← Salesforce intake email + drift detection
-│   ├── ingest.js                 ← Ingestion Studio logic
-│   ├── bench.js / bench-data.js  ← Benchmarking
-│   ├── export-excel.js           ← Excel export (live formulas)
+│   ├── ingest.js · bench*.js      ← Ingestion + Benchmarking
+│   ├── export-excel.js           ← the 4-tab Excel export (live formulas)
 │   └── styles.css
 │
 ├── design-system/                ← brand: colours, type, Gotham fonts, logo
@@ -43,63 +45,29 @@ serverless functions. No build step.
 └── .gitignore
 
 NOT in this repo (by design — confidential, lives in Box):
-   rates.json   ← the Macro 2024 rate grid (rack rates, cost floors, discounts)
+   rates.json   ← the Macro rate grid (rack rates, cost floors, discounts)
 ```
 
----
+## The one rule
+The rate numbers must NEVER be committed. The grid lives only in Box as
+`rates.json`; the app pulls it after login and hydrates the engine in memory.
+`.gitignore` blocks it from being committed; `.vercelignore` blocks it (and
+`research/`) from deploying.
 
-## The rate card is NOT in this code
+## Setup (one-time) — see the Runbook §12–13 for detail
+1. **Box app** (Developer Console): User Auth (OAuth 2.0), PKCE enabled, redirect
+   URI `https://<your-vercel-domain>/oauth-callback.html`, read/write scope.
+2. **Box folder**: put `projects.json` (`{"schemaVersion":1,"projects":{}}`) and
+   the confidential `rates.json` in it; copy both file ids + the folder id into
+   `universal-fee-calc/box-adapter.js` → `BOX_CONFIG`.
+3. **Vercel env vars**: `BOX_CLIENT_ID`, `BOX_CLIENT_SECRET`, `ANTHROPIC_API_KEY`.
+4. Confirm `BOX_CONFIG`: `enabled:true`, `testMode:false`, `clientId`,
+   `dataFileId`, `ratesFileId`, `folderId`.
 
-The confidential rate grid (rack rates, cost-rate floors, target discounts) is
-**not** in `rates-catalog.js` — anything in the deployed bundle is readable at
-its URL with no login. The grid lives in **Box** as `rates.json` and is pulled
-in only after a successful Box sign-in.
+Until `rates.json` exists in Box with its id set, every page shows a
+"Rate card unavailable" gate by design.
 
-`rates-catalog.js` is the engine (the High/Mid/Low math + title mapping). On
-boot it pulls `rates.json` from Box and hydrates the catalog in memory.
-
----
-
-## Setup (one-time)
-
-### 1. Box app (Developer Console → My Apps)
-- Custom App → **User Authentication (OAuth 2.0)**
-- Redirect URI = `https://<your-vercel-domain>/oauth-callback.html`
-- Enable **Authorization Code Grant with PKCE**
-- Scopes: **Read and write all files and folders**
-- Copy the **Client ID** → `universal-fee-calc/box-adapter.js` → `BOX_CONFIG.clientId`
-
-### 2. Box folder — two JSON files
-- Put an empty `projects.json` → `{"schemaVersion":1,"projects":{}}` in a Box folder.
-  Copy its **file id** → `BOX_CONFIG.dataFileId`.
-- Upload **`rates.json`** (the confidential grid — supplied separately) into the
-  same folder. Copy its **file id** → `BOX_CONFIG.ratesFileId`.
-
-### 3. Vercel environment variables
-- `BOX_CLIENT_ID`     — the Box app client id
-- `BOX_CLIENT_SECRET` — the Box app client secret (server-side only)
-- `ANTHROPIC_API_KEY` — for `api/extract.js` (Ingestion Studio)
-- Redeploy after setting them.
-
-### 4. Confirm config in `universal-fee-calc/box-adapter.js`
-```
-enabled:     true
-testMode:    false           // production OAuth
-clientId:    <your Box client id>
-dataFileId:  <projects.json file id>
-ratesFileId: <rates.json file id>   // currently "PASTE_RATES_FILE_ID"
-```
-
-Until `ratesFileId` is set and `rates.json` exists in Box, every page shows a
-**"Rate card unavailable"** gate (by design — it refuses to run without rates).
-
----
-
-## Security notes
-- **Box folder permissions are the real access boundary.** The in-app per-person
-  filter is a view convenience, not a hard wall — anyone who can authenticate
-  could read the data file directly.
-- `rates.json` and `research/` are kept off the public origin via `.vercelignore`,
-  and `rates.json` is git-ignored so it can't be committed.
-- No client secret ships to the browser — the OAuth exchange runs in
-  `api/box-token.js`.
+## Access (fail-closed)
+Admins (allowlist in `store.js`) see everything; everyone else sees only their
+own projects; an unrecognized login sees nothing. Box folder permission is the
+true boundary — see Runbook §6.
