@@ -149,6 +149,7 @@
     if (!record.id) record.id = 'proj_' + Math.random().toString(36).slice(2, 11);
     if (!record.createdAt) record.createdAt = new Date().toISOString();
     record.updatedAt = new Date().toISOString();
+    maybeSnapshotFinancials(record);   // freeze derived figures once booked
     db.projects[record.id] = record;
     writeDb(db);
     return record;
@@ -240,7 +241,12 @@
     return p.roles.reduce((sum, r) => {
       return sum + p.phases.reduce((phSum, ph) => {
         const slice = monthsByPhase[ph.id] || [];
-        const fte = (r.fte?.[ph.id] || 0) / 100;
+        const fte = ((() => {
+          // month-canonical: average the phase's months (fteMonthly ?? phase)
+          if (!slice.length) return 0;
+          const sum = slice.reduce((a, m) => a + ((r.fteMonthly && r.fteMonthly[m.year + '-' + m.month] != null) ? r.fteMonthly[m.year + '-' + m.month] : (r.fte?.[ph.id] || 0)), 0);
+          return sum / slice.length;
+        })()) / 100;
         if (!fte) return phSum;
         const tierRate = r.__rate ?? 0;  // expected to be set externally
         return phSum + slice.reduce((s, m) => {
@@ -287,28 +293,399 @@
     const discPct = (p.assumptions?.discount || 0) / 100;
 
     const monthsByPhase = computeMonthsByPhase(p);
+    const phaseOfMonth = {};
+    (p.phases || []).forEach(ph => (monthsByPhase[ph.id] || []).forEach(m => { phaseOfMonth[m.year + '-' + m.month] = ph.id; }));
+    const months = enumerateMonths(p.timeline);
 
     let gross = 0, lockCredit = 0, fteMonths = 0;
     p.roles.forEach(r => {
       const tierRate = getTierRate(r);
-      p.phases.forEach(ph => {
-        const slice = monthsByPhase[ph.id] || [];
-        const fte = (r.fte?.[ph.id] || 0) / 100;
-        if (!fte || !slice.length) return;
-        fteMonths += fte * slice.length;
-        slice.forEach(mObj => {
-          const unlocked = tierRate * Math.pow(1 + esc, mObj.year - baseYear);
-          const locked   = tierRate * Math.pow(1 + esc, startYear - baseYear);
-          // Gross at the PUBLISHED (unlocked) rate; Rate Lock surfaces once as lockCredit.
-          // Using the locked rate here AND subtracting the credit would double-remove it.
-          gross += fte * unlocked * hrs;
-          if (lockOn) lockCredit += Math.max(0, (unlocked - locked) * fte * hrs);
-        });
+      months.forEach(mObj => {                          // MONTH-CANONICAL: iterate months
+        const mk = mObj.year + '-' + mObj.month;
+        const phId = phaseOfMonth[mk];
+        const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte?.[phId] || 0)) / 100;
+        if (!fte) return;
+        fteMonths += fte;
+        const unlocked = tierRate * Math.pow(1 + esc, mObj.year - baseYear);
+        const locked   = tierRate * Math.pow(1 + esc, startYear - baseYear);
+        gross += fte * unlocked * hrs;
+        if (lockOn) lockCredit += Math.max(0, (unlocked - locked) * fte * hrs);
       });
     });
     const discount = (gross) * discPct;
     const net = gross - lockCredit - discount;
     return { gross, lockCredit, discount, net, fteMonths };
+  }
+
+  /* ============================================================
+     FINANCIALS SNAPSHOT — frozen derived figures for reporting.
+     ------------------------------------------------------------
+     Records store inputs; the pipeline derives dollars live. For
+     reporting (Power BI), we FREEZE the derived waterfall onto the
+     record when it becomes booked (won/active/closed), so a signed
+     fee never silently changes if the rate card, a bug fix, or an
+     assumption changes later. Pre-booking records get no snapshot.
+     If a booked record's fee-affecting inputs later change, we mark
+     the snapshot `stale` (a change-order / re-stamp prompt) rather
+     than overwriting the frozen number.
+     ============================================================ */
+  const ENGINE_VERSION = '2026.06';
+  const BOOKED_STATUSES = new Set(['won', 'active', 'closed']);
+
+  /** Stable signature of every fee-affecting input. Any change flips a booked
+      snapshot to `stale`. */
+  function financialsInputsHash(p) {
+    const a = p.assumptions || {};
+    const sig = JSON.stringify({
+      t: p.timeline,
+      ph: (p.phases || []).map(x => [x.id, x.length]),
+      as: [a.hrsPerMo, a.escalation, a.industryAdj, a.discount, a.rateLock, a.billingMode, a.catalogBaseYear,
+           a.feeShare && a.feeShare.enabled, a.feeShare && a.feeShare.pct],
+      r: (p.roles || []).map(r => [r.titleId, r.tierId, r.rateSource, r.contractedRate, r.groupId,
+           r.fte, r.fteMonthly]),
+    });
+    // djb2 → short hex
+    let h = 5381; for (let i = 0; i < sig.length; i++) h = ((h << 5) + h + sig.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(16);
+  }
+
+  /** Compute the full derived waterfall + by-month + by-group for a project.
+      Fully MONTH-CANONICAL: one month-aware loop honors per-month FTE overrides
+      (phase FTE is the fallback), so totals, byGroup and byMonth always agree —
+      including when a change order staffs specific months. Returns null if it
+      can't be priced. */
+  function computeFinancials(p, catalog) {
+    if (!p || !p.roles || !p.phases || !catalog) return null;
+    const hrs = p.assumptions?.hrsPerMo || 173.33;
+    const esc = (p.assumptions?.escalation || 0) / 100;
+    const baseYear = p.assumptions?.catalogBaseYear || catalog.baseYear || 2024;
+    const startYear = p.timeline?.startYear || baseYear;
+    const lockOn = !!p.assumptions?.rateLock;
+    const discPct = (p.assumptions?.discount || 0) / 100;
+    const round2 = (n) => Math.round(n * 100) / 100;
+
+    const months = enumerateMonths(p.timeline);
+    const byPhase = computeMonthsByPhase(p);
+    const phaseOfMonth = {};
+    (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOfMonth[m.year + '-' + m.month] = ph.id; }));
+
+    let gross = 0, lock = 0, fteMonths = 0;
+    const groupGross = {}, groupLock = {}, monthNet = {};
+    p.roles.forEach(r => {
+      const { base, anchorYear } = resolveRoleRate(r, catalog, p);
+      months.forEach(m => {
+        const mk = m.year + '-' + m.month;
+        const phId = phaseOfMonth[mk];
+        const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte?.[phId] || 0)) / 100;
+        if (!fte) return;
+        fteMonths += fte;                                  // each month = one FTE-month unit
+        if (!base) return;
+        const unlocked = base * Math.pow(1 + esc, m.year - anchorYear);
+        const locked = base * Math.pow(1 + esc, startYear - anchorYear);
+        const g = fte * unlocked * hrs;
+        const l = lockOn ? Math.max(0, (unlocked - locked) * fte * hrs) : 0;
+        gross += g; lock += l;
+        const grp = r.groupId || 'core';
+        groupGross[grp] = (groupGross[grp] || 0) + g;
+        groupLock[grp] = (groupLock[grp] || 0) + l;
+        const ymKey = m.year + '-' + String(m.month).padStart(2, '0');
+        monthNet[ymKey] = (monthNet[ymKey] || 0) + (g - l - g * discPct);   // net accrued this month
+      });
+    });
+    if (!(gross > 0)) return null;                          // nothing priced — don't freeze $0
+
+    const discount = gross * discPct;
+    const net = gross - lock - discount;
+    const byGroup = Object.keys(groupGross).map(grp => {
+      const gg = groupGross[grp], gl = groupLock[grp] || 0;
+      return { group: grp, net: round2(gg - gl - gg * discPct) };
+    });
+    const byMonth = Object.keys(monthNet).sort().map(ym => ({ ym, net: round2(monthNet[ym]) }));
+
+    const feeSharePct = (p.assumptions?.feeShare && p.assumptions.feeShare.enabled)
+      ? (parseFloat(p.assumptions.feeShare.pct) || 0) : 0;
+    const feeShare = round2(net * (feeSharePct / 100));
+    const revenue = round2(net - feeShare);
+
+    return {
+      computedAt: new Date().toISOString(),
+      engineVersion: ENGINE_VERSION,
+      basis: 'booked',
+      gross: round2(gross),
+      rateLockCredit: round2(lock),
+      discount: round2(discount),
+      net: round2(net),
+      feeSharePct,
+      feeShare,
+      revenue,
+      fteMonths: Math.round(fteMonths * 100) / 100,
+      byGroup,
+      byMonth,
+    };
+  }
+
+  /** On save: freeze the financials snapshot the first time a record is booked;
+      mark it stale (not overwrite) if a booked record's inputs later change. */
+  function maybeSnapshotFinancials(record) {
+    const status = record.project && record.project.status;
+    const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    if (!catalog || !catalog.hydrated) return;          // rates not loaded → can't price
+    if (!BOOKED_STATUSES.has(status)) return;           // only freeze booked records
+    const hash = financialsInputsHash(record);
+    if (!record.financials) {
+      const fin = computeFinancials(record, catalog);
+      if (fin) { fin.inputsHash = hash; fin.stale = false; record.financials = fin; }
+    } else if (record.financials.inputsHash !== hash) {
+      record.financials.stale = true;                   // diverged — prompt re-stamp / change order
+    }
+  }
+
+  /** Explicit re-stamp (e.g. an approved change order) — refreshes the frozen
+      figures to the current inputs and clears `stale`. */
+  function restampFinancials(id) {
+    const db = readDb();
+    const r = db.projects[id];
+    const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    if (!r || !catalog) return null;
+    const fin = computeFinancials(r, catalog);
+    if (!fin) return null;
+    fin.inputsHash = financialsInputsHash(r);
+    fin.stale = false;
+    r.financials = fin;
+    writeDb(db);
+    return r;
+  }
+
+  /* ============================================================
+     CHANGE ORDERS — amendments to a booked contract.
+     ------------------------------------------------------------
+     Model: original contract + Σ approved change orders = revised
+     contract. Each CO is a LINKED record (its own row), forked as a
+     full copy of the running revised scope, edited to the new total,
+     and frozen on approval. The CO's *value* is the incremental net
+     vs. the contract it forked from (can be negative = de-scope).
+       • CO amends the PARENT's Salesforce ID (no new SF project).
+       • Incremental scope — the baseline curve is never reset; the CO
+         delta naturally starts wherever the months differ.
+       • Per-month is canonical on a CO (phase FTE expanded to months).
+       • Only APPROVED (booked + snapshotted) COs roll into the revised
+         contract.
+     ============================================================ */
+  const MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function monYearLabel(d) { return MON3[d.getMonth()] + ' ' + d.getFullYear(); }
+
+  function isChangeOrder(p) { return !!(p && p.changeOrder && p.changeOrder.parentId); }
+  function childChangeOrders(parentId) {
+    return listProjects().filter(p => isChangeOrder(p) && p.changeOrder.parentId === parentId)
+      .sort((a, b) => (a.changeOrder.coNumber || 0) - (b.changeOrder.coNumber || 0));
+  }
+  function approvedChangeOrders(parentId) {
+    return childChangeOrders(parentId).filter(co =>
+      BOOKED_STATUSES.has(co.project && co.project.status) && co.financials && !co.financials.stale);
+  }
+
+  /** Expand every role's phase FTE into explicit per-month values, so a CO is
+      edited and diffed at month granularity (phase becomes a rollup). */
+  function expandRolesToMonthly(p) {
+    const byPhase = computeMonthsByPhase(p);
+    const phaseOfMonth = {};
+    (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOfMonth[m.year + '-' + m.month] = ph.id; }));
+    const months = enumerateMonths(p.timeline);
+    (p.roles || []).forEach(r => {
+      const fm = r.fteMonthly || {};
+      months.forEach(m => {
+        const mk = m.year + '-' + m.month;
+        if (fm[mk] == null) {
+          const phId = phaseOfMonth[mk];
+          fm[mk] = (r.fte && r.fte[phId]) || 0;
+        }
+      });
+      r.fteMonthly = fm;
+    });
+  }
+
+  /** A {ym: net} map from a financials byMonth array. */
+  function byMonthMap(fin) {
+    const out = {};
+    (fin && fin.byMonth || []).forEach(x => { out[x.ym] = x.net; });
+    return out;
+  }
+
+  /** The revised contract = baseline (parent's frozen contract) + Σ approved CO
+      deltas. Returns totals + a per-CO ledger + the combined byMonth curve. */
+  function revisedContract(parentId) {
+    const parent = getProject(parentId);
+    const baseFin = parent && parent.financials;
+    const baselineNet = (baseFin && baseFin.net) || 0;
+    const curve = byMonthMap(baseFin || {});
+    const cos = approvedChangeOrders(parentId);
+    let coNetSum = 0;
+    const ledger = cos.map(co => {
+      const d = changeOrderDelta(co);
+      coNetSum += d.net;
+      d.byMonth.forEach(x => { curve[x.ym] = (curve[x.ym] || 0) + x.net; });
+      return { id: co.id, coNumber: co.changeOrder.coNumber, coDate: co.changeOrder.coDate, net: d.net, status: co.project.status };
+    });
+    const byMonth = Object.keys(curve).sort().map(ym => ({ ym, net: Math.round(curve[ym] * 100) / 100 }));
+    return {
+      parentId, baselineNet,
+      coNetSum: Math.round(coNetSum * 100) / 100,
+      revisedNet: Math.round((baselineNet + coNetSum) * 100) / 100,
+      coCount: cos.length, ledger, byMonth,
+    };
+  }
+
+  /** A compact roster snapshot (id → role identity + total FTE-months) for diffing. */
+  function rosterSnapshot(p) {
+    const months = enumerateMonths(p.timeline);
+    const byPhase = computeMonthsByPhase(p);
+    const phaseOfMonth = {};
+    (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOfMonth[m.year + '-' + m.month] = ph.id; }));
+    const out = {};
+    (p.roles || []).forEach(r => {
+      let fteMonths = 0;
+      months.forEach(m => {
+        const mk = m.year + '-' + m.month;
+        fteMonths += ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte?.[phaseOfMonth[mk]] || 0)) / 100;
+      });
+      out[r.id] = {
+        titleId: r.titleId, tierId: r.tierId, rateSource: r.rateSource,
+        contractedRate: r.contractedRate,
+        resource: r.resource || '', projectRole: r.projectRole || '',
+        fteMonths: Math.round(fteMonths * 100) / 100,
+      };
+    });
+    return out;
+  }
+
+  /** Role-level diff of a CO vs. its frozen baseline roster: added / removed /
+      changed (rate or FTE-months). Drives the differences-only panel. */
+  function changeOrderRoleDiff(co) {
+    const base = (co.changeOrder && co.changeOrder.baselineRoster) || {};
+    const now = rosterSnapshot(co);
+    const added = [], removed = [], changed = [];
+    Object.keys(now).forEach(id => {
+      const n = now[id], b = base[id];
+      const label = (n.projectRole || '').trim() || n.resource || 'role';
+      if (!b) { if (n.fteMonths > 0.001) added.push({ label, fteMonths: n.fteMonths }); return; }
+      const rateChanged = b.titleId !== n.titleId || b.tierId !== n.tierId
+        || b.rateSource !== n.rateSource || b.contractedRate !== n.contractedRate;
+      const fteDelta = Math.round((n.fteMonths - b.fteMonths) * 100) / 100;
+      if (rateChanged || Math.abs(fteDelta) > 0.01) changed.push({ label, fteDelta, rateChanged });
+    });
+    Object.keys(base).forEach(id => {
+      if (!now[id] && base[id].fteMonths > 0.001) {
+        const b = base[id];
+        removed.push({ label: (b.projectRole || '').trim() || b.resource || 'role', fteMonths: b.fteMonths });
+      }
+    });
+    return { added, removed, changed };
+  }
+
+  /** The incremental value of a CO vs. the contract it forked from. The CO side
+      is computed LIVE (so the delta updates as you edit a draft CO); the baseline
+      it's compared to was frozen onto the CO at fork time. */
+  function changeOrderDelta(co) {
+    const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    const coFin = (co.financials && !co.financials.stale) ? co.financials
+      : (catalog ? computeFinancials(co, catalog) : null);
+    const baseMap = (co.changeOrder && co.changeOrder.baselineByMonth) || {};
+    const coMap = byMonthMap(coFin || {});
+    const baselineNet = (co.changeOrder && co.changeOrder.baselineNet) || 0;
+    const coNet = (coFin && coFin.net) || 0;
+    const yms = new Set([...Object.keys(baseMap), ...Object.keys(coMap)]);
+    const byMonth = [...yms].sort().map(ym => ({ ym, net: Math.round(((coMap[ym] || 0) - (baseMap[ym] || 0)) * 100) / 100 }))
+      .filter(x => Math.abs(x.net) > 0.005);
+    return {
+      net: Math.round((coNet - baselineNet) * 100) / 100,
+      effectiveYM: byMonth.length ? byMonth[0].ym : null,
+      byMonth,
+    };
+  }
+
+  /** Fork a change order from a booked parent (or its latest approved CO). The
+      CO is a full, month-canonical copy of the running revised scope, named
+      "{Parent} — CHANGE ORDER n (Mon YYYY)", sharing the parent's Salesforce ID,
+      with the prior contract frozen onto it as the diff baseline. */
+  function createChangeOrder(parentId) {
+    const db = readDb();
+    const parent = db.projects[parentId];
+    if (!parent) return { error: 'Parent project not found.' };
+    if (!BOOKED_STATUSES.has(parent.project && parent.project.status) || !parent.financials) {
+      return { error: 'A change order can only amend a booked project that has a frozen contract.' };
+    }
+    const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    if (!catalog || !catalog.hydrated) return { error: 'Rate card not loaded — cannot price the change order yet.' };
+
+    const approved = approvedChangeOrders(parentId);
+    const forkFrom = approved.length ? approved[approved.length - 1] : parent;
+    const prior = revisedContract(parentId);          // contract value BEFORE this CO
+    const coNumber = childChangeOrders(parentId).reduce((m, co) => Math.max(m, co.changeOrder.coNumber || 0), 0) + 1;
+    const now = new Date();
+
+    const clone = JSON.parse(JSON.stringify(forkFrom));
+    delete clone.financials; delete clone.createdAt; delete clone.updatedAt;
+    const baseName = (parent.project && parent.project.name || 'Project').replace(/ — CHANGE ORDER.*$/, '');
+    clone.id = 'co_' + Math.random().toString(36).slice(2, 11);
+    clone.project = Object.assign({}, clone.project, {
+      name: `${baseName} — CHANGE ORDER ${coNumber} (${monYearLabel(now)})`,
+      status: 'draft',
+      salesforceId: (parent.project && parent.project.salesforceId) || '',   // amend the parent's SF ID
+      intakeSent: false,
+    });
+    clone.changeOrder = {
+      parentId,
+      coNumber,
+      coDate: now.toISOString().slice(0, 10),
+      baselineNet: prior.revisedNet,
+      baselineByMonth: prior.byMonth.reduce((o, x) => { o[x.ym] = x.net; return o; }, {}),
+      baselineRoster: rosterSnapshot(forkFrom),       // for the differences-only diff
+    };
+    expandRolesToMonthly(clone);                       // per-month canonical
+    clone.createdAt = clone.updatedAt = now.toISOString();
+    db.projects[clone.id] = clone;
+    writeDb(db);
+    return { ok: true, co: clone };
+  }
+
+  /** Approve a CO: freeze its financials snapshot and mark it booked-active so it
+      rolls into the revised contract. */
+  function approveChangeOrder(id) {
+    const db = readDb();
+    const co = db.projects[id];
+    if (!co || !isChangeOrder(co)) return { error: 'Not a change order.' };
+    const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    const fin = catalog && computeFinancials(co, catalog);
+    if (!fin) return { error: 'Nothing priced to approve.' };
+    fin.inputsHash = financialsInputsHash(co);
+    fin.stale = false;
+    co.financials = fin;
+    co.project.status = 'active';
+    co.updatedAt = new Date().toISOString();
+    writeDb(db);
+    return { ok: true, co };
+  }
+
+  /** Roll up projects by client: contract + revised + CO count. Parents only
+      (COs fold into their parent's revised total). */
+  function clientRollup(projects) {
+    const list = (projects || listProjects()).filter(p => !isChangeOrder(p));
+    const byClient = {};
+    list.forEach(p => {
+      const c = (p.project && p.project.client) || '—';
+      const rc = revisedContract(p.id);
+      const baseline = (p.financials && p.financials.net) || 0;
+      const b = byClient[c] || (byClient[c] = { client: c, projects: 0, baseline: 0, revised: 0, coCount: 0 });
+      b.projects++;
+      b.baseline += baseline;
+      b.revised += rc.revisedNet || baseline;
+      b.coCount += rc.coCount;
+    });
+    return Object.values(byClient).map(b => ({
+      ...b,
+      baseline: Math.round(b.baseline * 100) / 100,
+      revised: Math.round(b.revised * 100) / 100,
+    })).sort((a, b) => b.revised - a.revised);
   }
 
   /** Per-calendar-month invoice series for a project — the amount billed each
@@ -398,7 +775,11 @@
     const title = catalog?.titles?.find(t => t.id === role.titleId)
       || (catalog?.legacyAlias?.[role.titleId] && catalog.titles.find(t => t.id === catalog.legacyAlias[role.titleId].titleId));
     if (!title) return { base: 0, anchorYear: baseYear };
-    const tier = title.tiers.find(x => x.id === role.tierId) || title.tiers[0];
+    // Unknown/legacy tier id → fall back to MID (matches the calculator's getTier;
+    // it must NOT silently fall to tiers[0] = High, which would over-price here).
+    const tier = title.tiers.find(x => x.id === role.tierId)
+      || title.tiers.find(x => x.id === 'mid')
+      || title.tiers[0];
     if (!tier || tier.isNoCharge) return { base: 0, anchorYear: baseYear };
     const adj = (a.industryAdj || 0) / 100;
     return { base: tier.rate * (1 - adj), anchorYear: baseYear };
@@ -448,7 +829,7 @@
     'salim@savills.us',      // Salim — owner
     'esobel@savills.us',     // Emily Sobel
     'jsantoro@savills.us',   // Jeff Santoro
-    'mglatt@savills.us',     // Michael Glatt
+    'mhadim@savills.us',     // Maria Hadim
     'kspiegel@savills.us',   // Kathy Spiegel
     'eglatt@savills.us',     // Emily Glatt
   ].map(s => s.toLowerCase()));
@@ -625,6 +1006,9 @@
     exportDb, importDb, downloadJson,
     FLASH_LABELS, captureSnapshot, getSnapshots, deleteSnapshot, periodKey,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
+    computeFinancials, financialsInputsHash, restampFinancials,
+    isChangeOrder, childChangeOrders, approvedChangeOrders, createChangeOrder,
+    approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, setCurrentUser, isAdmin, userOwnsProject, visibleProjects,
     setRealIdentity, getRealIdentity, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,

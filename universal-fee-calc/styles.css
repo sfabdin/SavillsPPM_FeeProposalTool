@@ -1407,6 +1407,42 @@ html, body {
 .intake-callout.confirmed .ic-confirm input:checked + .ic-check::after { border-color: var(--sav-navy); }
 .intake-callout.confirmed .ic-confirm:hover .ic-check { border-color: var(--sav-yellow); }
 
+/* ===== Change-order banner ===== */
+.co-banner {
+  display: flex; align-items: flex-start; gap: 16px;
+  margin: 0 0 28px; padding: 18px 24px;
+  background: var(--sav-navy); color: #fff;
+  border-left: 6px solid var(--sav-teal);
+}
+.co-banner[hidden] { display: none; }
+.co-banner .co-mark { font-size: 24px; line-height: 1; flex: none; color: var(--sav-teal); }
+.co-banner .co-body { flex: 1; }
+.co-banner .co-title { font-family: var(--font-display); font-weight: 900; font-size: 16px; letter-spacing: -0.005em; margin-bottom: 5px; }
+.co-banner .co-detail { font-family: var(--font-body); font-size: 13px; line-height: 1.55; color: rgba(255,255,255,0.9); max-width: 760px; }
+.co-banner .co-detail strong { color: #fff; font-family: var(--font-display); }
+.co-banner .co-delta-pos { color: var(--sav-yellow); }
+.co-banner .co-delta-neg { color: #ff9b9b; }
+.co-banner .co-actions { display: flex; flex-direction: column; gap: 8px; flex: none; align-items: stretch; }
+.co-banner .co-btn {
+  font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: 0.06em;
+  padding: 10px 16px; border: 0; cursor: pointer; white-space: nowrap;
+  background: var(--sav-teal); color: #fff;
+}
+.co-banner .co-btn:hover { background: #0a6463; }
+.co-banner .co-btn.secondary { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.4); }
+.co-banner .co-btn.secondary:hover { border-color: var(--sav-yellow); color: var(--sav-yellow); }
+.co-banner .co-diffs { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.co-banner .co-diffs-lbl { font-family: var(--font-display); font-weight: 700; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.6); width: 100%; margin-bottom: 2px; }
+.co-banner .co-diff { font-family: var(--font-body); font-size: 11.5px; padding: 2px 9px; border-radius: 2px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); }
+.co-banner .co-diff.add { color: #b6e7c2; border-color: rgba(140,220,160,0.4); }
+.co-banner .co-diff.rem { color: #ff9b9b; border-color: rgba(255,140,140,0.4); }
+.co-banner .co-diff.chg { color: var(--sav-yellow); border-color: rgba(255,223,0,0.4); }
+.co-banner .co-diff.none { color: rgba(255,255,255,0.7); font-style: italic; background: transparent; border: 0; }
+/* Stale contract (booked, drifted) — red alert */
+.co-banner.co-stale { background: var(--sav-red); border-left-color: var(--sav-red-press); }
+.co-banner.co-stale .co-mark { color: var(--sav-yellow); }
+
+
 
 /* ===== Cost-rate floor banner ===== */
 .floor-banner {

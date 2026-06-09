@@ -87,6 +87,10 @@
     return sign + '$' + Math.abs(Math.round(n)).toLocaleString();
   };
   const fmtMoneyDecimal = (n) => '$' + (Math.round(n * 100) / 100).toFixed(2);
+  const fmtMoneyCents = (n) => { const sign = n < 0 ? '-' : ''; return sign + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  /** Trim a number for display: up to 6 decimals, no trailing zeros. Keeps the
+      stored value exact while showing a readable string (e.g. 12.345678). */
+  const trimNum = (n) => { if (n == null || isNaN(n)) return ''; return parseFloat(Number(n).toFixed(6)).toString(); };
   const fmtMoneySmall = (n) => (!n || Math.abs(n) < 0.5) ? '—' : '$' + Math.abs(Math.round(n)).toLocaleString();
   const monthLabel = (y, m, opts={}) => `${MONTH_NAMES[m-1]} ’${String(y).slice(-2)}`;
   const monthLabelLong = (y, m) => `${MONTH_FULL[m-1]} ${y}`;
@@ -296,10 +300,23 @@
   function feeSharePct() { return (state.assumptions.feeShare && parseFloat(state.assumptions.feeShare.pct)) || 0; }
   function feeShareAmt() { return feeShareOn() ? netTotal() * (feeSharePct() / 100) : 0; }
   function revenueTotal() { return netTotal() - feeShareAmt(); }
+  /** A phase's display FTE for a role = the rounded average of its months'
+      effective FTE. Phase is a derived rollup; months are canonical. */
+  function phaseAvgFte(role, phaseId) {
+    const months = getMonthsByPhase().find(x => x.phase.id === phaseId)?.months || [];
+    if (!months.length) return 0;
+    const sum = months.reduce((s, m) => s + effectiveFte(role, m, phaseId), 0);
+    return Math.round((sum / months.length) * 10) / 10;
+  }
+  /** Keep every role's fte[phaseId] mirror in sync with its months (display only). */
+  function syncPhaseRollups() {
+    state.roles.forEach(r => state.phases.forEach(p => { r.fte[p.id] = phaseAvgFte(r, p.id); }));
+  }
   function totalFteMonths() {
-    return state.roles.reduce((s, r) => {
-      return s + state.phases.reduce((sp, p) => sp + ((r.fte[p.id] || 0) / 100) * p.length, 0);
-    }, 0);
+    const byPhase = getMonthsByPhase();
+    return state.roles.reduce((s, r) =>
+      s + byPhase.reduce((sp, b) =>
+        sp + b.months.reduce((sm, m) => sm + effectiveFte(r, m, b.phase.id) / 100, 0), 0), 0);
   }
 
   /* ---------- Cost-rate floor check ----------
@@ -337,6 +354,7 @@
   function renderAll() {
     rebalancePhases();
     reconcileRoleFte();
+    syncPhaseRollups();
     renderProjectMeta();
     renderProjFlag();
     renderTimeline();
@@ -381,35 +399,110 @@
     } else {
       const delta = net - target;
       const pct = target ? (delta / target) * 100 : 0;
-      const within = Math.abs(delta) < Math.max(1, target * 0.001);
-      deltaEl.textContent = within ? '✓ reconciled' : `${delta > 0 ? '+' : '−'}${fmtMoney(Math.abs(delta))} (${delta > 0 ? '+' : '−'}${Math.abs(pct).toFixed(1)}%)`;
+      const within = Math.abs(delta) < 0.005;          // reconciled = correct to the penny
+      deltaEl.textContent = within ? '✓ reconciled to the penny' : `${delta > 0 ? '+' : '−'}${fmtMoney(Math.abs(delta))} (${delta > 0 ? '+' : '−'}${Math.abs(pct).toFixed(1)}%)`;
       deltaEl.className = 'rc-delta' + (within ? ' ok' : ' off');
     }
     if (noteOverride) $('#rc-note').innerHTML = noteOverride;
   }
 
-  /** Seed FTE allocations to hit a target fee when the matrix is blank.
-      Loads every billable role to 100% across all phases, measures that net,
-      then scales all allocations by the ratio that lands net == target (at the
-      current discount). Caps at 100%; reports a shortfall if even full load
-      can't reach it. */
-  function seedAllocationsToTarget(target) {
-    const billable = state.roles.filter(r => { const t = getTier(r.titleId, r.tierId); return t && !t.isNoCharge; });
-    if (!billable.length) { renderReconcile('<span class="rc-warn">No billable roles to allocate. Add staff or set rates first.</span>'); return; }
-    state.roles.forEach(r => state.phases.forEach(p => { r.fte[p.id] = 100; }));
-    const gross100 = grossTotal();
-    const lock100 = lockCredit();
+  /* Logical staffing SHAPE by seniority — relative weights, not absolute FTE.
+     Mid-tier delivery roles (PM / Sr PM) carry the load; principals / EVPs are
+     light-touch oversight; coordinators sit in between. At scale factor k=1 this
+     IS a sensible fully-loaded team; the solver scales it up or down to hit the
+     target. These are the ONLY assumed numbers, and only ever used when the
+     proposal states no hours at all. */
+  const SENIORITY_WEIGHT = {
+    principal: 0.12, evp: 0.18, ed: 0.32, sd: 0.55, director: 0.70,
+    'assoc-dir': 0.85, 'senior-pm': 1.0, pm: 1.0, 'assistant-pm': 0.85,
+    'cost-control': 0.55, 'proj-coord': 0.65,
+  };
+  function seniorityWeight(role) {
+    const id = resolveTitleId(role.titleId);
+    return SENIORITY_WEIGHT[id] != null ? SENIORITY_WEIGHT[id] : 0.6;
+  }
+  /** A role's NET fee at 100% FTE across all phases (what 100% contributes to
+      the target). Net is separable per role — discount and lock are per-role —
+      so this is exact. Returns 0 for no-charge / unpriced roles. */
+  function roleNetAtFull(role) {
+    const tier = getTier(role.titleId, role.tierId);
+    if (tier && tier.isNoCharge) return 0;
+    const { base } = roleBaseInfo(role);
+    if (!base) return 0;                       // contracted w/ no rate yet, etc.
+    const saved = { ...role.fte };
+    state.phases.forEach(p => { role.fte[p.id] = 100; });
     const d = (state.assumptions.discount || 0) / 100;
-    const net100 = (gross100 - lock100) - gross100 * d;
-    if (net100 <= 0.5) { renderReconcile('<span class="rc-warn">Roles have no billable rate — can\'t solve allocations. Check tiers/rates.</span>'); return; }
-    let k = target / net100, capped = false;
-    if (k > 1) { k = 1; capped = true; }
-    const pct = Math.round(100 * k * 10) / 10;   // one-decimal FTE → lands close to target
-    state.roles.forEach(r => state.phases.forEach(p => { const t = getTier(r.titleId, r.tierId); r.fte[p.id] = (t && t.isNoCharge) ? 0 : pct; }));
+    const gross = roleTotal(role);
+    const net = gross - roleLockCredit(role) - gross * d;
+    role.fte = saved;
+    return net;
+  }
+
+  /** Seed a LOGICAL staffing mock-up that bridges to a target fee when the
+      proposal named people but stated no hours. Every named person gets some
+      allocation, shaped by seniority, scaled (with 100% caps, water-filled) so
+      the billable net lands on the target. Roles that can't be priced are given
+      a nominal seniority-shaped allocation but excluded from the solve. If
+      nothing can be priced, allocations are left blank — nothing is invented. */
+  function seedAllocationsToTarget(target) {
+    if (!state.roles.length) { renderReconcile('<span class="rc-warn">No people to staff. Add roles first.</span>'); return; }
+    // Per-role net at 100% FTE and seniority weight.
+    const info = state.roles.map(r => ({ r, c: roleNetAtFull(r) / 100, w: seniorityWeight(r) }));
+    const billable = info.filter(x => x.c > 0.0001);
+    if (!billable.length) {
+      // No priced roles → can't bridge to a dollar figure. Leave blank, don't invent.
+      state.roles.forEach(r => { r.fteMonthly = {}; state.phases.forEach(p => { r.fte[p.id] = 0; }); });
+      renderAll();
+      renderReconcile('<span class="rc-warn">These roles have no usable rate, so there\'s no logical way to bridge to the fee — allocations left blank. Set tiers or contracted rates, then reconcile.</span>');
+      markDirty();
+      return;
+    }
+
+    // Water-fill: x_i = min(100, k · w_i · 100) for billable roles, solve k so
+    // Σ x_i·c_i = target. Cap roles that exceed 100%, redistribute to the rest.
+    const capped = new Set();
+    let k = 0, solved = false, maxedOut = false;
+    for (let iter = 0; iter < billable.length + 2; iter++) {
+      let capNet = 0, coef = 0;
+      billable.forEach(x => {
+        if (capped.has(x)) capNet += 100 * x.c;
+        else coef += x.w * 100 * x.c;
+      });
+      if (coef <= 0) { maxedOut = true; break; }
+      k = (target - capNet) / coef;
+      if (k <= 0) { k = 0; }
+      // Which uncapped roles now want > 100%?
+      const newCaps = billable.filter(x => !capped.has(x) && k * x.w * 100 > 100 + 1e-9);
+      if (!newCaps.length) { solved = true; break; }
+      newCaps.forEach(x => capped.add(x));
+      if (capped.size === billable.length) { maxedOut = true; break; }
+    }
+
+    // Assign FTEs. Billable: water-filled. Unpriced/no-charge: nominal weight shape.
+    state.roles.forEach(r => {
+      const x = info.find(i => i.r === r);
+      let pct;
+      if (billable.includes(x)) {
+        pct = capped.has(x) || maxedOut ? 100 : Math.min(100, k * x.w * 100);
+      } else {
+        pct = Math.min(100, x.w * 100);          // staffed presence, contributes $0 to fee
+      }
+      pct = Math.max(0, Math.round(pct * 10) / 10);   // one-decimal FTE
+      // Broadcast to months (canonical) + mirror the phase display.
+      r.fteMonthly = r.fteMonthly || {};
+      getMonthsByPhase().forEach(b => b.months.forEach(m => { r.fteMonthly[monthKey(m)] = pct; }));
+      state.phases.forEach(p => { r.fte[p.id] = pct; });
+    });
     renderAll();
-    let msg = capped
-      ? `<span class="rc-warn">Loaded all roles at 100% — the most this team can bill is <strong>${fmtMoney(netTotal())}</strong>, under the <strong>${fmtMoney(target)}</strong> target. Add people, extend the term, or raise rates.</span>`
-      : `<strong>Allocations seeded to ${fmtMoney(target)}.</strong> Every role set to <strong>${pct}%</strong> across all phases as a starting point — now redistribute per phase in the matrix to match the real plan.`;
+
+    const net = netTotal();
+    let msg;
+    if (maxedOut && net < target - 0.005) {
+      const shortBy = target - net;
+      msg = `<span class="rc-warn">Staffed everyone to a sensible max — this team can bill <strong>${fmtMoney(net)}</strong>, <strong>${fmtMoney(shortBy)}</strong> short of <strong>${fmtMoney(target)}</strong>. Add people, extend the term, or raise rates; nothing was invented past 100%.</span>`;
+    } else {
+      msg = `<strong>Staffing mocked up to ${fmtMoneyCents(target)}.</strong> Allocations shaped by seniority (delivery roles carry the load, principals lighter) so every named person is staffed and the fee bridges to the target. Redistribute per phase to match the real plan, then <em>Fit to target</em> to lock the penny.`;
+    }
     const viol = floorViolations().length;
     if (viol) msg += ` <span class="rc-warn">${viol} role${viol === 1 ? '' : 's'} below cost floor (advisory).</span>`;
     renderReconcile(msg);
@@ -449,9 +542,13 @@
     let undershoot = false;                    // target is above what current rates can bill
     if (d < 0) { d = 0; undershoot = true; }
     d = Math.min(0.95, d);
-    state.assumptions.discount = Math.round(d * 10000) / 100;   // two decimals
+    // Store the EXACT discount (full float) so net reconciles to the penny — even
+    // if that means a discount like 12.34567%. The input shows a trimmed value for
+    // readability, but that display never feeds back unless the user edits it, so
+    // the exact value in state is what drives the math.
+    state.assumptions.discount = d * 100;
     const discInput = $('#a-disc');
-    if (discInput) discInput.value = state.assumptions.discount;
+    if (discInput) discInput.value = trimNum(state.assumptions.discount);
 
     renderAll();
 
@@ -460,7 +557,8 @@
       const shortBy = target - maxNet;
       msg = `<span class="rc-warn">At current rates the most you can bill (0% discount) is <strong>${fmtMoney(maxNet)}</strong> — <strong>${fmtMoney(shortBy)}</strong> short of the target. Allocations are held to the proposal, so raise the rates (grid tier or contracted rate) to close the gap.</span>`;
     } else {
-      msg = `<strong>Reconciled to ${fmtMoney(target)}.</strong> Held staffing &amp; rates; solved a <strong>${state.assumptions.discount}%</strong> client discount.`;
+      const exactPct = trimNum(state.assumptions.discount);
+      msg = `<strong>Reconciled to ${fmtMoneyCents(target)}.</strong> Held staffing &amp; rates; solved a <strong>${exactPct}%</strong> client discount — exact to the penny.`;
     }
     const viol = floorViolations().length;
     if (viol) msg += ` <span class="rc-warn">${viol} role${viol === 1 ? '' : 's'} now below cost floor (advisory).</span>`;
@@ -956,7 +1054,7 @@
     $('#a-hrs').value = a.hrsPerMo;
     $('#a-esc').value = a.escalation;
     $('#a-ind').value = a.industryAdj;
-    $('#a-disc').value = a.discount;
+    $('#a-disc').value = trimNum(a.discount);
     $('#a-lock').checked = a.rateLock;
     $('#a-catbase').textContent = a.catalogBaseYear;
   }
@@ -1023,6 +1121,116 @@
   }
 
   /** Show the intake button on Won/Active; re-flag if fee/schedule drifted since last intake. */
+  /** Change-order banner: on a booked PARENT, offer "Process as change order"
+      and show the revised-contract rollup; on a CO record, show the live delta
+      vs. the contract it amends, plus Approve. */
+  /** Differences-only summary for a CO: added / removed / changed roles. */
+  function renderCoDiff() {
+    if (!STORE.changeOrderRoleDiff) return '';
+    const d = STORE.changeOrderRoleDiff(stateAsRecord());
+    const bits = [];
+    d.added.forEach(x => bits.push(`<span class="co-diff add">+ ${escapeHtml(x.label)} (${x.fteMonths.toFixed(1)} fte-mo)</span>`));
+    d.removed.forEach(x => bits.push(`<span class="co-diff rem">− ${escapeHtml(x.label)} (${x.fteMonths.toFixed(1)} fte-mo)</span>`));
+    d.changed.forEach(x => {
+      const fteTxt = Math.abs(x.fteDelta) > 0.01 ? `${x.fteDelta > 0 ? '+' : '−'}${Math.abs(x.fteDelta).toFixed(1)} fte-mo` : '';
+      const rateTxt = x.rateChanged ? 'rate' : '';
+      bits.push(`<span class="co-diff chg">~ ${escapeHtml(x.label)}${(fteTxt || rateTxt) ? ' (' + [fteTxt, rateTxt].filter(Boolean).join(', ') + ')' : ''}</span>`);
+    });
+    if (!bits.length) return `<div class="co-diffs"><span class="co-diff none">No staffing changes yet — edit the matrix to build the change.</span></div>`;
+    return `<div class="co-diffs"><div class="co-diffs-lbl">Differences from the contract</div>${bits.join('')}</div>`;
+  }
+
+  function updateChangeOrderBanner() {
+    const banner = $('#co-banner');
+    if (!banner || !STORE.createChangeOrder) return;
+    const titleEl = $('#co-title'), detailEl = $('#co-detail'), actionsEl = $('#co-actions'), markEl = $('#co-mark');
+    const isCO = !!(state.changeOrder && state.changeOrder.parentId);
+    const booked = ['won', 'active', 'closed'].includes(state.project.status);
+
+    if (isCO) {
+      // Viewing a change order.
+      const parent = STORE.getProject(state.changeOrder.parentId);
+      const parentName = (parent && parent.project && parent.project.name) || 'the original project';
+      const delta = STORE.changeOrderDelta(stateAsRecord());
+      const approved = state.project.status === 'active' && state.financials && !state.financials.stale;
+      markEl.textContent = '⇄';
+      titleEl.textContent = `Change Order ${state.changeOrder.coNumber} · amends ${parentName.replace(/ — CHANGE ORDER.*$/, '')}`;
+      const cls = delta.net >= 0 ? 'co-delta-pos' : 'co-delta-neg';
+      const sign = delta.net >= 0 ? '+' : '−';
+      detailEl.innerHTML = `Incremental value <span class="${cls}"><strong>${sign}${fmtMoney(Math.abs(delta.net))}</strong></span>`
+        + (delta.effectiveYM ? ` from <strong>${delta.effectiveYM}</strong>` : '')
+        + ` · shares Salesforce ID <strong>${escapeHtml(state.project.salesforceId || '—')}</strong> with the parent.`
+        + (approved ? ' <strong>Approved</strong> — rolled into the revised contract.' : ' Edit the staffing, then approve to roll it into the revised contract.')
+        + renderCoDiff();
+      actionsEl.innerHTML = approved
+        ? `<a class="co-btn secondary" href="?id=${encodeURIComponent(state.changeOrder.parentId)}">View parent →</a>`
+        : `<button class="co-btn" id="co-approve" type="button">Approve change order</button>`
+          + `<a class="co-btn secondary" href="?id=${encodeURIComponent(state.changeOrder.parentId)}">View parent →</a>`;
+      const ap = $('#co-approve');
+      if (ap) ap.addEventListener('click', onApproveChangeOrder);
+      banner.hidden = false;
+      return;
+    }
+
+    if (booked && state.id && state.financials) {
+      // Booked parent — show rollup if COs exist, offer to create one.
+      const rc = STORE.revisedContract(state.id);
+      const stale = state.financials.stale;
+      markEl.textContent = stale ? '⚠' : '⇄';
+      banner.classList.toggle('co-stale', !!stale);
+      if (stale) {
+        titleEl.textContent = 'Contract changed since it was booked — restamp or process a change order.';
+        detailEl.innerHTML = `The staffing or assumptions no longer match the <strong>frozen contract</strong> (${fmtMoney(state.financials.net)}). Either <strong>restamp</strong> the booked figures to the current scope, or <strong>process a change order</strong> to capture the difference as a signed amendment.`;
+        actionsEl.innerHTML = `<button class="co-btn" id="co-create" type="button">Process as change order →</button>`
+          + `<button class="co-btn secondary" id="co-restamp" type="button">Restamp contract</button>`;
+        const cb = $('#co-create'); if (cb) cb.addEventListener('click', onCreateChangeOrder);
+        const rs = $('#co-restamp'); if (rs) rs.addEventListener('click', onRestampContract);
+        banner.hidden = false;
+        return;
+      }
+      titleEl.textContent = rc.coCount
+        ? `Revised contract · ${fmtMoney(rc.revisedNet)}`
+        : `Booked contract · ${fmtMoney(rc.baselineNet)}`;
+      detailEl.innerHTML = rc.coCount
+        ? `Original <strong>${fmtMoney(rc.baselineNet)}</strong> ${rc.coNetSum >= 0 ? '+' : '−'} ${rc.coCount} change order${rc.coCount === 1 ? '' : 's'} <strong>${fmtMoney(Math.abs(rc.coNetSum))}</strong> = <strong>${fmtMoney(rc.revisedNet)}</strong>. A change order amends this contract without touching the frozen original.`
+        : `This contract is frozen for reporting. To revise scope, process a <strong>change order</strong> — it forks an editable copy, prices only the incremental change, and shares this project's Salesforce ID.`;
+      actionsEl.innerHTML = `<button class="co-btn" id="co-create" type="button">Process as change order →</button>`;
+      const cb = $('#co-create');
+      if (cb) cb.addEventListener('click', onCreateChangeOrder);
+      banner.hidden = false;
+      return;
+    }
+
+    banner.hidden = true;
+  }
+
+  /** Shape current editor state as a record for STORE helpers. */
+  function stateAsRecord() { return JSON.parse(JSON.stringify(state)); }
+
+  function onCreateChangeOrder() {
+    // Save the parent first so the contract baseline is current, then fork.
+    saveToStore({ silent: true });
+    const res = STORE.createChangeOrder(state.id);
+    if (!res || res.error) { alert(res && res.error || 'Could not create change order.'); return; }
+    window.location.search = '?id=' + encodeURIComponent(res.co.id);
+  }
+
+  function onApproveChangeOrder() {
+    if (!confirm('Approve this change order? Its figures freeze and roll into the revised contract.')) return;
+    saveToStore({ silent: true });
+    const res = STORE.approveChangeOrder(state.id);
+    if (!res || res.error) { alert(res && res.error || 'Could not approve.'); return; }
+    window.location.reload();
+  }
+
+  function onRestampContract() {
+    if (!confirm('Restamp the booked contract to the current scope? This refreshes the frozen figures and clears the changed flag.')) return;
+    saveToStore({ silent: true });
+    const res = STORE.restampFinancials(state.id);
+    if (!res) { alert('Could not restamp — check that the project is priced.'); return; }
+    window.location.reload();
+  }
+
   function updateIntakeButton() {
     const btn = $('#intake-btn');
     if (!btn || !window.UFC_Intake) return;
@@ -1072,6 +1280,7 @@
   function updateStatusRatingHints() {
     updateIntakeButton();
     updateIntakeCallout();
+    updateChangeOrderBanner();
     const rh = $('#rating-hint');
     if (rh) rh.textContent = ratingGuidanceText(state.project.status);
     const sh = $('#status-hint');
@@ -1226,7 +1435,7 @@
               </td>`;
             });
           } else {
-            const v = r.fte[p.id] || 0;
+            const v = phaseAvgFte(r, p.id);
             html += `<td class="fte ${v === 0 ? 'zero' : ''}">
               <input type="number" data-role="${r.id}" data-phase="${p.id}" value="${v}" min="0" max="200" step="5">%
             </td>`;
@@ -1266,14 +1475,13 @@
           // it no longer feeds the other months, so they stay put.
           if (phase) recomputePhaseAvg(role, phase);
         } else if (role) {
-          // Phase-level edit → set phase value AND clear any month overrides in it
-          // so the phase rate applies uniformly again.
-          role.fte[e.target.dataset.phase] = val;
-          if (role.fteMonthly) {
-            const months = getMonthsByPhase().find(x => x.phase.id === e.target.dataset.phase)?.months || [];
-            months.forEach(m => { delete role.fteMonthly[monthKey(m)]; });
-            if (!Object.keys(role.fteMonthly).length) delete role.fteMonthly;
-          }
+          // Phase-level edit is a SHORTCUT: broadcast the value to every month in
+          // the phase (months are canonical), and mirror it as the phase display.
+          const phaseId = e.target.dataset.phase;
+          role.fteMonthly = role.fteMonthly || {};
+          const months = getMonthsByPhase().find(x => x.phase.id === phaseId)?.months || [];
+          months.forEach(m => { role.fteMonthly[monthKey(m)] = val; });
+          role.fte[phaseId] = val;
         }
         const td = e.target.closest('td.fte');
         if (td) td.classList.toggle('zero', !(val > 0));
@@ -1315,7 +1523,7 @@
   /** Append the FTE / gross / credit / net / grand-total summary rows. */
   function colFteSum(col) {
     if (col.type === 'month') return state.roles.reduce((s, r) => s + effectiveFte(r, col.month, col.phase.id) / 100, 0);
-    return state.roles.reduce((s, r) => s + (r.fte[col.phase.id] || 0) / 100, 0);
+    return state.roles.reduce((s, r) => s + phaseAvgFte(r, col.phase.id) / 100, 0);
   }
   function colGross(col) {
     if (col.type === 'month') return state.roles.reduce((s, r) => s + monthlyFee(r, col.month, col.phase.id), 0);
@@ -1786,6 +1994,9 @@
     effectiveMinRate,
     roleCostFloor,
     roleFloorViolation,
+    seedAllocationsToTarget,
+    fitToTarget,
+    updateChangeOrderBanner,
     CATALOG,
   };
 

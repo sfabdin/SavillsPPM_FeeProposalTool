@@ -38,16 +38,23 @@
     return base * Math.pow(1 + esc, year - anchor);
   }
   function roleFteMonths(role, p) {
-    return (p.phases || []).reduce((s, ph) => s + ((role.fte?.[ph.id] || 0) / 100) * (ph.length || 0), 0);
+    const months = STORE.computeMonthsByPhase(p);
+    return (p.phases || []).reduce((s, ph) => s + (months[ph.id] || []).reduce((a, m) => {
+      const mk = m.year + '-' + m.month;
+      return a + ((role.fteMonthly && role.fteMonthly[mk] != null ? role.fteMonthly[mk] : (role.fte?.[ph.id] || 0)) / 100);
+    }, 0), 0);
   }
   function roleFee(role, p) {
     const hrs = p.assumptions.hrsPerMo || 173.33;
     const months = STORE.computeMonthsByPhase(p);
     let fee = 0;
     (p.phases || []).forEach(ph => {
-      const fte = (role.fte?.[ph.id] || 0) / 100;
-      if (!fte) return;
-      (months[ph.id] || []).forEach(m => { fee += fte * rateAtYear(role, p, m.year) * hrs; });
+      (months[ph.id] || []).forEach(m => {
+        const mk = m.year + '-' + m.month;
+        const fte = (role.fteMonthly && role.fteMonthly[mk] != null ? role.fteMonthly[mk] : (role.fte?.[ph.id] || 0)) / 100;
+        if (!fte) return;
+        fee += fte * rateAtYear(role, p, m.year) * hrs;
+      });
     });
     return fee;
   }

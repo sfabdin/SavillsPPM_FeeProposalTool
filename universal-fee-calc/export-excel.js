@@ -377,13 +377,18 @@ window.UFC_buildAndDownloadExcel = async function () {
       s2.getCell(`D${mrow}`).numFmt = '"$"#,##0';
       s2.getCell(`D${mrow}`).font = { name: 'Calibri', color: { argb: STEEL } };
       s2.getCell(`D${mrow}`).alignment = { horizontal: 'right' };
-      // FTE inputs per phase
+      // FTE inputs per phase — show the month-average (phase is a rollup of months)
       phases.forEach((p, i) => {
+        const slice = (byPhase.find(x => x.phase.id === p.id) || {}).months || [];
+        const avg = slice.length ? Math.round(slice.reduce((a, m) => {
+          const mk = m.year + '-' + m.month;
+          return a + ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte[p.id] || 0));
+        }, 0) / slice.length * 10) / 10 : (r.fte[p.id] || 0);
         const c = s2.getCell(`${colLetter(5 + i)}${mrow}`);
-        c.value = r.fte[p.id] || 0;
+        c.value = avg;
         c.numFmt = '0"%"';
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: (r.fte[p.id] || 0) > 0 ? YEL_TINT : 'FFFAFAF7' } };
-        c.font = { name: 'Calibri', color: { argb: (r.fte[p.id] || 0) > 0 ? NAVY : STEEL }, bold: (r.fte[p.id] || 0) > 0 };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: avg > 0 ? YEL_TINT : 'FFFAFAF7' } };
+        c.font = { name: 'Calibri', color: { argb: avg > 0 ? NAVY : STEEL }, bold: avg > 0 };
         c.alignment = { horizontal: 'center' };
       });
       // Remember each FTE cell so the Monthly Detail sheet can reference it live.
