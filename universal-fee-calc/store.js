@@ -829,7 +829,7 @@
     'salim@savills.us',      // Salim — owner
     'esobel@savills.us',     // Emily Sobel
     'jsantoro@savills.us',   // Jeff Santoro
-    'mhadim@savills.us',     // Maria Hadim
+    'mglatt@savills.us',     // Michael Glatt
     'kspiegel@savills.us',   // Kathy Spiegel
     'eglatt@savills.us',     // Emily Glatt
   ].map(s => s.toLowerCase()));
