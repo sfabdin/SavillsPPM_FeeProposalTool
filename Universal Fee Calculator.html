@@ -356,7 +356,12 @@
     <div class="section-title">
       <span class="ix">Detailed</span>
       <h2>FTE allocation matrix.</h2>
-      <span class="hint">Click any FTE % cell. Phase fees update live.</span>
+      <span class="hint">Click any cell. Phase fees update live.</span>
+      <div class="unit-toggle" id="unit-toggle" role="group" aria-label="Allocation unit">
+        <span class="unit-toggle-lbl">Enter as</span>
+        <button type="button" class="unit-opt is-active" data-unit="percent">% FTE</button>
+        <button type="button" class="unit-opt" data-unit="hours">Hours</button>
+      </div>
     </div>
     <table class="matrix-table" id="matrix-table">
       <thead id="matrix-thead"></thead>

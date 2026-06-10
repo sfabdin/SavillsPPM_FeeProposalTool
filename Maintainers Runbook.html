@@ -133,7 +133,7 @@
   <div class="masthead">
     <div class="kicker">Savills PPM · Internal Tooling · Maintainer's Runbook</div>
     <h1>Fee Proposal Generator</h1>
-    <div class="sub">How this application is built, where its data lives, how to deploy it, and what to watch out for. Written for a future owner or developer inheriting the tool.</div>
+    <div class="sub">How this application is built, where its data lives, how to deploy it, and what to watch out for. Written for a future owner or developer inheriting the tool. Every statement here describes what the system does today, not what it might do.</div>
     <div class="metaline">
       <span><b>Status</b> &nbsp;Live, in production use</span>
       <span><b>Stack</b> &nbsp;Static HTML/JS + Vercel functions + Box</span>
@@ -142,20 +142,25 @@
   </div>
 
   <h2><span class="n">1</span> What it is</h2>
-  <p class="lead">A multi-page internal app that builds, prices, stores, and reports on client fee proposals. A user assembles a project team (roles &times; tiers &times; allocation), the app prices it against a confidential rate grid with escalation, rate-lock and discount logic, and produces a formula-driven Excel proposal. Projects are saved to a shared database in Box, which feeds a projects index, a revenue-projection view, and downstream reporting (Power BI / Clockify).</p>
+  <p class="lead">A multi-page internal app that builds, prices, stores, and reports on client fee proposals. A user assembles a project team (roles &times; tiers &times; monthly allocation), the app prices it against a confidential rate grid with escalation, rate-lock and discount logic, produces a formula-driven Excel proposal, and saves the project to a shared database. That database feeds a projects index, a revenue-projection view, benchmarking, change orders, and downstream reporting (Power BI / Clockify).</p>
 
-  <p>It is <strong>not</strong> a framework app — there is no build step, no npm install to run it, no React. It is plain HTML, CSS and vanilla JavaScript served as static files, plus two small serverless functions. A developer can open any file and read it directly. That simplicity is deliberate and worth preserving.</p>
+  <p>It is <strong>not</strong> a framework app — no build step, no <code>npm install</code> to run it, no React. It is plain HTML, CSS and vanilla JavaScript served as static files, plus two small serverless functions. A developer can open any file and read it directly. That simplicity is deliberate and worth preserving.</p>
+
+  <div class="box key">
+    <span class="tag">The one-sentence mental model</span>
+    The website deployed on Vercel is an <strong>empty shell — a door</strong>. It contains no fees, no rates, no client data. When a user signs in with Box (OAuth), the door opens and the app pulls the real data out of <strong>Box</strong> into the browser for that session. Everything confidential lives in Box and only in Box.
+  </div>
 
   <h2><span class="n">2</span> The pages (front doors)</h2>
   <table>
     <tr><th>Page</th><th>Purpose</th></tr>
     <tr><td class="k">Fee Generator.html</td><td>Home / hub. Links to every other page. One of the two front doors.</td></tr>
-    <tr><td class="k">Projects Index.html</td><td>The project database — every saved record, filtered by who you are. The other front door.</td></tr>
-    <tr><td class="k">Universal Fee Calculator.html</td><td>The core tool — build and price a single proposal; export Excel; submit Salesforce intake.</td></tr>
-    <tr><td class="k">Revenue Projections.html</td><td>Pipeline / revenue forecast across projects, by month and quarter.</td></tr>
+    <tr><td class="k">Projects Index.html</td><td>The project database — every saved record, filtered by who you are. Rolls up change orders and totals by client. The other front door.</td></tr>
+    <tr><td class="k">Universal Fee Calculator.html</td><td>The core tool — build and price a proposal; export Excel; submit Salesforce intake; process change orders.</td></tr>
+    <tr><td class="k">Revenue Projections.html</td><td>Pipeline / revenue forecast across projects, by month and quarter. Exports to Excel exactly as viewed.</td></tr>
     <tr><td class="k">Ingestion Studio.html</td><td>Import a historical proposal (PDF/text) via Claude into a structured record.</td></tr>
     <tr><td class="k">Benchmarking Dashboard.html</td><td>"What have we charged before?" — comparison across saved projects.</td></tr>
-    <tr><td class="k">Enterprise&nbsp;Migration&nbsp;Guide.html<br>Fee System Roadmap.html</td><td>Internal reference docs (not part of the app runtime).</td></tr>
+    <tr><td class="k">Enterprise&nbsp;Migration&nbsp;Guide.html<br>Fee System Roadmap.html<br>Maintainers Runbook.html</td><td>Internal reference docs (this is one of them — not part of the app runtime).</td></tr>
   </table>
 
   <h2><span class="n">3</span> File structure</h2>
@@ -174,7 +179,7 @@
 │
 ├── universal-fee-calc/           <span class="c">← the application code (shared by all pages)</span>
 │   ├── rates-catalog.js          <span class="y">rate ENGINE only — NO confidential numbers</span>
-│   ├── store.js                  <span class="c">data layer + access rules (admin allowlist)</span>
+│   ├── store.js                  <span class="c">data layer, access rules, snapshots, change orders</span>
 │   ├── box-adapter.js            <span class="c">Box sync: auth, pull/push, rates pull, config</span>
 │   ├── boot.js                   <span class="c">gates each page on auth + data load</span>
 │   ├── sync-status.js            <span class="c">the "Synced to Box" indicator</span>
@@ -189,33 +194,44 @@
 ├── .vercelignore                <span class="c">keeps confidential files off the public origin</span>
 └── .gitignore
 
-<span class="y">NOT in the repo — confidential, lives ONLY in Box:</span>
-   rates.json   <span class="c">the Macro rate grid (rack rates, cost floors, discounts)</span></div>
+<span class="y">NEVER in the repo — confidential, lives ONLY in Box:</span>
+   rates.json      <span class="c">the Macro rate grid (rack rates, cost floors, discounts)</span>
+   projects.json   <span class="c">all saved projects, incl. frozen $ snapshots on booked records</span></div>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 1 / 6</span></div>
+  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 1 / 7</span></div>
 </div>
 
 <!-- ============ PAGE 2 ============ -->
 <div class="page">
 
   <h2><span class="n">4</span> How the data works</h2>
-  <p>Every project is one JSON record holding <em>inputs only</em> — roles, tiers, allocation %, assumptions, dates, Salesforce ID. <strong>Dollar figures are never stored; they are recomputed live</strong> from the inputs each time a page renders. (This is why a calculation fix instantly corrects every existing project — there is nothing stale to migrate.)</p>
+  <p>Every project is one JSON record. Records carry two kinds of value, and the distinction is the most important thing to understand about the data model:</p>
+  <ul>
+    <li><strong>Inputs</strong> — roles, tiers, monthly allocation %, assumptions, dates, Salesforce ID. On <em>every</em> project. The dollar figures shown on screen are recomputed live from these inputs each time a page renders, so a calculation fix instantly corrects every project with no migration.</li>
+    <li><strong>A frozen <code>financials</code> snapshot</strong> — real dollar figures (gross, rate-lock credit, discount, net, revenue, plus by-month and by-group arrays). This is written onto a record <em>only</em> when it is booked (won / active / closed), and it does <strong>not</strong> recompute — it is a contractual fact frozen at booking. See &sect;11.</li>
+  </ul>
+
+  <div class="box key">
+    <span class="tag">Yes, there are dollar numbers in projects.json now</span>
+    Booked records contain hard dollar figures in their <code>financials</code> block — this is intentional and is what downstream reporting reads. Those numbers live in <code>projects.json</code> <strong>inside Box</strong>. They are never in the deployed app, never in GitHub. The app on Vercel ships with zero fees and zero rates; it only ever <em>fetches</em> them from Box after the user authenticates.
+  </div>
+
   <p>All records live in a single file, <code>projects.json</code>, in a Box folder. The app keeps two mirrored copies:</p>
   <ul>
     <li><strong>localStorage</strong> (in the browser) — the fast working copy; every edit writes here instantly.</li>
-    <li><strong>Box</strong> — the shared source of truth. On load the app pulls Box&nbsp;&rarr;&nbsp;local; after edits it debounce-pushes local&nbsp;&rarr;&nbsp;Box. Concurrent saves are merged newest-edit-wins per project, guarded by an etag.</li>
+    <li><strong>Box</strong> — the shared source of truth. On load the app pulls Box&nbsp;&rarr;&nbsp;local; after edits it debounce-pushes local&nbsp;&rarr;&nbsp;Box. Concurrent saves merge newest-edit-wins per project, guarded by an etag. On sign-out the local copy is cleared so no data lingers on a shared machine.</li>
   </ul>
-  <p>The <strong>Salesforce ID</strong> on each booked record is the join key that links <code>projects.json</code> &rarr; Salesforce &rarr; Clockify for downstream reporting. Reporting tools read <code>projects.json</code> from Box directly — they do not go through the app.</p>
+  <p>The <strong>Salesforce ID</strong> on each booked record is the join key that links <code>projects.json</code> &rarr; Salesforce &rarr; Clockify. Reporting tools read <code>projects.json</code> from Box directly — they never go through the app.</p>
 
   <h2><span class="n">5</span> The confidential rate grid</h2>
   <div class="box warn">
     <span class="tag">The single most important rule</span>
     The rate numbers must NEVER be committed to the repo. Anything in the deployed bundle is readable at its URL with no login. The grid lives only in Box as <code>rates.json</code>.
   </div>
-  <p><code>rates-catalog.js</code> (in the repo) is the <strong>engine</strong> — the High/Mid/Low math and title&rarr;family mapping, no numbers. On boot the app pulls <code>rates.json</code> from Box and hydrates the engine in memory. If the file is missing or its id is unset, every page shows a <strong>"Rate card unavailable"</strong> gate rather than running with blank rates. <code>.gitignore</code> blocks <code>rates.json</code> from being committed; <code>.vercelignore</code> blocks it (and <code>research/</code>) from deploying.</p>
+  <p><code>rates-catalog.js</code> (in the repo) is the <strong>engine</strong> — the High/Mid/Low math and title&rarr;family mapping, with no numbers in it. On boot, after the user authenticates, the app pulls <code>rates.json</code> from Box and hydrates the engine in memory for that session. If the file is missing or its id is unset, every page shows a <strong>"Rate card unavailable"</strong> gate rather than running with blank rates. <code>.gitignore</code> blocks <code>rates.json</code> from being committed; <code>.vercelignore</code> blocks it (and <code>research/</code>) from deploying.</p>
 
   <h2><span class="n">6</span> Access &amp; permissions</h2>
-  <p>Sign-in is Box OAuth — no Box login, no app. Once in, visibility is <strong>fail-closed</strong>:</p>
+  <p>Sign-in is Box OAuth — no Box login, no app. The deployed page is a shell until a valid Box token loads the data. Once in, visibility is <strong>fail-closed</strong>:</p>
   <ul>
     <li><strong>Admins</strong> (allowlist in <code>store.js</code>) see every project.</li>
     <li><strong>Everyone else</strong> sees only the projects they lead or own.</li>
@@ -224,35 +240,37 @@
   <p>To grant or revoke all-access, edit the <code>ADMINS</code> set at the top of <code>store.js</code>. A single super-user (set by <code>SUPERUSER</code>) gets a hidden "Viewing as" switch on the Projects Index to preview anyone's restricted view — no one else can.</p>
   <div class="box warn">
     <span class="tag">Honest limit</span>
-    The per-person wall is enforced in the browser, and the Box <em>folder</em> permission is the real boundary: anyone with folder access can read <code>projects.json</code> directly. Fine for a trusted leadership group. Restricting a person who should see <em>some but not all</em> projects requires server-side filtering — a future build, not yet present.
+    The per-person wall is enforced in the browser, and the Box <em>folder</em> permission is the real boundary: anyone with folder access can read <code>projects.json</code> directly. Fine for a trusted leadership group. Restricting a person who should see <em>some but not all</em> projects requires server-side filtering — listed in future work, not yet built.
   </div>
 
-  <h2><span class="n">7</span> The Excel export</h2>
-  <p>Generated client-side (ExcelJS) with <strong>live formulas, not pasted values</strong> — open any cell to read the math. Four tabs:</p>
+  <h2><span class="n">7</span> The Excel exports</h2>
+  <p>Both exports are generated client-side (ExcelJS) with <strong>live formulas, not pasted values</strong> — open any cell to read the math.</p>
+  <p><strong>Calculator (4 tabs):</strong></p>
   <ol>
     <li><strong>Setup &amp; Summary</strong> — project info, assumptions, rates table, headline totals.</li>
-    <li><strong>Phase Matrix</strong> — FTE allocation by period with phase-fee formulas.</li>
-    <li><strong>Monthly Detail</strong> — two stacked sections: editable <em>allocation %</em> on top driving <em>fee $</em> below.</li>
-    <li><strong>Billing Summary</strong> — invoiced net by group, by month (discount + rate-lock baked in), with a reconciliation bridge.</li>
+    <li><strong>Phase Matrix</strong> — FTE allocation by period; phase % shown is the average of its months.</li>
+    <li><strong>Monthly Detail</strong> — role &times; month, every cell a formula (FTE &times; rate &times; escalation &times; hours), with group subtotals, monthly totals, cumulative, and the gross&rarr;net waterfall.</li>
+    <li><strong>Billing Summary</strong> — net invoiced by group, by month (discount + rate-lock baked in), with a reconciliation bridge.</li>
   </ol>
+  <p><strong>Revenue Projections:</strong> a "⤓ Excel" button exports the matrix <strong>exactly as currently viewed</strong> — respects every active filter and the rated-5–7 toggle, mirrors the rating-grouped rows, year/month headers, row totals, the Projected and Probability-weighted totals rows, KPI band, and CO rollups.</p>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 2 / 6</span></div>
+  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 2 / 7</span></div>
 </div>
 
 <!-- ============ PAGE 3 · CALCULATION PIPELINE ============ -->
 <div class="page">
 
   <h2><span class="n">8</span> The calculation pipeline</h2>
-  <p class="lead">Every dollar the app shows is derived live from inputs through the exact sequence below. The same math is implemented twice — in <code>app.js</code> (the calculator) and <code>store.js</code> (the index, projections and benchmarking). Both must agree; they were reconciled and verified to the dollar.</p>
+  <p class="lead">Every dollar the app shows is derived live from inputs through the exact sequence below. The same math is implemented twice — in <code>app.js</code> (the calculator) and <code>store.js</code> (the index, projections and benchmarking). Both are month-canonical and were reconciled and verified equal to the dollar.</p>
 
   <h3>Step 1 · Timeline → months</h3>
   <p>The start and end month/year are enumerated inclusively into a list of calendar months. Every month in range counts as a whole month — there is no day-level proration.</p>
 
-  <h3>Step 2 · Months → phases</h3>
-  <p>Each phase has a length in months; months are assigned to phases in order. Phases auto-rebalance so their lengths sum to the total month count, with any remainder going to the last phase.</p>
+  <h3>Step 2 · Months are the source of truth; phase is a rollup</h3>
+  <p>Allocation is stored per month. A <strong>phase</strong> is a calculated convenience: the phase % shown is the average of its months, and editing a phase cell is a shortcut that broadcasts that value to every month in the phase. All dollars are computed from the months, never from the phase. Phases auto-rebalance so their lengths sum to the month count.</p>
 
-  <h3>Step 3 · Allocation per role-month</h3>
-  <p>For each role in each month, the <strong>effective FTE %</strong> is the per-month override if one exists, otherwise the phase-level FTE %. (Editing one month pins its siblings; the phase value becomes a display average.)</p>
+  <h3>Step 3 · Effective allocation per role-month</h3>
+  <p>For each role in each month, the <strong>effective FTE %</strong> is that month's stored value (a per-month edit), falling back to the phase value if a month was never individually set.</p>
 
   <h3>Step 4 · Base rate &amp; anchor year</h3>
   <table>
@@ -268,7 +286,7 @@
     Compounds annually, stepping on <strong>January 1</strong> of each calendar year.
   </div>
 
-  <h3>Step 6 · Published monthly fee</h3>
+  <h3>Step 6 · Monthly fee</h3>
   <div class="box">
     <code>monthlyFee = effectiveFTE% &times; rate(month's year) &times; hoursPerMonth</code><br>
     Always at the <strong>unlocked</strong> (full escalated) rate. <code>hoursPerMonth = 173.33</code> (2080 / 12).
@@ -277,7 +295,7 @@
   <h3>Step 7 · Roll-ups &amp; the gross → net waterfall</h3>
   <table>
     <tr><th>Line</th><th>Formula</th></tr>
-    <tr><td class="k">Gross fee</td><td>&Sigma; published monthly fee, all roles &times; all months</td></tr>
+    <tr><td class="k">Gross fee</td><td>&Sigma; monthly fee, all roles &times; all months</td></tr>
     <tr><td class="k">&minus; Rate&nbsp;Lock credit</td><td>&Sigma; max(0, unlockedRate &minus; lockedRate) &times; FTE &times; hrs &nbsp;<span style="color:var(--steel)">(lockedRate is pinned to the start year)</span></td></tr>
     <tr><td class="k">&minus; Client discount</td><td>Gross &times; discount %</td></tr>
     <tr><td class="k"><b>= Net (proposed fee)</b></td><td><b>Gross &minus; Rate&nbsp;Lock credit &minus; discount</b> — what the client pays</td></tr>
@@ -285,14 +303,14 @@
     <tr><td class="k">= Revenue</td><td>Net &minus; fee share — what Savills keeps</td></tr>
   </table>
   <div class="box key">
-    <span class="tag">The rate-lock rule (this was a real bug, now fixed)</span>
-    Gross is computed at the <strong>full published rate</strong>. Rate Lock appears <strong>once</strong>, as the credit line. The earlier code baked the locked rate into gross <em>and</em> subtracted the credit — double-removing it. Net now equals exactly what the client pays at locked rates.
+    <span class="tag">The rate-lock rule</span>
+    Gross is computed at the <strong>full published rate</strong>. Rate Lock appears <strong>once</strong>, as the credit line. (An earlier version baked the locked rate into gross <em>and</em> subtracted the credit, double-removing it — fixed in both engines. Net now equals exactly what the client pays at locked rates.)
   </div>
 
   <h3>Step 8 · Cost-floor check (advisory only — does not change the fee)</h3>
-  <p>Each grid role's lowest billed rate — <code>rate(startYear) &times; (1 &minus; discount%)</code> — is compared to the tier's confidential cost floor. If it falls below, the role is flagged <strong>"below cost."</strong> This is a warning only; it never alters the calculated fee.</p>
+  <p>Each grid role's lowest billed rate — <code>rate(startYear) &times; (1 &minus; discount%)</code> — is compared to the tier's confidential cost floor. If it falls below, the role is flagged <strong>"below cost."</strong> A warning only; it never alters the calculated fee.</p>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 3 / 6</span></div>
+  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 3 / 7</span></div>
 </div>
 
 <!-- ============ PAGE 4 · CAVEATS ============ -->
@@ -328,8 +346,8 @@
       <td>PIC / advisory no-charge tiers price at $0 and are exempt from the cost-floor check. Expected.</td>
     </tr>
     <tr>
-      <td class="k">Per-month overrides</td>
-      <td>Editing one month pins its siblings to their current values (so they don't drift toward an average); the phase cell becomes a display-only average. Typing into the phase cell re-broadcasts evenly to all its months.</td>
+      <td class="k">Phase edits broadcast</td>
+      <td>Editing a phase cell overwrites every month in that phase with the typed value (the shortcut). Editing a single month changes only that month; the phase then displays the new month average. Months are always the stored truth.</td>
     </tr>
     <tr>
       <td class="k">Flatline billing</td>
@@ -341,15 +359,9 @@
     </tr>
     <tr>
       <td class="k">Two engines must stay in sync</td>
-      <td>The calculator (<code>app.js</code>) and the index/projections (<code>store.js</code>) reimplement the same math. A change in one <strong>must</strong> be mirrored in the other — the rate-lock fix had to be made in both. Verified equal to the dollar after each change.</td>
+      <td>The calculator (<code>app.js</code>) and the index/projections (<code>store.js</code>) reimplement the same math. A change in one <strong>must</strong> be mirrored in the other. Verified equal to the dollar after each change.</td>
     </tr>
   </table>
-
-  <h3>Fixed while documenting this</h3>
-  <div class="box">
-    <span class="tag">Tier fallback aligned</span>
-    A role with an unrecognized/legacy tier id fell back to <strong>Mid</strong> in the calculator but to <strong>High</strong> in the projections engine — which could price a malformed role higher in Projections than in the calculator. Both now fall back to Mid. Edge case (only malformed/legacy ids), now consistent.
-  </div>
 
   <h3>Recommended follow-ups</h3>
   <ul>
@@ -358,39 +370,51 @@
     <li><strong>"Discount on gross" footnote</strong> — one line in the summary so the basis is explicit to reviewers.</li>
   </ul>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 4 / 6</span></div>
+  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 4 / 7</span></div>
 </div>
 
-<!-- ============ PAGE 5 · RECONCILE & REPORTING ============ -->
+<!-- ============ PAGE 5 · RECONCILE & CHANGE ORDERS ============ -->
 <div class="page">
 
   <h2><span class="n">10</span> Reconcile-to-target &amp; staffing mock-up</h2>
-  <p class="lead">When a record carries a proposal total (typed, or extracted by Ingestion), the <em>Reconcile to proposal</em> bar back-solves to it. There are two paths, chosen automatically by whether the staffing matrix is already populated.</p>
+  <p class="lead">When a record carries a proposal total (typed, or extracted by Ingestion), the <em>Reconcile to proposal</em> bar back-solves to it. Two paths, chosen automatically by whether the staffing matrix is already populated.</p>
 
   <h3>Path A · staffing exists → solve the discount</h3>
-  <p>If roles are allocated (gross &gt; 0), <em>Fit to target</em> holds staffing and rates fixed and solves the <strong>client discount</strong> to hit the target. The discount is stored at <strong>full precision</strong> (e.g. 13.306045%), so net reconciles to the <strong>penny</strong> — the panel confirms "reconciled to the penny" only when truly exact. If the target is above what current rates can bill at 0% discount, it reports the shortfall and leaves rates for a manual change.</p>
+  <p>If roles are allocated (gross &gt; 0), <em>Fit to target</em> holds staffing and rates fixed and solves the <strong>client discount</strong> to hit the target. The discount is stored at <strong>full precision</strong> (e.g. 13.306045%), so net reconciles to the <strong>penny</strong> — the panel confirms "reconciled to the penny" only when truly exact. If the target exceeds what current rates can bill at 0% discount, it reports the shortfall.</p>
 
   <h3>Path B · no hours stated → mock up logical staffing</h3>
-  <p>If the proposal named people but stated no hours (blank matrix), <em>Fit to target</em> builds a logical staffing shape instead:</p>
-  <ul>
-    <li><strong>Only named people</strong> are staffed — never invents bodies.</li>
-    <li><strong>Every person gets some allocation</strong>, shaped by seniority: delivery roles (PM / Sr PM) carry the load, principals / EVPs are light-touch oversight, coordinators in between.</li>
-    <li>That shape is <strong>scaled to bridge to the fee</strong>, water-filled with 100% caps so no one exceeds full time.</li>
-    <li>If the target <strong>exceeds the team's capacity</strong>, everyone maxes at 100% and the shortfall is reported — nothing is invented past 100%.</li>
-    <li>If <strong>nothing can be priced</strong> (no rates), allocations are left <strong>blank</strong> and the reason is shown — no fabrication.</li>
-  </ul>
-  <p>The two paths chain: mock up the staffing, then <em>Fit to target</em> again to lock the penny via a micro-discount. The seniority weights are the <em>only</em> assumed numbers in the whole system, and apply only when the proposal states no hours.</p>
+  <p>If the proposal named people but stated no hours (blank matrix), <em>Fit to target</em> builds a logical staffing shape: only named people are staffed; everyone gets some allocation shaped by seniority (delivery roles carry the load, principals light-touch); the shape is scaled with 100% caps to bridge to the fee. If the target exceeds the team's capacity it maxes at 100% and reports the shortfall; if nothing can be priced it leaves allocations blank. The seniority weights are the <em>only</em> assumed numbers in the system, used only when no hours are stated.</p>
 
-  <h2><span class="n">11</span> Reporting &amp; derived figures</h2>
-  <p class="lead">Records store <strong>inputs</strong>; the pipeline derives the dollars live. For reporting (Power BI), the rule is: <strong>snapshot the answers at booking, recompute everything else live.</strong></p>
+  <h2><span class="n">11</span> Change orders</h2>
+  <p class="lead">A change order (CO) amends a booked contract. The model: <strong>original contract + &Sigma; approved change orders = revised contract.</strong></p>
+  <ul>
+    <li><strong>Forked, linked record.</strong> "Process as change order" on a booked project creates a new record — a full, month-canonical copy of the running revised scope — named <code>{Project} — CHANGE ORDER n (Mon YYYY)</code>, sharing the <strong>parent's Salesforce ID</strong> (no new SF project).</li>
+    <li><strong>Incremental scope.</strong> A CO's value is the difference between its priced net and the contract it forked from. The baseline curve is never reset; the delta naturally starts where the months diverge. COs can be negative (de-scope).</li>
+    <li><strong>Differences-only panel.</strong> While editing a CO, the banner shows a live role-level diff — roles added / removed / changed (FTE-months and rate) — plus the incremental dollar value and effective month.</li>
+    <li><strong>Approval freezes it.</strong> Approving a CO snapshots its financials and sets it active, so it rolls into the revised contract. Only approved COs roll in.</li>
+    <li><strong>Rolls up everywhere.</strong> The Projects Index shows the revised contract per project and a by-client rollup; Revenue Projections folds each approved CO's incremental into the parent's monthly curve. COs are never separate line items in either rollup.</li>
+  </ul>
+  <div class="box">
+    <span class="tag">Stale-contract flag</span>
+    If a booked project's inputs drift from its frozen snapshot, the calculator shows a red banner — "Contract changed since it was booked" — with two actions: <strong>Restamp contract</strong> (<code>restampFinancials</code> refreshes the frozen figures to current scope) or <strong>Process as change order</strong> (capture the difference as a signed amendment).
+  </div>
+
+  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 5 / 7</span></div>
+</div>
+
+<!-- ============ PAGE 6 · REPORTING ============ -->
+<div class="page">
+
+  <h2><span class="n">12</span> Reporting &amp; the financials snapshot</h2>
+  <p class="lead">Records store <strong>inputs</strong> that recompute live; booked records <em>also</em> carry frozen dollar figures for reporting. The rule: <strong>snapshot the answers at booking, recompute everything else live.</strong></p>
 
   <div class="box key">
     <span class="tag">Design principle</span>
-    Snapshot the <strong>results</strong>, never the <strong>recipe</strong>. The math lives in one place (the app). Do not reimplement the pipeline in DAX / report formulas — that would be a third engine to keep in sync and would drift.
+    Snapshot the <strong>results</strong>, never the <strong>recipe</strong>. The math lives in one place (the app). The reporting side reads the frozen numbers and does not reimplement the pipeline in DAX / report formulas — a third engine would only drift.
   </div>
 
-  <h3>Booked figures are frozen facts</h3>
-  <p>A booked fee is contractual — it must not silently change because the rate card, a bug fix, or an assumption changed later. On the <strong>Won / Active</strong> transition (the same trigger as the Salesforce intake), the record should carry a <code>financials</code> snapshot:</p>
+  <h3>What gets frozen, and when</h3>
+  <p>On the first booked save (won / active / closed), <code>saveProject</code> writes a <code>financials</code> block onto the record. It is real dollar figures, stamped with the engine version and timestamp, and it does not recompute:</p>
   <div class="tree"><span class="c">"financials": {</span>
   "computedAt": "2026-06-09T14:22:31Z",   <span class="c">when frozen</span>
   "engineVersion": "2026.06",             <span class="c">which pipeline produced it</span>
@@ -402,27 +426,29 @@
   "feeShare": 0,
   "revenue": 1669651.00,                  <span class="c">net of broker fee share</span>
   "byMonth": [ { "ym": "2027-01", "net": 64210.00 }, ... ],
-  "byGroup": [ { "group": "Core team", "net": 980400.00 }, ... ]
+  "byGroup": [ { "group": "Core team", "net": 980400.00 }, ... ],
+  "stale": false                          <span class="c">true if inputs drifted since</span>
 <span class="c">}</span></div>
-  <p>Power BI reads this block directly — no recomputation, no formula logic on the reporting side. The <code>engineVersion</code> + <code>computedAt</code> stamps let reporting distinguish old snapshots from new if the pipeline ever changes.</p>
+  <p>This block lives in <code>projects.json</code> <strong>in Box</strong>. Power BI reads it directly via the Box file — no app, no recomputation. <code>byGroup</code> and <code>byMonth</code> tie to <code>net</code>; the snapshot agrees with the live engine to the penny at the moment it is taken.</p>
 
   <h3>Pre-booking projects stay live</h3>
-  <p>Draft / negotiation records have <strong>no</strong> snapshot — their numbers are working estimates and should recompute live in the app's projection views. Reporting either ignores them or reads them clearly labelled as "live estimate," never as committed revenue.</p>
+  <p>Draft / negotiation records have <strong>no</strong> snapshot — their numbers are working estimates and recompute live in the projection views. Reporting either ignores them or treats them clearly as "live estimate," never as committed revenue.</p>
 
   <h3>Keeping a snapshot honest</h3>
-  <p>A snapshot can drift if someone edits a booked project afterward. The existing <strong>intake drift detector</strong> already catches this: editing a booked project re-flags the intake <em>and</em> should re-stamp the <code>financials</code> snapshot (or be processed as a change order). That freezes the booked number without ever letting it silently mutate.</p>
+  <p>A snapshot would drift if someone edits a booked project afterward. The app does <strong>not</strong> silently overwrite it: editing a booked record sets <code>financials.stale = true</code> and the calculator shows the stale-contract banner (&sect;11). The figures only refresh on an explicit <strong>restamp</strong> or are superseded by an approved <strong>change order</strong>. A booked number never changes by accident.</p>
+
   <div class="box">
     <span class="tag">Status · implemented</span>
-    The <code>financials</code> snapshot is live in <code>store.js</code>. It freezes on the first booked save (won / active / closed) via <code>saveProject</code>, agrees with the live engine to the penny, and <code>byGroup</code> / <code>byMonth</code> tie to net. Editing a booked record's inputs sets <code>financials.stale = true</code> without overwriting the frozen numbers; <code>restampFinancials(id)</code> refreshes them on an approved change order. Pre-booking records carry no snapshot.
+    The snapshot, stale flag, restamp, and change-order roll-up are all live in <code>store.js</code> and the calculator UI, and verified end-to-end.
   </div>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 5 / 6</span></div>
+  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 6 / 7</span></div>
 </div>
 
-<!-- ============ PAGE 3 ============ -->
+<!-- ============ PAGE 7 · CONFIG / DEPLOY ============ -->
 <div class="page">
 
-  <h2><span class="n">12</span> Configuration reference</h2>
+  <h2><span class="n">13</span> Configuration reference</h2>
   <p>All wiring lives in <strong><code>universal-fee-calc/box-adapter.js</code></strong> &rarr; <code>BOX_CONFIG</code>, except secrets, which live in Vercel.</p>
   <table>
     <tr><th>Setting</th><th>Where</th><th>Value / note</th></tr>
@@ -434,11 +460,11 @@
     <tr><td class="k">ratesFileId</td><td>box-adapter.js</td><td>Box file id of <code>rates.json</code></td></tr>
     <tr><td class="k">folderId</td><td>box-adapter.js</td><td>Box folder id (used to recreate a missing data file)</td></tr>
     <tr><td class="k">BOX_CLIENT_ID</td><td>Vercel env var</td><td>Box app client id</td></tr>
-    <tr><td class="k">BOX_CLIENT_SECRET</td><td>Vercel env var</td><td>Box app secret — server-side only</td></tr>
+    <tr><td class="k">BOX_CLIENT_SECRET</td><td>Vercel env var</td><td>Box app secret — server-side only, used by <code>api/box-token.js</code></td></tr>
     <tr><td class="k">ANTHROPIC_API_KEY</td><td>Vercel env var</td><td>For <code>api/extract.js</code> (Ingestion Studio)</td></tr>
   </table>
 
-  <h2><span class="n">13</span> Deploying a change</h2>
+  <h2><span class="n">14</span> Deploying a change</h2>
   <p>Source of truth is the <strong>GitHub repo</strong>; Vercel auto-deploys on push.</p>
   <ol>
     <li>Edit the file(s) in the repo.</li>
@@ -450,25 +476,28 @@
     <span class="tag">Box app setup (one-time)</span>
     Box Developer Console &rarr; your app: Auth method = <strong>User Authentication (OAuth 2.0)</strong>; enable <strong>Authorization Code Grant with PKCE</strong>; Redirect URI = <code>https://&lt;your-vercel-domain&gt;/oauth-callback.html</code>; scope = Read/write all files. Each deploy origin (preview + prod) needs its own registered redirect URI.
   </div>
+  <div class="box">
+    <span class="tag">The Box copy of the code is storage, not the runtime</span>
+    A copy of the app files may sit in the Box folder for safekeeping (e.g. a "DO NOT OPEN" folder). It is <strong>not</strong> what users run — Box serves HTML as a download, can't run the serverless functions, and can't complete OAuth. Users always open the <strong>Vercel</strong> URL. Keep GitHub as the single source of truth.
+  </div>
 
-  <h2><span class="n">14</span> Known operational caveats</h2>
+  <h2><span class="n">15</span> Known operational caveats</h2>
   <ul>
-    <li><strong>Client-side access limit</strong> (see &sect;6) — Box folder permission is the true boundary.</li>
-    <li><strong>rates.json must exist in Box</strong> with its id set, or the app gates closed.</li>
+    <li><strong>Client-side access limit</strong> (&sect;6) — Box folder permission is the true boundary.</li>
+    <li><strong>rates.json must exist in Box</strong> with its id set, or every page gates closed.</li>
     <li><strong>Box logins must match the allowlist emails exactly</strong> (<code>firstinitiallastname@savills.us</code>). A mismatch makes an admin look like a member.</li>
-    <li><strong>Intake drift flags after a calc fix</strong> — correcting the math changes booked figures slightly, so lock-on booked projects may read "re-submit intake." Expected, not a bug.</li>
-    <li><strong>Two copies of the code</strong> — keep ONE source of truth. If edits are ever made both here and elsewhere, they diverge.</li>
+    <li><strong>Editing a booked project flags it stale</strong> — by design (&sect;11). Restamp or process a change order.</li>
     <li><strong>Token refresh</strong> — sign-in survives ~60 days idle; after that the user re-authenticates. Normal.</li>
   </ul>
 
-  <h2><span class="n">15</span> Future work, in priority order</h2>
+  <h2><span class="n">16</span> Future work, in priority order</h2>
   <ol>
     <li><strong>Server-side per-user filtering</strong> — the only way to let someone in while truly hiding other projects. Returns just the caller's records from a serverless endpoint.</li>
     <li><strong>Server auth (service account) for the reporting pull</strong> — so Power BI reads the data with no human logged in.</li>
-    <li><strong>"Recalculated — re-confirm" helper</strong> for booked projects affected by a calc change.</li>
+    <li><strong>Parity self-check</strong> between the two calculation engines (&sect;9).</li>
   </ol>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 6 / 6</span></div>
+  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 7 / 7</span></div>
 </div>
 
 </body>

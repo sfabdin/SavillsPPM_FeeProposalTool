@@ -1,14 +1,22 @@
-# Confidential — never deploy these to the public Vercel origin.
-# The rate grid and fee sheets must only ever come from Box, post-login.
+# Dependencies
+node_modules/
 
-# The rate grid: this file is a STAGING ARTIFACT for uploading to Box.
-# Upload it to your Box folder, paste its file id into box-adapter.js
-# (BOX_CONFIG.ratesFileId), then it must never be served publicly.
+# Vercel
+.vercel/
+
+# Confidential — the rate grid lives in Box, never in the repo
 rates.json
 
-# Source research / real fee sheets — internal only.
+# Confidential source material
 research/
 
-# Old working backups.
+# OS / editor cruft
+.DS_Store
+*.log
+
+# Working backups / scratch
 _changed*/
+_github_repo/
+_github_update/
 screenshots/
+uploads/
