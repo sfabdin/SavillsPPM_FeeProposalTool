@@ -930,6 +930,43 @@ html, body {
   overflow-x: auto;
 }
 .matrix-wrap .section-title { padding: 0 28px; }
+
+/* Unit toggle (% FTE ↔ Hours) — display-layer entry mode */
+.unit-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.unit-toggle-lbl {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--sav-steel);
+  text-transform: uppercase;
+}
+.unit-toggle .unit-opt {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 13px;
+  border: 1px solid var(--hairline-strong);
+  background: #fff;
+  color: var(--sav-steel);
+  cursor: pointer;
+  margin: 0;
+}
+.unit-toggle .unit-opt + .unit-opt { border-left: 0; }
+.unit-toggle .unit-opt:hover { color: var(--sav-navy); }
+.unit-toggle .unit-opt.is-active {
+  background: var(--sav-navy);
+  color: #fff;
+  border-color: var(--sav-navy);
+}
+
 .matrix-table {
   width: 100%;
   border-collapse: collapse;

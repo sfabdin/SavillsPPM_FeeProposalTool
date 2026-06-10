@@ -1348,6 +1348,26 @@
 
   /* ----- Matrix ----- */
   let expandedPhases = new Set();
+
+  /* Allocation entry unit — a DISPLAY-ONLY preference. The stored data is always
+     % FTE; hours are just a converted view (hours = % × hrsPerMo / 100). Persisted
+     per-browser, never written into the project record, so engines/exports/snapshots
+     are untouched. Calculator page only. */
+  let matrixUnit = 'percent';
+  try { const u = localStorage.getItem('ufc_matrix_unit'); if (u === 'hours' || u === 'percent') matrixUnit = u; } catch (e) {}
+  const hrsPerMo = () => state.assumptions.hrsPerMo || 173.33;
+  /** % → displayed cell value (rounded to 0.1) in the current unit. */
+  const pctToUnit = (pct) => matrixUnit === 'hours' ? Math.round((pct / 100) * hrsPerMo() * 10) / 10 : pct;
+  /** entered cell value (current unit) → stored % (rounded to 0.1). */
+  const unitToPct = (val) => {
+    if (matrixUnit !== 'hours') return val;
+    const h = hrsPerMo() || 173.33;
+    return Math.round((val / h) * 100 * 10) / 10;
+  };
+  const unitSuffix = () => matrixUnit === 'hours' ? 'h' : '%';
+  const unitStep = () => matrixUnit === 'hours' ? 5 : 5;
+  const unitMax = () => matrixUnit === 'hours' ? Math.round(hrsPerMo() * 2) : 200;
+
   /** Flat list of matrix columns: a phase, or (if expanded) its months. */
   function matrixColumns() {
     const cols = [];
@@ -1431,13 +1451,13 @@
               const mk = monthKey(m);
               const v = (r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte[p.id] || 0);
               html += `<td class="fte mcol ${v === 0 ? 'zero' : ''}">
-                <input type="number" data-role="${r.id}" data-month="${mk}" data-phase="${p.id}" value="${v}" min="0" max="200" step="5">%
+                <input type="number" data-role="${r.id}" data-month="${mk}" data-phase="${p.id}" value="${pctToUnit(v)}" min="0" max="${unitMax()}" step="${unitStep()}">${unitSuffix()}
               </td>`;
             });
           } else {
             const v = phaseAvgFte(r, p.id);
             html += `<td class="fte ${v === 0 ? 'zero' : ''}">
-              <input type="number" data-role="${r.id}" data-phase="${p.id}" value="${v}" min="0" max="200" step="5">%
+              <input type="number" data-role="${r.id}" data-phase="${p.id}" value="${pctToUnit(v)}" min="0" max="${unitMax()}" step="${unitStep()}">${unitSuffix()}
             </td>`;
           }
         });
@@ -1455,7 +1475,7 @@
     $$('#matrix-tbody input[data-role][data-phase]').forEach(i => {
       i.addEventListener('input', e => {
         const role = state.roles.find(r => r.id === e.target.dataset.role);
-        const val = parseFloat(e.target.value) || 0;
+        const val = unitToPct(parseFloat(e.target.value) || 0);   // entered unit → stored %
         const mk = e.target.dataset.month;
         if (role && mk) {
           // Per-month edit. FIRST pin every month in this phase to its current
@@ -1497,6 +1517,22 @@
       if (expandedPhases.has(pid)) expandedPhases.delete(pid); else expandedPhases.add(pid);
       renderMatrix();
     }));
+  }
+
+  /** Wire the % FTE ↔ Hours unit toggle (once, on boot). */
+  function wireUnitToggle() {
+    const wrap = $('#unit-toggle');
+    if (!wrap) return;
+    $$('.unit-opt', wrap).forEach(btn => {
+      btn.classList.toggle('is-active', btn.dataset.unit === matrixUnit);
+      btn.addEventListener('click', () => {
+        if (matrixUnit === btn.dataset.unit) return;
+        matrixUnit = btn.dataset.unit;
+        try { localStorage.setItem('ufc_matrix_unit', matrixUnit); } catch (e) {}
+        $$('.unit-opt', wrap).forEach(b => b.classList.toggle('is-active', b.dataset.unit === matrixUnit));
+        renderMatrix();
+      });
+    });
   }
 
   /** Recompute the editable matrix's derived cells (role totals + all
@@ -1823,6 +1859,7 @@
      EVENT WIRING — non-list controls
      ============================================================ */
   function wireControls() {
+    wireUnitToggle();
     // Monthly schedule discount-view toggle
     $$('.mt-btn').forEach(b => b.addEventListener('click', () => {
       monthlyMode = b.dataset.mode;
@@ -1996,6 +2033,7 @@
     roleFloorViolation,
     seedAllocationsToTarget,
     fitToTarget,
+    renderMatrix,
     updateChangeOrderBanner,
     CATALOG,
   };
