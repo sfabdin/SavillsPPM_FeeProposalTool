@@ -53,25 +53,6 @@
     .kpi-strip { grid-template-columns: repeat(3, 1fr); }
   }
 
-  /* Client rollup */
-  .client-rollup { margin: 0 0 22px; border: 1px solid var(--hairline); background: #fff; }
-  .client-rollup summary {
-    cursor: pointer; padding: 13px 18px; font-family: var(--font-display);
-    font-weight: 700; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--sav-navy); list-style: none; display: flex; align-items: center; gap: 10px;
-  }
-  .client-rollup summary::-webkit-details-marker { display: none; }
-  .client-rollup .cr-caret { color: var(--sav-teal); transition: transform .15s; display: inline-block; }
-  .client-rollup[open] .cr-caret { transform: rotate(90deg); }
-  .client-rollup .cr-hint { font-family: var(--font-body); font-weight: 400; font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--sav-steel); }
-  .cr-body { padding: 0 18px 14px; }
-  .cr-table { width: 100%; border-collapse: collapse; }
-  .cr-table th, .cr-table td { text-align: left; padding: 8px 10px; font-size: 12px; border-top: 1px solid var(--hairline); }
-  .cr-table th { font-family: var(--font-display); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sav-steel); border-top: 0; }
-  .cr-table td.num, .cr-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .cr-table .cr-client { font-weight: 700; color: var(--sav-navy); }
-  .cr-table .cr-co { color: var(--sav-teal); font-size: 11px; }
-
   /* Toolbar */
   .toolbar {
     display: flex;
@@ -434,12 +415,6 @@
     </div>
   </div>
 
-  <!-- ===== Client rollup ===== -->
-  <details class="client-rollup" id="client-rollup">
-    <summary><span class="cr-caret">▸</span> By client <span class="cr-hint" id="cr-hint"></span></summary>
-    <div class="cr-body" id="cr-body"></div>
-  </details>
-
   <!-- ===== Identity / access bar ===== -->
   <div class="identity-bar" id="identity-bar">
     <div class="id-who">
@@ -461,9 +436,6 @@
     </select>
     <select class="filter-chip" id="filter-industry">
       <option value="">All industries</option>
-    </select>
-    <select class="filter-chip" id="filter-ptype">
-      <option value="">All project types</option>
     </select>
     <select class="filter-chip" id="filter-lead">
       <option value="">All leads</option>
@@ -488,7 +460,6 @@
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/boot.js"></script>
-<script src="universal-fee-calc/sync-status.js"></script>
 <script>
 (function () {
   'use strict';
@@ -500,7 +471,6 @@
     search: '',
     status: '',
     industry: '',
-    ptype: '',
     lead: '',
   };
   let sort = { col: 'updatedAt', dir: 'desc' };
@@ -552,7 +522,6 @@
   function populateFilters(projects) {
     const statusSel = $('#filter-status');
     const indSel = $('#filter-industry');
-    const ptSel = $('#filter-ptype');
     const leadSel = $('#filter-lead');
 
     // Build options (preserve current selections)
@@ -564,13 +533,6 @@
     indSel.innerHTML = '<option value="">All industries</option>' +
       industries.map(i => `<option value="${esc(i)}" ${i===curInd?'selected':''}>${esc(i)}</option>`).join('');
 
-    if (ptSel) {
-      const curPt = filters.ptype;
-      const ptypes = [...new Set(projects.map(p => p.project?.projectType).filter(Boolean))].sort();
-      ptSel.innerHTML = '<option value="">All project types</option>' +
-        ptypes.map(t => `<option value="${esc(t)}" ${t===curPt?'selected':''}>${esc(t)}</option>`).join('');
-    }
-
     const leads = [...new Set(projects.map(p => p.project?.lead).filter(Boolean))].sort();
     leadSel.innerHTML = '<option value="">All leads</option>' +
       leads.map(l => `<option value="${esc(l)}" ${l===curLead?'selected':''}>${esc(l)}</option>`).join('');
@@ -579,65 +541,36 @@
   /* ---------- Identity / access wall ---------- */
   function buildIdentityBar(allProjects) {
     const sel = $('#id-user');
-    const label = document.querySelector('.identity-bar .id-label');
     const cur = STORE.getCurrentUser();
-
-    // Only the SUPERUSER (Salim) gets the impersonation switcher. Everyone else
-    // sees a static, read-only identity — no way to assume another person's view.
-    if (!STORE.canImpersonate()) {
-      if (sel) sel.style.display = 'none';
-      if (label) label.textContent = 'Signed in as';
-      let nameEl = document.getElementById('id-static-name');
-      if (!nameEl && sel) {
-        nameEl = document.createElement('span');
-        nameEl.id = 'id-static-name';
-        nameEl.style.cssText = 'font-family:var(--font-display);font-weight:700;font-size:13px;color:#fff;margin:0 4px;';
-        sel.parentNode.insertBefore(nameEl, sel.nextSibling);
-      }
-      if (nameEl) nameEl.textContent = cur.name || '(unrecognized)';
-      updateIdentityMeta();
-      return;
-    }
-
-    // SUPERUSER: full switcher to preview anyone's restricted view.
-    if (label) label.textContent = 'Viewing as';
-    if (sel) sel.style.display = '';
-    const roster = STORE.impersonationRoster();
-    const imp = STORE.getImpersonation();
-    const opts = [`<option value="__me__">Me — Salim (admin · all projects)</option>`]
-      .concat(roster.map(r => `<option value="${esc(r.username)}">${esc(r.name)} · ${r.role}</option>`))
-      .concat([`<option value="__custom__">Custom email…</option>`]);
+    // Everyone who leads/owns a project becomes a switchable identity (member role),
+    // plus a leadership "All projects" admin view. In production this list comes
+    // from your directory and the current user is fixed by login.
+    const leads = [...new Set(allProjects.map(p => p.project?.lead).filter(Boolean))].sort();
+    const opts = [`<option value="__admin__">Leadership / Ops — all projects</option>`]
+      .concat(leads.map(l => `<option value="${esc(l)}">${esc(l)}</option>`));
     sel.innerHTML = opts.join('');
-    sel.value = imp ? esc(imp) : '__me__';
-    if (sel.selectedIndex < 0) sel.value = '__me__';
+    sel.value = cur.role === 'admin' ? '__admin__' : esc(cur.name);
+    if (!sel.value) sel.value = '__admin__';
     updateIdentityMeta();
   }
   function updateIdentityMeta() {
     const cur = STORE.getCurrentUser();
     const roleEl = $('#id-role'), noteEl = $('#id-note');
-    const previewing = !!cur.impersonating;
     if (cur.role === 'admin') {
       roleEl.textContent = 'Admin · sees all';
       roleEl.className = 'id-role admin';
-      noteEl.innerHTML = previewing
-        ? `<strong>Previewing</strong> ${esc(cur.name)} (admin). <a href="#" id="id-exit" style="color:#fff;">← back to me</a>`
-        : `Full portfolio visibility. Use <strong>Viewing as</strong> to preview a restricted view.`;
+      noteEl.innerHTML = `Full portfolio visibility. Switch to a person to preview their <strong>restricted</strong> view.`;
     } else {
       roleEl.textContent = 'Member · own projects';
       roleEl.className = 'id-role member';
-      noteEl.innerHTML = previewing
-        ? `<strong>Previewing</strong> ${esc(cur.name || 'this person')} — only their projects show. <a href="#" id="id-exit" style="color:#fff;">← back to me</a>`
-        : `Showing only projects led or owned by <strong>${esc(cur.name || '—')}</strong>. Other teams' fees are hidden.`;
+      noteEl.innerHTML = `Showing only projects led or owned by <strong>${esc(cur.name)}</strong>. Other teams' fees are hidden.`;
     }
-    const exit = document.getElementById('id-exit');
-    if (exit) exit.addEventListener('click', (e) => { e.preventDefault(); STORE.clearImpersonation(); filters = { search: '', status: '', industry: '', ptype: '', lead: '' }; render(); });
   }
   function applyFilters(projects) {
     return projects.filter(p => {
       const pj = p.project || {};
       if (filters.status && pj.status !== filters.status) return false;
       if (filters.industry && pj.industry !== filters.industry) return false;
-      if (filters.ptype && pj.projectType !== filters.ptype) return false;
       if (filters.lead && pj.lead !== filters.lead) return false;
       if (filters.search) {
         const q = filters.search.toLowerCase();
@@ -670,54 +603,25 @@
 
   /* ---------- KPI rollup ---------- */
   function renderKpis(allProjects) {
-    // Parents only — change orders fold into their parent's revised contract.
-    const parents = allProjects.filter(p => !STORE.isChangeOrder(p));
-    const fees = parents.map(p => {
-      const rc = STORE.revisedContract(p.id);
-      const net = rc.coCount ? rc.revisedNet : projectFee(p).net;
-      return { p, net };
-    });
-    const total = fees.reduce((s, x) => s + x.net, 0);
+    const fees = allProjects.map(p => ({ p, fin: projectFee(p) }));
+    const total = fees.reduce((s, x) => s + x.fin.net, 0);
     const pipeline = fees.filter(x => ['draft','submitted','negotiation'].includes(x.p.project?.status))
-                        .reduce((s, x) => s + x.net, 0);
+                        .reduce((s, x) => s + x.fin.net, 0);
     const won = fees.filter(x => ['won','active','closed'].includes(x.p.project?.status))
-                   .reduce((s, x) => s + x.net, 0);
+                   .reduce((s, x) => s + x.fin.net, 0);
     const active = fees.filter(x => x.p.project?.status === 'active')
-                      .reduce((s, x) => s + x.net, 0);
-    const wonCount = parents.filter(p => ['won','active','closed'].includes(p.project?.status)).length;
-    const lostCount = parents.filter(p => p.project?.status === 'lost').length;
+                      .reduce((s, x) => s + x.fin.net, 0);
+    const wonCount = allProjects.filter(p => ['won','active','closed'].includes(p.project?.status)).length;
+    const lostCount = allProjects.filter(p => p.project?.status === 'lost').length;
     const decided = wonCount + lostCount;
     const wr = decided ? Math.round((wonCount / decided) * 100) : null;
 
-    $('#kpi-count').textContent = parents.length;
+    $('#kpi-count').textContent = allProjects.length;
     $('#kpi-pipeline').textContent = fmtMoney(pipeline);
     $('#kpi-won').textContent = fmtMoney(won);
     $('#kpi-active').textContent = fmtMoney(active);
     $('#kpi-winrate').innerHTML = wr !== null ? `${wr}<span class="unit">%</span>` : '—';
     $('#kpi-total').textContent = fmtMoney(total);
-  }
-
-  /* ---------- Client rollup ---------- */
-  function renderClientRollup(allProjects) {
-    const parents = allProjects.filter(p => !STORE.isChangeOrder(p));
-    const rows = STORE.clientRollup(parents);
-    const hint = $('#cr-hint'), body = $('#cr-body');
-    if (!rows.length) { if (hint) hint.textContent = ''; if (body) body.innerHTML = ''; return; }
-    if (hint) hint.textContent = `${rows.length} client${rows.length === 1 ? '' : 's'}`;
-    body.innerHTML = `<table class="cr-table">
-      <thead><tr><th>Client</th><th class="num">Projects</th><th class="num">Original</th><th class="num">Change orders</th><th class="num">Revised contract</th></tr></thead>
-      <tbody>${rows.map(r => {
-        const coDelta = r.revised - r.baseline;
-        const coTxt = r.coCount ? `<span class="cr-co">${coDelta >= 0 ? '+' : '−'}${fmtMoneyFull(Math.abs(coDelta))} · ${r.coCount}</span>` : '—';
-        return `<tr>
-          <td class="cr-client">${esc(r.client)}</td>
-          <td class="num">${r.projects}</td>
-          <td class="num">${fmtMoneyFull(r.baseline)}</td>
-          <td class="num">${coTxt}</td>
-          <td class="num"><strong>${fmtMoneyFull(r.revised)}</strong></td>
-        </tr>`;
-      }).join('')}</tbody>
-    </table>`;
   }
 
   /* ---------- Render ---------- */
@@ -728,7 +632,6 @@
     const all = STORE.visibleProjects(everything);
     populateFilters(all);
     renderKpis(all);
-    renderClientRollup(all);
     const filtered = applySort(applyFilters(all));
 
     const host = $('#table-host');
@@ -762,7 +665,6 @@
       { key: 'client',    label: 'Client · location' },
       { key: 'status',    label: 'Status' },
       { key: 'industry',  label: 'Industry' },
-      { key: 'ptype',     label: 'Project type', sortable: false },
       { key: 'lead',      label: 'Lead PE' },
       { key: 'period',    label: 'Period', sortable: false },
       { key: 'fee',       label: 'Net fee', num: true },
@@ -780,25 +682,14 @@
         : `<th class="${cls}">${c.label}</th>`;
     }).join('');
 
-    const rowsHtml = filtered.filter(p => !STORE.isChangeOrder(p)).map(p => {
+    const rowsHtml = filtered.map(p => {
       const pj = p.project || {};
       const fin = projectFee(p);
-      const rc = STORE.revisedContract(p.id);
-      const hasCOs = rc.coCount > 0;
       const statusKey = pj.status || 'draft';
       const statusLabel = STORE.STATUS_LABELS[statusKey] || statusKey;
-      const coSign = rc.coNetSum >= 0 ? '+' : '−';
-      const feeCell = hasCOs
-        ? `<div class="pfee">${fmtMoneyFull(rc.revisedNet)}</div>
-           <div class="pfee-sub">${fmtMoneyFull(rc.baselineNet)} ${coSign} ${rc.coCount} CO${rc.coCount === 1 ? '' : 's'}</div>`
-        : `<div class="pfee">${fmtMoneyFull(fin.net)}</div>
-           <div class="pfee-sub">${fin.fteMonths.toFixed(1)} fte-mo</div>`;
-      const nameSub = hasCOs
-        ? `<span class="pname-sub">${esc(pj.industry || '—')} · revised contract</span>`
-        : `<span class="pname-sub">${esc(pj.industry || '—')}</span>`;
       return `<tr data-id="${p.id}">
         <td>
-          <div class="pname">${esc(pj.name || 'Untitled')}${nameSub}</div>
+          <div class="pname">${esc(pj.name || 'Untitled')}<span class="pname-sub">${esc(pj.industry || '—')}</span></div>
         </td>
         <td>
           <div class="pclient">${esc(pj.client || '—')}</div>
@@ -806,10 +697,12 @@
         </td>
         <td><span class="pill status-${statusKey}">${esc(statusLabel)}</span></td>
         <td>${esc(pj.industry || '—')}</td>
-        <td>${esc(pj.projectType || '—')}</td>
         <td>${esc(pj.lead || '—')}</td>
         <td style="font-family: var(--font-body); color: var(--sav-steel); font-size: 12px;">${fmtPeriod(p)}</td>
-        <td class="num">${feeCell}</td>
+        <td class="num">
+          <div class="pfee">${fmtMoneyFull(fin.net)}</div>
+          <div class="pfee-sub">${fin.fteMonths.toFixed(1)} fte-mo</div>
+        </td>
         <td style="font-family: var(--font-body); color: var(--sav-steel); font-size: 12px;">${fmtRelative(p.updatedAt)}</td>
         <td>
           <div class="row-actions">
@@ -876,44 +769,36 @@
   }
 
   /* ---------- Toolbar wiring ---------- */
-  $('#search-input')?.addEventListener('input', e => { filters.search = e.target.value; render(); });
-  $('#id-user')?.addEventListener('change', e => {
+  $('#search-input').addEventListener('input', e => { filters.search = e.target.value; render(); });
+  $('#id-user').addEventListener('change', e => {
     const v = e.target.value;
-    if (v === '__me__') {
-      STORE.clearImpersonation();
-    } else if (v === '__custom__') {
-      const email = (prompt('Preview as which Box login (email)?') || '').trim();
-      if (email) STORE.setImpersonation(email);
-      else { STORE.clearImpersonation(); }
-    } else {
-      STORE.setImpersonation(v);
-    }
+    if (v === '__admin__') STORE.setCurrentUser({ name: 'Leadership', role: 'admin' });
+    else STORE.setCurrentUser({ name: v, role: 'member' });
     // reset filters so a stale lead filter doesn't compound with the wall
-    filters = { search: '', status: '', industry: '', ptype: '', lead: '' };
+    filters = { search: '', status: '', industry: '', lead: '' };
     $('#search-input').value = '';
     render();
   });
-  $('#filter-status')?.addEventListener('change', e => { filters.status = e.target.value; render(); });
-  $('#filter-industry')?.addEventListener('change', e => { filters.industry = e.target.value; render(); });
-  $('#filter-ptype')?.addEventListener('change', e => { filters.ptype = e.target.value; render(); });
-  $('#filter-lead')?.addEventListener('change', e => { filters.lead = e.target.value; render(); });
-  $('#clear-btn')?.addEventListener('click', () => {
-    filters = { search: '', status: '', industry: '', ptype: '', lead: '' };
+  $('#filter-status').addEventListener('change', e => { filters.status = e.target.value; render(); });
+  $('#filter-industry').addEventListener('change', e => { filters.industry = e.target.value; render(); });
+  $('#filter-lead').addEventListener('change', e => { filters.lead = e.target.value; render(); });
+  $('#clear-btn').addEventListener('click', () => {
+    filters = { search: '', status: '', industry: '', lead: '' };
     $('#search-input').value = '';
     render();
   });
 
   /* ---------- Header actions ---------- */
-  $('#new-btn')?.addEventListener('click', () => {
+  $('#new-btn').addEventListener('click', () => {
     window.location.href = 'Universal Fee Calculator.html';
   });
-  $('#export-btn')?.addEventListener('click', () => {
+  $('#export-btn').addEventListener('click', () => {
     const json = STORE.exportDb();
     const date = new Date().toISOString().slice(0, 10);
     STORE.downloadJson(`savills-ppm-fee-db-${date}.json`, json);
   });
-  $('#import-btn')?.addEventListener('click', () => $('#import-input').click());
-  $('#import-input')?.addEventListener('change', (e) => {
+  $('#import-btn').addEventListener('click', () => $('#import-input').click());
+  $('#import-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -931,7 +816,7 @@
     e.target.value = '';
   });
 
-  $('#seed-btn')?.addEventListener('click', () => {
+  $('#seed-btn').addEventListener('click', () => {
     seedDemoData();
     render();
   });

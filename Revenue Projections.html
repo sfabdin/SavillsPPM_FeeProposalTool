@@ -92,6 +92,23 @@
   .snap-none { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); font-style: italic; }
   table.proj td.year-sep { border-right: 2px solid var(--hair-strong); }
 
+  /* Today column marker */
+  table.proj th.today, table.proj td.today { border-left: 2px solid var(--sav-red); border-right: 2px solid var(--sav-red); background: rgba(206,24,30,0.04); }
+  table.proj th.today { position: relative; }
+  table.proj .today-tag { display: block; font-size: 7.5px; font-weight: 800; letter-spacing: 0.08em; color: #fff; background: var(--sav-red); padding: 1px 0; margin: -2px -10px 2px; }
+  table.proj tr.totals td.today { background: rgba(206,24,30,0.5); }
+  /* Broker fee-split rows */
+  table.proj tr.broker-row td { background: #fbf7f4; color: var(--sav-red); font-size: 11px; padding: 5px 10px; }
+  table.proj tr.broker-row td.proj-cell { position: sticky; left: 0; z-index: 2; background: #fbf7f4; color: var(--sav-red); font-style: italic; padding-left: 22px; }
+  table.proj tr.broker-row td.rowtot { background: #f6ece8; color: var(--sav-red); }
+  table.proj tr.totals.broker-total td { background: #6b2530; color: #ffd9d9; font-size: 12px; }
+  table.proj tr.totals.broker-total td.proj-cell { background: #6b2530; color: #ffd9d9; }
+  table.proj tr.totals.broker-total td.rowtot { background: #5a1f28; color: #fff; }
+  table.proj tr.totals.net-after-broker td { background: #0e7c7b; color: #fff; }
+  table.proj tr.totals.net-after-broker td.proj-cell { background: #0e7c7b; color: #fff; }
+  table.proj tr.totals.net-after-broker td.rowtot { background: #0a6463; }
+  table.proj tr.totals.broker-total td.num, table.proj tr.totals.net-after-broker td.num { color: #fff; }
+
   /* Rating ribbon on project cell */
   td.proj-cell { border-left: 4px solid transparent; }
   tr.r1 td.proj-cell { border-left-color: #1f8a5b; }
@@ -140,6 +157,7 @@
     </div>
     <div class="actions">
       <label class="ctl-toggle"><input type="checkbox" id="show-excluded" checked> Show rated 5–7</label>
+      <label class="ctl-toggle"><input type="checkbox" id="show-broker"> Broker fee split</label>
       <button class="btn" id="edit-toggle" title="Edit ratings and override monthly billings">✎ Edit</button>
       <button class="btn" id="xlsx-export" title="Download the matrix exactly as shown">⤓ Excel</button>
       <a class="btn" href="Fee Generator.html">← Home</a>
@@ -219,6 +237,7 @@
   }
 
   let showExcluded = true;
+  let showBroker = false;
   let editMode = false;
   let ALL = [];                 // prepared rows (built once)
   let LAST_VIEW = null;         // last rendered model, for Excel export
@@ -245,8 +264,10 @@
       const pj = p.project || {};
       const leaders = [pj.lead, pj.clientRelOwner].map(x => (x || '').trim()).filter(Boolean);
       const serviceLines = STORE.projectServiceLines(p);
+      const fs = (p.assumptions && p.assumptions.feeShare) || {};
+      const feeSharePct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
       return { p, pj, rating: STORE.ratingFor(p), map, total, ov: p.monthlyOverrides || null,
-               coCount: cos.length,
+               coCount: cos.length, feeSharePct,
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim(), projectType: (pj.projectType || '').trim() };
     });
     populateFilters();
@@ -360,14 +381,17 @@
     years.forEach((yr, i) => { html += `<th colspan="${yr.span}">${yr.y}</th>`; });
     html += '<th class="totcol" rowspan="2">Total</th></tr>';
     html += '<tr>';
+    const _now = new Date(); const _ck = _now.getFullYear() + '-' + (_now.getMonth() + 1);
     cols.forEach((c, i) => {
       const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
-      html += `<th class="${sep.trim()}">${MONTHS[c.m - 1]}</th>`;
+      const today = c.key === _ck ? ' today' : '';
+      html += `<th class="${(sep + today).trim()}">${c.key === _ck ? '<span class="today-tag">TODAY</span>' : ''}${MONTHS[c.m - 1]}</th>`;
     });
     html += '</tr></thead><tbody>';
 
     // Column totals (ratings 1–4 only) + weighted (all, × confidence)
     const colTot = {}, colWt = {};
+    const colBroker = {}; let grandBroker = 0;
     cols.forEach(c => { colTot[c.key] = 0; colWt[c.key] = 0; });
     let grandTot = 0, grandWt = 0;
 
@@ -401,16 +425,29 @@
         const v = r.map[c.key] || 0;
         rvt += v;
         const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
+        const today = c.key === _ck ? ' today' : '';
         const isOv = r.ov && r.ov[c.key] != null;
         if (editMode) {
-          html += `<td class="num editable${isOv ? ' overridden' : ''}${sep}" contenteditable="true" data-pid="${r.p.id}" data-key="${c.key}">${v ? Math.round(v) : ''}</td>`;
+          html += `<td class="num editable${isOv ? ' overridden' : ''}${sep}${today}" contenteditable="true" data-pid="${r.p.id}" data-key="${c.key}">${v ? Math.round(v) : ''}</td>`;
         } else {
-          html += `<td class="num${v ? '' : ' zero'}${isOv ? ' overridden' : ''}${sep}">${v ? fmtK(v) : '·'}</td>`;
+          html += `<td class="num${v ? '' : ' zero'}${isOv ? ' overridden' : ''}${sep}${today}">${v ? fmtK(v) : '·'}</td>`;
         }
         if (!excluded) { colTot[c.key] += v; grandTot += v; }
       });
       html += `<td class="rowtot num">${fmtK(rvt)}</td>`;
       html += '</tr>';
+      // Broker fee-split sub-line (toggle): the monthly broker reduction beneath the total.
+      if (showBroker && r.feeSharePct > 0) {
+        html += `<tr class="broker-row"><td class="proj-cell">↳ Broker fee · ${r.feeSharePct}%</td>`;
+        cols.forEach((c, i) => {
+          const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
+          const today = c.key === _ck ? ' today' : '';
+          const b = (r.map[c.key] || 0) * (r.feeSharePct / 100);
+          html += `<td class="num broker${sep}${today}">${b ? '−' + fmtK(b) : ''}</td>`;
+          if (!excluded) { colBroker[c.key] = (colBroker[c.key] || 0) + b; grandBroker += b; }
+        });
+        html += `<td class="rowtot num broker">−${fmtK(rvt * (r.feeSharePct / 100))}</td></tr>`;
+      }
     });
 
     // Probability-weighted totals — every pursuit × its rating confidence (visible cols only).
@@ -425,6 +462,16 @@
     html += '<tr class="totals weighted"><td class="proj-cell">Probability-weighted (all)</td>';
     cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; html += `<td class="num${sep}">${colWt[c.key] ? fmtK(colWt[c.key]) : '·'}</td>`; });
     html += `<td class="rowtot num">${fmtK(grandWt)}</td></tr>`;
+
+    // Broker-fee rolled-up total (toggle)
+    if (showBroker && grandBroker > 0) {
+      html += '<tr class="totals broker-total"><td class="proj-cell">↳ Broker fee · all splits</td>';
+      cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const b = colBroker[c.key] || 0; html += `<td class="num${sep}">${b ? '−' + fmtK(b) : '·'}</td>`; });
+      html += `<td class="rowtot num">−${fmtK(grandBroker)}</td></tr>`;
+      html += '<tr class="totals net-after-broker"><td class="proj-cell">Net of broker fee</td>';
+      cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const n = (colTot[c.key] || 0) - (colBroker[c.key] || 0); html += `<td class="num${sep}">${n ? fmtK(n) : '·'}</td>`; });
+      html += `<td class="rowtot num">${fmtK(grandTot - grandBroker)}</td></tr>`;
+    }
 
     html += '</tbody>';
     $('#proj-table').innerHTML = html;
@@ -780,6 +827,7 @@
     build();
   });
   $('#show-excluded')?.addEventListener('change', e => { showExcluded = e.target.checked; build(); });
+  $('#show-broker')?.addEventListener('change', e => { showBroker = e.target.checked; build(); });
   $('#xlsx-export')?.addEventListener('click', exportProjections);
   ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => {
     $('#' + id)?.addEventListener('change', () => { $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.'; build(); });
