@@ -1482,7 +1482,7 @@
     if (cols.some(c => c.type === 'month')) {
       let sub = `<tr class="month-subhead"><th class="role-col"></th>`;
       cols.forEach(c => {
-        sub += c.type === 'month' ? `<th class="mcol ${isCurrentMonth(c.month) ? 'today' : ''} ${isPastMonth(c.month) ? 'past' : ''}">${isCurrentMonth(c.month) ? '<span class="today-tag">TODAY</span>' : ''}${c.month.label}</th>` : `<th></th>`;
+        sub += c.type === 'month' ? `<th class="mcol ${isCurrentMonth(c.month) ? 'today' : ''} ${isPastMonth(c.month) ? 'past' : ''}">${isCurrentMonth(c.month) ? '<span class="today-tag">CURRENT</span>' : ''}${c.month.label}</th>` : `<th></th>`;
       });
       sub += `<th></th></tr>`;
       hdr += sub;
