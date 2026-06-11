@@ -154,6 +154,7 @@
     <div class="filt"><label for="f-leader">Revenue leader · PE / rel. owner</label><select id="f-leader"></select></div>
     <div class="filt"><label for="f-service">Service line</label><select id="f-service"></select></div>
     <div class="filt"><label for="f-industry">Industry</label><select id="f-industry"></select></div>
+    <div class="filt"><label for="f-ptype">Project type</label><select id="f-ptype"></select></div>
     <div class="filt time"><label for="f-year">Year</label><select id="f-year"></select></div>
     <div class="filt time"><label for="f-quarter">Quarter</label><select id="f-quarter"></select></div>
     <div class="filt time"><label for="f-month">Month</label><select id="f-month"></select></div>
@@ -246,7 +247,7 @@
       const serviceLines = STORE.projectServiceLines(p);
       return { p, pj, rating: STORE.ratingFor(p), map, total, ov: p.monthlyOverrides || null,
                coCount: cos.length,
-               client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim() };
+               client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim(), projectType: (pj.projectType || '').trim() };
     });
     populateFilters();
   }
@@ -264,6 +265,7 @@
     fill('f-leader', uniqSorted(ALL.flatMap(r => r.leaders)), 'All leaders');
     fill('f-service', uniqSorted(ALL.flatMap(r => r.serviceLines)), 'All service lines');
     fill('f-industry', uniqSorted(ALL.map(r => r.industry)), 'All industries');
+    fill('f-ptype', uniqSorted(ALL.map(r => r.projectType)), 'All project types');
     // Years from data
     const years = uniqSorted(ALL.flatMap(r => Object.keys(r.map).map(k => k.split('-')[0])));
     const ysel = $('#f-year'); const yc = ysel.value;
@@ -278,7 +280,7 @@
   function currentFilters() {
     return {
       client: $('#f-client').value, leader: $('#f-leader').value,
-      service: $('#f-service').value, industry: $('#f-industry').value,
+      service: $('#f-service').value, industry: $('#f-industry').value, ptype: $('#f-ptype').value,
       year: $('#f-year').value, quarter: $('#f-quarter').value, month: $('#f-month').value,
     };
   }
@@ -289,7 +291,7 @@
     const f = currentFilters();
 
     // mark active filter selects
-    ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => {
+    ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => {
       $('#' + id).classList.toggle('active', !!$('#' + id).value);
     });
 
@@ -299,6 +301,7 @@
       if (f.leader && !r.leaders.includes(f.leader)) return false;
       if (f.service && !r.serviceLines.includes(f.service)) return false;
       if (f.industry && r.industry !== f.industry) return false;
+      if (f.ptype && r.projectType !== f.ptype) return false;
       return true;
     });
     // When a service line is selected, slice each project to only that line's fees.
@@ -493,6 +496,7 @@
     if (f.leader) fbits.push('Leader: '+f.leader);
     if (f.service) fbits.push('Service: '+f.service);
     if (f.industry) fbits.push('Industry: '+f.industry);
+    if (f.ptype) fbits.push('Type: '+f.ptype);
     if (f.year) fbits.push('Year: '+f.year);
     if (f.quarter) fbits.push(f.quarter);
     if (f.month) fbits.push('Month: '+MONTHS[parseInt(f.month)-1]);
@@ -777,11 +781,11 @@
   });
   $('#show-excluded')?.addEventListener('change', e => { showExcluded = e.target.checked; build(); });
   $('#xlsx-export')?.addEventListener('click', exportProjections);
-  ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => {
+  ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => {
     $('#' + id)?.addEventListener('change', () => { $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.'; build(); });
   });
   $('#clear-filters')?.addEventListener('click', () => {
-    ['f-client','f-leader','f-service','f-industry','f-year','f-quarter','f-month'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
+    ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
     $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.';
     build();
   });

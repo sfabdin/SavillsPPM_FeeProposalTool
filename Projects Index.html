@@ -462,6 +462,9 @@
     <select class="filter-chip" id="filter-industry">
       <option value="">All industries</option>
     </select>
+    <select class="filter-chip" id="filter-ptype">
+      <option value="">All project types</option>
+    </select>
     <select class="filter-chip" id="filter-lead">
       <option value="">All leads</option>
     </select>
@@ -497,6 +500,7 @@
     search: '',
     status: '',
     industry: '',
+    ptype: '',
     lead: '',
   };
   let sort = { col: 'updatedAt', dir: 'desc' };
@@ -548,6 +552,7 @@
   function populateFilters(projects) {
     const statusSel = $('#filter-status');
     const indSel = $('#filter-industry');
+    const ptSel = $('#filter-ptype');
     const leadSel = $('#filter-lead');
 
     // Build options (preserve current selections)
@@ -558,6 +563,13 @@
     const industries = [...new Set(projects.map(p => p.project?.industry).filter(Boolean))].sort();
     indSel.innerHTML = '<option value="">All industries</option>' +
       industries.map(i => `<option value="${esc(i)}" ${i===curInd?'selected':''}>${esc(i)}</option>`).join('');
+
+    if (ptSel) {
+      const curPt = filters.ptype;
+      const ptypes = [...new Set(projects.map(p => p.project?.projectType).filter(Boolean))].sort();
+      ptSel.innerHTML = '<option value="">All project types</option>' +
+        ptypes.map(t => `<option value="${esc(t)}" ${t===curPt?'selected':''}>${esc(t)}</option>`).join('');
+    }
 
     const leads = [...new Set(projects.map(p => p.project?.lead).filter(Boolean))].sort();
     leadSel.innerHTML = '<option value="">All leads</option>' +
@@ -618,13 +630,14 @@
         : `Showing only projects led or owned by <strong>${esc(cur.name || '—')}</strong>. Other teams' fees are hidden.`;
     }
     const exit = document.getElementById('id-exit');
-    if (exit) exit.addEventListener('click', (e) => { e.preventDefault(); STORE.clearImpersonation(); filters = { search: '', status: '', industry: '', lead: '' }; render(); });
+    if (exit) exit.addEventListener('click', (e) => { e.preventDefault(); STORE.clearImpersonation(); filters = { search: '', status: '', industry: '', ptype: '', lead: '' }; render(); });
   }
   function applyFilters(projects) {
     return projects.filter(p => {
       const pj = p.project || {};
       if (filters.status && pj.status !== filters.status) return false;
       if (filters.industry && pj.industry !== filters.industry) return false;
+      if (filters.ptype && pj.projectType !== filters.ptype) return false;
       if (filters.lead && pj.lead !== filters.lead) return false;
       if (filters.search) {
         const q = filters.search.toLowerCase();
@@ -749,6 +762,7 @@
       { key: 'client',    label: 'Client · location' },
       { key: 'status',    label: 'Status' },
       { key: 'industry',  label: 'Industry' },
+      { key: 'ptype',     label: 'Project type', sortable: false },
       { key: 'lead',      label: 'Lead PE' },
       { key: 'period',    label: 'Period', sortable: false },
       { key: 'fee',       label: 'Net fee', num: true },
@@ -792,6 +806,7 @@
         </td>
         <td><span class="pill status-${statusKey}">${esc(statusLabel)}</span></td>
         <td>${esc(pj.industry || '—')}</td>
+        <td>${esc(pj.projectType || '—')}</td>
         <td>${esc(pj.lead || '—')}</td>
         <td style="font-family: var(--font-body); color: var(--sav-steel); font-size: 12px;">${fmtPeriod(p)}</td>
         <td class="num">${feeCell}</td>
@@ -874,15 +889,16 @@
       STORE.setImpersonation(v);
     }
     // reset filters so a stale lead filter doesn't compound with the wall
-    filters = { search: '', status: '', industry: '', lead: '' };
+    filters = { search: '', status: '', industry: '', ptype: '', lead: '' };
     $('#search-input').value = '';
     render();
   });
   $('#filter-status')?.addEventListener('change', e => { filters.status = e.target.value; render(); });
   $('#filter-industry')?.addEventListener('change', e => { filters.industry = e.target.value; render(); });
+  $('#filter-ptype')?.addEventListener('change', e => { filters.ptype = e.target.value; render(); });
   $('#filter-lead')?.addEventListener('change', e => { filters.lead = e.target.value; render(); });
   $('#clear-btn')?.addEventListener('click', () => {
-    filters = { search: '', status: '', industry: '', lead: '' };
+    filters = { search: '', status: '', industry: '', ptype: '', lead: '' };
     $('#search-input').value = '';
     render();
   });

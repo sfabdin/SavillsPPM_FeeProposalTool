@@ -102,6 +102,11 @@
             <label for="pm-industry">Industry</label>
             <select id="pm-industry"></select>
           </div>
+          <div class="field">
+            <label for="pm-ptype">Project type</label>
+            <select id="pm-ptype"></select>
+            <div class="pt-subs" id="pm-ptype-subs" hidden></div>
+          </div>
         </div>
         <div class="field-grid cols-5" style="margin-top: 18px;">
           <div class="field">
@@ -129,6 +134,13 @@
           <div class="field">
             <label for="pm-location">Location</label>
             <input type="text" id="pm-location" placeholder="e.g. New York, NY">
+          </div>
+        </div>
+        <div class="field-grid" style="grid-template-columns: 1fr; margin-top: 18px; max-width: 600px;">
+          <div class="field">
+            <label for="pm-access">Grant access to (emails)</label>
+            <input type="text" id="pm-access" placeholder="jane@savills.us, john@savills.us">
+            <span class="hint">Comma-separated Box emails. Anyone listed can open and edit this project after they sign in — for collaborators or drafters who aren’t the lead. Admins always have access.</span>
           </div>
         </div>
         <div class="field-grid" id="sf-id-row" style="grid-template-columns: 1fr; margin-top: 18px; max-width: 600px;" hidden>
