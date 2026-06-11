@@ -38,6 +38,7 @@
       status: 'draft',
       industry: '',
       projectType: '',     // service line / engagement type (distinct from Industry)
+      projectSubtypes: [], // selected sub-services within the project type
       accessGrant: '',     // comma-separated emails granted access (besides lead/owner/admins)
       firstProposalDate: '',
       signedContractDate: '',
@@ -569,15 +570,25 @@
   }
 
   /* ----- Project meta ----- */
-  /** Show the representative sub-services for the selected Project Type. */
+  /** Show the representative sub-services for the selected Project Type as
+      clickable pills; selections are stored in project.projectSubtypes. */
   function renderProjectTypeSubs() {
     const el = $('#pm-ptype-subs');
     if (!el) return;
     const subs = STORE.projectTypeSubs(state.project.projectType || '');
     if (!subs.length) { el.hidden = true; el.innerHTML = ''; return; }
+    const chosen = Array.isArray(state.project.projectSubtypes) ? state.project.projectSubtypes : [];
     el.hidden = false;
     el.innerHTML = `<span class="pt-subs-lbl">Includes</span>` +
-      subs.map(s => `<span class="pt-sub">${escapeHtml(s)}</span>`).join('');
+      subs.map(s => `<span class="pt-sub ${chosen.includes(s) ? 'is-on' : ''}" data-sub="${escapeHtml(s)}">${escapeHtml(s)}</span>`).join('');
+    $$('.pt-sub', el).forEach(pill => pill.addEventListener('click', () => {
+      const s = pill.dataset.sub;
+      let arr = Array.isArray(state.project.projectSubtypes) ? state.project.projectSubtypes.slice() : [];
+      if (arr.includes(s)) arr = arr.filter(x => x !== s); else arr.push(s);
+      state.project.projectSubtypes = arr;
+      pill.classList.toggle('is-on');
+      markDirty();
+    }));
   }
 
   function renderProjectMeta() {
@@ -1960,7 +1971,7 @@
     });
     $('#pm-industry').addEventListener('change', e => { state.project.industry = e.target.value; markDirty(); });
     const ptypeEl = $('#pm-ptype');
-    if (ptypeEl) ptypeEl.addEventListener('change', e => { state.project.projectType = e.target.value; renderProjectTypeSubs(); markDirty(); });
+    if (ptypeEl) ptypeEl.addEventListener('change', e => { state.project.projectType = e.target.value; state.project.projectSubtypes = []; renderProjectTypeSubs(); markDirty(); });
     const accessInput = $('#pm-access');
     if (accessInput) accessInput.addEventListener('input', e => { state.project.accessGrant = e.target.value; markDirty(); });
     const ratingSelEl = $('#pm-rating');

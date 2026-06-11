@@ -967,13 +967,15 @@ html, body {
   border-color: var(--sav-navy);
 }
 
-/* Project-type sub-services (shown once a type is picked) */
+/* Project-type sub-services (shown once a type is picked) — full-width, clickable */
 .pt-subs {
-  margin-top: 8px;
+  margin-top: 12px;
+  padding: 12px 0 2px;
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 7px;
   align-items: center;
+  border-top: 1px solid var(--hairline);
 }
 .pt-subs[hidden] { display: none; }
 .pt-subs .pt-subs-lbl {
@@ -983,16 +985,25 @@ html, body {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--sav-steel);
-  margin-right: 2px;
+  margin-right: 4px;
 }
 .pt-subs .pt-sub {
   font-family: var(--font-body);
-  font-size: 11px;
-  color: var(--sav-navy);
-  background: var(--sav-cream);
-  border: 1px solid var(--hairline);
-  padding: 2px 8px;
-  border-radius: 2px;
+  font-size: 11.5px;
+  color: var(--sav-steel);
+  background: #fff;
+  border: 1px solid var(--hairline-strong);
+  padding: 3px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.pt-subs .pt-sub:hover { border-color: var(--sav-navy); color: var(--sav-navy); }
+.pt-subs .pt-sub.is-on {
+  background: var(--sav-navy);
+  color: #fff;
+  border-color: var(--sav-navy);
 }
 
 .matrix-table {

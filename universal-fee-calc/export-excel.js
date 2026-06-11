@@ -1068,6 +1068,213 @@ window.UFC_buildAndDownloadExcel = async function () {
     s4.getRow(b4).height = 22;
   }
 
+  /* ============================================================
+     SHEET 5 · Monthly by Group (pre-discount vs. discount baked in)
+     Two stacked sections over the same group×month grid:
+       A · PRE-DISCOUNT — gross by group/month; the client discount (and any
+           Rate-Lock credit) are shown as their own deduction rows, netting to
+           the invoice at the bottom.
+       B · DISCOUNT BAKED IN — the same grid with the reductions folded into
+           each cell, so it sums to the identical net. The two net rows tie.
+     All cells are live formulas referencing Sheet 3's group subtotals.
+     ============================================================ */
+  const s5 = wb.addWorksheet('Monthly by Group', {
+    pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+    views: [{ showGridLines: false, state: 'frozen', xSplit: 1, ySplit: 6 }],
+  });
+  const m5 = (i) => colLetter(2 + i);
+  const tot5 = colLetter(2 + nMonths);
+  s5.columns = [{ width: 26 }, ...Array(nMonths).fill({ width: 11 }), { width: 15 }];
+  const hasLock = parseFloat(lockConst) > 0.5;
+  const lockRatio = `(${lockConst}/${grossRef})`;          // share of gross removed by rate-lock
+
+  s5.mergeCells(`A1:${tot5}1`);
+  s5.getCell('A1').value = 'Monthly by Group · pre-discount and discount baked in';
+  s5.getCell('A1').font = { name: 'Calibri', bold: true, size: 18, color: { argb: NAVY } };
+  s5.getRow(1).height = 28;
+  s5.mergeCells(`A2:${tot5}2`);
+  s5.getCell('A2').value = 'Section A shows gross by group with the discount removed at the bottom, by month. Section B bakes the discount into each cell. Both net to the same total.';
+  s5.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
+
+  // Shared header builder: phase bands (row r), month labels (r+1), year (r+2)
+  function s5Header(topRow) {
+    let ci = 0;
+    byPhase.forEach(bucket => {
+      const len = bucket.months.length; if (!len) return;
+      s5.mergeCells(`${m5(ci)}${topRow}:${m5(ci + len - 1)}${topRow}`);
+      const c = s5.getCell(`${m5(ci)}${topRow}`);
+      c.value = bucket.phase.name;
+      c.font = { name: 'Calibri', bold: true, size: 10, color: { argb: NAVY } };
+      c.alignment = { horizontal: 'center' };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YELLOW } };
+      ci += len;
+    });
+    const hr = topRow + 1;
+    s5.getCell(`A${hr}`).value = 'Group'; styleHeader(s5.getCell(`A${hr}`), { align: 'left' });
+    s5.getCell(`${tot5}${hr}`).value = 'Total'; styleHeader(s5.getCell(`${tot5}${hr}`), { align: 'right' });
+    monthCols.forEach((mc, i) => { const c = s5.getCell(`${m5(i)}${hr}`); c.value = mc.m.label; styleHeader(c, { align: 'center' }); });
+    s5.getRow(hr).height = 22;
+    const yr = topRow + 2;
+    s5.getCell(`A${yr}`).value = 'Year →';
+    s5.getCell(`A${yr}`).font = { name: 'Calibri', size: 9, italic: true, color: { argb: STEEL } };
+    s5.getCell(`A${yr}`).alignment = { horizontal: 'right' };
+    monthCols.forEach((mc, i) => {
+      const c = s5.getCell(`${m5(i)}${yr}`); c.value = mc.m.year; c.numFmt = '0';
+      c.font = { name: 'Calibri', size: 9, bold: true, color: { argb: STEEL } };
+      c.alignment = { horizontal: 'center' };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
+    });
+    return yr + 1;   // first data row
+  }
+
+  // ---- SECTION A · PRE-DISCOUNT (gross) ----
+  s5.mergeCells(`A4:${tot5}4`);
+  s5.getCell('A4').value = '  A · PRE-DISCOUNT  ·  gross fee by group, by month';
+  s5.getCell('A4').font = { name: 'Calibri', bold: true, color: { argb: WHITE }, size: 11 };
+  s5.getCell('A4').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  let rA = s5Header(5);
+  const aGroupRows = [];
+  groupOrder.forEach(g => {
+    const subRow = groupSubRowById[g.id];
+    s5.getCell(`A${rA}`).value = g.name;
+    s5.getCell(`A${rA}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    monthCols.forEach((mc, i) => {
+      const c = s5.getCell(`${m5(i)}${rA}`);
+      c.value = { formula: `${bs}${mCol(i)}${subRow}` };          // gross group-month from Sheet 3
+      c.numFmt = '"$"#,##0'; c.alignment = { horizontal: 'right' };
+      c.font = { name: 'Calibri', color: { argb: NAVY } };
+    });
+    const tc = s5.getCell(`${tot5}${rA}`);
+    tc.value = { formula: `SUM(${m5(0)}${rA}:${m5(nMonths - 1)}${rA})` };
+    tc.numFmt = '"$"#,##0'; tc.font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    tc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } }; tc.alignment = { horizontal: 'right' };
+    aGroupRows.push(rA); rA++;
+  });
+  // Gross monthly total
+  const aGrossRow = rA;
+  s5.getCell(`A${aGrossRow}`).value = 'Gross — all groups';
+  s5.getCell(`A${aGrossRow}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+  s5.getCell(`A${aGrossRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL_TINT } };
+  monthCols.forEach((mc, i) => {
+    const col = m5(i);
+    const c = s5.getCell(`${col}${aGrossRow}`);
+    c.value = { formula: aGroupRows.map(rw => `${col}${rw}`).join('+') };
+    c.numFmt = '"$"#,##0'; c.font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL_TINT } }; c.alignment = { horizontal: 'right' };
+  });
+  s5.getCell(`${tot5}${aGrossRow}`).value = { formula: `SUM(${m5(0)}${aGrossRow}:${m5(nMonths - 1)}${aGrossRow})` };
+  s5.getCell(`${tot5}${aGrossRow}`).numFmt = '"$"#,##0';
+  s5.getCell(`${tot5}${aGrossRow}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+  s5.getCell(`${tot5}${aGrossRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL_TINT } };
+  s5.getCell(`${tot5}${aGrossRow}`).alignment = { horizontal: 'right' };
+  rA++;
+  // Less rate-lock credit (by month, proportional) — only if present
+  let aLockRow = 0;
+  if (hasLock) {
+    aLockRow = rA;
+    s5.getCell(`A${aLockRow}`).value = 'Less Rate-Lock credit';
+    s5.getCell(`A${aLockRow}`).font = { name: 'Calibri', color: { argb: RED } };
+    s5.getCell(`A${aLockRow}`).alignment = { horizontal: 'right' };
+    monthCols.forEach((mc, i) => {
+      const col = m5(i);
+      const c = s5.getCell(`${col}${aLockRow}`);
+      c.value = { formula: `-${col}${aGrossRow}*${lockRatio}*rate_lock` };
+      c.numFmt = '"$"#,##0'; c.font = { name: 'Calibri', color: { argb: RED } }; c.alignment = { horizontal: 'right' };
+    });
+    s5.getCell(`${tot5}${aLockRow}`).value = { formula: `SUM(${m5(0)}${aLockRow}:${m5(nMonths - 1)}${aLockRow})` };
+    s5.getCell(`${tot5}${aLockRow}`).numFmt = '"$"#,##0'; s5.getCell(`${tot5}${aLockRow}`).font = { name: 'Calibri', bold: true, color: { argb: RED } };
+    s5.getCell(`${tot5}${aLockRow}`).alignment = { horizontal: 'right' };
+    rA++;
+  }
+  // Less client discount (by month)
+  const aDiscRow = rA;
+  s5.getCell(`A${aDiscRow}`).value = 'Less client discount (by month)';
+  s5.getCell(`A${aDiscRow}`).font = { name: 'Calibri', color: { argb: RED } };
+  s5.getCell(`A${aDiscRow}`).alignment = { horizontal: 'right' };
+  monthCols.forEach((mc, i) => {
+    const col = m5(i);
+    const c = s5.getCell(`${col}${aDiscRow}`);
+    c.value = { formula: `-${col}${aGrossRow}*(discount_pct/100)` };
+    c.numFmt = '"$"#,##0'; c.font = { name: 'Calibri', color: { argb: RED } }; c.alignment = { horizontal: 'right' };
+  });
+  s5.getCell(`${tot5}${aDiscRow}`).value = { formula: `SUM(${m5(0)}${aDiscRow}:${m5(nMonths - 1)}${aDiscRow})` };
+  s5.getCell(`${tot5}${aDiscRow}`).numFmt = '"$"#,##0'; s5.getCell(`${tot5}${aDiscRow}`).font = { name: 'Calibri', bold: true, color: { argb: RED } };
+  s5.getCell(`${tot5}${aDiscRow}`).alignment = { horizontal: 'right' };
+  rA++;
+  // Net after discount
+  const aNetRow = rA;
+  s5.getCell(`A${aNetRow}`).value = 'Net invoiced (after discount)';
+  s5.getCell(`A${aNetRow}`).font = { name: 'Calibri', bold: true, color: { argb: YELLOW }, size: 12 };
+  s5.getCell(`A${aNetRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  monthCols.forEach((mc, i) => {
+    const col = m5(i);
+    const deductions = [aLockRow, aDiscRow].filter(Boolean).map(rw => `${col}${rw}`).join('+');
+    const c = s5.getCell(`${col}${aNetRow}`);
+    c.value = { formula: `${col}${aGrossRow}+${deductions}` };
+    c.numFmt = '"$"#,##0'; c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; c.alignment = { horizontal: 'right' };
+  });
+  s5.getCell(`${tot5}${aNetRow}`).value = { formula: `SUM(${m5(0)}${aNetRow}:${m5(nMonths - 1)}${aNetRow})` };
+  s5.getCell(`${tot5}${aNetRow}`).numFmt = '"$"#,##0';
+  s5.getCell(`${tot5}${aNetRow}`).font = { name: 'Calibri', bold: true, color: { argb: YELLOW } };
+  s5.getCell(`${tot5}${aNetRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+  s5.getCell(`${tot5}${aNetRow}`).alignment = { horizontal: 'right' };
+  s5.getRow(aNetRow).height = 20;
+
+  // ---- SECTION B · DISCOUNT BAKED IN ----
+  let rB = aNetRow + 3;
+  s5.mergeCells(`A${rB}:${tot5}${rB}`);
+  s5.getCell(`A${rB}`).value = '  B · DISCOUNT BAKED IN  ·  net by group, by month';
+  s5.getCell(`A${rB}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE }, size: 11 };
+  s5.getCell(`A${rB}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+  rB = s5Header(rB + 1);
+  const netRatio5 = `IF(${grossRef}=0,0,${netRef}/${grossRef})`;   // bakes discount (+lock) proportionally
+  const bGroupRows = [];
+  groupOrder.forEach(g => {
+    s5.getCell(`A${rB}`).value = g.name;
+    s5.getCell(`A${rB}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    const aRow = aGroupRows[bGroupRows.length];
+    monthCols.forEach((mc, i) => {
+      const col = m5(i);
+      const c = s5.getCell(`${col}${rB}`);
+      c.value = { formula: `${col}${aRow}*${netRatio5}` };        // group gross × net ratio
+      c.numFmt = '"$"#,##0'; c.alignment = { horizontal: 'right' };
+      c.font = { name: 'Calibri', color: { argb: NAVY } };
+    });
+    const tc = s5.getCell(`${tot5}${rB}`);
+    tc.value = { formula: `SUM(${m5(0)}${rB}:${m5(nMonths - 1)}${rB})` };
+    tc.numFmt = '"$"#,##0'; tc.font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    tc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } }; tc.alignment = { horizontal: 'right' };
+    bGroupRows.push(rB); rB++;
+  });
+  // Net monthly total (discount baked) — ties to Section A net
+  const bNetRow = rB;
+  s5.getCell(`A${bNetRow}`).value = 'Net invoiced (discount baked in)';
+  s5.getCell(`A${bNetRow}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE }, size: 12 };
+  s5.getCell(`A${bNetRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+  monthCols.forEach((mc, i) => {
+    const col = m5(i);
+    const c = s5.getCell(`${col}${bNetRow}`);
+    c.value = { formula: bGroupRows.map(rw => `${col}${rw}`).join('+') };
+    c.numFmt = '"$"#,##0'; c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } }; c.alignment = { horizontal: 'right' };
+  });
+  s5.getCell(`${tot5}${bNetRow}`).value = { formula: `SUM(${m5(0)}${bNetRow}:${m5(nMonths - 1)}${bNetRow})` };
+  s5.getCell(`${tot5}${bNetRow}`).numFmt = '"$"#,##0';
+  s5.getCell(`${tot5}${bNetRow}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+  s5.getCell(`${tot5}${bNetRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+  s5.getCell(`${tot5}${bNetRow}`).alignment = { horizontal: 'right' };
+  s5.getRow(bNetRow).height = 20;
+  // Tie-out check row
+  rB++;
+  s5.getCell(`A${rB}`).value = 'Check · A net − B net (should be $0)';
+  s5.getCell(`A${rB}`).font = { name: 'Calibri', italic: true, color: { argb: STEEL } };
+  s5.getCell(`A${rB}`).alignment = { horizontal: 'right' };
+  const chk = s5.getCell(`${tot5}${rB}`);
+  chk.value = { formula: `${tot5}${aNetRow}-${tot5}${bNetRow}` };
+  chk.numFmt = '"$"#,##0'; chk.font = { name: 'Calibri', italic: true, color: { argb: STEEL } };
+  chk.alignment = { horizontal: 'right' };
+
   /* Download */
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
