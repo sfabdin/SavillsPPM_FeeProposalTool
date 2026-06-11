@@ -92,11 +92,12 @@
   .snap-none { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); font-style: italic; }
   table.proj td.year-sep { border-right: 2px solid var(--hair-strong); }
 
-  /* Today column marker */
-  table.proj th.today, table.proj td.today { border-left: 2px solid var(--sav-red); border-right: 2px solid var(--sav-red); background: rgba(206,24,30,0.04); }
+  /* Current-month column marker */
+  table.proj th.today, table.proj td.today { border-left: 2px solid var(--sav-teal); border-right: 2px solid var(--sav-teal); }
+  table.proj td.today { background: rgba(14,124,123,0.06); }
   table.proj th.today { position: relative; }
-  table.proj .today-tag { display: block; font-size: 7.5px; font-weight: 800; letter-spacing: 0.08em; color: #fff; background: var(--sav-red); padding: 1px 0; margin: -2px -10px 2px; }
-  table.proj tr.totals td.today { background: rgba(206,24,30,0.5); }
+  table.proj .today-tag { display: block; font-size: 7.5px; font-weight: 800; letter-spacing: 0.06em; color: #fff; background: var(--sav-teal); padding: 1px 0; margin: -2px -10px 2px; }
+  table.proj tr.totals td.today { border-left: 2px solid var(--sav-teal); border-right: 2px solid var(--sav-teal); }
   /* Broker fee-split rows */
   table.proj tr.broker-row td { background: #fbf7f4; color: var(--sav-red); font-size: 11px; padding: 5px 10px; }
   table.proj tr.broker-row td.proj-cell { position: sticky; left: 0; z-index: 2; background: #fbf7f4; color: var(--sav-red); font-style: italic; padding-left: 22px; }
@@ -385,7 +386,7 @@
     cols.forEach((c, i) => {
       const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
       const today = c.key === _ck ? ' today' : '';
-      html += `<th class="${(sep + today).trim()}">${c.key === _ck ? '<span class="today-tag">TODAY</span>' : ''}${MONTHS[c.m - 1]}</th>`;
+      html += `<th class="${(sep + today).trim()}">${c.key === _ck ? '<span class="today-tag">CURRENT</span>' : ''}${MONTHS[c.m - 1]}</th>`;
     });
     html += '</tr></thead><tbody>';
 
