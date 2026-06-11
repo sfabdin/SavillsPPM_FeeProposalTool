@@ -42,14 +42,13 @@
 
   const BOX_CONFIG = {
     enabled: true,                        // Box layer ON
-    testMode: false,                      // PRODUCTION OAuth (PKCE + serverless token exchange). Set true only to dev with a pasted token.
+    testMode: true,                       // dev-token paste flow (no OAuth yet); set false for production
     clientId: 'jujkzyorzo9ttx8vnisaezi43wm3rofc',
     clientSecret: '',                     // NEVER in the browser for prod — use the serverless exchange. Empty here on purpose.
     redirectUri: window.location.origin + '/oauth-callback.html',
     tokenExchangeUrl: '/api/box-token',   // your Vercel serverless function (holds the secret)
     dataFileId: '2265137344562',          // projects.json in Box
-    ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
-    folderId: '387228486391',             // used only to (re)create the file if missing
+    folderId: 'PASTE_FOLDER_ID',          // used only to (re)create the file if missing
     pushDebounceMs: 1500,
 
     /* TEST MODE — paste a Box Developer Token here to validate read/write of
@@ -69,78 +68,28 @@
     logout,
     isAuthed: () => !!getToken(),
     pushNow,         // force an immediate flush
-    pullRates,       // fetch the confidential rate grid (post-login only)
   };
   window.UFC_Box = Box;
 
-  // ---- Sync status broadcast (drives the on-page sync indicator) ----
-  // states: 'pending' | 'syncing' | 'synced' | 'error' | 'signedout' | 'local'
-  Box.syncState = { state: 'local', message: '', at: 0 };
-  function emitSync(state, message) {
-    Box.syncState = { state, message: message || '', at: Date.now() };
-    try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: Box.syncState })); } catch (e) {}
-  }
-  Box.emitSync = emitSync;
-
   if (!BOX_CONFIG.enabled) return;        // inert until configured
 
-  // ---- Token storage ----
-  // Production token bundle {access_token, exp, refresh_token} lives in
-  // localStorage so a login survives tab-close / refresh / next morning;
-  // the access token is refreshed silently via the serverless endpoint when
-  // it expires (~60 min), using the long-lived (~60 day) refresh token.
+  // ---- Token storage (access token in sessionStorage; short-lived) ----
   const TOK_KEY = 'ufc_box_token_v1';
   const PKCE_KEY = 'ufc_box_pkce_v1';
   const TEST_TOK_KEY = 'ufc_box_devtoken';
-
-  function readTok() { try { return JSON.parse(localStorage.getItem(TOK_KEY)); } catch (e) { return null; } }
-
-  // Synchronous best-guess token (NO refresh) — used by the boot gate check.
   function getToken() {
     if (BOX_CONFIG.devToken) return BOX_CONFIG.devToken;          // (left empty in repo on purpose)
     if (BOX_CONFIG.testMode) { return sessionStorage.getItem(TEST_TOK_KEY) || null; }  // runtime paste — never committed
-    const t = readTok();
-    if (t && t.access_token && t.exp > Date.now()) return t.access_token;
-    if (t && t.refresh_token) return '__needs_refresh__';        // truthy → not a login wall; ensureToken() will refresh
+    try { const t = JSON.parse(sessionStorage.getItem(TOK_KEY)); if (t && t.access_token && t.exp > Date.now()) return t.access_token; } catch (e) {}
     return null;
   }
-
-  // Async: ALWAYS returns a usable access token (refreshing if expired) or null.
-  let _refreshing = null;
-  async function ensureToken() {
-    if (BOX_CONFIG.devToken) return BOX_CONFIG.devToken;
-    if (BOX_CONFIG.testMode) return sessionStorage.getItem(TEST_TOK_KEY) || null;
-    const t = readTok();
-    if (t && t.access_token && t.exp > Date.now()) return t.access_token;
-    if (t && t.refresh_token) {
-      if (!_refreshing) _refreshing = doRefresh(t.refresh_token).finally(() => { _refreshing = null; });
-      try { const nt = await _refreshing; return nt.access_token; }
-      catch (e) { clearToken(); return null; }
-    }
-    return null;
-  }
-  async function doRefresh(refresh_token) {
-    const res = await fetch(BOX_CONFIG.tokenExchangeUrl, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token }),
-    });
-    if (!res.ok) throw new Error('token refresh failed: ' + res.status);
-    const tok = await res.json();
-    setToken(tok);
-    return tok;
-  }
-
   function setTestToken(tok) { sessionStorage.setItem(TEST_TOK_KEY, (tok || '').trim()); }
   Box.setTestToken = setTestToken;
   function setToken(tok) {
-    const prev = readTok() || {};
-    localStorage.setItem(TOK_KEY, JSON.stringify({
-      access_token: tok.access_token,
-      exp: Date.now() + ((tok.expires_in || 3600) - 60) * 1000,
-      refresh_token: tok.refresh_token || prev.refresh_token,   // Box rotates these; keep prior if absent
-    }));
+    // Box access tokens last ~60min; refresh requires a token endpoint exchange.
+    sessionStorage.setItem(TOK_KEY, JSON.stringify({ access_token: tok.access_token, exp: Date.now() + (tok.expires_in - 60) * 1000, refresh_token: tok.refresh_token }));
   }
-  function clearToken() { localStorage.removeItem(TOK_KEY); }
+  function clearToken() { sessionStorage.removeItem(TOK_KEY); }
 
   // ---- PKCE helpers ----
   function b64url(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
@@ -160,13 +109,7 @@
     url.searchParams.set('state', randomStr(12));
     window.location.assign(url.toString());
   }
-  function logout() {
-    clearToken();
-    try { Store.setRealIdentity(null); } catch (e) {}
-    try { Store.clearImpersonation(); } catch (e) {}
-    // Clear the local project cache so no fee data lingers on a shared machine.
-    try { localStorage.removeItem('savills-ppm-fee-db:v1'); } catch (e) {}
-  }
+  function logout() { clearToken(); Store.setCurrentUser(null); }
 
   /* Exchange the ?code from the redirect for a token. Call this from
      oauth-callback.html. PKCE means no client secret is exposed; the
@@ -193,7 +136,7 @@
 
   // ---- Box REST helpers ----
   async function boxFetch(path, opts = {}) {
-    const token = await ensureToken();
+    const token = getToken();
     if (!token) throw new Error('not authenticated');
     const res = await fetch('https://api.box.com/2.0' + path, {
       ...opts,
@@ -219,27 +162,15 @@
     try { return JSON.parse(await res.text()); } catch (e) { return Store.defaultDb(); }
   }
 
-  // Download the confidential rate grid (rates.json) from Box.
-  // Never cached to localStorage — it must not linger on a signed-out machine.
-  async function pullRates() {
-    const id = BOX_CONFIG.ratesFileId;
-    if (!id || /PASTE/.test(id)) throw new Error('rates file id not configured');
-    const res = await boxFetch('/files/' + id + '/content');
-    if (!res.ok) throw new Error('rates pull failed: ' + res.status);
-    return JSON.parse(await res.text());
-  }
-
   // Upload a new version of projects.json, guarded by If-Match (etag).
   async function uploadRemote(db) {
-    const token = await ensureToken();
-    if (!token) throw new Error('not authenticated');
     const form = new FormData();
     const attrs = { name: 'projects.json' };
     form.append('attributes', JSON.stringify(attrs));
     form.append('file', new Blob([JSON.stringify(db)], { type: 'application/json' }), 'projects.json');
     const res = await fetch('https://upload.box.com/api/2.0/files/' + BOX_CONFIG.dataFileId + '/content', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + token, ...(_etag ? { 'If-Match': _etag } : {}) },
+      headers: { Authorization: 'Bearer ' + getToken(), ...(_etag ? { 'If-Match': _etag } : {}) },
       body: form,
     });
     if (res.status === 412) {
@@ -272,48 +203,30 @@
   let _pushTimer = null, _pending = null;
   function schedulePush(db) {
     _pending = db;
-    emitSync('pending', 'Changes saved locally — syncing to Box…');
     clearTimeout(_pushTimer);
     _pushTimer = setTimeout(pushNow, BOX_CONFIG.pushDebounceMs);
   }
   async function pushNow() {
-    if (!_pending) return;
-    const tok = await ensureToken();
-    if (!tok) { emitSync('signedout', 'Not signed in — changes are local only'); return; }
+    if (!_pending || !getToken()) return;
     const db = _pending; _pending = null;
-    emitSync('syncing', 'Syncing to Box…');
-    try {
-      await uploadRemote(db);
-      emitSync('synced', '');
-    } catch (e) {
-      _pending = db;                       // keep the pending data so a retry can flush it
-      emitSync('error', e.message || 'Sync failed');
-      console.warn('Box push failed', e);
-    }
+    try { await uploadRemote(db); } catch (e) { console.error('Box push failed', e); _pending = db; }
   }
-  // Manual "Sync now": flush pending, or re-push the current local db if nothing is pending.
-  async function syncNow() {
-    let db = _pending;
-    if (!db) { try { db = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1') || 'null'); } catch (e) {} }
-    if (!db) { emitSync('synced', ''); return; }
-    _pending = db;
-    await pushNow();
-  }
-  Box.syncNow = syncNow;
 
   // ---- Boot: auth → pull → identity → attach push ----
   async function boot() {
-    if (!BOX_CONFIG.enabled) { emitSync('local', ''); return { ok: true, backend: 'local' }; }
-    const tok = await ensureToken();
-    if (!tok) {
-      emitSync('signedout', 'Not signed in');
+    if (!BOX_CONFIG.enabled) return { ok: true, backend: 'local' };
+    if (!getToken()) {
       return BOX_CONFIG.testMode ? { ok: false, needsDevToken: true } : { ok: false, needsLogin: true };
     }
-    // Identity → drives the access wall. The role is decided by the admin
-    // allowlist in store.js (fail-closed); unknown logins see only their own.
+    // Identity → drives the access wall
     try {
       const me = await getIdentity();
-      Store.setRealIdentity({ username: me.login, name: me.name });
+      const leader = Store.resolveLeader(me.login) || Store.resolveLeader(me.name);
+      // Anyone in the leaders directory is a 'member' (sees own); everyone else
+      // is treated as admin/ops by default — flip this rule to your policy.
+      Store.setCurrentUser(leader
+        ? { name: leader.displayName, username: me.login, role: 'member' }
+        : { name: me.name, username: me.login, role: 'admin' });
     } catch (e) { console.warn('identity failed', e); }
     // Pull remote → local
     try {
@@ -321,21 +234,7 @@
       const local = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1') || 'null');
       const merged = local ? mergeDb(remote, local) : remote;
       Store.hydrateFromRemote(merged);
-      emitSync('synced', '');
-    } catch (e) {
-      emitSync('error', 'Could not load from Box — showing local cache');
-      console.error('Box pull failed — running on local cache', e);
-    }
-    // Pull the confidential rate grid (rates.json) and hydrate the catalog.
-    // This is REQUIRED — the rates aren't in the shipped code — so a failure
-    // here is fatal (caller shows the rate-card gate rather than running blank).
-    try {
-      const ratesPayload = await pullRates();
-      if (window.RATES_CATALOG && window.RATES_CATALOG.hydrate) window.RATES_CATALOG.hydrate(ratesPayload);
-    } catch (e) {
-      console.error('Rate card load failed', e);
-      return { ok: false, needsRates: true, error: (e && e.message) || String(e) };
-    }
+    } catch (e) { console.error('Box pull failed — running on local cache', e); }
     // Attach the push hook so future writes mirror to Box
     Store.attachRemote(schedulePush);
     return { ok: true, backend: 'box' };

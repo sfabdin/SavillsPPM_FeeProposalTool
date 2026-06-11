@@ -426,10 +426,18 @@
     const feeShare = round2(net * (feeSharePct / 100));
     const revenue = round2(net - feeShare);
 
+    // NTE: the worked/planned total is `net`; the ceiling is a reference cap.
+    const feeBasis = (p.assumptions?.feeBasis === 'nte') ? 'nte' : 'fixed';
+    const nteCeiling = round2(parseFloat(p.assumptions?.nteCeiling) || 0);
+    const overCeiling = feeBasis === 'nte' && nteCeiling > 0 && net > nteCeiling + 0.005;
+
     return {
       computedAt: new Date().toISOString(),
       engineVersion: ENGINE_VERSION,
       basis: 'booked',
+      feeBasis,
+      nteCeiling,
+      overCeiling,
       gross: round2(gross),
       rateLockCredit: round2(lock),
       discount: round2(discount),
@@ -443,14 +451,22 @@
     };
   }
 
-  /** On save: freeze the financials snapshot the first time a record is booked;
-      mark it stale (not overwrite) if a booked record's inputs later change. */
+  /** On save: snapshot the financials. Fixed-fee booked records freeze (first
+      time) and mark stale on later drift. NTE booked records auto-restamp every
+      save — the ceiling is the contract, the monthly forecast is meant to flex. */
   function maybeSnapshotFinancials(record) {
     const status = record.project && record.project.status;
     const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
     if (!catalog || !catalog.hydrated) return;          // rates not loaded → can't price
-    if (!BOOKED_STATUSES.has(status)) return;           // only freeze booked records
+    if (!BOOKED_STATUSES.has(status)) return;           // only snapshot booked records
     const hash = financialsInputsHash(record);
+    const isNTE = (record.assumptions && record.assumptions.feeBasis) === 'nte';
+    if (isNTE) {
+      // Auto-restamp: the forecast tracks the current allocations; never stale.
+      const fin = computeFinancials(record, catalog);
+      if (fin) { fin.inputsHash = hash; fin.stale = false; record.financials = fin; }
+      return;
+    }
     if (!record.financials) {
       const fin = computeFinancials(record, catalog);
       if (fin) { fin.inputsHash = hash; fin.stale = false; record.financials = fin; }

@@ -1006,6 +1006,29 @@ html, body {
   border-color: var(--sav-navy);
 }
 
+/* Today / past month markers in the matrix */
+.matrix-table th.mcol.today,
+.matrix-table td.mcol.today {
+  border-left: 2px solid var(--sav-red);
+  border-right: 2px solid var(--sav-red);
+  background: rgba(206,24,30,0.04);
+}
+.matrix-table th.mcol.today { position: relative; }
+.matrix-table .today-tag {
+  display: block;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #fff;
+  background: var(--sav-red);
+  padding: 1px 0;
+  margin: -4px -6px 2px;
+}
+.matrix-table th.mcol.past,
+.matrix-table td.mcol.past { background: rgba(37,39,58,0.025); }
+.matrix-table td.mcol.actual-locked { background: rgba(14,124,123,0.06); }
+.matrix-table td.mcol.actual-locked input { color: var(--sav-teal); font-weight: 700; }
+
 .matrix-table {
   width: 100%;
   border-collapse: collapse;

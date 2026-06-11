@@ -72,6 +72,8 @@
       industryAdj: 20,   // rate-wide “industry standard” trim off the high Macro rack rates
       discount: 0,       // client / fixed-fee discount, applied at total level
       rateLock: false,
+      feeBasis: 'fixed',   // 'fixed' = fixed fee (frozen on booking) · 'nte' = not-to-exceed (live forecast)
+      nteCeiling: 0,       // NTE cap (locked at booking); revenue = actuals-to-date + planned future, capped here
       billingMode: 'phase', // 'phase' = resource-loaded as accrued · 'flatline' = net ÷ months, even monthly
       feeShare: { enabled: false, pct: 10 }, // broker referral cut off the revenue side
       catalogBaseYear: CATALOG.baseYear,
@@ -226,6 +228,11 @@
 
   /** Per-month FTE override key. */
   function monthKey(monthObj) { return monthObj.year + '-' + monthObj.month; }
+  /** Current month key ("YYYY-M") for the today marker. */
+  function currentMonthKey() { const n = new Date(); return n.getFullYear() + '-' + (n.getMonth() + 1); }
+  /** A month is past if it ends before the current month (for NTE actuals lock). */
+  function isPastMonth(m) { const n = new Date(); return (m.year < n.getFullYear()) || (m.year === n.getFullYear() && m.month < (n.getMonth() + 1)); }
+  function isCurrentMonth(m) { return monthKey(m) === currentMonthKey(); }
   /** Effective FTE % for a role in a given month: a per-month override wins over
       the phase-level value. role.fteMonthly = { "YYYY-M": pct }. */
   function effectiveFte(role, monthObj, phaseId) {
@@ -1098,6 +1105,28 @@
     $('#a-disc').value = trimNum(a.discount);
     $('#a-lock').checked = a.rateLock;
     $('#a-catbase').textContent = a.catalogBaseYear;
+    // Fee basis (Fixed / NTE)
+    const fb = (a.feeBasis === 'nte') ? 'nte' : 'fixed';
+    const fbSel = $('#a-feebasis'); if (fbSel) fbSel.value = fb;
+    const nteField = $('#a-nte-field'); if (nteField) nteField.hidden = (fb !== 'nte');
+    const nteInput = $('#a-nte'); if (nteInput) nteInput.value = a.nteCeiling || '';
+    updateNteHint();
+  }
+
+  /** Live "over ceiling" hint on the NTE field. */
+  function updateNteHint() {
+    const a = state.assumptions;
+    const hintEl = $('#a-nte-hint');
+    if (!hintEl || a.feeBasis !== 'nte') return;
+    const ceiling = parseFloat(a.nteCeiling) || 0;
+    const planned = netTotal();
+    if (ceiling > 0 && planned > ceiling + 0.005) {
+      hintEl.innerHTML = `<strong style="color:var(--sav-red);">⚠ Over cap by ${fmtMoney(planned - ceiling)}</strong> — planned ${fmtMoney(planned)} exceeds the ${fmtMoney(ceiling)} ceiling. Trim allocations.`;
+    } else if (ceiling > 0) {
+      hintEl.innerHTML = `Planned ${fmtMoney(planned)} of ${fmtMoney(ceiling)} ceiling — ${fmtMoney(ceiling - planned)} of headroom.`;
+    } else {
+      hintEl.textContent = 'The cap the client gave us. Locked at booking. Planned fee is flagged if it exceeds this.';
+    }
   }
 
   /** Guidance text under the Status + Projection-rating dropdowns, and an aging hint. */
@@ -1341,6 +1370,7 @@
     const lock = lockCredit();
     const disc = discountAmt();
     const net = gross - lock - disc;
+    if (typeof updateNteHint === 'function') updateNteHint();
     $('#sum-fte').innerHTML = `${totalFteMonths().toFixed(1)}<span class="unit">fte-mo</span>`;
     $('#sum-gross').textContent = fmtMoney(gross);
     $('#sum-lock').textContent = fmtMoney(-lock);
@@ -1452,7 +1482,7 @@
     if (cols.some(c => c.type === 'month')) {
       let sub = `<tr class="month-subhead"><th class="role-col"></th>`;
       cols.forEach(c => {
-        sub += c.type === 'month' ? `<th class="mcol">${c.month.label}</th>` : `<th></th>`;
+        sub += c.type === 'month' ? `<th class="mcol ${isCurrentMonth(c.month) ? 'today' : ''} ${isPastMonth(c.month) ? 'past' : ''}">${isCurrentMonth(c.month) ? '<span class="today-tag">TODAY</span>' : ''}${c.month.label}</th>` : `<th></th>`;
       });
       sub += `<th></th></tr>`;
       hdr += sub;
@@ -1490,9 +1520,11 @@
             const months = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
             months.forEach(m => {
               const mk = monthKey(m);
-              const v = (r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte[p.id] || 0);
-              html += `<td class="fte mcol ${v === 0 ? 'zero' : ''}">
-                <input type="number" data-role="${r.id}" data-month="${mk}" data-phase="${p.id}" value="${pctToUnit(v)}" min="0" max="${unitMax()}" step="${unitStep()}">${unitSuffix()}
+              const isNTE = state.assumptions.feeBasis === 'nte';
+              const past = isPastMonth(m), today = isCurrentMonth(m);
+              const lockCell = isNTE && past;   // NTE: past months lock as actuals
+              html += `<td class="fte mcol ${v === 0 ? 'zero' : ''} ${today ? 'today' : ''} ${past ? 'past' : ''} ${lockCell ? 'actual-locked' : ''}">
+                <input type="number" data-role="${r.id}" data-month="${mk}" data-phase="${p.id}" value="${pctToUnit(v)}" min="0" max="${unitMax()}" step="${unitStep()}" ${lockCell ? 'title="Past month — actual (NTE)"' : ''}>${unitSuffix()}
               </td>`;
             });
           } else {
@@ -2010,6 +2042,14 @@
     $('#a-ind').addEventListener('input',  e => { state.assumptions.industryAdj = parseFloat(e.target.value) || 0; renderCatalog(); renderSelectedRoles(); renderSummary(); renderMatrix(); renderMonthly(); renderFloorCheck(); markDirty(); });
     $('#a-disc').addEventListener('input', e => { state.assumptions.discount = parseFloat(e.target.value) || 0; renderSummary(); renderMatrix(); renderMonthly(); renderSelectedRoles(); renderFloorCheck(); markDirty(); });
     $('#a-lock').addEventListener('change', e => { state.assumptions.rateLock = e.target.checked; renderSummary(); renderMatrix(); renderMonthly(); renderSelectedRoles(); renderFloorCheck(); markDirty(); });
+    const fbSel = $('#a-feebasis');
+    if (fbSel) fbSel.addEventListener('change', e => {
+      state.assumptions.feeBasis = e.target.value;
+      const nteField = $('#a-nte-field'); if (nteField) nteField.hidden = (e.target.value !== 'nte');
+      updateNteHint(); renderSummary(); markDirty();
+    });
+    const nteInput = $('#a-nte');
+    if (nteInput) nteInput.addEventListener('input', e => { state.assumptions.nteCeiling = parseFloat(e.target.value) || 0; updateNteHint(); renderSummary(); markDirty(); });
 
     // Header actions
     $('#reset-btn').addEventListener('click', () => {

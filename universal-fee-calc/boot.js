@@ -35,25 +35,7 @@
       renderLoginGate();
       return new Promise(() => {});       // halt until OAuth redirect
     }
-    if (res && res.needsRates) {
-      renderRatesGate(res.error);
-      return new Promise(() => {});       // halt — calculator can't run without the rate card
-    }
     return res;
-  }
-
-  function renderRatesGate(detail) {
-    document.documentElement.style.background = '#f3f3f0';
-    document.body.innerHTML = `
-      <div style="height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#25273a;">
-        <div style="text-align:center;max-width:460px;padding:0 24px;">
-          <div style="font-weight:800;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6b7280;margin-bottom:14px;">Savills PPM · Fee System</div>
-          <div style="font-weight:900;font-size:26px;letter-spacing:-0.01em;margin-bottom:10px;">Rate card unavailable</div>
-          <div style="font-size:14px;line-height:1.6;color:#6b7280;margin-bottom:20px;">The confidential rate grid couldn't be loaded from Box, so the calculator can't run. This usually means <strong>rates.json</strong> hasn't been added to the Box folder yet, or the file id isn't set in the app config.</div>
-          <button onclick="window.location.reload()" style="font-family:system-ui,sans-serif;font-weight:700;font-size:13px;letter-spacing:0.06em;text-transform:uppercase;padding:13px 26px;background:#25273a;color:#fff;border:0;cursor:pointer;">Retry</button>
-          <div style="color:#a0a0a0;font-size:11px;margin-top:14px;">${detail ? String(detail).replace(/</g, '&lt;') : ''}</div>
-        </div>
-      </div>`;
   }
 
   function renderTokenGate() {
