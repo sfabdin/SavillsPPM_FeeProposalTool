@@ -90,12 +90,31 @@
     'Life Sciences',
     'Healthcare',
     'Industrial',
-    'General Office Fitout',
     'Public Sector',
     'Education',
     'Hospitality',
     'Other',
   ];
+
+  /* Project Type — the service line / engagement type, distinct from the client's
+     Industry. Each type has a bucket of representative sub-services shown once the
+     type is selected. Drawn from the Savills PPM service taxonomy. */
+  const PROJECT_TYPES = [
+    { name: 'Relocation & Migration', subs: ['Corporate relocations', 'Restacks', 'Occupancy changes', 'Employee moves', 'Headquarters transitions'] },
+    { name: 'Workplace Transformation', subs: ['Change management', 'Workplace strategy', 'Hybrid work initiatives', 'Employee engagement and readiness programs', 'Organizational transformation'] },
+    { name: 'Capital Projects & Construction', subs: ['Tenant fit-outs', 'Renovations', 'New office development', 'Construction oversight', "Owner's representation"] },
+    { name: 'Program & Portfolio Management', subs: ['PMO services', 'Multi-project governance', 'Portfolio planning', 'Executive reporting', 'Enterprise-wide initiatives'] },
+    { name: 'Furniture, Equipment & Procurement', subs: ['FF&E management', 'Procurement support', 'Medical equipment projects', 'Vendor sourcing and selection', 'Asset deployment'] },
+    { name: 'Real Estate Strategy & Advisory', subs: ['Site selection', 'Due diligence', 'Portfolio optimization', 'Occupancy planning', 'Strategic real estate consulting'] },
+    { name: 'Operational Transition & Decommissioning', subs: ['Facility closures', 'Space decommissioning', 'Asset disposition', 'Business continuity planning', 'Transition management'] },
+    { name: 'Technology & Infrastructure Deployment', subs: ['Technology relocations', 'Broadcast projects', 'Infrastructure migrations', 'Workplace technology implementations'] },
+    { name: 'Specialized Consulting & Advisory', subs: ['Process improvement', 'Organizational assessments', 'Strategic planning', 'Custom client advisory engagements', 'Business case development'] },
+    { name: 'Development Management', subs: ['New development', 'Core & shell', "Owner's representation"] },
+  ];
+  function projectTypeSubs(name) {
+    const t = PROJECT_TYPES.find(x => x.name === name);
+    return t ? t.subs : [];
+  }
 
   function defaultDb() {
     return { schemaVersion: SCHEMA, projects: {} };
@@ -829,7 +848,7 @@
     'salim@savills.us',      // Salim — owner
     'esobel@savills.us',     // Emily Sobel
     'jsantoro@savills.us',   // Jeff Santoro
-    'mglatt@savills.us',     // Michael Glatt
+    'mhadim@savills.us',     // Maria Hadim
     'kspiegel@savills.us',   // Kathy Spiegel
     'eglatt@savills.us',     // Emily Glatt
   ].map(s => s.toLowerCase()));
@@ -976,6 +995,21 @@
   }
   /** Does `user` own / is assigned to project `p`? Matches through the leaders
       directory so id / displayName / alias / username all resolve to one identity. */
+  /** Parse a comma/semicolon/newline-separated string of emails into a clean,
+      de-duped, lowercased list. Used for the per-project access grant. */
+  function parseAccessEmails(raw) {
+    if (!raw) return [];
+    const seen = new Set();
+    return String(raw).split(/[,;\n]+/).map(s => s.trim().toLowerCase())
+      .filter(s => s && s.includes('@') && !seen.has(s) && seen.add(s));
+  }
+  /** The granted-access emails on a project (project.accessGrant is the raw string). */
+  function accessGrantList(p) {
+    return parseAccessEmails((p.project || {}).accessGrant);
+  }
+
+  /** Does `user` own / is assigned to project `p`? Matches through the leaders
+      directory so id / displayName / alias / username all resolve to one identity. */
   function userOwnsProject(p, user) {
     const u = user || getCurrentUser();
     const pj = p.project || {};
@@ -989,6 +1023,9 @@
     if (sameLeader(pj.clientRelOwner)) return true;
     const team = pj.team || pj.assignedTo || [];
     if (Array.isArray(team) && team.some(t => sameLeader(t))) return true;
+    // Explicit per-project access grant — match the signed-in user's Box email.
+    const grant = accessGrantList(p);
+    if (grant.length && u.username && grant.includes(String(u.username).trim().toLowerCase())) return true;
     return false;
   }
   /** The access wall: admins get everything; members get only their own. */
@@ -999,7 +1036,8 @@
   }
 
   window.UFC_Store = {
-    SCHEMA, STATUSES, STATUS_LABELS, INDUSTRIES,
+    SCHEMA, STATUSES, STATUS_LABELS, INDUSTRIES, PROJECT_TYPES, projectTypeSubs,
+    accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING,
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject,

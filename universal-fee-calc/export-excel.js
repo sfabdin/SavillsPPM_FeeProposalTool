@@ -98,6 +98,8 @@ window.UFC_buildAndDownloadExcel = async function () {
     ['Project',       state.project.name],
     ['Client',        state.project.client],
     ['Savills lead',  state.project.lead],
+    ['Industry',      state.project.industry],
+    ['Project type',  state.project.projectType],
     ['Proposal date', state.project.proposalDate],
     ['Location',      state.project.location],
     ['Period',        months.length ? `${months[0].longLabel} → ${months[months.length-1].longLabel}` : '—'],

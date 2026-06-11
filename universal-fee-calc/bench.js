@@ -37,9 +37,11 @@
   function fillFilterOptions() {
     const clients = [...new Set(FACTS.map(f => f.client).filter(Boolean))].sort();
     const inds = [...new Set(FACTS.map(f => f.industry).filter(Boolean))].sort();
+    const ptypes = [...new Set(FACTS.map(f => f.projectType).filter(Boolean))].sort();
     const titles = CATALOG.titles.filter(t => FACTS.some(f => f.titleId === t.id));
     fillSelect($('#f-client'), clients, 'All clients');
     fillSelect($('#f-industry'), inds, 'All industries');
+    if ($('#f-ptype')) fillSelect($('#f-ptype'), ptypes, 'All project types');
     $('#f-title').innerHTML = `<option value="">All staff titles</option>` +
       titles.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
   }
@@ -54,11 +56,13 @@
   }
   function filteredFacts() {
     const c = $('#f-client').value, ind = $('#f-industry').value, t = $('#f-title').value;
+    const pt = $('#f-ptype') ? $('#f-ptype').value : '';
     const size = $('#f-size').value, role = $('#f-role').value.trim().toLowerCase();
     const projSize = {}; PROJFACTS.forEach(p => projSize[p.id] = p.net);
     return FACTS.filter(f => {
       if (c && f.client !== c) return false;
       if (ind && f.industry !== ind) return false;
+      if (pt && f.projectType !== pt) return false;
       if (t && f.titleId !== t) return false;
       if (size && sizeBucket(projSize[f.projectId] || 0) !== size) return false;
       if (role && !(f.projectRole || '').toLowerCase().includes(role)) return false;
@@ -174,6 +178,7 @@
       ${row('Project', ps.map(p => `<strong>${esc(p.name)}</strong>`), { head: true })}
       ${row('Client', ps.map(p => esc(p.client)))}
       ${row('Industry', ps.map(p => esc(p.industry || '—')))}
+      ${row('Project type', ps.map(p => esc(p.projectType || '—')))}
       ${row('Status', ps.map(p => `<span class="status-tag">${esc((STORE.STATUS_LABELS[p.status] || p.status || '—'))}</span>`))}
       ${row('Start year', ps.map(p => p.startYear || '—'))}
       ${row('Duration', ps.map(p => `${p.durationMonths} mo`))}
@@ -211,8 +216,8 @@
     renderCmp();
     renderFootnote();
     initTabs();
-    ['#f-client', '#f-industry', '#f-title', '#f-size', '#f-role'].forEach(s =>
-      $(s).addEventListener('input', renderComp));
+    ['#f-client', '#f-industry', '#f-ptype', '#f-title', '#f-size', '#f-role'].forEach(s =>
+      $(s) && $(s).addEventListener('input', renderComp));
   }
 
   document.addEventListener('DOMContentLoaded', () => {

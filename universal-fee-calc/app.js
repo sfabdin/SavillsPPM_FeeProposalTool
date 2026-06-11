@@ -37,6 +37,8 @@
       location: '',
       status: 'draft',
       industry: '',
+      projectType: '',     // service line / engagement type (distinct from Industry)
+      accessGrant: '',     // comma-separated emails granted access (besides lead/owner/admins)
       firstProposalDate: '',
       signedContractDate: '',
       clientContact: '',
@@ -567,6 +569,17 @@
   }
 
   /* ----- Project meta ----- */
+  /** Show the representative sub-services for the selected Project Type. */
+  function renderProjectTypeSubs() {
+    const el = $('#pm-ptype-subs');
+    if (!el) return;
+    const subs = STORE.projectTypeSubs(state.project.projectType || '');
+    if (!subs.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = `<span class="pt-subs-lbl">Includes</span>` +
+      subs.map(s => `<span class="pt-sub">${escapeHtml(s)}</span>`).join('');
+  }
+
   function renderProjectMeta() {
     const f = state.project;
     $('#pm-name').value = f.name;
@@ -619,6 +632,23 @@
       });
     }
     indSel.value = f.industry || '';
+
+    // Project Type dropdown (+ sub-services shown once selected)
+    const ptSel = $('#pm-ptype');
+    if (ptSel && !ptSel.options.length) {
+      const blank = document.createElement('option');
+      blank.value = ''; blank.textContent = '— select —';
+      ptSel.appendChild(blank);
+      STORE.PROJECT_TYPES.forEach(t => {
+        const o = document.createElement('option');
+        o.value = t.name; o.textContent = t.name;
+        ptSel.appendChild(o);
+      });
+    }
+    if (ptSel) ptSel.value = f.projectType || '';
+    renderProjectTypeSubs();
+
+    const accessEl = $('#pm-access'); if (accessEl) accessEl.value = f.accessGrant || '';
 
     $('#pm-firstProposal').value = f.firstProposalDate || '';
     $('#pm-signed').value = f.signedContractDate || '';
@@ -1929,6 +1959,10 @@
       markDirty();
     });
     $('#pm-industry').addEventListener('change', e => { state.project.industry = e.target.value; markDirty(); });
+    const ptypeEl = $('#pm-ptype');
+    if (ptypeEl) ptypeEl.addEventListener('change', e => { state.project.projectType = e.target.value; renderProjectTypeSubs(); markDirty(); });
+    const accessInput = $('#pm-access');
+    if (accessInput) accessInput.addEventListener('input', e => { state.project.accessGrant = e.target.value; markDirty(); });
     const ratingSelEl = $('#pm-rating');
     if (ratingSelEl) ratingSelEl.addEventListener('change', e => { state.project.rating = parseInt(e.target.value) || null; updateStatusRatingHints(); markDirty(); });
     $('#pm-firstProposal').addEventListener('input', e => { state.project.firstProposalDate = e.target.value; markDirty(); });
@@ -2034,6 +2068,7 @@
     seedAllocationsToTarget,
     fitToTarget,
     renderMatrix,
+    renderProjectMeta,
     updateChangeOrderBanner,
     CATALOG,
   };

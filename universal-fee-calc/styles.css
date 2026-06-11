@@ -967,6 +967,34 @@ html, body {
   border-color: var(--sav-navy);
 }
 
+/* Project-type sub-services (shown once a type is picked) */
+.pt-subs {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+.pt-subs[hidden] { display: none; }
+.pt-subs .pt-subs-lbl {
+  font-family: var(--font-body);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sav-steel);
+  margin-right: 2px;
+}
+.pt-subs .pt-sub {
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: var(--sav-navy);
+  background: var(--sav-cream);
+  border: 1px solid var(--hairline);
+  padding: 2px 8px;
+  border-radius: 2px;
+}
+
 .matrix-table {
   width: 100%;
   border-collapse: collapse;
