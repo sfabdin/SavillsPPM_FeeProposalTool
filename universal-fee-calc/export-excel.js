@@ -1178,7 +1178,9 @@ window.UFC_buildAndDownloadExcel = async function () {
     monthCols.forEach((mc, i) => {
       const col = m5(i);
       const c = s5.getCell(`${col}${aLockRow}`);
-      c.value = { formula: `-${col}${aGrossRow}*${lockRatio}*rate_lock` };
+      // Per-month credit = month gross × (1 − (1+esc)^(startYear − monthYear)).
+      // Zero in the start year (locked == unlocked); positive only once escalation bites.
+      c.value = { formula: `-${col}${aGrossRow}*(1-POWER(1+escalation_pct/100, project_start_year-${mc.m.year}))*rate_lock` };
       c.numFmt = '"$"#,##0'; c.font = { name: 'Calibri', color: { argb: RED } }; c.alignment = { horizontal: 'right' };
     });
     s5.getCell(`${tot5}${aLockRow}`).value = { formula: `SUM(${m5(0)}${aLockRow}:${m5(nMonths - 1)}${aLockRow})` };
