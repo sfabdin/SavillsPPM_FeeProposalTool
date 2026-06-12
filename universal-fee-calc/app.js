@@ -1520,6 +1520,7 @@
             const months = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
             months.forEach(m => {
               const mk = monthKey(m);
+              const v = (r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte[p.id] || 0);
               const isNTE = state.assumptions.feeBasis === 'nte';
               const past = isPastMonth(m), today = isCurrentMonth(m);
               const lockCell = isNTE && past;   // NTE: past months lock as actuals
@@ -2119,6 +2120,7 @@
     seedAllocationsToTarget,
     fitToTarget,
     renderMatrix,
+    renderMonthly,
     renderProjectMeta,
     updateChangeOrderBanner,
     CATALOG,
