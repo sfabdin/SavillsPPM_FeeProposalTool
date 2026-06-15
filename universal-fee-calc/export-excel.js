@@ -1230,7 +1230,10 @@ window.UFC_buildAndDownloadExcel = async function () {
   s5.getCell(`A${rB}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE }, size: 11 };
   s5.getCell(`A${rB}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
   rB = s5Header(rB + 1);
-  const netRatio5 = `IF(${grossRef}=0,0,${netRef}/${grossRef})`;   // bakes discount (+lock) proportionally
+  // Per-group, per-month: bake the discount on THIS group's own gross (uniform %),
+  // and allocate the month's rate-lock credit by this group's share of that month's
+  // gross. Computed per row — not via a portfolio ratio — so removing a role still
+  // ties, and Σ groups = Section A's net for every month.
   const bGroupRows = [];
   groupOrder.forEach(g => {
     s5.getCell(`A${rB}`).value = g.name;
@@ -1239,7 +1242,12 @@ window.UFC_buildAndDownloadExcel = async function () {
     monthCols.forEach((mc, i) => {
       const col = m5(i);
       const c = s5.getCell(`${col}${rB}`);
-      c.value = { formula: `${col}${aRow}*${netRatio5}` };        // group gross × net ratio
+      const gGross = `${col}${aRow}`;                       // this group's gross this month
+      const discounted = `${gGross}*(1-discount_pct/100)`;
+      const lockShare = aLockRow
+        ? ` + IF(${col}${aGrossRow}=0, 0, ${col}${aLockRow}*${gGross}/${col}${aGrossRow})`   // aLockRow is negative
+        : '';
+      c.value = { formula: `${discounted}${lockShare}` };
       c.numFmt = '"$"#,##0'; c.alignment = { horizontal: 'right' };
       c.font = { name: 'Calibri', color: { argb: NAVY } };
     });
