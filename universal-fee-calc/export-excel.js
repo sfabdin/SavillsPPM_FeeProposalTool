@@ -1277,6 +1277,33 @@ window.UFC_buildAndDownloadExcel = async function () {
   chk.numFmt = '"$"#,##0'; chk.font = { name: 'Calibri', italic: true, color: { argb: STEEL } };
   chk.alignment = { horizontal: 'right' };
 
+  /* ============================================================
+     TIE SHEETS 1 & 2 TO THE EXACT PER-MONTH ENGINE (Sheet 3)
+     ------------------------------------------------------------
+     The Phase Matrix role/phase totals use a phase-AVERAGE SUMPRODUCT,
+     which diverges from the true per-month sum when monthly FTE
+     overrides fall in months at different escalation rates (a phase
+     spanning a Jan-1 boundary). Monthly Detail is exact, so repoint
+     Sheet 2's per-phase fees and grand total at its monthly-total row.
+     This makes all tabs agree to the dollar.
+     ============================================================ */
+  {
+    const phaseColStart = {};
+    let _ci = 0;
+    byPhase.forEach(b => { phaseColStart[b.phase.id] = _ci; _ci += b.months.length; });
+    phases.forEach((p, i) => {
+      const start = phaseColStart[p.id];
+      const bucket = byPhase.find(b => b.phase.id === p.id);
+      const len = bucket ? bucket.months.length : 0;
+      const cell = s2.getCell(`${colLetter(5 + i)}${phaseFeeRow}`);
+      cell.value = len > 0
+        ? { formula: `SUM('Monthly Detail'!${mCol(start)}${monthTotRow}:${mCol(start + len - 1)}${monthTotRow})` }
+        : 0;
+    });
+    // Grand total = exact gross from Monthly Detail (cascades to gross_fee, discount, net, and Sheet 1 headline)
+    s2.getCell(`${lastCol}${phaseFeeRow}`).value = { formula: `'Monthly Detail'!${totCol}${monthTotRow}` };
+  }
+
   /* Download */
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
