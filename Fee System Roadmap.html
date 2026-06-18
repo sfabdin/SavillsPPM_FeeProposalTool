@@ -466,7 +466,7 @@
       <strong>Version</strong> &nbsp; Draft 2<br>
       <strong>Owner</strong> &nbsp; PPM Leadership<br>
       <strong>Date</strong> &nbsp; May 2026<br>
-      <strong>Status</strong> &nbsp; Phases 0–3 shipped · Projections v1
+      <strong>Status</strong> &nbsp; Capture + reporting layers live · Box-backed, multi-user
     </div>
   </header>
 
@@ -491,7 +491,7 @@
     <header class="sec-head">
       <span class="ix">Architecture</span>
       <h2>The system at a glance.</h2>
-      <span class="h-meta">Capture layer live · reporting layer next</span>
+      <span class="h-meta">Capture &amp; reporting layers live · Box-backed</span>
     </header>
     <div class="arch">
       <div class="arch-grid">
@@ -535,8 +535,13 @@
 
         <div class="arch-box done">
           <div class="a-label">Projections Engine</div>
-          <div class="a-desc">Rolls every project's monthly schedule into a firm-wide forecast — billings by month, rated 1–7, filterable by client / leader / service line / industry / period. First cut live.</div>
-          <span class="a-status">Shipped · v1</span>
+          <div class="a-desc">Rolls every project's monthly schedule into a firm-wide forecast — billings by month, rated 1–7, filterable by client / leader / service line / industry / project type / period. Rolls up change orders, marks the current month, optional broker fee-split view, Excel export.</div>
+          <span class="a-status">Shipped</span>
+        </div>
+        <div class="arch-box done">
+          <div class="a-label">Fee-Share &amp; Allocation</div>
+          <div class="a-desc">Per-project fee-share % flows through the calculator, snapshot, and projections. A toggle in Projections breaks out the monthly broker reduction (total → less broker → net) per project and firm-wide.</div>
+          <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box">
           <div class="a-label">Flash &amp; Budget Reports</div>
@@ -584,52 +589,52 @@
     </header>
     <div class="storage">
       <div class="storage-card">
-        <span class="badge">Today · Phases 0–3</span>
+        <span class="badge">Superseded</span>
         <h4>Browser localStorage + JSON file</h4>
-        <div class="when">Single-user prototype</div>
+        <div class="when">Original single-user prototype</div>
         <ul class="pros">
-          <li>Ships immediately, zero IT involvement</li>
-          <li>Works offline, no API keys</li>
-          <li>JSON export = bulletproof backup &amp; portable record</li>
+          <li>Shipped immediately, zero IT involvement</li>
+          <li>Worked offline, no API keys</li>
+          <li>JSON export = portable backup</li>
         </ul>
         <div class="div"></div>
         <ul class="cons">
           <li>Single browser, single user — no concurrent access</li>
-          <li>Cache clear destroys data unless backed up</li>
-          <li>No audit log, no permissions</li>
+          <li>Cache clear destroyed data unless backed up</li>
+          <li>No permissions — replaced by Box (see right)</li>
         </ul>
       </div>
 
       <div class="storage-card rec">
-        <span class="badge">Phase 7</span>
-        <h4>Airtable (recommended)</h4>
-        <div class="when">Multi-user, shared, real database</div>
+        <span class="badge">Today · Live</span>
+        <h4>Box + OAuth (in production)</h4>
+        <div class="when">Multi-user, shared, permissioned</div>
         <ul class="pros">
-          <li>Stand up in a day; schema matches our JSON record 1:1</li>
-          <li>Multi-user with permissions per PE</li>
-          <li>API + Zapier — easy to wire Clockify in later</li>
-          <li>Web UI as backup data-entry surface</li>
+          <li>Sign in with Box — the app pulls data from a shared Box folder</li>
+          <li>Auto-sync: edits save locally, push to Box in the background</li>
+          <li>Fail-closed access: admins see all, others see only their own / granted projects</li>
+          <li>Confidential rate grid stays in Box, never in the deployed app</li>
+          <li>Booked records carry frozen $ snapshots Power BI reads directly</li>
         </ul>
         <div class="div"></div>
         <ul class="cons">
-          <li>~$20–$25/user/month at our scale</li>
-          <li>Plan limits if we cross 50k records (we won't)</li>
+          <li>Per-person isolation is client-side — Box folder permission is the true wall</li>
+          <li>Server-side per-user filtering is the next hardening step</li>
         </ul>
       </div>
 
       <div class="storage-card">
-        <span class="badge">Phase 8+</span>
-        <h4>Enterprise backend</h4>
-        <div class="when">When the firm needs SSO + integration</div>
+        <span class="badge">Future</span>
+        <h4>Server auth for reporting</h4>
+        <div class="when">Unattended Power BI / Clockify pulls</div>
         <ul class="pros">
-          <li>SharePoint Lists + Power Apps (if MSFT-shop)</li>
-          <li>Or custom Postgres + Node API for full control</li>
-          <li>Salesforce custom object if we go all-in on CRM</li>
+          <li>Box service account reads the data with no human logged in</li>
+          <li>Server-side per-user filtering for true project-level isolation</li>
+          <li>Scheduled, hands-off reporting refresh</li>
         </ul>
         <div class="div"></div>
         <ul class="cons">
-          <li>IT involvement required, weeks of setup</li>
-          <li>Migrate later once Airtable shape is proven</li>
+          <li>Needs a Box admin to provision the service account</li>
         </ul>
       </div>
     </div>
@@ -640,7 +645,7 @@
     <header class="sec-head">
       <span class="ix">Plan</span>
       <h2>Phased rollout.</h2>
-      <span class="h-meta">Phases 0–3 shipped · reporting layer is the next horizon</span>
+      <span class="h-meta">Capture + reporting shipped · integrations are the next horizon</span>
     </header>
 
     <div class="timeline">
@@ -886,23 +891,23 @@
       </div>
 
       <!-- Phase 7 -->
-      <div class="phase">
+      <div class="phase done">
         <div class="phase-card">
           <div class="phase-head">
             <span class="ix">07</span>
-            <h3>Shared backend · Airtable migration · multi-user.</h3>
-            <span class="when">Later</span>
-            <span class="status">Planned</span>
+            <h3>Shared backend · Box-backed · multi-user.</h3>
+            <span class="when">Done</span>
+            <span class="status">Shipped</span>
           </div>
           <div class="phase-body">
             <div>
               <h4>Build</h4>
               <ul>
-                <li>Provision Airtable base with the proven JSON schema</li>
-                <li>Migration tool — push every localStorage project to Airtable in one click</li>
-                <li>Calculator reads/writes Airtable instead of localStorage (transparent swap)</li>
-                <li>Per-PE accounts; role-based access (PE sees own book, leadership sees all)</li>
-                <li>Audit log (who changed what, when)</li>
+                <li>Box folder as the shared store; the app pulls/pushes <code>projects.json</code> on sign-in</li>
+                <li>OAuth sign-in; access resolved from an admin allowlist + per-project grants</li>
+                <li>App reads/writes Box instead of localStorage (transparent swap)</li>
+                <li>Per-PE visibility (PE sees own book + granted, leadership sees all)</li>
+                <li>Confidential rate grid kept in Box, never in the deployed app</li>
                 <li>Per-project shareable link + downloadable HTML + PDF export</li>
               </ul>
             </div>
@@ -916,7 +921,7 @@
             </div>
           </div>
           <div class="phase-dep">
-            <strong>Depends on:</strong> &nbsp; Airtable workspace provisioning · agreed permission model · email list of intended users.
+            <strong>Depends on:</strong> &nbsp; Box app (OAuth) provisioned · redirect URI registered · client secret in Vercel · agreed admin allowlist.
           </div>
         </div>
       </div>
@@ -989,9 +994,9 @@
           <div class="mit"><strong>Mitigation:</strong> &nbsp; Make the calculator the path of least resistance for new proposals (better than Excel templates). Excel export keeps procurement happy. Make ingestion handle the historical pain so PEs aren't double-entering.</div>
         </div>
         <div class="risk">
-          <h4>Storage cost &amp; migration cost.</h4>
-          <p>Airtable is $20–25/user/month; if we add 20 users that's $5–6k/year. Migrating later to a custom backend is another sprint of work.</p>
-          <div class="mit"><strong>Mitigation:</strong> &nbsp; Validate value with 3–5 power users on Airtable first. Schema-first design means migration is data-move, not rewrite. Costs ~$1.5k/year for that pilot.</div>
+          <h4>Confidential data &amp; access.</h4>
+          <p>Fee data and the rate grid are sensitive. The deployed app ships with neither — it pulls them from Box only after OAuth sign-in. Per-person filtering is currently client-side, so Box folder permission is the real boundary.</p>
+          <div class="mit"><strong>Mitigation:</strong> &nbsp; Lock the Box folder to the trusted group; admin allowlist + per-project grants for everyone else. Server-side per-user filtering is the next hardening step for true project-level isolation.</div> for that pilot.</div>
         </div>
       </div>
     </div>
