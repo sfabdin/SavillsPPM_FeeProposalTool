@@ -2063,6 +2063,13 @@
     $('#save-btn').addEventListener('click', () => {
       saveToStore({ explicit: true });
     });
+    // Safety net: flush a pending autosave if the tab closes within the debounce window.
+    window.addEventListener('beforeunload', () => {
+      if (dirty) {
+        const worthSaving = state.id || (state.project && state.project.name && state.project.name.trim()) || (state.roles && state.roles.length);
+        if (worthSaving) { clearTimeout(autosaveTimer); try { saveToStore({ silent: true }); } catch (e) {} }
+      }
+    });
     $('#print-btn').addEventListener('click', () => {
       window.print();
     });
@@ -2193,12 +2200,17 @@
   /* ----- Store integration ----- */
   function markDirty() {
     dirty = true;
-    if (state.id) {
-      // Autosave when working on an existing project
+    // Autosave both existing AND new projects. A new project (no id yet) is
+    // created on first autosave the moment it has anything worth saving (a name
+    // or at least one role) — so forgetting to click Save can't lose work.
+    const worthSaving = state.id || (state.project && state.project.name && state.project.name.trim()) || (state.roles && state.roles.length);
+    if (worthSaving) {
       clearTimeout(autosaveTimer);
       autosaveTimer = setTimeout(() => saveToStore({ silent: true }), 800);
+      setSavedLabel('Unsaved…');
+    } else {
+      setSavedLabel('Not saved');
     }
-    setSavedLabel(state.id ? 'Unsaved…' : 'Not saved');
   }
 
   function markDirtyFromRender() {
