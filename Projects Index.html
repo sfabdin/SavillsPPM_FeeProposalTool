@@ -735,6 +735,7 @@
 
   /* ---------- Render ---------- */
   function render() {
+    if (STORE.migrateLeadIds) { try { STORE.migrateLeadIds(); } catch (e) {} }
     const everything = STORE.listProjects();
     buildIdentityBar(everything);
     // Apply the access wall FIRST — members never see other teams' projects.
