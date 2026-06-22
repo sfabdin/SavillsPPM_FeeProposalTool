@@ -156,15 +156,15 @@
     const projects = STORE.visibleProjects(STORE.listProjects()).filter(p => !STORE.isChangeOrder(p));
     return projects.map(p => {
       const series = STORE.monthlySeries(p, CATALOG) || [];
-      let yearTotal = 0;
-      series.forEach(s => { if (s.year === activeYear) yearTotal += s.amount; });
+      let yearTotal = 0; const byMonth = {};
+      series.forEach(s => { if (s.year === activeYear) { yearTotal += s.amount; byMonth[s.month] = (byMonth[s.month] || 0) + s.amount; } });
       const pj = p.project || {};
       const leader = STORE.resolveLeader(pj.leadId || pj.lead);
       const created = Date.parse(p.createdAt || '');
       return {
-        p, yearTotal,
+        p, yearTotal, byMonth,
         rating: STORE.ratingFor(p),
-        isNew: isFinite(cutoff) && isFinite(created) && created > cutoff,   // new-since-baseline → draws pool
+        isNew: isFinite(cutoff) && isFinite(created) && created > cutoff,
         client: (pj.client || '—').trim() || '—',
         leader: leader ? leader.displayName : (pj.lead || '—'),
         industry: (pj.industry || '—').trim() || '—',
@@ -210,82 +210,138 @@
     const overallPool = adjustEntries.filter(a => a.type === 'pool' && a.dim === 'all').reduce((s, a) => s + a.annual, 0);
     const overallAdj = adjustEntries.filter(a => a.type === 'adjust' && a.dim === 'all').reduce((s, a) => s + a.annual, 0);
 
-    // Group live by slice; firm (r1) vs in-play (2-4); drawdown = new-since-baseline live.
+    // ---- Group live by slice, split into likelihood buckets ----
+    const RB = (r) => r === 1 ? 'booked' : r === 2 ? 'p90' : (r >= 3 && r <= 4) ? 'likely' : 'low';
     const groups = {};
     rows.forEach(r => {
       const k = sliceKey(r);
-      const g = groups[k] || (groups[k] = { key: k, live: 0, firm: 0, inplay: 0, drawn: 0 });
-      g.live += r.yearTotal;
-      if (r.rating === 1) g.firm += r.yearTotal; else if (r.rating >= 2 && r.rating <= 4) g.inplay += r.yearTotal;
-      if (r.isNew) g.drawn += r.yearTotal;     // consumes the pool
+      const g = groups[k] || (groups[k] = { key: k, booked: 0, p90: 0, likely: 0, low: 0 });
+      g[RB(r.rating)] += r.yearTotal;
     });
-    if (sliceDim === 'client') Object.keys(baseByClient).forEach(c => { if (lead && !(leaderClients && leaderClients.has(c))) return; if (!groups[c]) groups[c] = { key: c, live: 0, firm: 0, inplay: 0, drawn: 0 }; });
-    adjustEntries.forEach(a => { if (a.key && a.dim === sliceDim && !groups[a.key]) groups[a.key] = { key: a.key, live: 0, firm: 0, inplay: 0, drawn: 0 }; });
+    if (sliceDim === 'client') Object.keys(baseByClient).forEach(c => { if (lead && !(leaderClients && leaderClients.has(c))) return; if (!groups[c]) groups[c] = { key: c, booked: 0, p90: 0, likely: 0, low: 0 }; });
+    adjustEntries.forEach(a => { if (a.key && a.dim === sliceDim && !groups[a.key]) groups[a.key] = { key: a.key, booked: 0, p90: 0, likely: 0, low: 0 }; });
 
     const list = Object.values(groups).map(g => {
-      const pool = poolFor(g.key);
-      const remaining = Math.max(0, pool - g.drawn);     // unbooked future work still expected
       const adjust = adjFor(g.key);
-      const scenario = g.live + remaining + adjust;       // live already includes drawn bookings
+      const projected = g.booked + g.p90 + g.likely + adjust;   // 1–4 + manual adjust (low excluded)
       const tgt = targetForSlice(g.key);
-      return { ...g, pool, remaining, adjust, scenario, tgt, overCap: pool > 0 && g.drawn > pool + 0.5 };
-    }).sort((a, b) => (b.tgt || b.scenario) - (a.tgt || a.scenario));
+      const vsT = tgt != null ? projected - tgt : null;          // <0 = remaining gap, >0 = over
+      return { ...g, adjust, projected, tgt, vsT };
+    }).sort((a, b) => (b.tgt || b.projected) - (a.tgt || a.projected));
 
-    // Totals
-    let T = { tgt: 0, live: 0, firm: 0, inplay: 0, pool: 0, drawn: 0, remaining: 0, adjust: 0, scenario: 0 };
-    list.forEach(g => { T.tgt += g.tgt || 0; T.live += g.live; T.firm += g.firm; T.inplay += g.inplay; T.pool += g.pool; T.drawn += g.drawn; T.remaining += g.remaining; T.adjust += g.adjust; T.scenario += g.scenario; });
-    // Overall (unsliced) pool + adjustment add at the total level
-    T.pool += overallPool; T.remaining += Math.max(0, overallPool); T.adjust += overallAdj;
-    T.scenario += Math.max(0, overallPool) + overallAdj;
+    let T = { tgt: 0, booked: 0, p90: 0, likely: 0, low: 0, adjust: 0, projected: 0 };
+    list.forEach(g => { T.tgt += g.tgt || 0; T.booked += g.booked; T.p90 += g.p90; T.likely += g.likely; T.low += g.low; T.adjust += g.adjust; T.projected += g.projected; });
+    T.adjust += overallAdj; T.projected += overallAdj;
+    const vsTotal = T.projected - T.tgt;
 
-    const variance = T.scenario - T.tgt;
     const scName = sc ? sc.name : 'Live only';
     $('#kpis').innerHTML = `
       <div class="kpi teal"><div class="k-lbl">${esc(baseline.name)} target · ${activeYear}</div><div class="k-val">${fmt(T.tgt)}</div><div class="k-sub">Frozen baseline</div></div>
-      <div class="kpi navy"><div class="k-lbl">Scenario · ${esc(scName)}</div><div class="k-val">${fmt(T.scenario)}</div><div class="k-sub">Live + pool + adjustments</div></div>
-      <div class="kpi"><div class="k-lbl">Booked (r1)</div><div class="k-val">${fmt(T.firm)}</div><div class="k-sub">Firm revenue</div></div>
-      <div class="kpi"><div class="k-lbl">Variance vs target</div><div class="k-val ${variance>=0?'num pos':'num neg'}">${variance>=0?'+':''}${fmt(variance)}</div><div class="k-sub">${T.tgt?((variance/T.tgt)*100).toFixed(1)+'% of target':'—'}</div></div>`;
+      <div class="kpi navy"><div class="k-lbl">Projected (1–4)${sc?' · '+esc(scName):''}</div><div class="k-val">${fmt(T.projected)}</div><div class="k-sub">Booked + 90% + likely + adj</div></div>
+      <div class="kpi"><div class="k-lbl">Booked (rated 1)</div><div class="k-val">${fmt(T.booked)}</div><div class="k-sub">Firm revenue</div></div>
+      <div class="kpi"><div class="k-lbl">${vsTotal>=0?'Over target':'Remaining to target'}</div><div class="k-val ${vsTotal>=0?'num pos':'num neg'}">${vsTotal>=0?'+':''}${fmt(vsTotal)}</div><div class="k-sub">${T.tgt?((vsTotal/T.tgt)*100).toFixed(1)+'% of target':'—'}</div></div>`;
 
     const sliceLabel = { client: 'Client', leader: 'Revenue Leader', industry: 'Industry', serviceLine: 'Service line', rating: 'Rating' }[sliceDim];
     let html = `<thead><tr>
       <th class="lbl">${sliceLabel}</th>
       <th>${esc(baseline.name)} target</th>
-      <th>Live</th><th>Booked</th>
-      <th>Future pool</th><th>Drawn</th><th>Remaining</th>
-      <th>Adjust</th><th>Scenario</th><th>Variance</th><th>Status</th>
+      <th>① Booked</th><th>② 90%</th><th>③④ Likely</th>
+      <th class="low">⑤–⑦ Low</th>
+      <th>Adjust</th><th>Projected</th><th>Remaining</th><th>Status</th>
     </tr></thead><tbody>`;
     list.forEach(g => {
       const hasT = g.tgt != null;
-      const v = hasT ? (g.scenario - g.tgt) : null;
-      const flag = !hasT ? '' : (Math.abs(v) < Math.max(1, g.tgt * 0.02) ? '<span class="flag at">At</span>' : (v > 0 ? '<span class="flag above">Above</span>' : '<span class="flag below">Below</span>'));
+      const flag = !hasT ? '' : (Math.abs(g.vsT) < Math.max(1, g.tgt * 0.02) ? '<span class="flag at">At</span>' : (g.vsT > 0 ? '<span class="flag above">Above</span>' : '<span class="flag below">Below</span>'));
+      const rem = hasT ? (g.vsT < 0 ? fmt(g.vsT) : (g.vsT > 0 ? '+' + fmt(g.vsT) : '✓')) : '—';
       html += `<tr>
         <td class="lbl">${esc(g.key)}</td>
         <td>${hasT ? fmt(g.tgt) : '—'}</td>
-        <td>${fmt(g.live)}</td>
-        <td>${fmt(g.firm)}</td>
-        <td>${g.pool ? fmt(g.pool) : '—'}</td>
-        <td>${g.drawn ? fmt(g.drawn) : '—'}</td>
-        <td class="${g.overCap?'num neg':''}">${g.pool ? fmt(g.remaining) + (g.overCap ? ' ⚠' : '') : '—'}</td>
+        <td class="bk-booked">${g.booked ? fmt(g.booked) : '—'}</td>
+        <td class="bk-p90">${g.p90 ? fmt(g.p90) : '—'}</td>
+        <td class="bk-likely">${g.likely ? fmt(g.likely) : '—'}</td>
+        <td class="low">${g.low ? fmt(g.low) : '—'}</td>
         <td class="${g.adjust?(g.adjust>0?'num pos':'num neg'):''}">${g.adjust ? (g.adjust>0?'+':'')+fmt(g.adjust) : '—'}</td>
-        <td><strong>${fmt(g.scenario)}</strong></td>
-        <td class="${v==null?'':(v>=0?'num pos':'num neg')}">${v==null?'—':(v>=0?'+':'')+fmt(v)}</td>
+        <td><strong>${fmt(g.projected)}</strong></td>
+        <td class="${hasT?(g.vsT>=0?'num pos':'num neg'):''}">${rem}</td>
         <td style="text-align:left;">${flag}</td>
       </tr>`;
     });
-    if (overallPool || overallAdj) {
-      html += `<tr><td class="lbl">＋ Overall (unallocated)</td><td>—</td><td>—</td><td>—</td><td>${overallPool?fmt(overallPool):'—'}</td><td>—</td><td>${overallPool?fmt(Math.max(0,overallPool)):'—'}</td><td class="${overallAdj?(overallAdj>0?'num pos':'num neg'):''}">${overallAdj?(overallAdj>0?'+':'')+fmt(overallAdj):'—'}</td><td><strong>${fmt(Math.max(0,overallPool)+overallAdj)}</strong></td><td>—</td><td></td></tr>`;
+    if (overallAdj) {
+      html += `<tr><td class="lbl">＋ Overall adjustment</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="${overallAdj>0?'num pos':'num neg'}">${(overallAdj>0?'+':'')+fmt(overallAdj)}</td><td><strong>${fmt(overallAdj)}</strong></td><td>—</td><td></td></tr>`;
     }
     html += `</tbody><tfoot><tr class="tot">
-      <td class="lbl">Total</td><td>${fmt(T.tgt)}</td><td>${fmt(T.live)}</td><td>${fmt(T.firm)}</td>
-      <td>${fmt(T.pool)}</td><td>${fmt(T.drawn)}</td><td>${fmt(T.remaining)}</td>
+      <td class="lbl">Total</td><td>${fmt(T.tgt)}</td>
+      <td class="bk-booked">${fmt(T.booked)}</td><td class="bk-p90">${fmt(T.p90)}</td><td class="bk-likely">${fmt(T.likely)}</td>
+      <td class="low">${fmt(T.low)}</td>
       <td class="${T.adjust?(T.adjust>0?'num pos':'num neg'):''}">${T.adjust?(T.adjust>0?'+':'')+fmt(T.adjust):'—'}</td>
-      <td>${fmt(T.scenario)}</td>
-      <td class="${variance>=0?'num pos':'num neg'}">${variance>=0?'+':''}${fmt(variance)}</td><td></td>
+      <td>${fmt(T.projected)}</td>
+      <td class="${vsTotal>=0?'num pos':'num neg'}">${vsTotal>=0?'+':''}${fmt(vsTotal)}</td><td></td>
     </tr></tfoot>`;
     $('#cmp-table').innerHTML = html;
     renderEntries();
+    renderMonthly(rows, baseline, T.adjust);
 
-    $('#studio-foot').innerHTML = `Scenario = Live + remaining future pool + adjustments. <strong>Drawn</strong> = revenue from projects created after the baseline date (${esc((baseline.submittedAt||'').slice(0,10))}) — these consume the pool. Pools/adjustments live only in the scenario; project data is untouched.` + (sliceDim !== 'client' ? ` <em>${esc(sliceLabel)} has no baseline target (Budget is client-level).</em>` : '');
+    $('#studio-foot').innerHTML = `<strong>Projected</strong> = Booked (1) + 90% (2) + Likely (3–4) + adjustments. Low likelihood (5–7) is shown greyed and excluded. <strong>Remaining</strong> is the gap to target (negative) or amount over (positive).` + (sliceDim !== 'client' ? ` <em>${esc(sliceLabel)} has no baseline target (Budget is client-level).</em>` : '');
+  }
+
+  /* ---- Monthly stacked chart + table, colored by likelihood ---- */
+  function renderMonthly(rows, baseline, totalAdjust) {
+    const host = $('#monthly'); if (!host) return;
+    const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const now = new Date(); const curMonth = (activeYear === now.getFullYear()) ? now.getMonth() + 1 : (activeYear < now.getFullYear() ? 13 : 0);
+    // month × bucket
+    const m = MO.map(() => ({ booked: 0, p90: 0, likely: 0, low: 0 }));
+    rows.forEach(r => {
+      const b = r.rating === 1 ? 'booked' : r.rating === 2 ? 'p90' : (r.rating >= 3 && r.rating <= 4) ? 'likely' : 'low';
+      Object.keys(r.byMonth).forEach(mm => { const i = (+mm) - 1; if (i >= 0 && i < 12) m[i][b] += r.byMonth[mm]; });
+    });
+    const liveMonthTotal = (i) => m[i].booked + m[i].p90 + m[i].likely;   // 1–4 (low excluded)
+
+    // Target line: past months = actual booked-through total; remaining = flatline of leftover annual budget.
+    const annualTgt = baseline.total || 0;
+    let pastActual = 0; for (let i = 0; i < 12; i++) if (i + 1 < curMonth) pastActual += liveMonthTotal(i);
+    const remMonths = Math.max(1, 12 - Math.max(0, curMonth - 1));
+    const remPerMonth = Math.max(0, (annualTgt - pastActual)) / remMonths;
+    const tgtLine = MO.map((_, i) => (i + 1 < curMonth) ? liveMonthTotal(i) : remPerMonth);
+
+    const maxV = Math.max(1, ...MO.map((_, i) => Math.max(liveMonthTotal(i), tgtLine[i])));
+    const H = 150;
+    const bars = MO.map((mo, i) => {
+      const seg = (v, cls) => v > 0 ? `<div class="seg ${cls}" style="height:${(v / maxV) * H}px" title="${mo}: ${cls} ${fmt(v)}"></div>` : '';
+      const tY = H - (tgtLine[i] / maxV) * H;
+      const isPast = i + 1 < curMonth, isCur = i + 1 === curMonth;
+      return `<div class="mcol2 ${isCur ? 'cur' : ''}">
+        <div class="bar" style="height:${H}px">
+          ${seg(m[i].booked, 'booked')}${seg(m[i].p90, 'p90')}${seg(m[i].likely, 'likely')}
+          <div class="tgt" style="bottom:${(tgtLine[i] / maxV) * H}px" title="${mo} target ${fmt(tgtLine[i])}"></div>
+        </div>
+        <div class="mlbl ${isPast ? 'past' : ''} ${isCur ? 'cur' : ''}">${mo}</div>
+      </div>`;
+    }).join('');
+
+    // Monthly table rows
+    const trow = (lbl, cls, vals, bold) => `<tr class="${bold ? 'tot' : ''}"><td class="lbl">${lbl}</td>${vals.map(v => `<td class="${cls}">${v ? fmt(v) : '·'}</td>`).join('')}<td class="${cls}"><strong>${fmt(vals.reduce((a, b) => a + b, 0))}</strong></td></tr>`;
+    const tableHtml = `<table class="cmp mtbl"><thead><tr><th class="lbl">By month · ${activeYear}</th>${MO.map((mo, i) => `<th class="${i+1<curMonth?'past':''} ${i+1===curMonth?'cur':''}">${mo}</th>`).join('')}<th>Total</th></tr></thead><tbody>
+      ${trow('① Booked', 'bk-booked', m.map(x => x.booked))}
+      ${trow('② 90%', 'bk-p90', m.map(x => x.p90))}
+      ${trow('③④ Likely', 'bk-likely', m.map(x => x.likely))}
+      ${trow('⑤–⑦ Low', 'low', m.map(x => x.low))}
+      ${trow('Target', '', tgtLine, true)}
+    </tbody></table>`;
+
+    host.innerHTML = `
+      <div class="mhead">
+        <h2>By month · ${activeYear}</h2>
+        <div class="legend">
+          <span><i class="sw booked"></i>① Booked</span>
+          <span><i class="sw p90"></i>② 90%</span>
+          <span><i class="sw likely"></i>③④ Likely</span>
+          <span><i class="sw low"></i>⑤–⑦ Low (excl.)</span>
+          <span><i class="sw tgtsw"></i>Target</span>
+        </div>
+      </div>
+      <div class="chart">${bars}</div>
+      <div class="table-wrap">${tableHtml}</div>`;
   }
 
   /* Scenario entry chips (pool + adjustments) below the table */
