@@ -486,8 +486,8 @@
     const pipeline14 = rows.filter(r => r.rating >= 2 && r.rating <= 4).reduce((s, r) => s + visTotal(r), 0);
     const longshot = rows.filter(r => r.rating >= 5 && r.rating <= 6).reduce((s, r) => s + visTotal(r), 0);
     // Calendar-year + current-month rollups (rated 1–4, the forecast set)
-    const _now = new Date(); const cy = _now.getFullYear(); const cmKey = cy + '-' + (_now.getMonth() + 1);
-    const cmLabel = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_now.getMonth()] + ' ' + cy;
+    const _ky = new Date(); const cy = _ky.getFullYear(); const cmKey = cy + '-' + (_ky.getMonth() + 1);
+    const cmLabel = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_ky.getMonth()] + ' ' + cy;
     const fc = rows.filter(r => r.rating >= 1 && r.rating <= 4);
     const cyTotal = fc.reduce((s, r) => s + cols.filter(c => c.y === cy).reduce((a, c) => a + (r.map[c.key] || 0), 0), 0);
     const cmTotal = fc.reduce((s, r) => s + (r.map[cmKey] || 0), 0);
