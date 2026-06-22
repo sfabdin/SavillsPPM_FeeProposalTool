@@ -732,6 +732,13 @@
     const months = enumerateMonths(p.timeline);
     if (!months.length) return [];
     const slFilter = opts && opts.serviceLine;
+    // Imported projects: the monthly $ from the source sheet is canonical and
+    // stays locked (so projections never move as staffing is built) until the
+    // project is explicitly reconciled. Not sliced by service line.
+    const imp = p.source && p.source.importedByMonth;
+    if (imp && !slFilter && !(p.source && p.source.reconciled)) {
+      return months.map(m => ({ year: m.year, month: m.month, amount: +imp[m.year + '-' + m.month] || 0 }));
+    }
     // Which group ids are in the requested service line (if filtering)
     let allowedGroups = null;
     if (slFilter) {
@@ -781,9 +788,38 @@
     return applyOverrides(series, p, slFilter);
   }
 
+  /** Imported broker (fee-share) series for a project, by month. */
+  function importedBrokerSeries(p) {
+    return (p.source && p.source.brokerByMonth) || null;
+  }
+
+  /** Reconciliation: imported $ vs. calculated $ (from current staffing) per
+      month, with variance. Drives the calculator's side-by-side panel so
+      allocations can be tuned to match the imported total without disturbing
+      the (locked) projection numbers. */
+  function reconcileImport(p, catalog) {
+    const imp = p.source && p.source.importedByMonth;
+    if (!imp) return null;
+    const months = enumerateMonths(p.timeline);
+    // Calculated series = what the staffing currently produces (ignores the
+    // imported lock, so we can compare against it).
+    const clone = JSON.parse(JSON.stringify(p));
+    if (clone.source) delete clone.source.importedByMonth;   // force a real compute
+    const calc = monthlySeries(clone, catalog) || [];
+    const calcMap = {};
+    calc.forEach(s => { calcMap[s.year + '-' + s.month] = s.amount; });
+    let impTot = 0, calcTot = 0;
+    const byMonth = months.map(m => {
+      const k = m.year + '-' + m.month;
+      const i = +imp[k] || 0, c = calcMap[k] || 0;
+      impTot += i; calcTot += c;
+      return { ym: k, year: m.year, month: m.month, imported: i, calculated: c, variance: c - i };
+    });
+    return { byMonth, importedTotal: impTot, calculatedTotal: calcTot, variance: calcTot - impTot, reconciled: !!(p.source && p.source.reconciled) };
+  }
+
   /** Manual monthly overrides (set in Revenue Projections) replace the computed
-      amount for that month. Stored as p.monthlyOverrides = { "YYYY-M": number }.
-      Only applied to the whole-project view, not service-line slices. */
+      amount for that month. Stored as p.monthlyOverrides = { "YYYY-M": number }. */
   function applyOverrides(series, p, slFilter) {
     const ov = p.monthlyOverrides;
     if (slFilter || !ov) return series;
@@ -1062,6 +1098,7 @@
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     computeFinancials, financialsInputsHash, restampFinancials,
     isChangeOrder, childChangeOrders, approvedChangeOrders, createChangeOrder,
+    importedBrokerSeries, reconcileImport,
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, setCurrentUser, isAdmin, userOwnsProject, visibleProjects,

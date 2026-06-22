@@ -414,6 +414,75 @@
       deltaEl.className = 'rc-delta' + (within ? ' ok' : ' off');
     }
     if (noteOverride) $('#rc-note').innerHTML = noteOverride;
+    renderImportReconcile();
+  }
+
+  /** Import reconciliation panel: imported $ (locked, from the source sheet)
+      vs. calculated $ (from current staffing) per month, with variance — so
+      allocations can be tuned to match without disturbing the locked projection.
+      Self-injects above the monthly schedule; only shows for imported projects. */
+  function renderImportReconcile() {
+    let panel = $('#import-reconcile');
+    const src = state.source;
+    const isImport = !!(src && src.importedByMonth);
+    if (!isImport) { if (panel) panel.hidden = true; return; }
+    const cat = window.RATES_CATALOG;
+    const rec = STORE.reconcileImport(stateAsRecord ? stateAsRecord() : JSON.parse(JSON.stringify(state)), cat);
+    if (!rec) { if (panel) panel.hidden = true; return; }
+
+    if (!panel) {
+      // Inject above the monthly schedule section.
+      const anchor = $('#monthly-thead') ? $('#monthly-thead').closest('.cover-section, section, .matrix-wrap, div') : null;
+      panel = document.createElement('div');
+      panel.id = 'import-reconcile';
+      panel.className = 'import-reconcile';
+      const host = $('#monthly-tbody') ? $('#monthly-tbody').closest('table') : null;
+      if (host && host.parentNode) host.parentNode.insertBefore(panel, host);
+      else document.body.appendChild(panel);
+    }
+    panel.hidden = false;
+    const reconciled = rec.reconciled;
+    const vAbs = Math.abs(rec.variance);
+    const within = vAbs < Math.max(1, rec.importedTotal * 0.005);
+    const cls = reconciled ? 'done' : (within ? 'match' : 'off');
+    const rows = rec.byMonth.filter(m => m.imported || m.calculated).map(m => {
+      const v = m.variance, vc = Math.abs(v) < 1 ? 'ok' : (v > 0 ? 'over' : 'under');
+      return `<tr>
+        <td>${monthLabelFromYM(m.ym)}</td>
+        <td class="num">${m.imported ? fmtMoney(m.imported) : '·'}</td>
+        <td class="num">${m.calculated ? fmtMoney(m.calculated) : '·'}</td>
+        <td class="num ${vc}">${Math.abs(v) < 1 ? '✓' : (v > 0 ? '+' : '−') + fmtMoney(Math.abs(v))}</td>
+      </tr>`;
+    }).join('');
+    panel.innerHTML = `
+      <div class="ir-head">
+        <div>
+          <div class="ir-title">Imported vs. calculated · reconciliation</div>
+          <div class="ir-sub">Imported total is <strong>locked</strong> for revenue projections. Build staffing until calculated matches, then mark reconciled to switch projections onto your fee model.</div>
+        </div>
+        <div class="ir-stat ${cls}">
+          <div class="ir-stat-row"><span>Imported</span><b>${fmtMoney(rec.importedTotal)}</b></div>
+          <div class="ir-stat-row"><span>Calculated</span><b>${fmtMoney(rec.calculatedTotal)}</b></div>
+          <div class="ir-stat-row var"><span>Variance</span><b>${rec.variance >= 0 ? '+' : '−'}${fmtMoney(vAbs)}</b></div>
+        </div>
+      </div>
+      <div class="ir-actions">
+        <button type="button" class="ir-btn" id="ir-toggle">${reconciled ? '↺ Re-lock to imported' : '✓ Mark reconciled (use fee model)'}</button>
+        <span class="ir-flag ${reconciled ? 'on' : ''}">${reconciled ? 'Reconciled — projections follow the fee model' : 'Locked — projections follow the imported sheet'}</span>
+      </div>
+      <details class="ir-detail"><summary>Month-by-month (${rec.byMonth.filter(m=>m.imported||m.calculated).length})</summary>
+        <table class="ir-table"><thead><tr><th>Month</th><th class="num">Imported</th><th class="num">Calculated</th><th class="num">Variance</th></tr></thead><tbody>${rows}</tbody></table>
+      </details>`;
+    const tg = $('#ir-toggle');
+    if (tg) tg.addEventListener('click', () => {
+      state.source.reconciled = !state.source.reconciled;
+      markDirty();
+      renderImportReconcile();
+    });
+  }
+  function monthLabelFromYM(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m - 1] + ' ' + y;
   }
 
   /* Logical staffing SHAPE by seniority — relative weights, not absolute FTE.
