@@ -23,7 +23,8 @@
   .btn-primary { background: var(--sav-navy); color: var(--sav-yellow); }
 
   /* KPI strip */
-  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+  .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 24px; }
+  @media (max-width: 1100px) { .kpis { grid-template-columns: repeat(3, 1fr); } }
   .kpi { background: #fff; border: 1px solid var(--hair); padding: 16px 18px; }
   .kpi.navy { background: var(--sav-navy); }
   .kpi.teal { background: var(--sav-teal); }
@@ -484,11 +485,19 @@
     const booked = rows.filter(r => r.rating === 1).reduce((s, r) => s + visTotal(r), 0);
     const pipeline14 = rows.filter(r => r.rating >= 2 && r.rating <= 4).reduce((s, r) => s + visTotal(r), 0);
     const longshot = rows.filter(r => r.rating >= 5 && r.rating <= 6).reduce((s, r) => s + visTotal(r), 0);
+    // Calendar-year + current-month rollups (rated 1–4, the forecast set)
+    const _now = new Date(); const cy = _now.getFullYear(); const cmKey = cy + '-' + (_now.getMonth() + 1);
+    const cmLabel = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_now.getMonth()] + ' ' + cy;
+    const fc = rows.filter(r => r.rating >= 1 && r.rating <= 4);
+    const cyTotal = fc.reduce((s, r) => s + cols.filter(c => c.y === cy).reduce((a, c) => a + (r.map[c.key] || 0), 0), 0);
+    const cmTotal = fc.reduce((s, r) => s + (r.map[cmKey] || 0), 0);
     $('#kpis').innerHTML = `
-      <div class="kpi navy"><div class="k-lbl">Booked (rated 1)</div><div class="k-val">${fmtFull(booked)}</div><div class="k-sub">Signed / active revenue</div></div>
-      <div class="kpi"><div class="k-lbl">Pipeline (rated 2–4)</div><div class="k-val">${fmtFull(pipeline14)}</div><div class="k-sub">≥ 50% confidence</div></div>
-      <div class="kpi teal"><div class="k-lbl">Projected total (1–4)</div><div class="k-val">${fmtFull(grandTot)}</div><div class="k-sub">What rolls into the forecast</div></div>
-      <div class="kpi"><div class="k-lbl">Probability-weighted</div><div class="k-val">${fmtFull(grandWt)}</div><div class="k-sub">All pursuits × confidence · incl. ${fmtFull(longshot)} long-shot</div></div>
+      <div class="kpi teal"><div class="k-lbl">Calendar ${cy} · projected</div><div class="k-val" title="${fmtExact(cyTotal)}">${fmtFull(cyTotal)}</div><div class="k-sub">Rated 1–4, ${cy} work-performed months</div></div>
+      <div class="kpi navy"><div class="k-lbl">Current month · ${cmLabel}</div><div class="k-val" title="${fmtExact(cmTotal)}">${fmtFull(cmTotal)}</div><div class="k-sub">Highlighted column in the grid</div></div>
+      <div class="kpi"><div class="k-lbl">Booked (rated 1)</div><div class="k-val" title="${fmtExact(booked)}">${fmtFull(booked)}</div><div class="k-sub">Signed / active revenue</div></div>
+      <div class="kpi"><div class="k-lbl">Pipeline (rated 2–4)</div><div class="k-val" title="${fmtExact(pipeline14)}">${fmtFull(pipeline14)}</div><div class="k-sub">≥ 50% confidence</div></div>
+      <div class="kpi"><div class="k-lbl">Projected total (1–4) · all shown months</div><div class="k-val" title="${fmtExact(grandTot)}">${fmtFull(grandTot)}</div><div class="k-sub">Everything in the visible range</div></div>
+      <div class="kpi"><div class="k-lbl">Probability-weighted</div><div class="k-val" title="${fmtExact(grandWt)}">${fmtFull(grandWt)}</div><div class="k-sub">All pursuits × confidence · incl. ${fmtFull(longshot)} long-shot</div></div>
     `;
 
     // Capture the exact rendered model for the Excel export.
