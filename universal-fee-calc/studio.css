@@ -43,3 +43,20 @@ table.cmp tr.tot td.lbl { background: #f4f2ef; }
 .num.pos { color: #1f7a44; } .num.neg { color: #b3151b; }
 .empty { background: #fff; border: 1px solid var(--hair); padding: 36px; text-align: center; color: var(--sav-steel); font-size: 14px; }
 .foot { margin-top: 18px; font-size: 11.5px; color: var(--sav-steel); line-height: 1.6; }
+
+/* Scenario entries */
+.entries { margin: 0 0 18px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.entries-lbl { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sav-steel); width: 100%; margin-bottom: 2px; }
+.entries-empty { font-size: 12px; color: var(--sav-steel); font-style: italic; }
+.entry { font-size: 11.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--hair-2); background: #fff; }
+.entry.pool { border-color: rgba(14,124,123,0.4); color: var(--sav-teal); }
+.entry.add { border-color: rgba(31,122,68,0.4); color: #1f7a44; }
+.entry.sub { border-color: rgba(179,21,27,0.4); color: #b3151b; }
+.entry a { text-decoration: none; margin-left: 6px; opacity: 0.6; }
+.entry a:hover { opacity: 1; }
+table.cmp td.num.neg, table.cmp td .num.neg { color: #b3151b; }
+
+/* Leader view */
+.leader-banner { background: var(--sav-navy); color: #fff; padding: 12px 18px; margin-bottom: 16px; font-size: 13px; display: flex; align-items: center; gap: 10px; }
+.leader-banner strong { color: var(--sav-yellow, #FFDF00); }
+body.leader-mode .admin-only { display: none !important; }
