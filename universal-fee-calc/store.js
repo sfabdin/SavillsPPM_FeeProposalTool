@@ -814,17 +814,22 @@
 
   /** Roll up projects by client: contract + revised + CO count. Parents only
       (COs fold into their parent's revised total). */
-  function clientRollup(projects) {
+  function clientRollup(projects, feeOf) {
     const list = (projects || listProjects()).filter(p => !isChangeOrder(p));
     const byClient = {};
     list.forEach(p => {
       const c = (p.project && p.project.client) || '—';
       const rc = revisedContract(p.id);
-      const baseline = (p.financials && p.financials.net) || 0;
+      // Baseline net = frozen snapshot if present, else compute live via the
+      // supplied resolver (handles imported-by-month + never-booked projects,
+      // which carry no financials snapshot). Revised = baseline + Σ CO deltas.
+      let baseline = (p.financials && p.financials.net);
+      if (!baseline && typeof feeOf === 'function') { try { baseline = feeOf(p); } catch (e) {} }
+      baseline = baseline || 0;
       const b = byClient[c] || (byClient[c] = { client: c, projects: 0, baseline: 0, revised: 0, coCount: 0 });
       b.projects++;
       b.baseline += baseline;
-      b.revised += rc.revisedNet || baseline;
+      b.revised += baseline + (rc.coNetSum || 0);
       b.coCount += rc.coCount;
     });
     return Object.values(byClient).map(b => ({
