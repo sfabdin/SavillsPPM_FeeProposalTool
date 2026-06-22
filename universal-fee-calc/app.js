@@ -1444,7 +1444,15 @@
     $('#sum-gross').textContent = fmtMoney(gross);
     $('#sum-lock').textContent = fmtMoney(-lock);
     $('#sum-discount').textContent = fmtMoney(-disc);
-    $('#sum-total').textContent = fmtMoney(net);
+    // Imported project with no staffing yet: show the imported total as the
+    // headline (the number we're bridging to) instead of a calculated $0.
+    const imp = state.source && state.source.importedByMonth && !state.source.reconciled;
+    const impTotal = imp ? Object.values(state.source.importedByMonth).reduce((a, b) => a + (+b || 0), 0) : 0;
+    if (imp && net === 0) {
+      $('#sum-total').innerHTML = `${fmtMoney(impTotal)}<span class="unit" style="display:block;font-size:11px;color:var(--sav-teal);">imported · build staffing to reconcile</span>`;
+    } else {
+      $('#sum-total').textContent = fmtMoney(net);
+    }
     $('#sum-discount-pct').textContent = `${state.assumptions.discount}% client discount — applied at total.`;
     $('#sum-lock-detail').textContent = state.assumptions.rateLock
       ? `Active — start-year rate held through ${state.timeline.endYear}.`
