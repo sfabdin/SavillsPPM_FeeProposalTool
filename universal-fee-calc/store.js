@@ -914,6 +914,7 @@
      Edit this list to grant/revoke all-access.                  */
   const ADMINS = new Set([
     'salim@savills.us',      // Salim — owner
+    'kyriacos.yerou@savills.com', // Kyri Yerou — developer (note .com)
     'esobel@savills.us',     // Emily Sobel
     'jsantoro@savills.us',   // Jeff Santoro
     'mhadim@savills.us',     // Maria Hadim
@@ -921,9 +922,12 @@
     'eglatt@savills.us',     // Emily Glatt
   ].map(s => s.toLowerCase()));
 
-  /* Only this login may use the "Viewing as" impersonation switch to preview
+  /* These logins may use the "Viewing as" impersonation switch to preview
      other people's restricted views. Everyone else never sees the control. */
-  const SUPERUSER = 'salim@savills.us';
+  const SUPERUSERS = new Set([
+    'salim@savills.us',
+    'kyriacos.yerou@savills.com',
+  ]);
 
   function roleFor(login) {
     return ADMINS.has(String(login || '').trim().toLowerCase()) ? 'admin' : 'member';
@@ -999,7 +1003,7 @@
   /* Impersonation — ONLY the SUPERUSER may preview another person's view. */
   function canImpersonate() {
     const r = getRealIdentity();
-    return !!r && r.username.toLowerCase() === SUPERUSER;
+    return !!r && SUPERUSERS.has(r.username.toLowerCase());
   }
   function getImpersonation() {
     if (!canImpersonate()) return null;          // hard gate: ignored for everyone else
