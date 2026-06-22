@@ -26,6 +26,7 @@
 
   let PREP = null;
 
+  function wire() {
   $('#file').addEventListener('change', async (e) => {
     const f = e.target.files[0];
     if (!f) return;
@@ -165,4 +166,20 @@
       $('#commit-msg').innerHTML = `<div class="msg err">Imported ${n} before error: ${e.message}</div>`;
     }
   });
+  } // end wire()
+
+  /* ADMIN-ONLY gate. Boot signs in via Box; only admins may import. */
+  function init() {
+    const me = STORE.getCurrentUser();
+    if (!STORE.isAdmin(me)) {
+      document.querySelector('.wrap').innerHTML =
+        '<h1>Import Revenue Projections</h1>' +
+        '<div class="card"><h2>Admin only</h2><p class="note">This tool is restricted to administrators. You\u2019re signed in as <strong>' +
+        (me.name ? me.name.replace(/[&<>"]/g, '') : 'unknown') +
+        '</strong>. Ask an admin if you need to import revenue data.</p></div>';
+      return;
+    }
+    wire();
+  }
+  if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(init); else window.addEventListener('load', init);
 })();
