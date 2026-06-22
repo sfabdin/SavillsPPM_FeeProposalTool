@@ -230,6 +230,7 @@
   const $ = (s) => document.querySelector(s);
 
   const fmtFull = (n) => (n < 0 ? '-' : '') + '$' + Math.round(Math.abs(n)).toLocaleString();
+  const fmtExact = (n) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   function fmtK(n) {
     if (!n) return '';
     const k = n / 1000;
@@ -431,11 +432,11 @@
         if (editMode) {
           html += `<td class="num editable${isOv ? ' overridden' : ''}${sep}${today}" contenteditable="true" data-pid="${r.p.id}" data-key="${c.key}">${v ? Math.round(v) : ''}</td>`;
         } else {
-          html += `<td class="num${v ? '' : ' zero'}${isOv ? ' overridden' : ''}${sep}${today}">${v ? fmtK(v) : '·'}</td>`;
+          html += `<td class="num${v ? '' : ' zero'}${isOv ? ' overridden' : ''}${sep}${today}"${v ? ` title="${fmtExact(v)}"` : ''}>${v ? fmtK(v) : '·'}</td>`;
         }
         if (!excluded) { colTot[c.key] += v; grandTot += v; }
       });
-      html += `<td class="rowtot num">${fmtK(rvt)}</td>`;
+      html += `<td class="rowtot num" title="${fmtExact(rvt)}">${fmtK(rvt)}</td>`;
       html += '</tr>';
       // Broker fee-split sub-line (toggle): the monthly broker reduction beneath the total.
       if (showBroker && r.feeSharePct > 0) {
@@ -444,7 +445,7 @@
           const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
           const today = c.key === _ck ? ' today' : '';
           const b = (r.map[c.key] || 0) * (r.feeSharePct / 100);
-          html += `<td class="num broker${sep}${today}">${b ? '−' + fmtK(b) : ''}</td>`;
+          html += `<td class="num broker${sep}${today}"${b ? ` title="−${fmtExact(b)}"` : ''}>${b ? '−' + fmtK(b) : ''}</td>`;
           if (!excluded) { colBroker[c.key] = (colBroker[c.key] || 0) + b; grandBroker += b; }
         });
         html += `<td class="rowtot num broker">−${fmtK(rvt * (r.feeSharePct / 100))}</td></tr>`;
@@ -457,12 +458,12 @@
 
     // ---- Totals rows ----
     html += '<tr class="totals"><td class="proj-cell">Projected (rated 1–4)</td>';
-    cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; html += `<td class="num${sep}">${colTot[c.key] ? fmtK(colTot[c.key]) : '·'}</td>`; });
-    html += `<td class="rowtot num">${fmtK(grandTot)}</td></tr>`;
+    cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; html += `<td class="num${sep}"${colTot[c.key] ? ` title="${fmtExact(colTot[c.key])}"` : ''}>${colTot[c.key] ? fmtK(colTot[c.key]) : '·'}</td>`; });
+    html += `<td class="rowtot num" title="${fmtExact(grandTot)}">${fmtK(grandTot)}</td></tr>`;
 
     html += '<tr class="totals weighted"><td class="proj-cell">Probability-weighted (all)</td>';
-    cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; html += `<td class="num${sep}">${colWt[c.key] ? fmtK(colWt[c.key]) : '·'}</td>`; });
-    html += `<td class="rowtot num">${fmtK(grandWt)}</td></tr>`;
+    cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; html += `<td class="num${sep}"${colWt[c.key] ? ` title="${fmtExact(colWt[c.key])}"` : ''}>${colWt[c.key] ? fmtK(colWt[c.key]) : '·'}</td>`; });
+    html += `<td class="rowtot num" title="${fmtExact(grandWt)}">${fmtK(grandWt)}</td></tr>`;
 
     // Broker-fee rolled-up total (toggle)
     if (showBroker && grandBroker > 0) {
@@ -523,10 +524,10 @@
     for (let i=0;i<nCols;i++) ws.getColumn(2+i).width = 10;
     ws.getColumn(lastCol).width = 14;
 
-    const money = (n) => Math.round(n);
+    const money = (n) => n;   // full precision in the cell; numFmt controls DISPLAY only
     const setMoney = (cell, n, opts={}) => {
       cell.value = n ? money(n) : (opts.dash ? '·' : null);
-      cell.numFmt = '#,##0';
+      cell.numFmt = '#,##0.00';
       cell.alignment = { horizontal: 'right' };
       if (opts.font) cell.font = opts.font;
       if (opts.fill) cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:opts.fill} };
