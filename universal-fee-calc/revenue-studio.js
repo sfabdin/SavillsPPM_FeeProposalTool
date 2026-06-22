@@ -213,17 +213,21 @@
     // ---- Group live by slice, split into likelihood buckets ----
     // "Future Business" = the unallocated slush from Revenue Projections — shown
     // below the line as an adjustment, never as a client row.
-    const isFuture = (name) => /new business|future business|opportunit|unalloc|slush|^tbd$/i.test(name || '');
+    // Three tiers, in order: named clients (top) → New Clients (middle, named
+    // new-business pipeline) → Future Business slush (bottom, generic unallocated).
+    const isSlush = (name) => /future business|unalloc|slush|^tbd$|^new business$/i.test(name || '');
+    const isNewClient = (name) => !isSlush(name) && /new business|new client|opportunit|prospect|secured revenue/i.test(name || '');
+    const isFuture = isSlush;   // monthly curve excludes only true slush; new clients flow in
     const RB = (r) => r === 1 ? 'booked' : r === 2 ? 'p90' : (r >= 3 && r <= 4) ? 'likely' : 'low';
     const groups = {}; let futureBiz = 0;
     rows.forEach(r => {
-      if (isFuture(r.client)) { if (r.rating <= 4) futureBiz += r.yearTotal; return; }
+      if (isSlush(r.client)) { if (r.rating <= 4) futureBiz += r.yearTotal; return; }
       const k = sliceKey(r);
-      const g = groups[k] || (groups[k] = { key: k, booked: 0, p90: 0, likely: 0, low: 0 });
+      const g = groups[k] || (groups[k] = { key: k, booked: 0, p90: 0, likely: 0, low: 0, isNew: sliceDim === 'client' && isNewClient(r.client) });
       g[RB(r.rating)] += r.yearTotal;
     });
-    if (sliceDim === 'client') Object.keys(baseByClient).forEach(c => { if (lead && !(leaderClients && leaderClients.has(c))) return; if (!groups[c]) groups[c] = { key: c, booked: 0, p90: 0, likely: 0, low: 0 }; });
-    adjustEntries.forEach(a => { if (a.key && a.dim === sliceDim && !groups[a.key]) groups[a.key] = { key: a.key, booked: 0, p90: 0, likely: 0, low: 0 }; });
+    if (sliceDim === 'client') Object.keys(baseByClient).forEach(c => { if (lead && !(leaderClients && leaderClients.has(c))) return; if (!groups[c]) groups[c] = { key: c, booked: 0, p90: 0, likely: 0, low: 0, isNew: isNewClient(c) }; });
+    adjustEntries.forEach(a => { if (a.key && a.dim === sliceDim && !groups[a.key]) groups[a.key] = { key: a.key, booked: 0, p90: 0, likely: 0, low: 0, isNew: isNewClient(a.key) }; });
 
     const list = Object.values(groups).map(g => {
       const adjust = adjFor(g.key);
@@ -231,7 +235,10 @@
       const tgt = targetForSlice(g.key);
       const vsT = tgt != null ? projected - tgt : null;          // <0 = remaining gap, >0 = over
       return { ...g, adjust, projected, tgt, vsT };
-    }).sort((a, b) => (b.tgt || b.projected) - (a.tgt || a.projected));
+    }).sort((a, b) => {
+      if (!!a.isNew !== !!b.isNew) return a.isNew ? 1 : -1;       // named clients above new clients
+      return (b.tgt || b.projected) - (a.tgt || a.projected);
+    });
 
     let T = { tgt: 0, booked: 0, p90: 0, likely: 0, low: 0, adjust: 0, projected: 0 };
     list.forEach(g => { T.tgt += g.tgt || 0; T.booked += g.booked; T.p90 += g.p90; T.likely += g.likely; T.low += g.low; T.adjust += g.adjust; T.projected += g.projected; });
@@ -254,7 +261,12 @@
       <th class="low">Rating 5–7</th>
       <th>Adjust</th><th>Projected</th><th>Remaining</th><th>Status</th>
     </tr></thead><tbody>`;
+    let newSectionShown = false;
     list.forEach(g => {
+      if (g.isNew && !newSectionShown) {
+        newSectionShown = true;
+        html += `<tr class="section-row"><td class="lbl" colspan="10">New Clients · named pipeline</td></tr>`;
+      }
       const hasT = g.tgt != null;
       const flag = !hasT ? '' : (Math.abs(g.vsT) < Math.max(1, g.tgt * 0.02) ? '<span class="flag at">At</span>' : (g.vsT > 0 ? '<span class="flag above">Above</span>' : '<span class="flag below">Below</span>'));
       const rem = hasT ? (g.vsT < 0 ? fmt(g.vsT) : (g.vsT > 0 ? '+' + fmt(g.vsT) : '✓')) : '—';
@@ -312,19 +324,33 @@
     const remPerMonth = Math.max(0, (annualTgt - pastActual)) / remMonths;
     const tgtLine = MO.map((_, i) => (i + 1 < curMonth) ? liveMonthTotal(i) : remPerMonth);
 
-    // Scale to the tallest of (stacked total, target) so bars + target line share an axis.
-    const maxV = Math.max(1, ...MO.map((_, i) => Math.max(liveMonthTotal(i), tgtLine[i])));
-    const H = 170;
+    // Nice rounded axis top so gridlines read in clean increments.
+    const rawMax = Math.max(1, ...MO.map((_, i) => Math.max(liveMonthTotal(i), tgtLine[i])));
+    const niceStep = (() => {
+      const rough = rawMax / 4;
+      const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+      const norm = rough / mag;
+      const s = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+      return s * mag;
+    })();
+    const maxV = Math.max(niceStep, Math.ceil(rawMax / niceStep) * niceStep);
+    const H = 230;
     const px = (v) => Math.max(0, (v / maxV) * H);
+    const fmtShort = (v) => v >= 1e6 ? '$' + (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + 'M'
+      : v >= 1e3 ? '$' + Math.round(v / 1e3) + 'K' : '$' + Math.round(v);
+
+    // Horizontal gridlines + dollar axis labels.
+    const ticks = []; for (let g = 0; g <= maxV + 1; g += niceStep) ticks.push(g);
+    const grid = ticks.map(t => `<div class="gline" style="bottom:${px(t)}px"><span class="ylab">${fmtShort(t)}</span></div>`).join('');
+
     const bars = MO.map((mo, i) => {
       const seg = (v, cls) => v > 0 ? `<div class="seg ${cls}" style="height:${px(v)}px" title="${mo}: ${cls} ${fmt(v)}"></div>` : '';
-      // ghost "gap to target" fills the bar up to the target when under (so the bar reads full to target)
-      const gap = Math.max(0, tgtLine[i] - liveMonthTotal(i));
-      const ghost = gap > 0 ? `<div class="seg gap" style="height:${px(gap)}px" title="${mo}: ${fmt(gap)} to target"></div>` : '';
+      const tot = liveMonthTotal(i);
       const isPast = i + 1 < curMonth, isCur = i + 1 === curMonth;
       return `<div class="mcol2 ${isCur ? 'cur' : ''}">
-        <div class="bar" style="height:${H}px">
-          ${seg(m[i].booked, 'booked')}${seg(m[i].p90, 'p90')}${seg(m[i].likely, 'likely')}${ghost}
+        <div class="mbar" style="height:${H}px">
+          ${tot > 0 ? `<div class="btot" style="bottom:${Math.min(H - 2, px(tot) + 3)}px">${fmtShort(tot)}</div>` : ''}
+          ${seg(m[i].booked, 'booked')}${seg(m[i].p90, 'p90')}${seg(m[i].likely, 'likely')}
           <div class="tgt" style="bottom:${px(tgtLine[i])}px" title="${mo} target ${fmt(tgtLine[i])}"></div>
         </div>
         <div class="mlbl ${isPast ? 'past' : ''} ${isCur ? 'cur' : ''}">${mo}</div>
@@ -347,11 +373,10 @@
           <span><i class="sw booked"></i>Rating 1 · Booked</span>
           <span><i class="sw p90"></i>Rating 2 · 90%</span>
           <span><i class="sw likely"></i>Rating 3–4 · Likely</span>
-          <span><i class="sw gap"></i>Gap to target</span>
           <span><i class="sw tgtsw"></i>Target</span>
         </div>
       </div>
-      <div class="chart">${bars}</div>
+      <div class="chart"><div class="grid">${grid}</div>${bars}</div>
       <div class="table-wrap">${tableHtml}</div>`;
   }
 
