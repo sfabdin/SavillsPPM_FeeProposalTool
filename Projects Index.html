@@ -713,7 +713,7 @@
   /* ---------- Client rollup ---------- */
   function renderClientRollup(allProjects) {
     const parents = allProjects.filter(p => !STORE.isChangeOrder(p));
-    const rows = STORE.clientRollup(parents);
+    const rows = STORE.clientRollup(parents, p => projectFee(p).net);
     const hint = $('#cr-hint'), body = $('#cr-body');
     if (!rows.length) { if (hint) hint.textContent = ''; if (body) body.innerHTML = ''; return; }
     if (hint) hint.textContent = `${rows.length} client${rows.length === 1 ? '' : 's'}`;
