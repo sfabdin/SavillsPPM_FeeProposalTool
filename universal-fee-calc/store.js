@@ -5,6 +5,7 @@
 (function () {
   'use strict';
   const KEY = 'savills-ppm-fee-db:v1';
+  const STUDIO_KEY = 'savills-ppm-studio-db:v1';   // Revenue Studio — SEPARATE store/file
   const SCHEMA = 1;
 
   const STATUSES = ['draft','submitted','negotiation','won','lost','active','closed','hold'];
@@ -153,6 +154,100 @@
     db.schemaVersion = SCHEMA;
     localStorage.setItem(KEY, JSON.stringify(db));
   }
+
+  /* ===== Revenue Studio store — SEPARATE file (studio.json in Box) =====
+     Baselines (frozen targets: Budget, RF1, RF2…) and named scenarios (what-if
+     overlays). Kept apart from projects.json so manipulations never touch real
+     project data and sync as their own file. */
+  let _studioPush = null;
+  function attachStudioRemote(pushFn) { _studioPush = typeof pushFn === 'function' ? pushFn : null; }
+  function defaultStudio() { return { schemaVersion: SCHEMA, baselines: {}, scenarios: {} }; }
+  function readStudio() {
+    try {
+      const raw = localStorage.getItem(STUDIO_KEY);
+      if (!raw) return defaultStudio();
+      const p = JSON.parse(raw);
+      if (!p.baselines) p.baselines = {};
+      if (!p.scenarios) p.scenarios = {};
+      return p;
+    } catch (e) { return defaultStudio(); }
+  }
+  function writeStudio(s) {
+    s.schemaVersion = SCHEMA;
+    localStorage.setItem(STUDIO_KEY, JSON.stringify(s));
+    if (typeof _studioPush === 'function') { try { _studioPush(s); } catch (e) { console.warn('studio push failed', e); } }
+  }
+  function hydrateStudioFromRemote(s) {
+    if (!s) return;
+    if (!s.baselines) s.baselines = {};
+    if (!s.scenarios) s.scenarios = {};
+    s.schemaVersion = SCHEMA;
+    localStorage.setItem(STUDIO_KEY, JSON.stringify(s));
+  }
+
+  const MONTHS12 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // ---- Baselines ----
+  function listBaselines() {
+    return Object.values(readStudio().baselines).sort((a, b) => (a.order || 0) - (b.order || 0) || (a.submittedAt || '').localeCompare(b.submittedAt || ''));
+  }
+  function getBaseline(id) { return readStudio().baselines[id] || null; }
+  function saveBaseline(b) {
+    const s = readStudio();
+    if (!b.id) b.id = 'bl_' + Math.random().toString(36).slice(2, 10);
+    if (b.order == null) b.order = Object.keys(s.baselines).length;
+    s.baselines[b.id] = b;
+    writeStudio(s);
+    return b;
+  }
+  function deleteBaseline(id) { const s = readStudio(); delete s.baselines[id]; writeStudio(s); }
+
+  /** Build a frozen baseline from a {client: annualAmount} map (the Budget sheet).
+      Flatlines each client's annual ÷ 12 across the given year. */
+  function baselineFromBudget(name, kind, year, clientAnnual, submittedAt) {
+    const byClient = {}; const byMonth = {}; let total = 0;
+    for (let m = 1; m <= 12; m++) byMonth[year + '-' + m] = 0;
+    Object.keys(clientAnnual).forEach(client => {
+      const annual = +clientAnnual[client] || 0;
+      if (!annual) return;
+      const per = annual / 12;
+      const grid = {};
+      for (let m = 1; m <= 12; m++) { const k = year + '-' + m; grid[k] = per; byMonth[k] += per; }
+      byClient[client] = { annual, byMonth: grid };
+      total += annual;
+    });
+    return {
+      id: '', name, kind: kind || 'budget', year,
+      submittedAt: submittedAt || (year + '-01-01'),
+      monthlyMode: 'flatline',
+      total, byMonth, byClient,
+    };
+  }
+
+  /** A baseline's monthly grid for a slice (currently client or 'all'). */
+  function baselineGridForSlice(baseline, slice) {
+    if (!baseline) return {};
+    if (!slice || slice.dim === 'all' || !slice.value) return baseline.byMonth || {};
+    if (slice.dim === 'client') return (baseline.byClient[slice.value] || {}).byMonth || {};
+    return baseline.byMonth || {};
+  }
+
+  // ---- Scenarios (named what-if overlays) ----
+  function listScenarios() {
+    return Object.values(readStudio().scenarios).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  }
+  function getScenario(id) { return readStudio().scenarios[id] || null; }
+  function saveScenario(sc) {
+    const s = readStudio();
+    if (!sc.id) sc.id = 'sc_' + Math.random().toString(36).slice(2, 10);
+    sc.updatedAt = new Date().toISOString();
+    if (!sc.createdAt) sc.createdAt = sc.updatedAt;
+    if (!sc.adjustments) sc.adjustments = [];
+    s.scenarios[sc.id] = sc;
+    writeStudio(s);
+    return sc;
+  }
+  function deleteScenario(id) { const s = readStudio(); delete s.scenarios[id]; writeStudio(s); }
 
   function listProjects() {
     const db = readDb();
@@ -1125,5 +1220,8 @@
     setRealIdentity, getRealIdentity, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
     REVENUE_LEADERS, leaderById, resolveLeader, leaderDisplay,
     attachRemote, hydrateFromRemote, defaultDb,
+    attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,
+    listBaselines, getBaseline, saveBaseline, deleteBaseline, baselineFromBudget, baselineGridForSlice,
+    listScenarios, getScenario, saveScenario, deleteScenario,
   };
 })();

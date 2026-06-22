@@ -49,6 +49,7 @@
     tokenExchangeUrl: '/api/box-token',   // your Vercel serverless function (holds the secret)
     dataFileId: '2265137344562',          // projects.json in Box
     ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
+    studioFileId: 'PASTE_STUDIO_FILE_ID', // studio.json in Box (Revenue Studio baselines + scenarios)
     folderId: '387228486391',             // used only to (re)create the file if missing
     pushDebounceMs: 1500,
 
@@ -301,6 +302,47 @@
   }
   Box.syncNow = syncNow;
 
+  // ---- Revenue Studio file (studio.json) — SEPARATE from projects.json ----
+  let _studioEtag = null;
+  async function pullStudio() {
+    const id = BOX_CONFIG.studioFileId;
+    if (!id || /PASTE/.test(id)) return Store.defaultStudio();   // not configured yet → local only
+    const meta = await boxFetch('/files/' + id + '?fields=etag');
+    if (meta.ok) { const m = await meta.json(); _studioEtag = m.etag; }
+    const res = await boxFetch('/files/' + id + '/content');
+    if (res.status === 404) return Store.defaultStudio();
+    if (!res.ok) throw new Error('studio pull failed: ' + res.status);
+    return JSON.parse(await res.text());
+  }
+  async function uploadStudio(s) {
+    const id = BOX_CONFIG.studioFileId;
+    if (!id || /PASTE/.test(id)) return;                         // local-only until configured
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'studio.json' }));
+    form.append('file', new Blob([JSON.stringify(s)], { type: 'application/json' }), 'studio.json');
+    const res = await fetch('https://upload.box.com/api/2.0/files/' + id + '/content', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, ...(_studioEtag ? { 'If-Match': _studioEtag } : {}) },
+      body: form,
+    });
+    if (res.ok) { const j = await res.json(); if (j.entries && j.entries[0]) _studioEtag = j.entries[0].etag; }
+    else if (res.status !== 412) throw new Error('studio upload failed: ' + res.status);
+  }
+  let _studioTimer = null, _studioPending = null;
+  function scheduleStudioPush(s) {
+    _studioPending = s;
+    clearTimeout(_studioTimer);
+    _studioTimer = setTimeout(studioPushNow, BOX_CONFIG.pushDebounceMs);
+  }
+  async function studioPushNow() {
+    if (!_studioPending) return;
+    const tok = await ensureToken(); if (!tok) return;
+    const s = _studioPending; _studioPending = null;
+    try { await uploadStudio(s); } catch (e) { _studioPending = s; console.warn('studio push failed', e); }
+  }
+  Box.pullStudio = pullStudio;
+
   // ---- Boot: auth → pull → identity → attach push ----
   async function boot() {
     if (!BOX_CONFIG.enabled) { emitSync('local', ''); return { ok: true, backend: 'local' }; }
@@ -338,6 +380,12 @@
     }
     // Attach the push hook so future writes mirror to Box
     Store.attachRemote(schedulePush);
+    // Revenue Studio file (separate). Pull → hydrate → attach its push hook.
+    try {
+      const studio = await pullStudio();
+      Store.hydrateStudioFromRemote(studio);
+    } catch (e) { console.warn('studio pull failed', e); }
+    Store.attachStudioRemote(scheduleStudioPush);
     return { ok: true, backend: 'box' };
   }
 
