@@ -45,7 +45,17 @@
         <label>View as</label>
         <select id="viewas-sel"></select>
       </div>
+      <div class="bar-group">
+        <label>Granularity</label>
+        <div class="seg-ctl" id="viewmode-ctl">
+          <button type="button" data-mode="year" class="on">Year</button>
+          <button type="button" data-mode="month">Month</button>
+        </div>
+      </div>
       <div class="bar-spacer"></div>
+      <button class="btn ghost" id="expand-all-btn">Expand all</button>
+      <button class="btn ghost" id="collapse-all-btn">Collapse all</button>
+      <button class="btn" id="export-view-btn">⤓ Export view</button>
       <button class="btn admin-only" id="load-budget-btn">Load 2026 Budget…</button>
       <input type="file" id="budget-file" accept=".xlsx,.xls" hidden>
     </div>
