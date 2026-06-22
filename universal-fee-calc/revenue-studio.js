@@ -214,19 +214,25 @@
     // "Future Business" = the unallocated slush from Revenue Projections — shown
     // below the line as an adjustment, never as a client row.
     // Three tiers, in order: named clients (top) → New Clients (middle, named
-    // new-business pipeline) → Future Business slush (bottom, generic unallocated).
-    // Slush = the generic unallocated "future business" pool (not a real client row).
-    const isSlush = (name) => /future business|unalloc|slush|^tbd$|new business opportun|^new business$/i.test(name || '');
+    // Slush = unallocated INCREMENTAL business not tied to a named client. It shows up
+    // both as a baseline line ("Incremental Business" / "New Business Opportunities") and
+    // as live unnamed pipeline rows. It becomes the below-the-line reserve, never an
+    // Existing-Client row.
+    const isSlush = (name) => /future business|unalloc|slush|^tbd$|incremental|new business opportun|new business$/i.test(name || '');
     const isFuture = isSlush;   // excluded from the monthly curve and from per-client rows
     const RB = (r) => r === 1 ? 'booked' : r === 2 ? 'p90' : (r >= 3 && r <= 4) ? 'likely' : 'low';
-    const groups = {}; let slushPool = 0;
+    const groups = {}; let slushLive = 0, slushTarget = 0;
     rows.forEach(r => {
-      if (isSlush(r.client)) { if (r.rating <= 4) slushPool += r.yearTotal; return; }
+      if (isSlush(r.client)) { if (r.rating <= 4) slushLive += r.yearTotal; return; }
       const k = sliceKey(r);
       const g = groups[k] || (groups[k] = { key: k, booked: 0, p90: 0, likely: 0, low: 0 });
       g[RB(r.rating)] += r.yearTotal;
     });
-    if (sliceDim === 'client') Object.keys(baseByClient).forEach(c => { if (lead && !(leaderClients && leaderClients.has(c))) return; if (!groups[c]) groups[c] = { key: c, booked: 0, p90: 0, likely: 0, low: 0 }; });
+    if (sliceDim === 'client') Object.keys(baseByClient).forEach(c => {
+      if (lead && !(leaderClients && leaderClients.has(c))) return;
+      if (isSlush(c)) { slushTarget += (baseByClient[c].annual || 0); return; }   // incremental baseline line → reserve
+      if (!groups[c]) groups[c] = { key: c, booked: 0, p90: 0, likely: 0, low: 0 };
+    });
     adjustEntries.forEach(a => { if (a.key && a.dim === sliceDim && !groups[a.key]) groups[a.key] = { key: a.key, booked: 0, p90: 0, likely: 0, low: 0 }; });
 
     const list = Object.values(groups).map(g => {
@@ -242,17 +248,19 @@
       return (b.tgt || b.projected) - (a.tgt || a.projected);
     });
 
-    // "Allocated for New Business" = the budgeted new-biz reserve (slush), drawn down
-    // as real New Clients/Projects materialize — so it offsets their gains instead of
-    // double-counting against the budget.
+    // "Allocated for New Business" = the budgeted incremental reserve (baseline
+    // "Incremental Business" line + live unnamed pipeline), drawn down as real New
+    // Clients/Projects land — so it offsets their gains instead of double-counting.
     const newClientTotal = list.filter(g => g.isNew).reduce((a, g) => a + g.projected, 0);
-    const allocatedNewBiz = Math.max(0, slushPool - newClientTotal);
-    const drawnNewBiz = slushPool - allocatedNewBiz;
+    const allocatedRemaining = Math.max(0, slushTarget - newClientTotal - slushLive);
+    const allocatedProjected = slushLive + allocatedRemaining;   // the reserve's contribution to projected
+    const drawnNewBiz = Math.min(newClientTotal, Math.max(0, slushTarget - slushLive));
 
     let T = { tgt: 0, booked: 0, p90: 0, likely: 0, low: 0, adjust: 0, projected: 0 };
     list.forEach(g => { T.tgt += g.tgt || 0; T.booked += g.booked; T.p90 += g.p90; T.likely += g.likely; T.low += g.low; T.adjust += g.adjust; T.projected += g.projected; });
-    T.adjust += overallAdj + allocatedNewBiz;  // Allocated for New Business rolls in below the line
-    T.projected += overallAdj + allocatedNewBiz;
+    T.tgt += slushTarget;                          // budget includes the incremental reserve target
+    T.adjust += overallAdj + allocatedProjected;   // Allocated for New Business rolls in below the line
+    T.projected += overallAdj + allocatedProjected;
     const vsTotal = T.projected - T.tgt;
 
     const scName = sc ? sc.name : 'Live only';
@@ -299,9 +307,9 @@
     if (overallAdj) {
       html += `<tr><td class="lbl">＋ Overall adjustment</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="${overallAdj>0?'num pos':'num neg'}">${(overallAdj>0?'+':'')+fmt(overallAdj)}</td><td><strong>${fmt(overallAdj)}</strong></td><td>—</td><td class="na">N/A</td></tr>`;
     }
-    if (slushPool || allocatedNewBiz) {
+    if (slushTarget || allocatedProjected) {
       const drawnNote = drawnNewBiz > 0 ? '−' + fmt(drawnNewBiz) + ' drawn' : '';
-      html += `<tr class="fbiz"><td class="lbl">↳ Allocated for New Business</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="num pos">+${fmt(allocatedNewBiz)}</td><td><strong>${fmt(allocatedNewBiz)}</strong></td><td class="num neg">${drawnNote}</td><td class="na">N/A</td></tr>`;
+      html += `<tr class="fbiz"><td class="lbl">↳ Allocated for New Business · incremental reserve</td><td>${slushTarget ? fmt(slushTarget) : '—'}</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="num pos">+${fmt(allocatedProjected)}</td><td><strong>${fmt(allocatedProjected)}</strong></td><td class="num neg">${drawnNote}</td><td class="na">N/A</td></tr>`;
     }
     html += `</tbody><tfoot><tr class="tot">
       <td class="lbl">Total</td><td>${fmt(T.tgt)}</td>
