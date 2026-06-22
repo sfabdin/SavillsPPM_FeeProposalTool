@@ -545,6 +545,12 @@
   }
 
   function projectFee(p) {
+    // Imported projects carry their $ in the locked monthly series, not in roles.
+    if (p.source && p.source.importedByMonth && !(p.source && p.source.reconciled)) {
+      const series = STORE.monthlySeries(p, CATALOG) || [];
+      const net = series.reduce((a, s) => a + (s.amount || 0), 0);
+      return { gross: net, lockCredit: 0, discount: 0, net, fteMonths: 0 };
+    }
     return STORE.projectFinancials(p, r => STORE.getTierRateFromCatalog(r, CATALOG, p));
   }
 
