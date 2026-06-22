@@ -88,6 +88,22 @@ table.cmp td.low, table.cmp th.low { color: #9aa0aa; }
 table.cmp td.na { color: #9aa0aa; font-style: italic; text-align: left; }
 table.cmp tr.fbiz td { background: #f7f5f1; }
 table.cmp tr.section-row td { background: #eef1f4; color: var(--sav-steel); font-weight: 700; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 12px; }
+/* Drill-down tree */
+table.cmp a.tw { text-decoration: none; color: var(--sav-steel); margin-right: 5px; display: inline-block; width: 12px; }
+table.cmp a.tw:hover { color: var(--sav-navy); }
+table.cmp .caret { font-size: 9px; }
+table.cmp .caret-sp { display: inline-block; width: 12px; margin-right: 5px; }
+table.cmp tr.lvl0 td { background: #eef1f4; font-weight: 700; }
+table.cmp tr.lvl0 .b0 { color: var(--sav-navy); letter-spacing: 0.02em; }
+table.cmp tr.lvl0.reserve td, table.cmp tr.lvl0.adj td { background: #f7f5f1; }
+table.cmp tr.lvl1 td { background: #fff; }
+table.cmp tr.lvl1 .b1 { font-weight: 600; color: var(--sav-navy); }
+table.cmp tr.lvl2 td { background: #fcfcfb; }
+table.cmp tr.lvl2 .b2 { font-weight: 400; color: var(--sav-steel); font-size: 11px; }
+table.cmp td.past { color: #1f8a4c; } table.cmp td.cur, table.cmp th.cur { border-left: 2px solid var(--sav-teal); border-right: 2px solid var(--sav-teal); }
+.seg-ctl { display: inline-flex; border: 1px solid var(--hair-strong); border-radius: 5px; overflow: hidden; }
+.seg-ctl button { border: 0; background: #fff; color: var(--sav-steel); font: inherit; font-size: 12px; padding: 5px 12px; cursor: pointer; }
+.seg-ctl button.on { background: var(--sav-navy); color: #fff; }
 .mcol2 .seg { width: 100%; }
 .mcol2 .btot { position: absolute; left: -4px; right: -4px; text-align: center; font-size: 9px; font-weight: 700; color: var(--sav-navy); white-space: nowrap; }
 .mcol2 .tgt { position: absolute; left: -3px; right: -3px; height: 0; border-top: 2px solid #25273A; z-index: 2; }

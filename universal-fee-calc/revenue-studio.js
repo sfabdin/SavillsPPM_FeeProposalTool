@@ -20,6 +20,12 @@
   let activeScenarioId = null;
   let sliceDim = 'client';
   let activeYear = 2026;
+  let viewMode = 'year';                       // 'year' | 'month'
+  const COLLAPSED = new Set();                 // bucket ids the user collapsed
+  const OPENGRP = new Set();                   // group ids the user drilled into
+  let LAST_TREE = null;                        // last rendered tree (for export)
+  try { const s = JSON.parse(localStorage.getItem('ufc_studio_view') || '{}'); if (s.mode) viewMode = s.mode; (s.collapsed || []).forEach(x => COLLAPSED.add(x)); (s.open || []).forEach(x => OPENGRP.add(x)); } catch (e) {}
+  const saveView = () => { try { localStorage.setItem('ufc_studio_view', JSON.stringify({ mode: viewMode, collapsed: [...COLLAPSED], open: [...OPENGRP] })); } catch (e) {} };
   let viewAsLeaderId = null;     // admin previewing a leader; null = own/admin view
   let isAdminUser = false;
 
@@ -47,6 +53,26 @@
     $('#baseline-sel').addEventListener('change', e => { activeBaselineId = e.target.value; render(); });
     $('#load-budget-btn').addEventListener('click', () => $('#budget-file').click());
     $('#budget-file').addEventListener('change', onBudgetFile);
+    // Granularity toggle (Year / Month)
+    $('#viewmode-ctl') && $('#viewmode-ctl').addEventListener('click', e => {
+      const b = e.target.closest('button[data-mode]'); if (!b) return;
+      viewMode = b.dataset.mode;
+      [...$('#viewmode-ctl').querySelectorAll('button')].forEach(x => x.classList.toggle('on', x.dataset.mode === viewMode));
+      saveView(); render();
+    });
+    [...($('#viewmode-ctl') ? $('#viewmode-ctl').querySelectorAll('button') : [])].forEach(x => x.classList.toggle('on', x.dataset.mode === viewMode));
+    $('#expand-all-btn') && $('#expand-all-btn').addEventListener('click', () => { COLLAPSED.clear(); (LAST_TREE ? LAST_TREE.tree : []).forEach(b => (b.kids || []).forEach(g => OPENGRP.add(g.id))); saveView(); render(); });
+    $('#collapse-all-btn') && $('#collapse-all-btn').addEventListener('click', () => { OPENGRP.clear(); saveView(); render(); });
+    $('#export-view-btn') && $('#export-view-btn').addEventListener('click', exportView);
+    // Drill-down caret delegation
+    $('#cmp-table') && $('#cmp-table').addEventListener('click', e => {
+      const a = e.target.closest('a.tw'); if (!a) return;
+      e.preventDefault();
+      const id = a.dataset.node;
+      if (a.dataset.kind === 'bkt') { if (COLLAPSED.has(id)) COLLAPSED.delete(id); else COLLAPSED.add(id); }
+      else { if (OPENGRP.has(id)) OPENGRP.delete(id); else OPENGRP.add(id); }
+      saveView(); render();
+    });
     $('#scenario-sel') && $('#scenario-sel').addEventListener('change', e => { activeScenarioId = e.target.value || null; render(); });
     $('#new-scenario-btn') && $('#new-scenario-btn').addEventListener('click', newScenario);
     $('#rename-scenario-btn') && $('#rename-scenario-btn').addEventListener('click', renameScenario);
@@ -188,6 +214,8 @@
     $('#no-baseline').hidden = true;
 
     const sc = activeScenario();
+    const now0 = new Date();
+    const curMonthIdx = (activeYear === now0.getFullYear()) ? (now0.getMonth() + 1) : (activeYear < now0.getFullYear() ? 13 : 0);
     let rows = liveRows(baseline);
     // Leader mode: restrict to the leader's own projects + their client set.
     let leaderClients = null;
@@ -225,8 +253,9 @@
     rows.forEach(r => {
       if (isSlush(r.client)) { if (r.rating <= 4) slushLive += r.yearTotal; return; }
       const k = sliceKey(r);
-      const g = groups[k] || (groups[k] = { key: k, booked: 0, p90: 0, likely: 0, low: 0 });
+      const g = groups[k] || (groups[k] = { key: k, booked: 0, p90: 0, likely: 0, low: 0, projects: [] });
       g[RB(r.rating)] += r.yearTotal;
+      g.projects.push(r);
     });
     if (sliceDim === 'client') Object.keys(baseByClient).forEach(c => {
       if (lead && !(leaderClients && leaderClients.has(c))) return;
@@ -271,54 +300,96 @@
       <div class="kpi"><div class="k-lbl">${vsTotal>=0?'Over target':'Remaining to target'}</div><div class="k-val ${vsTotal>=0?'num pos':'num neg'}">${vsTotal>=0?'+':''}${fmt(vsTotal)}</div><div class="k-sub">${T.tgt?((vsTotal/T.tgt)*100).toFixed(1)+'% of target':'—'}</div></div>`;
 
     const sliceLabel = { client: 'Client', leader: 'Revenue Leader', industry: 'Industry', serviceLine: 'Service line', rating: 'Rating' }[sliceDim];
-    let html = `<thead><tr>
-      <th class="lbl">${sliceLabel}</th>
-      <th>${esc(baseline.name)} target</th>
-      <th>Rating 1</th><th>Rating 2</th><th>Rating 3–4</th>
-      <th class="low">Rating 5–7</th>
-      <th>Adjust</th><th>Projected</th><th>Remaining</th><th>Status</th>
-    </tr></thead><tbody>`;
-    let existingShown = false, newSectionShown = false;
-    list.forEach(g => {
-      if (sliceDim === 'client' && !g.isNew && !existingShown) {
-        existingShown = true;
-        html += `<tr class="section-row"><td class="lbl" colspan="10">Existing Clients · have a Budget / RF1 target</td></tr>`;
+
+    // ---- Build the drill-down tree: bucket → group (slice key) → project ----
+    const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const RBkey = (rt) => rt === 1 ? 'booked' : rt === 2 ? 'p90' : (rt >= 3 && rt <= 4) ? 'likely' : 'low';
+    function projNode(r, pid) {
+      const n = { id: pid + '/' + r.p.id, label: (r.p.project && r.p.project.name) || 'Untitled', level: 2, kind: 'project',
+        tgt: null, booked: 0, p90: 0, likely: 0, low: 0, adjust: 0, byMonth: {}, kids: [], rating: r.rating, status: (r.p.project && r.p.project.status) || '' };
+      n[RBkey(r.rating)] = r.yearTotal;
+      Object.keys(r.byMonth || {}).forEach(mm => { n.byMonth[mm] = (n.byMonth[mm] || 0) + r.byMonth[mm]; });
+      n.projected = n.booked + n.p90 + n.likely;        // low excluded
+      return n;
+    }
+    function groupNode(g, pid) {
+      const id = pid + '/' + g.key;
+      const kids = (g.projects || []).map(r => projNode(r, id)).sort((a, b) => b.projected - a.projected);
+      const byMonth = {};
+      kids.forEach(k => Object.keys(k.byMonth).forEach(mm => { byMonth[mm] = (byMonth[mm] || 0) + k.byMonth[mm]; }));
+      return { id, label: g.key, level: 1, kind: 'group', tgt: g.tgt, booked: g.booked, p90: g.p90, likely: g.likely, low: g.low,
+        adjust: g.adjust, projected: g.projected, byMonth, kids, vsT: g.vsT, isNew: g.isNew };
+    }
+    function bucketNode(label, id, glist) {
+      const kids = glist.map(g => groupNode(g, id));
+      const agg = { id, label, level: 0, kind: 'bucket', tgt: 0, booked: 0, p90: 0, likely: 0, low: 0, adjust: 0, projected: 0, byMonth: {}, kids };
+      kids.forEach(k => { agg.tgt += k.tgt || 0; agg.booked += k.booked; agg.p90 += k.p90; agg.likely += k.likely; agg.low += k.low; agg.adjust += k.adjust; agg.projected += k.projected; Object.keys(k.byMonth).forEach(mm => { agg.byMonth[mm] = (agg.byMonth[mm] || 0) + k.byMonth[mm]; }); });
+      return agg;
+    }
+    const tree = [];
+    if (sliceDim === 'client') {
+      const ex = list.filter(g => !g.isNew), nw = list.filter(g => g.isNew);
+      if (ex.length) tree.push(bucketNode('Existing Clients · Budget / RF1', 'bkt-ex', ex));
+      if (nw.length) tree.push(bucketNode('New Clients / Projects · no baseline', 'bkt-new', nw));
+    } else {
+      tree.push(bucketNode(sliceLabel + 's', 'bkt-all', list));
+    }
+    // Below-the-line reserve + overall adjustment as leaf buckets.
+    if (slushTarget || allocatedProjected) tree.push({ id: 'bkt-alloc', label: '↳ Allocated for New Business · incremental reserve', level: 0, kind: 'reserve', tgt: slushTarget, booked: 0, p90: 0, likely: 0, low: 0, adjust: 0, projected: allocatedProjected, byMonth: {}, kids: [], drawn: drawnNewBiz });
+    if (overallAdj) tree.push({ id: 'bkt-adj', label: '＋ Overall adjustment', level: 0, kind: 'adj', tgt: null, booked: 0, p90: 0, likely: 0, low: 0, adjust: overallAdj, projected: overallAdj, byMonth: {}, kids: [] });
+
+    LAST_TREE = { tree, T, sliceLabel, baselineName: baseline.name, mode: viewMode };
+
+    // ---- Render rows honoring collapse state ----
+    const isBktOpen = (id) => !COLLAPSED.has(id);
+    const isGrpOpen = (id) => OPENGRP.has(id);
+    const fmtCell = (v) => v ? fmt(v) : '—';
+    const caret = (open) => `<span class="caret">${open ? '▾' : '▸'}</span>`;
+    const monthCols = MO.map((mo, i) => `<th class="${i+1<curMonthIdx?'past':''} ${i+1===curMonthIdx?'cur':''}">${mo}</th>`).join('');
+
+    let head, bodyRows = '';
+    if (viewMode === 'month') {
+      head = `<tr><th class="lbl">${sliceLabel}</th>${monthCols}<th>Total</th><th>Target</th><th>Rem.</th></tr>`;
+    } else {
+      head = `<tr><th class="lbl">${sliceLabel}</th><th>${esc(baseline.name)} target</th><th>Rating 1</th><th>Rating 2</th><th>Rating 3–4</th><th class="low">Rating 5–7</th><th>Adjust</th><th>Projected</th><th>Remaining</th><th>Status</th></tr>`;
+    }
+    const colCount = viewMode === 'month' ? 15 : 10;
+
+    function rowFor(n, open, hasKids) {
+      const pad = 6 + n.level * 18;
+      const tw = `<td class="lbl" style="padding-left:${pad}px">${hasKids ? `<a href="#" class="tw" data-node="${esc(n.id)}" data-kind="${n.kind === 'bucket' || n.kind === 'reserve' || n.kind === 'adj' ? 'bkt' : 'grp'}">${caret(open)}</a>` : '<span class="caret-sp"></span>'}<span class="${n.level===0?'b0':n.level===1?'b1':'b2'}">${esc(n.label)}</span></td>`;
+      if (viewMode === 'month') {
+        const cells = MO.map((_, i) => { const v = n.byMonth[i + 1] || 0; return `<td class="${i+1<curMonthIdx?'past':''} ${i+1===curMonthIdx?'cur':''}">${v ? fmt(v) : '·'}</td>`; }).join('');
+        const hasT = n.tgt != null && n.tgt > 0;
+        const rem = hasT ? (n.projected - n.tgt) : null;
+        return `<tr class="lvl${n.level} ${n.kind}">${tw}${cells}<td><strong>${fmtCell(n.projected)}</strong></td><td>${hasT ? fmt(n.tgt) : '—'}</td><td class="${hasT?(rem>=0?'num pos':'num neg'):''}">${hasT ? ((rem>=0?'+':'')+fmt(rem)) : '—'}</td></tr>`;
       }
-      if (sliceDim === 'client' && g.isNew && !newSectionShown) {
-        newSectionShown = true;
-        html += `<tr class="section-row"><td class="lbl" colspan="10">New Clients / Projects · no baseline target</td></tr>`;
-      }
-      const hasT = g.tgt != null;
-      const flag = !hasT ? '' : (Math.abs(g.vsT) < Math.max(1, g.tgt * 0.02) ? '<span class="flag at">At</span>' : (g.vsT > 0 ? '<span class="flag above">Above</span>' : '<span class="flag below">Below</span>'));
-      const rem = hasT ? (g.vsT < 0 ? fmt(g.vsT) : (g.vsT > 0 ? '+' + fmt(g.vsT) : '✓')) : '—';
-      html += `<tr>
-        <td class="lbl">${esc(g.key)}</td>
-        <td>${hasT ? fmt(g.tgt) : '—'}</td>
-        <td class="bk-booked">${g.booked ? fmt(g.booked) : '—'}</td>
-        <td class="bk-p90">${g.p90 ? fmt(g.p90) : '—'}</td>
-        <td class="bk-likely">${g.likely ? fmt(g.likely) : '—'}</td>
-        <td class="low">${g.low ? fmt(g.low) : '—'}</td>
-        <td class="${g.adjust?(g.adjust>0?'num pos':'num neg'):''}">${g.adjust ? (g.adjust>0?'+':'')+fmt(g.adjust) : '—'}</td>
-        <td><strong>${fmt(g.projected)}</strong></td>
-        <td class="${hasT?(g.vsT>=0?'num pos':'num neg'):''}">${rem}</td>
-        <td style="text-align:left;">${flag}</td>
-      </tr>`;
+      const hasT = n.tgt != null && (n.kind === 'reserve' ? n.tgt > 0 : n.tgt > 0);
+      const vsT = hasT ? (n.projected - n.tgt) : null;
+      const flag = !hasT ? (n.kind==='reserve'||n.kind==='adj'?'<span class="na">N/A</span>':'') : (Math.abs(vsT) < Math.max(1, n.tgt * 0.02) ? '<span class="flag at">At</span>' : (vsT > 0 ? '<span class="flag above">Above</span>' : '<span class="flag below">Below</span>'));
+      const rem = hasT ? (vsT < 0 ? fmt(vsT) : (vsT > 0 ? '+' + fmt(vsT) : '✓')) : (n.kind==='reserve' && n.drawn>0 ? '−'+fmt(n.drawn)+' drawn' : '—');
+      const statusCell = n.kind === 'project' ? `<td style="text-align:left;font-size:10px;color:var(--sav-steel);">${esc((STORE.STATUS_LABELS && STORE.STATUS_LABELS[n.status]) || n.status || '')}</td>` : `<td style="text-align:left;">${flag}</td>`;
+      return `<tr class="lvl${n.level} ${n.kind}">${tw}<td>${hasT ? fmt(n.tgt) : '—'}</td><td class="bk-booked">${fmtCell(n.booked)}</td><td class="bk-p90">${fmtCell(n.p90)}</td><td class="bk-likely">${fmtCell(n.likely)}</td><td class="low">${fmtCell(n.low)}</td><td class="${n.adjust?(n.adjust>0?'num pos':'num neg'):''}">${n.adjust?((n.adjust>0?'+':'')+fmt(n.adjust)):'—'}</td><td><strong>${fmtCell(n.projected)}</strong></td><td class="${hasT?(vsT>=0?'num pos':'num neg'):'num neg'}">${rem}</td>${statusCell}</tr>`;
+    }
+    tree.forEach(bkt => {
+      const bktOpen = isBktOpen(bkt.id);
+      bodyRows += rowFor(bkt, bktOpen, (bkt.kids || []).length > 0);
+      if (!bktOpen) return;
+      (bkt.kids || []).forEach(grp => {
+        const grpOpen = isGrpOpen(grp.id);
+        bodyRows += rowFor(grp, grpOpen, (grp.kids || []).length > 0);
+        if (grpOpen) (grp.kids || []).forEach(pr => { bodyRows += rowFor(pr, false, false); });
+      });
     });
-    if (overallAdj) {
-      html += `<tr><td class="lbl">＋ Overall adjustment</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="${overallAdj>0?'num pos':'num neg'}">${(overallAdj>0?'+':'')+fmt(overallAdj)}</td><td><strong>${fmt(overallAdj)}</strong></td><td>—</td><td class="na">N/A</td></tr>`;
+
+    let footCells;
+    if (viewMode === 'month') {
+      const mtot = MO.map((_, i) => { let s = 0; tree.forEach(b => { s += b.byMonth[i + 1] || 0; }); return `<td>${s ? fmt(s) : '·'}</td>`; }).join('');
+      footCells = `${mtot}<td><strong>${fmt(T.projected)}</strong></td><td>${fmt(T.tgt)}</td><td class="${vsTotal>=0?'num pos':'num neg'}">${vsTotal>=0?'+':''}${fmt(vsTotal)}</td>`;
+    } else {
+      footCells = `<td>${fmt(T.tgt)}</td><td class="bk-booked">${fmt(T.booked)}</td><td class="bk-p90">${fmt(T.p90)}</td><td class="bk-likely">${fmt(T.likely)}</td><td class="low">${fmt(T.low)}</td><td class="${T.adjust?(T.adjust>0?'num pos':'num neg'):''}">${T.adjust?(T.adjust>0?'+':'')+fmt(T.adjust):'—'}</td><td>${fmt(T.projected)}</td><td class="${vsTotal>=0?'num pos':'num neg'}">${vsTotal>=0?'+':''}${fmt(vsTotal)}</td><td></td>`;
     }
-    if (slushTarget || allocatedProjected) {
-      const drawnNote = drawnNewBiz > 0 ? '−' + fmt(drawnNewBiz) + ' drawn' : '';
-      html += `<tr class="fbiz"><td class="lbl">↳ Allocated for New Business · incremental reserve</td><td>${slushTarget ? fmt(slushTarget) : '—'}</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="num pos">+${fmt(allocatedProjected)}</td><td><strong>${fmt(allocatedProjected)}</strong></td><td class="num neg">${drawnNote}</td><td class="na">N/A</td></tr>`;
-    }
-    html += `</tbody><tfoot><tr class="tot">
-      <td class="lbl">Total</td><td>${fmt(T.tgt)}</td>
-      <td class="bk-booked">${fmt(T.booked)}</td><td class="bk-p90">${fmt(T.p90)}</td><td class="bk-likely">${fmt(T.likely)}</td>
-      <td class="low">${fmt(T.low)}</td>
-      <td class="${T.adjust?(T.adjust>0?'num pos':'num neg'):''}">${T.adjust?(T.adjust>0?'+':'')+fmt(T.adjust):'—'}</td>
-      <td>${fmt(T.projected)}</td>
-      <td class="${vsTotal>=0?'num pos':'num neg'}">${vsTotal>=0?'+':''}${fmt(vsTotal)}</td><td></td>
-    </tr></tfoot>`;
+    const html = `<thead>${head}</thead><tbody>${bodyRows}</tbody><tfoot><tr class="tot"><td class="lbl">Total</td>${footCells}</tr></tfoot>`;
     $('#cmp-table').innerHTML = html;
     renderEntries();
     renderMonthly(rows, baseline, isFuture, T.tgt);
@@ -406,6 +477,40 @@
       </div>
       <div class="chart"><div class="grid">${grid}</div>${bars}</div>
       <div class="table-wrap">${tableHtml}</div>`;
+  }
+
+  /* Export the current view (slice + granularity + full drill-down) to Excel. */
+  function exportView() {
+    if (typeof XLSX === 'undefined') { alert('Excel library not loaded.'); return; }
+    if (!LAST_TREE) { alert('Nothing to export yet.'); return; }
+    const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const { tree, T, sliceLabel, baselineName, mode } = LAST_TREE;
+    const aoa = [];
+    if (mode === 'month') {
+      aoa.push([sliceLabel, ...MO, 'Total', 'Target', 'Remaining']);
+      const push = (n, depth) => {
+        const hasT = n.tgt != null && n.tgt > 0;
+        aoa.push(['  '.repeat(depth) + n.label, ...MO.map((_, i) => Math.round(n.byMonth[i + 1] || 0)), Math.round(n.projected), hasT ? Math.round(n.tgt) : '', hasT ? Math.round(n.projected - n.tgt) : '']);
+        (n.kids || []).forEach(k => push(k, depth + 1));
+      };
+      tree.forEach(b => push(b, 0));
+      aoa.push(['Total', ...MO.map((_, i) => Math.round(tree.reduce((s, b) => s + (b.byMonth[i + 1] || 0), 0))), Math.round(T.projected), Math.round(T.tgt), Math.round(T.projected - T.tgt)]);
+    } else {
+      aoa.push([sliceLabel, baselineName + ' target', 'Rating 1', 'Rating 2', 'Rating 3-4', 'Rating 5-7', 'Adjust', 'Projected', 'Remaining']);
+      const push = (n, depth) => {
+        const hasT = n.tgt != null && n.tgt > 0;
+        aoa.push(['  '.repeat(depth) + n.label, hasT ? Math.round(n.tgt) : '', Math.round(n.booked), Math.round(n.p90), Math.round(n.likely), Math.round(n.low), Math.round(n.adjust), Math.round(n.projected), hasT ? Math.round(n.projected - n.tgt) : '']);
+        (n.kids || []).forEach(k => push(k, depth + 1));
+      };
+      tree.forEach(b => push(b, 0));
+      aoa.push(['Total', Math.round(T.tgt), Math.round(T.booked), Math.round(T.p90), Math.round(T.likely), Math.round(T.low), Math.round(T.adjust), Math.round(T.projected), Math.round(T.projected - T.tgt)]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Revenue Studio');
+    const lead = effectiveLeader();
+    const fname = `Revenue Studio · ${baselineName} · ${sliceLabel} · ${activeYear}${lead ? ' · ' + lead.displayName : ''} (${mode}).xlsx`;
+    XLSX.writeFile(wb, fname);
   }
 
   /* Scenario entry chips (pool + adjustments) below the table */
