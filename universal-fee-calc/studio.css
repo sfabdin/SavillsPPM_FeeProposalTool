@@ -79,6 +79,10 @@ table.cmp td.low, table.cmp th.low { color: #9aa0aa; }
 .mcol2 { flex: 1; display: flex; flex-direction: column; align-items: center; }
 .mcol2 .bar { position: relative; width: 100%; max-width: 46px; display: flex; flex-direction: column-reverse; }
 .mcol2 .seg.booked { background: #1f8a4c; } .mcol2 .seg.p90 { background: #3aa95c; } .mcol2 .seg.likely { background: #8fc97f; }
+.mcol2 .seg.gap { background: repeating-linear-gradient(45deg,#eceef1,#eceef1 4px,#f6f7f8 4px,#f6f7f8 8px); }
+.sw.gap { background: repeating-linear-gradient(45deg,#dfe2e6,#dfe2e6 3px,#f3f4f5 3px,#f3f4f5 6px); }
+table.cmp td.na { color: #9aa0aa; font-style: italic; text-align: left; }
+table.cmp tr.fbiz td { background: #f7f5f1; }
 .mcol2 .seg { width: 100%; }
 .mcol2 .tgt { position: absolute; left: -2px; right: -2px; height: 2px; background: #25273A; }
 .mcol2 .mlbl { font-size: 10px; color: var(--sav-steel); margin-top: 5px; }

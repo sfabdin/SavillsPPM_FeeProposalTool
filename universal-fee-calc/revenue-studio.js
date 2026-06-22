@@ -211,9 +211,13 @@
     const overallAdj = adjustEntries.filter(a => a.type === 'adjust' && a.dim === 'all').reduce((s, a) => s + a.annual, 0);
 
     // ---- Group live by slice, split into likelihood buckets ----
+    // "Future Business" = the unallocated slush from Revenue Projections — shown
+    // below the line as an adjustment, never as a client row.
+    const isFuture = (name) => /new business|future business|opportunit|unalloc|slush|^tbd$/i.test(name || '');
     const RB = (r) => r === 1 ? 'booked' : r === 2 ? 'p90' : (r >= 3 && r <= 4) ? 'likely' : 'low';
-    const groups = {};
+    const groups = {}; let futureBiz = 0;
     rows.forEach(r => {
+      if (isFuture(r.client)) { if (r.rating <= 4) futureBiz += r.yearTotal; return; }
       const k = sliceKey(r);
       const g = groups[k] || (groups[k] = { key: k, booked: 0, p90: 0, likely: 0, low: 0 });
       g[RB(r.rating)] += r.yearTotal;
@@ -231,22 +235,23 @@
 
     let T = { tgt: 0, booked: 0, p90: 0, likely: 0, low: 0, adjust: 0, projected: 0 };
     list.forEach(g => { T.tgt += g.tgt || 0; T.booked += g.booked; T.p90 += g.p90; T.likely += g.likely; T.low += g.low; T.adjust += g.adjust; T.projected += g.projected; });
-    T.adjust += overallAdj; T.projected += overallAdj;
+    T.adjust += overallAdj + futureBiz;        // Future Business rolls in as a below-the-line adjust
+    T.projected += overallAdj + futureBiz;
     const vsTotal = T.projected - T.tgt;
 
     const scName = sc ? sc.name : 'Live only';
     $('#kpis').innerHTML = `
-      <div class="kpi teal"><div class="k-lbl">${esc(baseline.name)} target · ${activeYear}</div><div class="k-val">${fmt(T.tgt)}</div><div class="k-sub">Frozen baseline</div></div>
-      <div class="kpi navy"><div class="k-lbl">Projected (1–4)${sc?' · '+esc(scName):''}</div><div class="k-val">${fmt(T.projected)}</div><div class="k-sub">Booked + 90% + likely + adj</div></div>
-      <div class="kpi"><div class="k-lbl">Booked (rated 1)</div><div class="k-val">${fmt(T.booked)}</div><div class="k-sub">Firm revenue</div></div>
+      <div class="kpi teal"><div class="k-lbl">${esc(baseline.name)} target · ${activeYear}${lead ? ' · your clients' : ''}</div><div class="k-val">${fmt(T.tgt)}</div><div class="k-sub">${lead ? 'Your submitted target' : 'Frozen baseline'}</div></div>
+      <div class="kpi navy"><div class="k-lbl">Projected (rating 1–4)${sc?' · '+esc(scName):''}</div><div class="k-val">${fmt(T.projected)}</div><div class="k-sub">Booked + 90% + likely + adj</div></div>
+      <div class="kpi"><div class="k-lbl">Booked (rating 1)</div><div class="k-val">${fmt(T.booked)}</div><div class="k-sub">Firm revenue</div></div>
       <div class="kpi"><div class="k-lbl">${vsTotal>=0?'Over target':'Remaining to target'}</div><div class="k-val ${vsTotal>=0?'num pos':'num neg'}">${vsTotal>=0?'+':''}${fmt(vsTotal)}</div><div class="k-sub">${T.tgt?((vsTotal/T.tgt)*100).toFixed(1)+'% of target':'—'}</div></div>`;
 
     const sliceLabel = { client: 'Client', leader: 'Revenue Leader', industry: 'Industry', serviceLine: 'Service line', rating: 'Rating' }[sliceDim];
     let html = `<thead><tr>
       <th class="lbl">${sliceLabel}</th>
       <th>${esc(baseline.name)} target</th>
-      <th>① Booked</th><th>② 90%</th><th>③④ Likely</th>
-      <th class="low">⑤–⑦ Low</th>
+      <th>Rating 1</th><th>Rating 2</th><th>Rating 3–4</th>
+      <th class="low">Rating 5–7</th>
       <th>Adjust</th><th>Projected</th><th>Remaining</th><th>Status</th>
     </tr></thead><tbody>`;
     list.forEach(g => {
@@ -267,7 +272,10 @@
       </tr>`;
     });
     if (overallAdj) {
-      html += `<tr><td class="lbl">＋ Overall adjustment</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="${overallAdj>0?'num pos':'num neg'}">${(overallAdj>0?'+':'')+fmt(overallAdj)}</td><td><strong>${fmt(overallAdj)}</strong></td><td>—</td><td></td></tr>`;
+      html += `<tr><td class="lbl">＋ Overall adjustment</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="${overallAdj>0?'num pos':'num neg'}">${(overallAdj>0?'+':'')+fmt(overallAdj)}</td><td><strong>${fmt(overallAdj)}</strong></td><td>—</td><td class="na">N/A</td></tr>`;
+    }
+    if (futureBiz) {
+      html += `<tr class="fbiz"><td class="lbl">↳ Future Business (slush)</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="num pos">+${fmt(futureBiz)}</td><td><strong>${fmt(futureBiz)}</strong></td><td>—</td><td class="na">N/A</td></tr>`;
     }
     html += `</tbody><tfoot><tr class="tot">
       <td class="lbl">Total</td><td>${fmt(T.tgt)}</td>
@@ -279,53 +287,56 @@
     </tr></tfoot>`;
     $('#cmp-table').innerHTML = html;
     renderEntries();
-    renderMonthly(rows, baseline, T.adjust);
+    renderMonthly(rows, baseline, isFuture, T.tgt);
 
-    $('#studio-foot').innerHTML = `<strong>Projected</strong> = Booked (1) + 90% (2) + Likely (3–4) + adjustments. Low likelihood (5–7) is shown greyed and excluded. <strong>Remaining</strong> is the gap to target (negative) or amount over (positive).` + (sliceDim !== 'client' ? ` <em>${esc(sliceLabel)} has no baseline target (Budget is client-level).</em>` : '');
+    $('#studio-foot').innerHTML = `<strong>Projected</strong> = Rating 1 (Booked) + Rating 2 (90%) + Rating 3–4 (Likely) + adjustments. Rating 5–7 is greyed and excluded. <strong>Future Business</strong> (unallocated slush) sits below the line as an adjustment. <strong>Remaining</strong> is the gap to target (negative) or amount over (positive).` + (sliceDim !== 'client' ? ` <em>${esc(sliceLabel)} has no baseline target (Budget is client-level).</em>` : '');
   }
 
   /* ---- Monthly stacked chart + table, colored by likelihood ---- */
-  function renderMonthly(rows, baseline, totalAdjust) {
+  function renderMonthly(rows, baseline, isFuture, sliceTarget) {
     const host = $('#monthly'); if (!host) return;
     const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const now = new Date(); const curMonth = (activeYear === now.getFullYear()) ? now.getMonth() + 1 : (activeYear < now.getFullYear() ? 13 : 0);
-    // month × bucket
     const m = MO.map(() => ({ booked: 0, p90: 0, likely: 0, low: 0 }));
     rows.forEach(r => {
+      if (isFuture && isFuture(r.client)) return;     // slush excluded from the curve
       const b = r.rating === 1 ? 'booked' : r.rating === 2 ? 'p90' : (r.rating >= 3 && r.rating <= 4) ? 'likely' : 'low';
       Object.keys(r.byMonth).forEach(mm => { const i = (+mm) - 1; if (i >= 0 && i < 12) m[i][b] += r.byMonth[mm]; });
     });
     const liveMonthTotal = (i) => m[i].booked + m[i].p90 + m[i].likely;   // 1–4 (low excluded)
 
-    // Target line: past months = actual booked-through total; remaining = flatline of leftover annual budget.
-    const annualTgt = baseline.total || 0;
+    // Target line, scoped to the current slice's target (so a leader sees only their own).
+    const annualTgt = (sliceTarget != null && sliceTarget > 0) ? sliceTarget : (baseline.total || 0);
     let pastActual = 0; for (let i = 0; i < 12; i++) if (i + 1 < curMonth) pastActual += liveMonthTotal(i);
     const remMonths = Math.max(1, 12 - Math.max(0, curMonth - 1));
     const remPerMonth = Math.max(0, (annualTgt - pastActual)) / remMonths;
     const tgtLine = MO.map((_, i) => (i + 1 < curMonth) ? liveMonthTotal(i) : remPerMonth);
 
+    // Scale to the tallest of (stacked total, target) so bars + target line share an axis.
     const maxV = Math.max(1, ...MO.map((_, i) => Math.max(liveMonthTotal(i), tgtLine[i])));
-    const H = 150;
+    const H = 170;
+    const px = (v) => Math.max(0, (v / maxV) * H);
     const bars = MO.map((mo, i) => {
-      const seg = (v, cls) => v > 0 ? `<div class="seg ${cls}" style="height:${(v / maxV) * H}px" title="${mo}: ${cls} ${fmt(v)}"></div>` : '';
-      const tY = H - (tgtLine[i] / maxV) * H;
+      const seg = (v, cls) => v > 0 ? `<div class="seg ${cls}" style="height:${px(v)}px" title="${mo}: ${cls} ${fmt(v)}"></div>` : '';
+      // ghost "gap to target" fills the bar up to the target when under (so the bar reads full to target)
+      const gap = Math.max(0, tgtLine[i] - liveMonthTotal(i));
+      const ghost = gap > 0 ? `<div class="seg gap" style="height:${px(gap)}px" title="${mo}: ${fmt(gap)} to target"></div>` : '';
       const isPast = i + 1 < curMonth, isCur = i + 1 === curMonth;
       return `<div class="mcol2 ${isCur ? 'cur' : ''}">
         <div class="bar" style="height:${H}px">
-          ${seg(m[i].booked, 'booked')}${seg(m[i].p90, 'p90')}${seg(m[i].likely, 'likely')}
-          <div class="tgt" style="bottom:${(tgtLine[i] / maxV) * H}px" title="${mo} target ${fmt(tgtLine[i])}"></div>
+          ${seg(m[i].booked, 'booked')}${seg(m[i].p90, 'p90')}${seg(m[i].likely, 'likely')}${ghost}
+          <div class="tgt" style="bottom:${px(tgtLine[i])}px" title="${mo} target ${fmt(tgtLine[i])}"></div>
         </div>
         <div class="mlbl ${isPast ? 'past' : ''} ${isCur ? 'cur' : ''}">${mo}</div>
       </div>`;
     }).join('');
 
-    // Monthly table rows
     const trow = (lbl, cls, vals, bold) => `<tr class="${bold ? 'tot' : ''}"><td class="lbl">${lbl}</td>${vals.map(v => `<td class="${cls}">${v ? fmt(v) : '·'}</td>`).join('')}<td class="${cls}"><strong>${fmt(vals.reduce((a, b) => a + b, 0))}</strong></td></tr>`;
     const tableHtml = `<table class="cmp mtbl"><thead><tr><th class="lbl">By month · ${activeYear}</th>${MO.map((mo, i) => `<th class="${i+1<curMonth?'past':''} ${i+1===curMonth?'cur':''}">${mo}</th>`).join('')}<th>Total</th></tr></thead><tbody>
-      ${trow('① Booked', 'bk-booked', m.map(x => x.booked))}
-      ${trow('② 90%', 'bk-p90', m.map(x => x.p90))}
-      ${trow('③④ Likely', 'bk-likely', m.map(x => x.likely))}
-      ${trow('⑤–⑦ Low', 'low', m.map(x => x.low))}
+      ${trow('Rating 1 · Booked', 'bk-booked', m.map(x => x.booked))}
+      ${trow('Rating 2 · 90%', 'bk-p90', m.map(x => x.p90))}
+      ${trow('Rating 3–4 · Likely', 'bk-likely', m.map(x => x.likely))}
+      ${trow('Rating 5–7 · Low', 'low', m.map(x => x.low))}
       ${trow('Target', '', tgtLine, true)}
     </tbody></table>`;
 
@@ -333,10 +344,10 @@
       <div class="mhead">
         <h2>By month · ${activeYear}</h2>
         <div class="legend">
-          <span><i class="sw booked"></i>① Booked</span>
-          <span><i class="sw p90"></i>② 90%</span>
-          <span><i class="sw likely"></i>③④ Likely</span>
-          <span><i class="sw low"></i>⑤–⑦ Low (excl.)</span>
+          <span><i class="sw booked"></i>Rating 1 · Booked</span>
+          <span><i class="sw p90"></i>Rating 2 · 90%</span>
+          <span><i class="sw likely"></i>Rating 3–4 · Likely</span>
+          <span><i class="sw gap"></i>Gap to target</span>
           <span><i class="sw tgtsw"></i>Target</span>
         </div>
       </div>
