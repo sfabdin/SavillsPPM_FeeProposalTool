@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Revenue Studio</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="stylesheet" href="universal-fee-calc/studio.css">
+</head>
+<body>
+<div class="studio-wrap">
+  <header class="studio-head">
+    <div>
+      <div class="kicker">Savills PPM · Admin</div>
+      <h1>Revenue Studio</h1>
+      <div class="sub">Slice, compare, and shape revenue against frozen baselines — without touching project data. Real projections change only in the calculator.</div>
+    </div>
+    <a class="btn ghost" href="Fee Generator.html">← Home</a>
+  </header>
+
+  <div id="gate" class="gate" hidden></div>
+
+  <div id="studio-body" hidden>
+    <!-- Baseline bar -->
+    <div class="bar">
+      <div class="bar-group">
+        <label>Baseline (target)</label>
+        <select id="baseline-sel"></select>
+      </div>
+      <div class="bar-group">
+        <label>Slice by</label>
+        <select id="slice-sel">
+          <option value="client">Client</option>
+          <option value="leader">Revenue Leader</option>
+          <option value="industry">Industry</option>
+          <option value="serviceLine">Service line</option>
+          <option value="rating">Rating</option>
+        </select>
+      </div>
+      <div class="bar-group">
+        <label>Year</label>
+        <select id="year-sel"></select>
+      </div>
+      <div class="bar-spacer"></div>
+      <button class="btn" id="load-budget-btn">Load 2026 Budget…</button>
+      <input type="file" id="budget-file" accept=".xlsx,.xls" hidden>
+    </div>
+
+    <div id="kpis" class="kpis"></div>
+    <div id="no-baseline" class="empty" hidden>No baseline loaded yet. Click <strong>Load 2026 Budget</strong> to bring in the annual plan — it flatlines across the year as your target.</div>
+    <div class="table-wrap"><table id="cmp-table" class="cmp"></table></div>
+    <div class="foot" id="studio-foot"></div>
+  </div>
+</div>
+
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/revenue-studio.js"></script>
+</body>
+</html>
