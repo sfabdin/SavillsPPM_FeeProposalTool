@@ -34,6 +34,7 @@
 <body>
 <div class="wrap">
   <h1>Import Revenue Projections</h1>
+  <div id="dep-banner" style="display:none;background:#fbe9ea;color:#b3151b;padding:12px 16px;margin-bottom:16px;font-size:13px;"></div>
   <div class="sub">Prime the system from the "3 · Detailed Revenues" sheet. One project per row, monthly $ mapped to WP month, staffing left blank for later reconciliation.</div>
 
   <div class="card">
@@ -60,9 +61,18 @@
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+  window.__xlsxStatus = 'pending';
+  function __xlsxLoaded(){ window.__xlsxStatus = (typeof XLSX !== 'undefined') ? 'ok' : 'fail'; var b=document.getElementById('dep-banner'); if(b){ if(window.__xlsxStatus==='ok'){ b.style.display='none'; } else { b.style.display='block'; b.textContent='⚠ Spreadsheet engine (SheetJS) failed to load from the CDN — your site may block it. Tell me and I will bundle it into the repo.'; } } }
+</script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" onload="__xlsxLoaded()" onerror="document.getElementById('dep-banner').style.display='block';document.getElementById('dep-banner').textContent='⚠ Could not load the spreadsheet engine from the CDN (blocked or offline). Tell me and I will bundle it into the repo so no CDN is needed.';"></script>
+<script>if (typeof XLSX === 'undefined') { var s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload=__xlsxLoaded; document.head.appendChild(s); } else { __xlsxLoaded(); }</script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
-<script src="universal-fee-calc/import-revenues.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/import-revenues.js" onerror="document.getElementById('dep-banner').style.display='block';document.getElementById('dep-banner').innerHTML='⚠ import-revenues.js did not load (404 / not deployed). Make sure that file is in universal-fee-calc/ on the live site.';"></script>
+<script src="universal-fee-calc/nav.js"></script>
 </body>
 </html>
