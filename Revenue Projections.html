@@ -527,11 +527,13 @@
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
     });
     const nCols = V.cols.length;
-    const lastCol = 2 + nCols;               // A label + months + total
+    const M0 = 5;                            // first month column (1 Project, 2 Client, 3 Rating, 4 Leader)
+    const lastCol = M0 + nCols;              // months + total
     const colL = (i) => { let s=''; i++; while(i>0){ s=String.fromCharCode(65+(i-1)%26)+s; i=Math.floor((i-1)/26);} return s; };
-    ws.getColumn(1).width = 34;
-    for (let i=0;i<nCols;i++) ws.getColumn(2+i).width = 10;
+    ws.getColumn(1).width = 30; ws.getColumn(2).width = 22; ws.getColumn(3).width = 16; ws.getColumn(4).width = 18;
+    for (let i=0;i<nCols;i++) ws.getColumn(M0+i).width = 10;
     ws.getColumn(lastCol).width = 14;
+    const leaderName = (pj) => { const l = STORE.resolveLeader && STORE.resolveLeader(pj.leadId || pj.lead); return l ? l.displayName : (pj.lead || ''); };
 
     const money = (n) => n;   // full precision in the cell; numFmt controls DISPLAY only
     const setMoney = (cell, n, opts={}) => {
@@ -585,12 +587,15 @@
 
     // ----- Header: year spans (row 5) + months (row 6) -----
     const yearRow = 5, monRow = 6;
-    ws.getCell(yearRow,1).value = `Project · ${V.rows.length}`;
-    ws.getCell(yearRow,1).font = { name:'Calibri', bold:true, color:{argb:WHITE} };
-    ws.getCell(yearRow,1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
-    ws.getCell(yearRow,1).alignment = { vertical:'middle' };
-    ws.mergeCells(yearRow,1,monRow,1);
-    let ci = 2;
+    [[1,`Project · ${V.rows.length}`],[2,'Client'],[3,'Rating'],[4,'Revenue Leader']].forEach(([col,label]) => {
+      ws.mergeCells(yearRow,col,monRow,col);
+      const hc = ws.getCell(yearRow,col);
+      hc.value = label;
+      hc.font = { name:'Calibri', bold:true, color:{argb:WHITE} };
+      hc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
+      hc.alignment = { vertical:'middle' };
+    });
+    let ci = M0;
     V.years.forEach(yr => {
       ws.mergeCells(yearRow, ci, yearRow, ci + yr.span - 1);
       const yc = ws.getCell(yearRow, ci);
@@ -607,7 +612,7 @@
     tc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
     tc.alignment = { horizontal:'right', vertical:'middle' };
     V.cols.forEach((c, i) => {
-      const cell = ws.getCell(monRow, 2 + i);
+      const cell = ws.getCell(monRow, M0 + i);
       cell.value = MONTHS[c.m - 1];
       cell.font = { name:'Calibri', size:9, bold:true, color:{argb:STEEL} };
       cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:CREAM} };
@@ -632,18 +637,20 @@
         r++;
       }
       const pj = row.p.project || {};
-      const nm = ws.getCell(r, 1);
-      nm.value = { richText: [
-        { text: (pj.name || 'Untitled'), font: { name:'Calibri', bold:true, size:11, color:{argb: excluded ? STEEL : NAVY} } },
-        { text: '   '+[pj.client, STORE.STATUS_LABELS[pj.status]].filter(Boolean).join(' · ') + (row.coCount ? '  (incl. '+row.coCount+' CO'+(row.coCount===1?'':'s')+')' : ''), font: { name:'Calibri', size:9, color:{argb:STEEL} } },
-      ] };
-      nm.alignment = { vertical:'middle' };
-      // rating chip color as a left accent via font color on the row total later
+      ws.getCell(r, 1).value = (pj.name || 'Untitled') + (row.coCount ? '  (incl. '+row.coCount+' CO'+(row.coCount===1?'':'s')+')' : '');
+      ws.getCell(r, 1).font = { name:'Calibri', bold:true, size:11, color:{argb: excluded ? STEEL : NAVY} };
+      ws.getCell(r, 1).alignment = { vertical:'middle' };
+      ws.getCell(r, 2).value = pj.client || '';
+      ws.getCell(r, 2).font = { name:'Calibri', size:10, color:{argb: excluded ? STEEL : NAVY} };
+      ws.getCell(r, 3).value = row.rating + ' · ' + (meta.short || meta.label || '');
+      ws.getCell(r, 3).font = { name:'Calibri', size:10, color:{argb: RCOL[row.rating] || NAVY}, bold:true };
+      ws.getCell(r, 4).value = leaderName(pj);
+      ws.getCell(r, 4).font = { name:'Calibri', size:10, color:{argb: STEEL} };
       let rvt = 0;
       V.cols.forEach((c, i) => {
         const v = row.map[c.key] || 0; rvt += v;
         const isOv = row.ov && row.ov[c.key] != null;
-        const cell = ws.getCell(r, 2 + i);
+        const cell = ws.getCell(r, M0 + i);
         setMoney(cell, v, { dash:true, font:{ name:'Calibri', size:10, color:{argb: isOv ? TEAL : (excluded ? STEEL : NAVY)}, bold: !!isOv } });
       });
       setMoney(ws.getCell(r, lastCol), rvt, { font:{ name:'Calibri', bold:true, color:{argb: RCOL[row.rating] || NAVY} } });
@@ -652,18 +659,22 @@
 
     // ----- Totals rows -----
     const totRow = r + 1;
+    ws.mergeCells(totRow,1,totRow,4);
     ws.getCell(totRow,1).value = 'Projected (rated 1–4)';
     ws.getCell(totRow,1).font = { name:'Calibri', bold:true, color:{argb:WHITE} };
     ws.getCell(totRow,1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
-    V.cols.forEach((c, i) => setMoney(ws.getCell(totRow, 2+i), V.colTot[c.key], { dash:true, font:{name:'Calibri', bold:true, color:{argb:WHITE}}, fill:NAVY }));
+    [2,3,4].forEach(cc=>{ ws.getCell(totRow,cc).fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} }; });
+    V.cols.forEach((c, i) => setMoney(ws.getCell(totRow, M0+i), V.colTot[c.key], { dash:true, font:{name:'Calibri', bold:true, color:{argb:WHITE}}, fill:NAVY }));
     setMoney(ws.getCell(totRow, lastCol), V.grandTot, { font:{name:'Calibri', bold:true, color:{argb:YEL}}, fill:NAVY });
     ws.getRow(totRow).height = 20;
 
     const wtRow = totRow + 1;
+    ws.mergeCells(wtRow,1,wtRow,4);
     ws.getCell(wtRow,1).value = 'Probability-weighted (all)';
     ws.getCell(wtRow,1).font = { name:'Calibri', bold:true, color:{argb:NAVY} };
     ws.getCell(wtRow,1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:CREAM} };
-    V.cols.forEach((c, i) => setMoney(ws.getCell(wtRow, 2+i), V.colWt[c.key], { dash:true, font:{name:'Calibri', color:{argb:NAVY}}, fill:CREAM }));
+    [2,3,4].forEach(cc=>{ ws.getCell(wtRow,cc).fill = { type:'pattern', pattern:'solid', fgColor:{argb:CREAM} }; });
+    V.cols.forEach((c, i) => setMoney(ws.getCell(wtRow, M0+i), V.colWt[c.key], { dash:true, font:{name:'Calibri', color:{argb:NAVY}}, fill:CREAM }));
     setMoney(ws.getCell(wtRow, lastCol), V.grandWt, { font:{name:'Calibri', bold:true, color:{argb:NAVY}}, fill:CREAM });
 
     // borders on the matrix
