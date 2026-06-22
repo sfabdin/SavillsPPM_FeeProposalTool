@@ -74,7 +74,7 @@ table.cmp td.low, table.cmp th.low { color: #9aa0aa; }
 .legend { display: flex; gap: 14px; font-size: 11px; color: var(--sav-steel); flex-wrap: wrap; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend .sw { width: 11px; height: 11px; display: inline-block; border-radius: 2px; }
-.sw.booked { background: #1f8a4c; } .sw.p90 { background: #3aa95c; } .sw.likely { background: #8fc97f; } .sw.low { background: #cfd3da; } .sw.tgtsw { background: #25273A; height: 3px; border-radius: 0; }
+.sw.booked { background: #1f8a4c; } .sw.p90 { background: #3aa95c; } .sw.likely { background: #8fc97f; } .sw.low { background: #cfd3da; } .sw.tgtsw { background: #25273A; height: 3px; border-radius: 0; } .sw.trend { background: #E07B39; height: 3px; border-radius: 0; }
 .chart { position: relative; display: flex; align-items: flex-end; gap: 8px; padding: 22px 0 4px 56px; border-bottom: 1px solid var(--hair); }
 .chart .grid { position: absolute; left: 56px; right: 0; top: 22px; bottom: 4px; pointer-events: none; }
 .chart .gline { position: absolute; left: 0; right: 0; border-top: 1px dashed #e6e8ec; }
@@ -91,6 +91,7 @@ table.cmp tr.section-row td { background: #eef1f4; color: var(--sav-steel); font
 .mcol2 .seg { width: 100%; }
 .mcol2 .btot { position: absolute; left: -4px; right: -4px; text-align: center; font-size: 9px; font-weight: 700; color: var(--sav-navy); white-space: nowrap; }
 .mcol2 .tgt { position: absolute; left: -3px; right: -3px; height: 0; border-top: 2px solid #25273A; z-index: 2; }
+.mcol2 .trd { position: absolute; left: -3px; right: -3px; height: 0; border-top: 2px dashed #E07B39; z-index: 3; }
 .mcol2 .mlbl { font-size: 10px; color: var(--sav-steel); margin-top: 6px; }
 .mcol2 .mlbl.past { color: #1f8a4c; font-weight: 700; } .mcol2 .mlbl.cur { color: var(--sav-teal); font-weight: 800; }
 .mcol2.cur .mbar { outline: 2px solid var(--sav-teal); outline-offset: 2px; }

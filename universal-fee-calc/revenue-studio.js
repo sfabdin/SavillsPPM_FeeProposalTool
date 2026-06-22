@@ -215,35 +215,44 @@
     // below the line as an adjustment, never as a client row.
     // Three tiers, in order: named clients (top) → New Clients (middle, named
     // new-business pipeline) → Future Business slush (bottom, generic unallocated).
-    const isSlush = (name) => /future business|unalloc|slush|^tbd$|^new business$/i.test(name || '');
-    const isNewClient = (name) => !isSlush(name) && /new business|new client|opportunit|prospect|secured revenue/i.test(name || '');
-    const isFuture = isSlush;   // monthly curve excludes only true slush; new clients flow in
+    // Slush = the generic unallocated "future business" pool (not a real client row).
+    const isSlush = (name) => /future business|unalloc|slush|^tbd$|new business opportun|^new business$/i.test(name || '');
+    const isFuture = isSlush;   // excluded from the monthly curve and from per-client rows
     const RB = (r) => r === 1 ? 'booked' : r === 2 ? 'p90' : (r >= 3 && r <= 4) ? 'likely' : 'low';
-    const groups = {}; let futureBiz = 0;
+    const groups = {}; let slushPool = 0;
     rows.forEach(r => {
-      if (isSlush(r.client)) { if (r.rating <= 4) futureBiz += r.yearTotal; return; }
+      if (isSlush(r.client)) { if (r.rating <= 4) slushPool += r.yearTotal; return; }
       const k = sliceKey(r);
-      const g = groups[k] || (groups[k] = { key: k, booked: 0, p90: 0, likely: 0, low: 0, isNew: sliceDim === 'client' && isNewClient(r.client) });
+      const g = groups[k] || (groups[k] = { key: k, booked: 0, p90: 0, likely: 0, low: 0 });
       g[RB(r.rating)] += r.yearTotal;
     });
-    if (sliceDim === 'client') Object.keys(baseByClient).forEach(c => { if (lead && !(leaderClients && leaderClients.has(c))) return; if (!groups[c]) groups[c] = { key: c, booked: 0, p90: 0, likely: 0, low: 0, isNew: isNewClient(c) }; });
-    adjustEntries.forEach(a => { if (a.key && a.dim === sliceDim && !groups[a.key]) groups[a.key] = { key: a.key, booked: 0, p90: 0, likely: 0, low: 0, isNew: isNewClient(a.key) }; });
+    if (sliceDim === 'client') Object.keys(baseByClient).forEach(c => { if (lead && !(leaderClients && leaderClients.has(c))) return; if (!groups[c]) groups[c] = { key: c, booked: 0, p90: 0, likely: 0, low: 0 }; });
+    adjustEntries.forEach(a => { if (a.key && a.dim === sliceDim && !groups[a.key]) groups[a.key] = { key: a.key, booked: 0, p90: 0, likely: 0, low: 0 }; });
 
     const list = Object.values(groups).map(g => {
       const adjust = adjFor(g.key);
       const projected = g.booked + g.p90 + g.likely + adjust;   // 1–4 + manual adjust (low excluded)
       const tgt = targetForSlice(g.key);
       const vsT = tgt != null ? projected - tgt : null;          // <0 = remaining gap, >0 = over
-      return { ...g, adjust, projected, tgt, vsT };
+      // Existing = has a Budget / RF1 baseline target; New = $0 baseline (client slice only).
+      const isNew = sliceDim === 'client' && !(tgt != null && tgt > 0);
+      return { ...g, adjust, projected, tgt, vsT, isNew };
     }).sort((a, b) => {
-      if (!!a.isNew !== !!b.isNew) return a.isNew ? 1 : -1;       // named clients above new clients
+      if (!!a.isNew !== !!b.isNew) return a.isNew ? 1 : -1;       // existing clients above new
       return (b.tgt || b.projected) - (a.tgt || a.projected);
     });
 
+    // "Allocated for New Business" = the budgeted new-biz reserve (slush), drawn down
+    // as real New Clients/Projects materialize — so it offsets their gains instead of
+    // double-counting against the budget.
+    const newClientTotal = list.filter(g => g.isNew).reduce((a, g) => a + g.projected, 0);
+    const allocatedNewBiz = Math.max(0, slushPool - newClientTotal);
+    const drawnNewBiz = slushPool - allocatedNewBiz;
+
     let T = { tgt: 0, booked: 0, p90: 0, likely: 0, low: 0, adjust: 0, projected: 0 };
     list.forEach(g => { T.tgt += g.tgt || 0; T.booked += g.booked; T.p90 += g.p90; T.likely += g.likely; T.low += g.low; T.adjust += g.adjust; T.projected += g.projected; });
-    T.adjust += overallAdj + futureBiz;        // Future Business rolls in as a below-the-line adjust
-    T.projected += overallAdj + futureBiz;
+    T.adjust += overallAdj + allocatedNewBiz;  // Allocated for New Business rolls in below the line
+    T.projected += overallAdj + allocatedNewBiz;
     const vsTotal = T.projected - T.tgt;
 
     const scName = sc ? sc.name : 'Live only';
@@ -261,11 +270,15 @@
       <th class="low">Rating 5–7</th>
       <th>Adjust</th><th>Projected</th><th>Remaining</th><th>Status</th>
     </tr></thead><tbody>`;
-    let newSectionShown = false;
+    let existingShown = false, newSectionShown = false;
     list.forEach(g => {
-      if (g.isNew && !newSectionShown) {
+      if (sliceDim === 'client' && !g.isNew && !existingShown) {
+        existingShown = true;
+        html += `<tr class="section-row"><td class="lbl" colspan="10">Existing Clients · have a Budget / RF1 target</td></tr>`;
+      }
+      if (sliceDim === 'client' && g.isNew && !newSectionShown) {
         newSectionShown = true;
-        html += `<tr class="section-row"><td class="lbl" colspan="10">New Clients · named pipeline</td></tr>`;
+        html += `<tr class="section-row"><td class="lbl" colspan="10">New Clients / Projects · no baseline target</td></tr>`;
       }
       const hasT = g.tgt != null;
       const flag = !hasT ? '' : (Math.abs(g.vsT) < Math.max(1, g.tgt * 0.02) ? '<span class="flag at">At</span>' : (g.vsT > 0 ? '<span class="flag above">Above</span>' : '<span class="flag below">Below</span>'));
@@ -286,8 +299,9 @@
     if (overallAdj) {
       html += `<tr><td class="lbl">＋ Overall adjustment</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="${overallAdj>0?'num pos':'num neg'}">${(overallAdj>0?'+':'')+fmt(overallAdj)}</td><td><strong>${fmt(overallAdj)}</strong></td><td>—</td><td class="na">N/A</td></tr>`;
     }
-    if (futureBiz) {
-      html += `<tr class="fbiz"><td class="lbl">↳ Future Business (slush)</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="num pos">+${fmt(futureBiz)}</td><td><strong>${fmt(futureBiz)}</strong></td><td>—</td><td class="na">N/A</td></tr>`;
+    if (slushPool || allocatedNewBiz) {
+      const drawnNote = drawnNewBiz > 0 ? '−' + fmt(drawnNewBiz) + ' drawn' : '';
+      html += `<tr class="fbiz"><td class="lbl">↳ Allocated for New Business</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="low">—</td><td class="num pos">+${fmt(allocatedNewBiz)}</td><td><strong>${fmt(allocatedNewBiz)}</strong></td><td class="num neg">${drawnNote}</td><td class="na">N/A</td></tr>`;
     }
     html += `</tbody><tfoot><tr class="tot">
       <td class="lbl">Total</td><td>${fmt(T.tgt)}</td>
@@ -301,7 +315,7 @@
     renderEntries();
     renderMonthly(rows, baseline, isFuture, T.tgt);
 
-    $('#studio-foot').innerHTML = `<strong>Projected</strong> = Rating 1 (Booked) + Rating 2 (90%) + Rating 3–4 (Likely) + adjustments. Rating 5–7 is greyed and excluded. <strong>Future Business</strong> (unallocated slush) sits below the line as an adjustment. <strong>Remaining</strong> is the gap to target (negative) or amount over (positive).` + (sliceDim !== 'client' ? ` <em>${esc(sliceLabel)} has no baseline target (Budget is client-level).</em>` : '');
+    $('#studio-foot').innerHTML = `<strong>Projected</strong> = Rating 1 (Booked) + Rating 2 (90%) + Rating 3–4 (Likely) + adjustments. Rating 5–7 is greyed and excluded. <strong>Existing Clients</strong> have a Budget / RF1 target; <strong>New Clients / Projects</strong> have no baseline. <strong>Allocated for New Business</strong> is the budgeted new-biz reserve — it draws down as real new clients land, so it offsets their gains instead of double-counting. <strong>Remaining</strong> is the gap to target (negative) or amount over (positive).` + (sliceDim !== 'client' ? ` <em>${esc(sliceLabel)} has no baseline target (Budget is client-level).</em>` : '');
   }
 
   /* ---- Monthly stacked chart + table, colored by likelihood ---- */
@@ -316,6 +330,7 @@
       Object.keys(r.byMonth).forEach(mm => { const i = (+mm) - 1; if (i >= 0 && i < 12) m[i][b] += r.byMonth[mm]; });
     });
     const liveMonthTotal = (i) => m[i].booked + m[i].p90 + m[i].likely;   // 1–4 (low excluded)
+    const trendLine = MO.map((_, i) => m[i].booked + m[i].p90);           // current trending = rating 1+2
 
     // Target line, scoped to the current slice's target (so a leader sees only their own).
     const annualTgt = (sliceTarget != null && sliceTarget > 0) ? sliceTarget : (baseline.total || 0);
@@ -351,6 +366,7 @@
         <div class="mbar" style="height:${H}px">
           ${tot > 0 ? `<div class="btot" style="bottom:${Math.min(H - 2, px(tot) + 3)}px">${fmtShort(tot)}</div>` : ''}
           ${seg(m[i].booked, 'booked')}${seg(m[i].p90, 'p90')}${seg(m[i].likely, 'likely')}
+          <div class="trd" style="bottom:${px(trendLine[i])}px" title="${mo} trending (1+2) ${fmt(trendLine[i])}"></div>
           <div class="tgt" style="bottom:${px(tgtLine[i])}px" title="${mo} target ${fmt(tgtLine[i])}"></div>
         </div>
         <div class="mlbl ${isPast ? 'past' : ''} ${isCur ? 'cur' : ''}">${mo}</div>
@@ -358,12 +374,15 @@
     }).join('');
 
     const trow = (lbl, cls, vals, bold) => `<tr class="${bold ? 'tot' : ''}"><td class="lbl">${lbl}</td>${vals.map(v => `<td class="${cls}">${v ? fmt(v) : '·'}</td>`).join('')}<td class="${cls}"><strong>${fmt(vals.reduce((a, b) => a + b, 0))}</strong></td></tr>`;
+    const tvar = (lbl, vals) => { const sum = vals.reduce((a, b) => a + b, 0); return `<tr class="tot var-row"><td class="lbl">${lbl}</td>${vals.map(v => `<td class="${v >= 0 ? 'num pos' : 'num neg'}">${v ? (v > 0 ? '+' : '') + fmt(v) : '·'}</td>`).join('')}<td class="${sum >= 0 ? 'num pos' : 'num neg'}"><strong>${(sum > 0 ? '+' : '') + fmt(sum)}</strong></td></tr>`; };
     const tableHtml = `<table class="cmp mtbl"><thead><tr><th class="lbl">By month · ${activeYear}</th>${MO.map((mo, i) => `<th class="${i+1<curMonth?'past':''} ${i+1===curMonth?'cur':''}">${mo}</th>`).join('')}<th>Total</th></tr></thead><tbody>
       ${trow('Rating 1 · Booked', 'bk-booked', m.map(x => x.booked))}
       ${trow('Rating 2 · 90%', 'bk-p90', m.map(x => x.p90))}
       ${trow('Rating 3–4 · Likely', 'bk-likely', m.map(x => x.likely))}
       ${trow('Rating 5–7 · Low', 'low', m.map(x => x.low))}
       ${trow('Target', '', tgtLine, true)}
+      ${trow('Current trending (1+2)', 'bk-p90', trendLine, true)}
+      ${tvar('Variance · trending − target', trendLine.map((t, i) => t - tgtLine[i]))}
     </tbody></table>`;
 
     host.innerHTML = `
@@ -373,6 +392,7 @@
           <span><i class="sw booked"></i>Rating 1 · Booked</span>
           <span><i class="sw p90"></i>Rating 2 · 90%</span>
           <span><i class="sw likely"></i>Rating 3–4 · Likely</span>
+          <span><i class="sw trend"></i>Trending (1+2)</span>
           <span><i class="sw tgtsw"></i>Target</span>
         </div>
       </div>
