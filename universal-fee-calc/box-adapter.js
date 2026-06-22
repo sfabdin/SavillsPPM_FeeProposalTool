@@ -49,7 +49,7 @@
     tokenExchangeUrl: '/api/box-token',   // your Vercel serverless function (holds the secret)
     dataFileId: '2265137344562',          // projects.json in Box
     ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
-    studioFileId: 'PASTE_STUDIO_FILE_ID', // studio.json in Box (Revenue Studio baselines + scenarios)
+    studioFileId: '2302220793247',        // studio.json in Box (Revenue Studio baselines + scenarios)
     folderId: '387228486391',             // used only to (re)create the file if missing
     pushDebounceMs: 1500,
 
