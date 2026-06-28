@@ -21,6 +21,7 @@
   let sliceDim = 'client';
   let activeYear = 2026;
   let viewMode = 'year';                       // 'year' | 'month'
+  let viewTab = 'build';                       // 'build' | 'exec'
   const COLLAPSED = new Set();                 // bucket ids the user collapsed
   const OPENGRP = new Set();                   // group ids the user drilled into
   let LAST_TREE = null;                        // last rendered tree (for export)
@@ -64,6 +65,13 @@
     $('#expand-all-btn') && $('#expand-all-btn').addEventListener('click', () => { COLLAPSED.clear(); (LAST_TREE ? LAST_TREE.tree : []).forEach(b => (b.kids || []).forEach(g => OPENGRP.add(g.id))); saveView(); render(); });
     $('#collapse-all-btn') && $('#collapse-all-btn').addEventListener('click', () => { OPENGRP.clear(); saveView(); render(); });
     $('#export-view-btn') && $('#export-view-btn').addEventListener('click', exportView);
+    // View tabs (Pipeline & Budget / Exec Report)
+    $('.studio-tabs') && $('.studio-tabs').addEventListener('click', e => {
+      const b = e.target.closest('button[data-view]'); if (!b) return;
+      viewTab = b.dataset.view;
+      [...document.querySelectorAll('.studio-tab')].forEach(x => x.classList.toggle('on', x.dataset.view === viewTab));
+      applyViewTab();
+    });
     // Drill-down caret delegation
     $('#cmp-table') && $('#cmp-table').addEventListener('click', e => {
       const a = e.target.closest('a.tw'); if (!a) return;
@@ -150,6 +158,7 @@
     STORE.saveScenario(sc); render();
   }
   window.__studioRemoveEntry = removeEntry;
+  window.__studioRenderExec = (...a) => renderExec(...a);   // test hook
 
   async function onBudgetFile(e) {
     const f = e.target.files[0]; if (!f) return;
@@ -200,6 +209,52 @@
   }
   function sliceKey(row) { return row[sliceDim] || '—'; }
 
+  /* ---- Pipeline waterfall: how Booked → +90% → +Likely → Projected builds vs target ---- */
+  function buildWaterfall(T, vsTotal) {
+    const steps = [
+      { label: 'Booked', sub: 'Rating 1', cls: 'booked', base: 0, delta: T.booked },
+      { label: '+ 90%', sub: 'Rating 2', cls: 'p90', base: T.booked, delta: T.p90 },
+      { label: '+ Likely', sub: 'Rating 3–4', cls: 'likely', base: T.booked + T.p90, delta: T.likely },
+    ];
+    if (Math.abs(T.adjust) > 0.5) {
+      const negBase = T.booked + T.p90 + T.likely + Math.min(0, T.adjust);
+      steps.push({ label: (T.adjust >= 0 ? '+ ' : '− ') + 'Adjust', sub: 'Reserve / manual', cls: 'adj', base: negBase, delta: Math.abs(T.adjust) });
+    }
+    steps.push({ label: 'Projected', sub: 'Rating 1–4', cls: 'total', base: 0, delta: T.projected, total: true });
+    const scale = Math.max(T.projected, T.tgt, 1) * 1.12;
+    const pct = (v) => (v / scale * 100);
+    const cols = steps.map((s, i) => {
+      const bottom = pct(s.base), h = Math.max(pct(s.delta), 0.4);
+      let val;
+      if (s.total || s.cls === 'booked') val = fmt(s.delta);
+      else if (s.cls === 'adj' && T.adjust < 0) val = '−' + fmt(s.delta);
+      else val = '+' + fmt(s.delta);
+      return `<div class="wf-col"><div class="wf-bar ${s.cls}" style="bottom:${bottom}%;height:${h}%"><span class="wf-val">${val}</span></div></div>`;
+    }).join('');
+    const labels = steps.map(s => `<div class="wf-lab"><span class="l1">${esc(s.label)}</span><span class="l2">${esc(s.sub)}</span></div>`).join('');
+    const tgtLine = T.tgt ? `<div class="wf-tgt" style="bottom:${pct(T.tgt)}%"><span>Target · ${fmt(T.tgt)}</span></div>` : '';
+    const gapTxt = T.tgt ? `<span class="wf-gap ${vsTotal >= 0 ? 'pos' : 'neg'}">${vsTotal >= 0 ? 'Over target by ' : 'Remaining to target '}${fmt(Math.abs(vsTotal))}</span>` : '';
+    return `<div class="panel-h"><h2>How the projected number builds</h2>${gapTxt}</div>
+      <div class="wf-plot">${tgtLine}${cols}</div>
+      <div class="wf-labs">${labels}</div>`;
+  }
+
+  /* ---- Provenance / confidence strip: what's safe to trust in this view ---- */
+  function buildConfidence(rows, baseline) {
+    const n = rows.length;
+    const imported = rows.filter(r => r.p.source && r.p.source.importedByMonth);
+    const withStaff = rows.filter(r => (r.p.roles || []).length > 0);
+    const totalRev = rows.reduce((a, r) => a + r.yearTotal, 0) || 1;
+    const importedRev = imported.reduce((a, r) => a + r.yearTotal, 0);
+    const pctLive = Math.round((totalRev - importedRev) / totalRev * 100);
+    const frozen = baseline.createdAt ? new Date(baseline.createdAt).toLocaleDateString() : '—';
+    const chip = (status, label, val) => `<div class="cf-chip"><span class="cf-dot ${status}"></span><span class="cf-l">${label}</span><span class="cf-v">${val}</span></div>`;
+    return chip(pctLive >= 80 ? 'live' : 'partial', 'Pipeline source', pctLive + '% calculated · ' + (100 - pctLive) + '% imported $')
+      + chip(withStaff.length === n && n ? 'live' : (withStaff.length ? 'partial' : 'missing'), 'Staffing coverage', withStaff.length + '/' + n + ' have allocations')
+      + chip('imported', 'Baseline', esc(baseline.name) + ' · frozen ' + frozen)
+      + chip('planned', 'Margin', 'Planned — floor-rate basis · actuals pending Clockify');
+  }
+
   function render() {
     const lead = effectiveLeader();
     document.body.classList.toggle('leader-mode', !!lead);
@@ -210,7 +265,7 @@
     } else { banner.hidden = true; }
 
     const baseline = activeBaselineId ? STORE.getBaseline(activeBaselineId) : null;
-    if (!baseline) { $('#no-baseline').hidden = false; $('#cmp-table').innerHTML = ''; $('#kpis').innerHTML = ''; $('#studio-foot').textContent = ''; renderEntries(); return; }
+    if (!baseline) { $('#no-baseline').hidden = false; $('#cmp-table').innerHTML = ''; $('#kpis').innerHTML = ''; $('#waterfall').hidden = true; $('#confidence').innerHTML = ''; $('#studio-foot').textContent = ''; renderEntries(); return; }
     $('#no-baseline').hidden = true;
 
     const sc = activeScenario();
@@ -298,6 +353,10 @@
       <div class="kpi navy"><div class="k-lbl">Projected (rating 1–4)${sc?' · '+esc(scName):''}</div><div class="k-val">${fmt(T.projected)}</div><div class="k-sub">Booked + 90% + likely + adj</div></div>
       <div class="kpi"><div class="k-lbl">Booked (rating 1)</div><div class="k-val">${fmt(T.booked)}</div><div class="k-sub">Firm revenue</div></div>
       <div class="kpi"><div class="k-lbl">${vsTotal>=0?'Over target':'Remaining to target'}</div><div class="k-val ${vsTotal>=0?'num pos':'num neg'}">${vsTotal>=0?'+':''}${fmt(vsTotal)}</div><div class="k-sub">${T.tgt?((vsTotal/T.tgt)*100).toFixed(1)+'% of target':'—'}</div></div>`;
+
+    $('#waterfall').hidden = false;
+    $('#waterfall').innerHTML = buildWaterfall(T, vsTotal);
+    $('#confidence').innerHTML = buildConfidence(rows, baseline);
 
     const sliceLabel = { client: 'Client', leader: 'Revenue Leader', industry: 'Industry', serviceLine: 'Service line', rating: 'Rating' }[sliceDim];
 
@@ -393,8 +452,102 @@
     $('#cmp-table').innerHTML = html;
     renderEntries();
     renderMonthly(rows, baseline, isFuture, T.tgt);
+    renderExec(rows, T, baseline);
+    applyViewTab();
 
     $('#studio-foot').innerHTML = `<strong>Projected</strong> = Rating 1 (Booked) + Rating 2 (90%) + Rating 3–4 (Likely) + adjustments. Rating 5–7 is greyed and excluded. <strong>Existing Clients</strong> have a Budget / RF1 target; <strong>New Clients / Projects</strong> have no baseline. <strong>Allocated for New Business</strong> is the budgeted new-biz reserve — it draws down as real new clients land, so it offsets their gains instead of double-counting. <strong>Remaining</strong> is the gap to target (negative) or amount over (positive).` + (sliceDim !== 'client' ? ` <em>${esc(sliceLabel)} has no baseline target (Budget is client-level).</em>` : '');
+  }
+
+  /* ---- Toggle build vs exec view ---- */
+  function applyViewTab() {
+    const body = $('#studio-body'); if (!body) return;
+    body.setAttribute('data-view', viewTab);
+    const bv = $('#build-view'), ev = $('#exec-view');
+    if (bv) bv.hidden = viewTab !== 'build';
+    if (ev) ev.hidden = viewTab !== 'exec';
+  }
+
+  /* ---- Exec report: concentration, ageing, mix — project-level, leader-scoped ---- */
+  function renderExec(rows, T, baseline) {
+    const host = $('#exec-view'); if (!host) return;
+    const proj = (r) => (r.rating <= 4 ? r.yearTotal : 0);     // projected $ = rating 1–4
+    const live = rows.filter(r => !/future business|unalloc|slush|^tbd$|incremental|new business opportun|new business$/i.test(r.client || ''));
+    const totalProj = live.reduce((a, r) => a + proj(r), 0) || 1;
+    const now = Date.now();
+
+    /* 1 · Client concentration (Pareto) */
+    const byClient = {};
+    live.forEach(r => { const k = r.client; byClient[k] = (byClient[k] || 0) + proj(r); });
+    const clients = Object.entries(byClient).map(([k, v]) => ({ k, v })).filter(c => c.v > 0).sort((a, b) => b.v - a.v);
+    const maxC = clients.length ? clients[0].v : 1;
+    let cum = 0, n80 = 0, hit80 = false;
+    const pareto = clients.map((c, i) => {
+      cum += c.v; const cumPct = cum / totalProj * 100;
+      const inTop = !hit80; if (cumPct >= 80 && !hit80) { hit80 = true; n80 = i + 1; }
+      return { ...c, share: c.v / totalProj * 100, cumPct, inTop };
+    });
+    if (!n80) n80 = clients.length;
+    const topShare = clients.slice(0, n80).reduce((a, c) => a + c.v, 0) / totalProj * 100;
+    const paretoRows = pareto.slice(0, 12).map(c => `<tr class="${c.inTop ? 'in80' : 'tail80'}">
+      <td class="l">${esc(c.k)}</td>
+      <td class="num">${fmt(c.v)}</td>
+      <td class="num">${c.share.toFixed(1)}%</td>
+      <td class="barcell"><div class="bar ${c.inTop ? '' : 'tail'}" style="width:${Math.max(2, c.v / maxC * 100)}%"></div><div class="cum" style="left:${Math.min(100, c.cumPct)}%"></div></td>
+      <td class="num">${c.cumPct.toFixed(0)}%</td></tr>`).join('');
+    const moreC = pareto.length > 12 ? `<tr class="tail80"><td class="l">+ ${pareto.length - 12} more clients</td><td class="num">${fmt(pareto.slice(12).reduce((a,c)=>a+c.v,0))}</td><td class="num"></td><td></td><td class="num">100%</td></tr>` : '';
+
+    /* 2 · Pipeline by stage + ageing */
+    const RB = (rt) => rt === 1 ? 'booked' : rt === 2 ? 'p90' : (rt >= 3 && rt <= 4) ? 'likely' : 'low';
+    const stageMeta = { booked: ['Booked', 'Rating 1'], p90: ['90% · Verbal', 'Rating 2'], likely: ['Likely', 'Rating 3–4'], low: ['Low likelihood', 'Rating 5–7'] };
+    const stages = { booked: [], p90: [], likely: [], low: [] };
+    live.forEach(r => stages[RB(r.rating)].push(r));
+    const ageOf = (r) => { const c = Date.parse(r.p.createdAt || ''); return isFinite(c) ? Math.max(0, Math.round((now - c) / 86400000)) : null; };
+    const agePill = (d) => d == null ? '<span class="age-pill">—</span>' : `<span class="age-pill ${d <= 30 ? 'fresh' : d <= 90 ? 'mid' : 'stale'}">${d}d</span>`;
+    const stageRows = ['booked','p90','likely','low'].map(s => {
+      const list = stages[s]; if (!list.length) return '';
+      const sum = list.reduce((a, r) => a + r.yearTotal, 0);
+      const ages = list.map(ageOf).filter(d => d != null);
+      const avgAge = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : null;
+      return `<tr class="stage-row"><td class="l"><span class="stage-dot ${s}"></span>${stageMeta[s][0]} <span style="color:var(--sav-steel);font-weight:400;font-size:10px">${stageMeta[s][1]}</span></td>
+        <td class="num">${list.length}</td><td class="num">${fmt(sum)}</td><td class="num">${agePill(avgAge)}</td></tr>`;
+    }).join('');
+
+    /* 3 · Mix rollups (industry, service line) */
+    function mix(dim, label) {
+      const by = {};
+      live.forEach(r => { const k = r[dim] || '—'; by[k] = (by[k] || 0) + proj(r); });
+      const arr = Object.entries(by).map(([k, v]) => ({ k, v })).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
+      const mx = arr.length ? arr[0].v : 1;
+      const body = arr.slice(0, 8).map(x => `<tr><td class="l">${esc(x.k)}</td><td class="num">${fmt(x.v)}</td><td class="num">${(x.v/totalProj*100).toFixed(0)}%</td><td><div class="share"><i style="width:${Math.max(3, x.v/mx*100)}%"></i></div></td></tr>`).join('');
+      return `<div class="exec-card"><h2>${label}</h2><div class="ec-sub">Projected $ share · rating 1–4</div>
+        <table class="roll"><thead><tr><th class="l">${label}</th><th>$</th><th>Share</th><th> </th></tr></thead>
+        <tbody>${body}</tbody></table></div>`;
+    }
+
+    host.innerHTML = `
+      <div class="exec-grid">
+        <div class="exec-card wide">
+          <h2>Client concentration</h2>
+          <div class="ec-sub">Projected revenue by client, ranked · dashed line = cumulative share</div>
+          <div class="exec-callout">Top <strong>${n80}</strong> ${n80 === 1 ? 'client' : 'clients'} = <strong>${topShare.toFixed(0)}%</strong> of the projected book · ${clients.length} clients total · ${fmt(totalProj)} projected</div>
+          <table class="pareto"><thead><tr><th class="l">Client</th><th>Projected</th><th>Share</th><th class="l"> </th><th>Cum.</th></tr></thead>
+          <tbody>${paretoRows}${moreC}</tbody></table>
+        </div>
+        <div class="exec-card">
+          <h2>Pipeline by stage &amp; age</h2>
+          <div class="ec-sub">Count, value and average age since created</div>
+          <table class="roll"><thead><tr><th class="l">Stage</th><th># </th><th>Value</th><th>Avg age</th></tr></thead>
+          <tbody>${stageRows}</tbody>
+          <tbody><tr class="tot"><td class="l">All pipeline</td><td class="num">${live.length}</td><td class="num">${fmt(live.reduce((a,r)=>a+r.yearTotal,0))}</td><td></td></tr></tbody></table>
+        </div>
+        ${mix('industry', 'By industry')}
+        ${mix('serviceLine', 'By service line')}
+        <div class="exec-card">
+          <h2>Margin</h2>
+          <div class="ec-sub">Planned basis · floor-rate</div>
+          <div class="exec-callout" style="border-left-color:#8a6abf">Margin analysis is <strong>planned-only</strong> today — computed against floor rates. <strong>Actuals pending Clockify</strong> (join on Salesforce ID). Once live, this card shows planned vs. actual margin by client and service line.</div>
+        </div>
+      </div>`;
   }
 
   /* ---- Monthly stacked chart + table, colored by likelihood ---- */
