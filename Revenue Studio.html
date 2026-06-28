@@ -21,13 +21,19 @@
   <div id="leader-banner" class="leader-banner" hidden></div>
 
   <div id="studio-body" hidden>
+    <!-- View tabs -->
+    <div class="studio-tabs">
+      <button type="button" class="studio-tab on" data-view="build">Pipeline &amp; Budget</button>
+      <button type="button" class="studio-tab" data-view="exec">Exec Report</button>
+    </div>
+
     <!-- Baseline bar -->
     <div class="bar">
       <div class="bar-group">
         <label>Baseline (target)</label>
         <select id="baseline-sel"></select>
       </div>
-      <div class="bar-group">
+      <div class="bar-group build-only">
         <label>Slice by</label>
         <select id="slice-sel">
           <option value="client">Client</option>
@@ -45,7 +51,7 @@
         <label>View as</label>
         <select id="viewas-sel"></select>
       </div>
-      <div class="bar-group">
+      <div class="bar-group build-only">
         <label>Granularity</label>
         <div class="seg-ctl" id="viewmode-ctl">
           <button type="button" data-mode="year" class="on">Year</button>
@@ -53,15 +59,15 @@
         </div>
       </div>
       <div class="bar-spacer"></div>
-      <button class="btn ghost" id="expand-all-btn">Expand all</button>
-      <button class="btn ghost" id="collapse-all-btn">Collapse all</button>
-      <button class="btn" id="export-view-btn">⤓ Export view</button>
+      <button class="btn ghost build-only" id="expand-all-btn">Expand all</button>
+      <button class="btn ghost build-only" id="collapse-all-btn">Collapse all</button>
+      <button class="btn build-only" id="export-view-btn">⤓ Export view</button>
       <button class="btn admin-only" id="load-budget-btn">Load 2026 Budget…</button>
       <input type="file" id="budget-file" accept=".xlsx,.xls" hidden>
     </div>
 
     <!-- Scenario bar (Phase B) -->
-    <div class="bar">
+    <div class="bar build-only">
       <div class="bar-group">
         <label>Scenario</label>
         <select id="scenario-sel"></select>
@@ -74,12 +80,19 @@
       <button class="btn ghost admin-only" id="add-adjust-btn">± Adjustment</button>
     </div>
 
-    <div id="entries" class="entries"></div>
+    <div id="build-view">
+      <div id="entries" class="entries"></div>
 
-    <div id="kpis" class="kpis"></div>
-    <div id="no-baseline" class="empty" hidden>No baseline loaded yet. Click <strong>Load 2026 Budget</strong> to bring in the annual plan — it flatlines across the year as your target.</div>
-    <div class="table-wrap"><table id="cmp-table" class="cmp"></table></div>
-    <div id="monthly" class="monthly"></div>
+      <div id="kpis" class="kpis"></div>
+      <div id="waterfall" class="wf-wrap" hidden></div>
+      <div id="confidence" class="confidence"></div>
+      <div id="no-baseline" class="empty" hidden>No baseline loaded yet. Click <strong>Load 2026 Budget</strong> to bring in the annual plan — it flatlines across the year as your target.</div>
+      <div class="table-wrap"><table id="cmp-table" class="cmp"></table></div>
+      <div id="monthly" class="monthly"></div>
+    </div>
+
+    <div id="exec-view" hidden></div>
+
     <div class="foot" id="studio-foot"></div>
   </div>
 </div>
