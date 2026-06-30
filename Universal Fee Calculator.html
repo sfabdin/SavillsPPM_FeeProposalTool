@@ -27,12 +27,37 @@
     </div>
     <div class="actions">
       <button class="btn btn-ghost" id="reset-btn">Reset</button>
+      <button class="btn btn-ghost" id="versions-btn">Versions <span id="versions-count" class="ver-count" hidden>0</span></button>
       <button class="btn btn-secondary" id="save-btn">Save</button>
       <button class="btn btn-primary" id="xlsx-btn">Download Excel</button>
       <button class="btn btn-ghost" id="print-btn">Print / PDF</button>
       <button class="btn btn-secondary" id="intake-btn" style="display:none;">Salesforce Intake →</button>
     </div>
   </header>
+
+  <!-- ========== Version history modal ========== -->
+  <div class="ver-overlay" id="ver-overlay" hidden>
+    <div class="ver-modal" role="dialog" aria-label="Proposal version history">
+      <div class="ver-modal-head">
+        <div>
+          <h3>Proposal version history</h3>
+          <p class="ver-sub">Every saved version of this proposal — an audit trail. Versions never change the live numbers.</p>
+        </div>
+        <button class="ver-x" id="ver-close" aria-label="Close">×</button>
+      </div>
+      <div class="ver-modal-actions">
+        <button class="btn btn-secondary" id="ver-save-btn">+ Save current as version</button>
+        <div class="ver-compare" id="ver-compare" hidden>
+          <label>Compare</label>
+          <select id="ver-a"></select>
+          <span class="ver-arrow">→</span>
+          <select id="ver-b"></select>
+        </div>
+      </div>
+      <div class="ver-diff" id="ver-diff" hidden></div>
+      <div class="ver-list" id="ver-list"></div>
+    </div>
+  </div>
 
   <!-- ========== Booked → Salesforce intake callout ========== -->
   <div class="intake-callout" id="intake-callout" hidden>
@@ -93,6 +118,11 @@
             <select id="pm-status"></select>
             <div class="field-hint" id="status-hint"></div>
           </div>
+          <div class="field" id="lost-reason-field" style="display:none;">
+            <label for="pm-lostReason">Lost reason</label>
+            <select id="pm-lostReason"></select>
+            <div class="field-hint">Feeds win/loss analytics.</div>
+          </div>
           <div class="field">
             <label for="pm-rating">Projection rating</label>
             <select id="pm-rating"></select>
@@ -113,6 +143,16 @@
           </div>
         </div>
         <div class="pt-subs" id="pm-ptype-subs" hidden></div>
+        <div class="assumptions-block" id="assumptions-block">
+          <div class="asm-head">
+            <span class="asm-lbl">Assumptions &amp; exclusions</span>
+            <span class="hint">The conditions this fee is priced under. Prints on the proposal &amp; Excel; makes proposals comparable.</span>
+          </div>
+          <div class="asm-chips" id="pm-assumptions"></div>
+          <div class="asm-add">
+            <input type="text" id="pm-asm-custom" placeholder="Add a custom assumption and press Enter…">
+          </div>
+        </div>
         <div class="field-grid cols-5" style="margin-top: 18px;">
           <div class="field">
             <label for="pm-date">Proposal date</label>
