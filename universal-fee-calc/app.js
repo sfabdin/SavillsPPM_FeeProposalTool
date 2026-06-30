@@ -39,6 +39,7 @@
       industry: '',
       projectType: '',     // service line / engagement type (distinct from Industry)
       projectSubtypes: [], // selected sub-services within the project type
+      assumptionsList: [], // proposal assumptions / exclusions (library + custom)
       accessGrant: '',     // comma-separated emails granted access (besides lead/owner/admins)
       firstProposalDate: '',
       signedContractDate: '',
@@ -667,6 +668,35 @@
     }));
   }
 
+  /** Assumptions & exclusions: library chips (toggle) + any custom lines the
+      user added. Selections + custom entries are stored in project.assumptionsList. */
+  function renderAssumptions() {
+    const el = $('#pm-assumptions');
+    if (!el) return;
+    const chosen = Array.isArray(state.project.assumptionsList) ? state.project.assumptionsList : [];
+    const lib = STORE.ASSUMPTION_LIBRARY;
+    const custom = chosen.filter(a => !lib.includes(a));
+    const chips = lib.map(a => `<span class="asm-chip ${chosen.includes(a) ? 'is-on' : ''}" data-asm="${escapeHtml(a)}">${escapeHtml(a)}</span>`)
+      .concat(custom.map(a => `<span class="asm-chip is-on is-custom" data-asm="${escapeHtml(a)}">${escapeHtml(a)} <span class="asm-x" data-rm="${escapeHtml(a)}">×</span></span>`));
+    el.innerHTML = chips.join('');
+    $$('.asm-chip', el).forEach(chip => chip.addEventListener('click', (e) => {
+      if (e.target.classList.contains('asm-x')) return;   // handled below
+      const a = chip.dataset.asm;
+      let arr = Array.isArray(state.project.assumptionsList) ? state.project.assumptionsList.slice() : [];
+      if (arr.includes(a)) arr = arr.filter(x => x !== a); else arr.push(a);
+      state.project.assumptionsList = arr;
+      renderAssumptions();
+      markDirty();
+    }));
+    $$('.asm-x', el).forEach(x => x.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const a = x.dataset.rm;
+      state.project.assumptionsList = (state.project.assumptionsList || []).filter(v => v !== a);
+      renderAssumptions();
+      markDirty();
+    }));
+  }
+
   function renderProjectMeta() {
     const f = state.project;
     $('#pm-name').value = f.name;
@@ -693,6 +723,20 @@
       });
     }
     statusSel.value = f.status || 'draft';
+
+    // Lost-reason dropdown (only visible when status = lost)
+    const lostSel = $('#pm-lostReason');
+    if (lostSel && !lostSel.options.length) {
+      const blank = document.createElement('option'); blank.value = ''; blank.textContent = '— select —';
+      lostSel.appendChild(blank);
+      STORE.LOST_REASONS.forEach(r => {
+        const o = document.createElement('option'); o.value = r; o.textContent = r;
+        lostSel.appendChild(o);
+      });
+    }
+    if (lostSel) lostSel.value = f.lostReason || '';
+    const lostField = $('#lost-reason-field');
+    if (lostField) lostField.style.display = (f.status === 'lost') ? '' : 'none';
 
     // Projection rating dropdown (1–7)
     const ratingSel = $('#pm-rating');
@@ -734,6 +778,7 @@
     }
     if (ptSel) ptSel.value = f.projectType || '';
     renderProjectTypeSubs();
+    renderAssumptions();
 
     const accessEl = $('#pm-access'); if (accessEl) accessEl.value = f.accessGrant || '';
 
@@ -2011,6 +2056,7 @@
      ============================================================ */
   function wireControls() {
     wireUnitToggle();
+    wireVersions();
     // Monthly schedule discount-view toggle
     $$('.mt-btn').forEach(b => b.addEventListener('click', () => {
       monthlyMode = b.dataset.mode;
@@ -2077,13 +2123,30 @@
         const rs = $('#pm-rating'); if (rs) rs.value = def;
       }
       updateStatusRatingHints();
+      const lostField = $('#lost-reason-field');
+      if (lostField) lostField.style.display = (e.target.value === 'lost') ? '' : 'none';
       markDirty();
     });
+    const lostSelEl = $('#pm-lostReason');
+    if (lostSelEl) lostSelEl.addEventListener('change', e => { state.project.lostReason = e.target.value; markDirty(); });
     $('#pm-industry').addEventListener('change', e => { state.project.industry = e.target.value; markDirty(); });
     const ptypeEl = $('#pm-ptype');
     if (ptypeEl) ptypeEl.addEventListener('change', e => { state.project.projectType = e.target.value; state.project.projectSubtypes = []; renderProjectTypeSubs(); markDirty(); });
     const accessInput = $('#pm-access');
     if (accessInput) accessInput.addEventListener('input', e => { state.project.accessGrant = e.target.value; markDirty(); });
+    const asmCustom = $('#pm-asm-custom');
+    if (asmCustom) asmCustom.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const val = (e.target.value || '').trim();
+      if (!val) return;
+      const arr = Array.isArray(state.project.assumptionsList) ? state.project.assumptionsList.slice() : [];
+      if (!arr.includes(val)) arr.push(val);
+      state.project.assumptionsList = arr;
+      e.target.value = '';
+      renderAssumptions();
+      markDirty();
+    });
     const ratingSelEl = $('#pm-rating');
     if (ratingSelEl) ratingSelEl.addEventListener('change', e => { state.project.rating = parseInt(e.target.value) || null; updateStatusRatingHints(); markDirty(); });
     $('#pm-firstProposal').addEventListener('input', e => { state.project.firstProposalDate = e.target.value; markDirty(); });
@@ -2269,6 +2332,7 @@
       }
     }
     renderAll();
+    refreshVersionCount();
     };
     // Gate on the data layer (instant on localStorage; pulls from Box when enabled).
     if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(start); } else { start(); }
@@ -2303,6 +2367,7 @@
       state.updatedAt = saved.updatedAt;
       setProjectIdInUrl(saved.id);
       setSavedLabel('Saved · ' + formatTime(saved.updatedAt));
+      refreshVersionCount();
       dirty = false;
       if (opts.explicit) {
         const btn = $('#save-btn');
@@ -2319,6 +2384,140 @@
   function setSavedLabel(text) {
     const el = $('#hdr-saved');
     if (el) el.textContent = text || '';
+  }
+
+  /* ----- Version history ----- */
+  function refreshVersionCount() {
+    const el = $('#versions-count');
+    if (!el) return;
+    const rec = state.id ? STORE.getProject(state.id) : null;
+    const n = rec && rec.versions ? rec.versions.length : 0;
+    if (n > 0) { el.textContent = n; el.hidden = false; } else { el.hidden = true; }
+  }
+
+  function openVersions() {
+    // Flush any pending edit so the latest state is captured/compared.
+    if (dirty) { clearTimeout(autosaveTimer); saveToStore({ silent: true }); }
+    renderVersionList();
+    $('#ver-overlay').hidden = false;
+  }
+  function closeVersions() { $('#ver-overlay').hidden = true; $('#ver-diff').hidden = true; }
+
+  function renderVersionList() {
+    const rec = state.id ? STORE.getProject(state.id) : null;
+    const versions = rec ? STORE.listVersions(rec) : [];
+    const list = $('#ver-list');
+    if (!versions.length) {
+      list.innerHTML = '<div class="ver-empty">No versions yet. Click <strong>+ Save current as version</strong> to capture this proposal — or it auto-captures when you move it to Submitted, Awarded, or Lost.</div>';
+      $('#ver-compare').hidden = true;
+      return;
+    }
+    list.innerHTML = versions.slice().reverse().map(v => {
+      const who = v.savedBy && (v.savedBy.name || v.savedBy.username) || '—';
+      const lbl = v.label || ('Version ' + v.n);
+      const net = (v.net != null) ? fmtMoney(v.net) : '—';
+      return `<div class="ver-row">
+        <div class="vr-n">v${v.n}</div>
+        <div class="vr-main">
+          <div class="vr-label">${escapeHtml(lbl)}${v.auto ? '<span class="vr-auto">Auto</span>' : ''}</div>
+          <div class="vr-meta">${escapeHtml(STORE.STATUS_LABELS[v.status] || v.status || '')} · ${escapeHtml(who)} · ${formatVerDate(v.savedAt)}${v.note ? ' · ' + escapeHtml(v.note) : ''}</div>
+        </div>
+        <div class="vr-right">
+          <div class="vr-net">${net} <span>net</span></div>
+          <button class="vr-restore" data-restore="${v.id}">Restore</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Compare selectors
+    const cmp = $('#ver-compare');
+    cmp.hidden = false;
+    const opts = versions.map(v => `<option value="${v.id}">v${v.n} · ${escapeHtml(v.label || ('Version ' + v.n))}</option>`).join('');
+    const curOpt = '<option value="current">Current (live)</option>';
+    $('#ver-a').innerHTML = opts;
+    $('#ver-b').innerHTML = opts + curOpt;
+    $('#ver-a').value = versions[0].id;
+    $('#ver-b').value = 'current';
+    renderVersionDiff();
+  }
+
+  function renderVersionDiff() {
+    const rec = state.id ? STORE.getProject(state.id) : null;
+    if (!rec) return;
+    const a = $('#ver-a').value, b = $('#ver-b').value;
+    if (!a || !b || a === b) { $('#ver-diff').hidden = true; return; }
+    const d = STORE.versionDiff(rec, a, b);
+    const dNet = (d.b.net != null && d.a.net != null) ? d.b.net - d.a.net : null;
+    const chips = (arr, cls, fmt) => arr.length ? arr.map(fmt).join('') : '';
+    const addC = chips(d.roles.added, 'add', r => `<span class="vd-chip add">+ ${escapeHtml(r.label)} (${r.fteMonths.toFixed(1)} fte-mo)</span>`);
+    const remC = chips(d.roles.removed, 'rem', r => `<span class="vd-chip rem">− ${escapeHtml(r.label)} (${r.fteMonths.toFixed(1)} fte-mo)</span>`);
+    const chgC = chips(d.roles.changed, 'chg', r => `<span class="vd-chip chg">~ ${escapeHtml(r.label)}${r.rateChanged ? ' (rate)' : ''}${Math.abs(r.fteDelta) > 0.01 ? ' ' + (r.fteDelta > 0 ? '+' : '') + r.fteDelta.toFixed(1) + ' fte-mo' : ''}</span>`);
+    const anyRole = addC || remC || chgC;
+    const deltaCls = dNet == null ? '' : dNet > 0 ? 'pos' : dNet < 0 ? 'neg' : '';
+    const deltaStr = dNet == null ? '—' : (dNet > 0 ? '+' : '') + fmtMoney(dNet);
+    $('#ver-diff').hidden = false;
+    $('#ver-diff').innerHTML = `
+      <div class="vd-totals">
+        <div class="vd-tot"><span>From (net)</span><b>${d.a.net != null ? fmtMoney(d.a.net) : '—'}</b></div>
+        <div class="vd-tot"><span>To (net)</span><b>${d.b.net != null ? fmtMoney(d.b.net) : '—'}</b></div>
+        <div class="vd-tot"><span>Change</span><b class="vd-delta ${deltaCls}">${deltaStr}</b></div>
+      </div>
+      <div>${anyRole || '<span class="vd-none">No staffing differences between these versions.</span>'}</div>`;
+  }
+
+  function onSaveVersion() {
+    if (!state.id) { saveToStore({ silent: true }); }
+    if (!state.id) { alert('Add a project name or a role first, then save a version.'); return; }
+    const label = prompt('Name this version (e.g. "Client counteroffer", "v2 after Kathy review"):', '');
+    if (label === null) return;   // cancelled
+    STORE.saveVersion(state.id, { label: label || '' });
+    refreshVersionCount();
+    renderVersionList();
+  }
+
+  function onRestoreVersion(vid) {
+    const rec = state.id ? STORE.getProject(state.id) : null;
+    if (!rec) return;
+    const v = (rec.versions || []).find(x => x.id === vid);
+    if (!v) return;
+    if (!confirm(`Restore ${v.label || ('version ' + v.n)}? This loads that version's inputs into the calculator. Your current state is preserved as long as you saved it as a version — otherwise save one first.`)) return;
+    // Capture the current state as a version before overwriting, so nothing is lost.
+    STORE.saveVersion(state.id, { label: 'Before restore of v' + v.n, auto: true });
+    const restored = STORE.restoreVersionRecord(STORE.getProject(state.id), vid);
+    const defaults = DEFAULT_STATE();
+    state = {
+      ...defaults, ...restored,
+      project: { ...defaults.project, ...(restored.project || {}) },
+      timeline: { ...defaults.timeline, ...(restored.timeline || {}) },
+      assumptions: { ...defaults.assumptions, ...(restored.assumptions || {}) },
+      phases: restored.phases || defaults.phases,
+      groups: restored.groups || defaults.groups,
+      roles: restored.roles || [],
+    };
+    saveToStore({ silent: true });
+    renderAll();
+    refreshVersionCount();
+    closeVersions();
+    setSavedLabel('Restored v' + v.n);
+  }
+
+  function formatVerDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function wireVersions() {
+    $('#versions-btn') && $('#versions-btn').addEventListener('click', openVersions);
+    $('#ver-close') && $('#ver-close').addEventListener('click', closeVersions);
+    $('#ver-overlay') && $('#ver-overlay').addEventListener('click', e => { if (e.target.id === 'ver-overlay') closeVersions(); });
+    $('#ver-save-btn') && $('#ver-save-btn').addEventListener('click', onSaveVersion);
+    $('#ver-a') && $('#ver-a').addEventListener('change', renderVersionDiff);
+    $('#ver-b') && $('#ver-b').addEventListener('change', renderVersionDiff);
+    $('#ver-list') && $('#ver-list').addEventListener('click', e => {
+      const b = e.target.closest('[data-restore]');
+      if (b) onRestoreVersion(b.dataset.restore);
+    });
   }
 
   function formatTime(iso) {

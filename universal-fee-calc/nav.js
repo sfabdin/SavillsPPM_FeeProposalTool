@@ -18,6 +18,7 @@
     { href: 'Revenue Projections.html',      label: 'Revenue Projections', group: 'Manage' },
     { href: 'Revenue Studio.html',           label: 'Revenue Studio',      group: 'Manage' },
     { href: 'Benchmarking Dashboard.html',   label: 'Benchmarking',        group: 'Manage' },
+    { href: 'Proposal Analytics.html',        label: 'Proposal Analytics',  group: 'Manage' },
     { href: 'Import Revenues.html',          label: 'Import Revenues',     group: 'Admin', admin: true },
     { href: 'Enterprise Migration Guide.html', label: 'Migration Guide',   group: 'Docs' },
     { href: 'Fee System Roadmap.html',       label: 'Roadmap',             group: 'Docs' },

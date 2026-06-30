@@ -20,6 +20,34 @@
     hold: 'On hold',
   };
 
+  /* Why a proposal was lost — captured on the record when status = 'lost',
+     so win/loss analytics can answer "why do we lose?". */
+  const LOST_REASONS = ['Too expensive', 'Relationship', 'Incumbent', 'Scope', 'Procurement', 'Client cancelled', 'Internal / no-bid', 'No decision', 'Other'];
+
+  /* Standard proposal assumptions / exclusions — the conditions a fee is
+     priced under. Captured as a checklist on the record so two proposals are
+     actually comparable (a $5M with decommissioning ≠ a $5M without). Users
+     pick from this library and may add custom lines. */
+  const ASSUMPTION_LIBRARY = [
+    'Client provides movers',
+    'Night / weekend work',
+    'Standard business hours only',
+    'No swing space required',
+    'Single occupancy / phased move',
+    'Furniture reused (no new FF&E)',
+    'FF&E procurement included',
+    'No IT disconnect / reconnect',
+    'Client-managed IT/AV',
+    'No decommissioning',
+    'Decommissioning included',
+    'Vendor-managed logistics',
+    'Client provides building / security access',
+    'Client supplies inventory & data',
+    'No change management',
+    'Permitting by others',
+    'Single phase / single building',
+  ];
+
   /* Revenue-projection probability rating (the 1–7 scale used today).
      Coexists with the lifecycle status above; `weight` is the probability
      used for any weighted view. 1 = booked, 7 = dead. */
@@ -276,10 +304,12 @@
 
   function saveProject(record) {
     const db = readDb();
+    const prev = record.id ? db.projects[record.id] : null;
     if (!record.id) record.id = 'proj_' + Math.random().toString(36).slice(2, 11);
     if (!record.createdAt) record.createdAt = new Date().toISOString();
     record.updatedAt = new Date().toISOString();
     maybeSnapshotFinancials(record);   // freeze derived figures once booked
+    maybeAutoVersion(record, prev);    // capture a version when status crosses a lifecycle milestone
     db.projects[record.id] = record;
     writeDb(db);
     return record;
@@ -293,6 +323,195 @@
 
   function exportDb() {
     return JSON.stringify(readDb(), null, 2);
+  }
+
+  /* ============================================================
+     PROPOSAL VERSION HISTORY — append-only snapshots of a proposal.
+     ------------------------------------------------------------
+     One project record carries its whole lifecycle: v1, v2, v3 …
+     Each version freezes the COMPLETE input state (so it can be
+     restored), the headline totals, and a roster snapshot (so any
+     two versions diff like a change order). Captured two ways:
+       • Manually  — "Save version" with an optional label + note.
+       • Automatically — when status crosses a lifecycle milestone
+         (Submitted / Awarded / Lost), so a history exists even if
+         nobody clicks save.
+     Versions never roll into any total — they are an audit trail.
+     ============================================================ */
+  const VERSION_MILESTONES = { submitted: 'Submitted', won: 'Awarded', lost: 'Lost' };
+
+  function realIdentityLabel() {
+    const r = getRealIdentity();
+    if (!r) return { username: '', name: '' };
+    return { username: r.username || '', name: r.name || '' };
+  }
+
+  function versionInputs(record) {
+    return JSON.parse(JSON.stringify({
+      project: record.project || {}, timeline: record.timeline || {},
+      roles: record.roles || [], phases: record.phases || [],
+      groups: record.groups || [], assumptions: record.assumptions || {},
+    }));
+  }
+
+  function buildVersion(record, opts) {
+    opts = opts || {};
+    const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    let gross = null, net = null;
+    if (catalog && catalog.hydrated) {
+      const fin = computeFinancials(record, catalog);
+      if (fin) { gross = fin.gross; net = fin.net; }
+    }
+    const existing = record.versions || [];
+    return {
+      id: 'v_' + Math.random().toString(36).slice(2, 10),
+      n: existing.length + 1,
+      label: (opts.label || '').trim(),
+      note: (opts.note || '').trim(),
+      auto: !!opts.auto,
+      savedAt: new Date().toISOString(),
+      savedBy: realIdentityLabel(),
+      status: record.project && record.project.status,
+      rating: record.project && record.project.rating,
+      gross: gross, net: net,
+      roster: rosterSnapshot(record),
+      inputs: versionInputs(record),
+    };
+  }
+
+  /** Capture the current state of project `id` as a new version. */
+  function saveVersion(id, opts) {
+    const db = readDb();
+    const r = db.projects[id];
+    if (!r) return null;
+    r.versions = r.versions || [];
+    const v = buildVersion(r, opts);
+    r.versions.push(v);
+    r.updatedAt = new Date().toISOString();
+    writeDb(db);
+    return v;
+  }
+
+  /** Internal: append a milestone version when status transitions. Runs inside saveProject. */
+  function maybeAutoVersion(record, prev) {
+    const status = record.project && record.project.status;
+    const milestone = VERSION_MILESTONES[status];
+    if (!milestone) return;
+    const prevStatus = prev && prev.project && prev.project.status;
+    if (prevStatus === status) return;                 // no transition this save → don't capture
+    record.versions = record.versions || [];
+    record.versions.push(buildVersion(record, { label: milestone, auto: true }));
+  }
+
+  function listVersions(project) {
+    return ((project && project.versions) || []).slice().sort((a, b) => a.n - b.n);
+  }
+
+  /* ============================================================
+     PROPOSAL HEALTH SCORE — a 0–100 composite that turns the
+     calculator into a decision-support signal. Weighted blend of
+     four robustly-computable signals; band thresholds give the
+     🟢 / 🟡 / 🔴 triage. `fee` (net) is passed in so callers can
+     reuse the fee they already computed.
+     ============================================================ */
+  function proposalHealth(p, fee) {
+    const pj = p.project || {};
+    const a = p.assumptions || {};
+    const signals = [];
+
+    // 1 · Win confidence (rating 1–7). weight 0.30
+    const rating = ratingFor(p);
+    const winMap = { 1: 100, 2: 85, 3: 65, 4: 50, 5: 30, 6: 15, 7: 0 };
+    const winScore = winMap[rating] != null ? winMap[rating] : 50;
+    signals.push({ key: 'win', label: 'Win confidence', score: winScore, weight: 0.30,
+      detail: 'Rating ' + (rating || '—') });
+
+    // 2 · Discount discipline. weight 0.25
+    const disc = a.discount || 0;
+    const discScore = disc <= 5 ? 100 : disc <= 10 ? 82 : disc <= 15 ? 64 : disc <= 20 ? 45 : disc <= 30 ? 25 : 8;
+    signals.push({ key: 'discount', label: 'Discount discipline', score: discScore, weight: 0.25,
+      detail: disc ? disc.toFixed(1) + '% discount' : 'no discount' });
+
+    // 3 · Staffing defined — priced roles with allocation (imported / blank = can't validate). weight 0.25
+    const roles = p.roles || [];
+    const hasAlloc = roles.some(r => {
+      const m = r.fteMonthly && Object.values(r.fteMonthly).some(v => v > 0);
+      const ph = r.fte && Object.values(r.fte).some(v => v > 0);
+      return m || ph;
+    });
+    const importedBlank = p.source && p.source.importedByMonth && !roles.length;
+    const staffScore = hasAlloc ? 100 : importedBlank ? 25 : roles.length ? 55 : 10;
+    signals.push({ key: 'staffing', label: 'Staffing defined', score: staffScore, weight: 0.25,
+      detail: hasAlloc ? roles.length + ' roles allocated' : importedBlank ? 'imported $ only' : roles.length ? 'roles unallocated' : 'no staffing' });
+
+    // 4 · Completeness — type, assumptions, lead, dates. weight 0.20
+    let comp = 0;
+    if (pj.projectType) comp += 30;
+    if (Array.isArray(pj.assumptionsList) && pj.assumptionsList.length) comp += 25;
+    if (pj.leadId || pj.lead) comp += 25;
+    if (pj.firstProposalDate || pj.proposalDate) comp += 20;
+    signals.push({ key: 'completeness', label: 'Completeness', score: comp, weight: 0.20,
+      detail: comp >= 80 ? 'well documented' : comp >= 50 ? 'partly documented' : 'sparse' });
+
+    const score = Math.round(signals.reduce((s, x) => s + x.score * x.weight, 0));
+    const band = score >= 70 ? 'green' : score >= 45 ? 'yellow' : 'red';
+    const bandLabel = band === 'green' ? 'Healthy' : band === 'yellow' ? 'Needs review' : 'Executive review';
+    return { score, band, bandLabel, signals };
+  }
+
+  /** Generic role-level diff between two roster snapshots: added / removed / changed. */
+  function rosterDiff(baseRoster, nowRoster) {
+    const base = baseRoster || {}, now = nowRoster || {};
+    const added = [], removed = [], changed = [];
+    Object.keys(now).forEach(id => {
+      const n = now[id], b = base[id];
+      const label = (n.projectRole || '').trim() || n.resource || 'role';
+      if (!b) { if (n.fteMonths > 0.001) added.push({ label, fteMonths: n.fteMonths }); return; }
+      const rateChanged = b.titleId !== n.titleId || b.tierId !== n.tierId
+        || b.rateSource !== n.rateSource || b.contractedRate !== n.contractedRate;
+      const fteDelta = Math.round((n.fteMonths - b.fteMonths) * 100) / 100;
+      if (rateChanged || Math.abs(fteDelta) > 0.01) changed.push({ label, fteDelta, rateChanged });
+    });
+    Object.keys(base).forEach(id => {
+      if (!now[id] && base[id].fteMonths > 0.001) {
+        const b = base[id];
+        removed.push({ label: (b.projectRole || '').trim() || b.resource || 'role', fteMonths: b.fteMonths });
+      }
+    });
+    return { added, removed, changed };
+  }
+
+  function versionRoster(project, vid) {
+    if (vid === 'current') return rosterSnapshot(project);
+    const v = (project.versions || []).find(x => x.id === vid);
+    return v ? v.roster : {};
+  }
+  function versionTotals(project, vid) {
+    if (vid === 'current') {
+      const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+      const fin = (catalog && catalog.hydrated) ? computeFinancials(project, catalog) : null;
+      return fin ? { gross: fin.gross, net: fin.net } : { gross: null, net: null };
+    }
+    const v = (project.versions || []).find(x => x.id === vid);
+    return v ? { gross: v.gross, net: v.net } : { gross: null, net: null };
+  }
+  /** Diff two versions (or a version vs 'current'): role changes + total deltas. */
+  function versionDiff(project, vidA, vidB) {
+    return {
+      roles: rosterDiff(versionRoster(project, vidA), versionRoster(project, vidB)),
+      a: versionTotals(project, vidA),
+      b: versionTotals(project, vidB),
+    };
+  }
+
+  /** Reconstruct a full record from a version's frozen inputs (id + history preserved).
+      Returns a NEW object — NOT written — for the calculator to load into state. */
+  function restoreVersionRecord(project, vid) {
+    const v = (project.versions || []).find(x => x.id === vid);
+    if (!v) return null;
+    const rec = JSON.parse(JSON.stringify(project));          // keep id, versions, financials, createdAt
+    Object.assign(rec, JSON.parse(JSON.stringify(v.inputs))); // overwrite inputs from the version
+    return rec;
   }
 
   /* ============================================================
@@ -708,24 +927,7 @@
       changed (rate or FTE-months). Drives the differences-only panel. */
   function changeOrderRoleDiff(co) {
     const base = (co.changeOrder && co.changeOrder.baselineRoster) || {};
-    const now = rosterSnapshot(co);
-    const added = [], removed = [], changed = [];
-    Object.keys(now).forEach(id => {
-      const n = now[id], b = base[id];
-      const label = (n.projectRole || '').trim() || n.resource || 'role';
-      if (!b) { if (n.fteMonths > 0.001) added.push({ label, fteMonths: n.fteMonths }); return; }
-      const rateChanged = b.titleId !== n.titleId || b.tierId !== n.tierId
-        || b.rateSource !== n.rateSource || b.contractedRate !== n.contractedRate;
-      const fteDelta = Math.round((n.fteMonths - b.fteMonths) * 100) / 100;
-      if (rateChanged || Math.abs(fteDelta) > 0.01) changed.push({ label, fteDelta, rateChanged });
-    });
-    Object.keys(base).forEach(id => {
-      if (!now[id] && base[id].fteMonths > 0.001) {
-        const b = base[id];
-        removed.push({ label: (b.projectRole || '').trim() || b.resource || 'role', fteMonths: b.fteMonths });
-      }
-    });
-    return { added, removed, changed };
+    return rosterDiff(base, rosterSnapshot(co));
   }
 
   /** The incremental value of a CO vs. the contract it forked from. The CO side
@@ -1208,11 +1410,13 @@
   }
 
   window.UFC_Store = {
-    SCHEMA, STATUSES, STATUS_LABELS, INDUSTRIES, PROJECT_TYPES, projectTypeSubs,
+    SCHEMA, STATUSES, STATUS_LABELS, LOST_REASONS, ASSUMPTION_LIBRARY, INDUSTRIES, PROJECT_TYPES, projectTypeSubs,
     accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING,
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
+    saveVersion, listVersions, versionDiff, restoreVersionRecord, rosterDiff,
+    proposalHealth,
     exportDb, importDb, downloadJson,
     FLASH_LABELS, captureSnapshot, getSnapshots, deleteSnapshot, periodKey,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,

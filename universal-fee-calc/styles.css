@@ -1006,6 +1006,28 @@ html, body {
   border-color: var(--sav-navy);
 }
 
+/* Assumptions & exclusions capture */
+.assumptions-block { margin-top: 14px; padding: 14px 0 2px; border-top: 1px solid var(--hairline); }
+.assumptions-block .asm-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.assumptions-block .asm-lbl { font-family: var(--font-body); font-size: 9.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sav-steel); }
+.assumptions-block .asm-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.assumptions-block .asm-chip {
+  font-family: var(--font-body); font-size: 11.5px; color: var(--sav-steel);
+  background: #fff; border: 1px solid var(--hairline-strong);
+  padding: 3px 11px; border-radius: 999px; cursor: pointer; user-select: none;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.assumptions-block .asm-chip:hover { border-color: var(--sav-navy); color: var(--sav-navy); }
+.assumptions-block .asm-chip.is-on { background: var(--sav-navy); color: #fff; border-color: var(--sav-navy); }
+.assumptions-block .asm-chip.is-custom { background: var(--sav-teal); border-color: var(--sav-teal); }
+.assumptions-block .asm-chip .asm-x { margin-left: 4px; font-weight: 800; opacity: 0.85; }
+.assumptions-block .asm-chip .asm-x:hover { opacity: 1; }
+.assumptions-block .asm-add { margin-top: 10px; }
+.assumptions-block .asm-add input {
+  width: 100%; max-width: 420px; font-family: var(--font-body); font-size: 12px;
+  padding: 6px 9px; border: 1px solid var(--hairline-strong); background: #fff;
+}
+
 /* Current month / past month markers in the matrix */
 .matrix-table th.mcol.today,
 .matrix-table td.mcol.today {
@@ -1636,3 +1658,41 @@ html, body {
   input, select { border-bottom: 1px solid var(--sav-navy) !important; background: transparent !important; }
   @page { size: landscape; margin: 10mm; }
 }
+
+/* ===== Version history ===== */
+.ver-count { display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 5px; margin-left: 4px; border-radius: 9px; background: var(--sav-teal); color: #fff; font-size: 10px; font-weight: 800; font-family: var(--font-display); }
+.ver-overlay { position: fixed; inset: 0; z-index: 1200; background: rgba(20,21,34,0.46); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 18px 18px; overflow-y: auto; }
+.ver-modal { width: 100%; max-width: 760px; background: #fff; border: 1px solid var(--hairline, rgba(37,39,58,0.12)); box-shadow: 0 24px 60px rgba(20,21,34,0.32); }
+.ver-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 26px 16px; border-bottom: 1px solid rgba(37,39,58,0.1); }
+.ver-modal-head h3 { font-family: var(--font-display); font-size: 19px; font-weight: 900; color: var(--sav-navy); margin: 0 0 4px; letter-spacing: -0.01em; }
+.ver-sub { font-family: var(--font-body); font-size: 12.5px; color: #6b7280; margin: 0; line-height: 1.5; max-width: 560px; }
+.ver-x { border: 0; background: transparent; font-size: 26px; line-height: 1; color: #9aa0aa; cursor: pointer; padding: 0 2px; }
+.ver-x:hover { color: var(--sav-navy); }
+.ver-modal-actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding: 16px 26px; border-bottom: 1px solid rgba(37,39,58,0.08); }
+.ver-modal-actions .btn { white-space: nowrap; }
+.ver-compare { display: flex; align-items: center; gap: 8px; }
+.ver-compare label { font-family: var(--font-display); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sav-steel); }
+.ver-compare select { font-family: var(--font-body); font-size: 12px; padding: 5px 7px; border: 1px solid rgba(37,39,58,0.18); background: #fff; }
+.ver-arrow { color: var(--sav-steel); font-weight: 700; }
+.ver-diff { margin: 0 26px; padding: 14px 16px; background: #f7f8fa; border: 1px solid rgba(37,39,58,0.1); font-family: var(--font-body); font-size: 12.5px; }
+.ver-diff .vd-totals { display: flex; gap: 24px; margin-bottom: 10px; }
+.ver-diff .vd-tot b { font-family: var(--font-display); font-size: 16px; color: var(--sav-navy); display: block; }
+.ver-diff .vd-tot span { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sav-steel); }
+.ver-diff .vd-delta.pos { color: #1f8a4c; } .ver-diff .vd-delta.neg { color: #b3151b; }
+.ver-diff .vd-chip { display: inline-block; margin: 2px 5px 2px 0; padding: 2px 9px; border-radius: 11px; font-size: 11px; font-weight: 600; }
+.ver-diff .vd-chip.add { background: #e4f6e8; color: #1e7a33; }
+.ver-diff .vd-chip.rem { background: #fce4e4; color: #b3151b; }
+.ver-diff .vd-chip.chg { background: #fdf4d6; color: #8a6a00; }
+.ver-diff .vd-none { color: var(--sav-steel); font-style: italic; }
+.ver-list { padding: 12px 26px 26px; display: flex; flex-direction: column; gap: 9px; }
+.ver-empty { font-family: var(--font-body); font-size: 13px; color: #6b7280; text-align: center; padding: 26px 0; }
+.ver-row { display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid rgba(37,39,58,0.12); background: #fff; }
+.ver-row .vr-n { font-family: var(--font-display); font-size: 18px; font-weight: 900; color: var(--sav-navy); text-align: center; }
+.ver-row .vr-main .vr-label { font-family: var(--font-display); font-size: 14px; font-weight: 700; color: var(--sav-navy); }
+.ver-row .vr-main .vr-meta { font-family: var(--font-body); font-size: 11.5px; color: #6b7280; margin-top: 2px; }
+.ver-row .vr-auto { display: inline-block; margin-left: 7px; font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sav-steel); background: #eef1f4; padding: 1px 6px; border-radius: 8px; vertical-align: middle; }
+.ver-row .vr-right { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.ver-row .vr-net { font-family: var(--font-display); font-size: 15px; font-weight: 800; color: var(--sav-navy); }
+.ver-row .vr-net span { font-size: 10px; color: var(--sav-steel); font-weight: 600; }
+.ver-row .vr-restore { border: 1px solid var(--sav-navy); background: #fff; color: var(--sav-navy); font-family: var(--font-display); font-size: 11px; font-weight: 700; padding: 4px 11px; cursor: pointer; }
+.ver-row .vr-restore:hover { background: var(--sav-navy); color: #fff; }

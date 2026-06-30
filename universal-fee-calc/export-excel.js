@@ -100,6 +100,8 @@ window.UFC_buildAndDownloadExcel = async function () {
     ['Savills lead',  state.project.lead],
     ['Industry',      state.project.industry],
     ['Project type',  state.project.projectType],
+    ['Scope includes', (Array.isArray(state.project.projectSubtypes) && state.project.projectSubtypes.length) ? state.project.projectSubtypes.join(', ') : '—'],
+    ['Assumptions',   (Array.isArray(state.project.assumptionsList) && state.project.assumptionsList.length) ? state.project.assumptionsList.join('; ') : '—'],
     ['Proposal date', state.project.proposalDate],
     ['Location',      state.project.location],
     ['Period',        months.length ? `${months[0].longLabel} → ${months[months.length-1].longLabel}` : '—'],
