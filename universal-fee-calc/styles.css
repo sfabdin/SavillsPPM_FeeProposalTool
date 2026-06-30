@@ -1662,6 +1662,7 @@ html, body {
 /* ===== Version history ===== */
 .ver-count { display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 5px; margin-left: 4px; border-radius: 9px; background: var(--sav-teal); color: #fff; font-size: 10px; font-weight: 800; font-family: var(--font-display); }
 .ver-overlay { position: fixed; inset: 0; z-index: 1200; background: rgba(20,21,34,0.46); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 18px 18px; overflow-y: auto; }
+.ver-overlay[hidden] { display: none; }
 .ver-modal { width: 100%; max-width: 760px; background: #fff; border: 1px solid var(--hairline, rgba(37,39,58,0.12)); box-shadow: 0 24px 60px rgba(20,21,34,0.32); }
 .ver-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 26px 16px; border-bottom: 1px solid rgba(37,39,58,0.1); }
 .ver-modal-head h3 { font-family: var(--font-display); font-size: 19px; font-weight: 900; color: var(--sav-navy); margin: 0 0 4px; letter-spacing: -0.01em; }
