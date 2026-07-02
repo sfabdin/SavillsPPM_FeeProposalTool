@@ -862,16 +862,17 @@ window.UFC_buildAndDownloadExcel = async function () {
   netCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YELLOW } };
   s3.getRow(wNet).height = 26;
 
-  // Fee share / revenue
+  // Fee share / revenue (broker) — mode-aware
   let s3NetRow = wNet;
   const fsX = state.assumptions.feeShare;
   if (fsX && fsX.enabled) {
     const pct = parseFloat(fsX.pct) || 0;
+    const onTop = fsX.mode === 'ontop';
     const fRow = wNet + 1, revRow = wNet + 2;
-    wLabel(fRow, `Less ${pct}% fee share · broker`, RED);
-    wVal(fRow, `-${totCol}${wNet}*(${pct}/100)`, RED);
+    wLabel(fRow, onTop ? `Plus ${pct}% broker markup · on top` : `Less ${pct}% fee share · broker (off invoice)`, RED);
+    wVal(fRow, `${onTop ? '' : '-'}${totCol}${wNet}*(${pct}/100)`, RED);
     s3.mergeCells(`A${revRow}:${colLetter(4 + nMonths)}${revRow}`);
-    s3.getCell(`A${revRow}`).value = 'Revenue · net of fee share';
+    s3.getCell(`A${revRow}`).value = onTop ? 'Client invoice · incl. broker' : 'Revenue · net of fee share';
     s3.getCell(`A${revRow}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE }, size: 12 };
     s3.getCell(`A${revRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
     s3.getCell(`A${revRow}`).alignment = { horizontal: 'right' };
@@ -1054,15 +1055,18 @@ window.UFC_buildAndDownloadExcel = async function () {
   brLabel(b4, 'Less client discount', RED); brVal(b4, `-${grossRef}*(discount_pct/100)`, RED); b4++;
   brLabel(b4, 'Net invoiced (ties to row above)', NAVY); brVal(b4, netRef, NAVY); b4++;
 
-  // Fee-share revenue (optional)
+  // Fee-share revenue / client invoice (optional) — mode-aware
   if (fsX && fsX.enabled) {
     const pctv = parseFloat(fsX.pct) || 0;
+    const onTopv = fsX.mode === 'ontop';
     b4 += 2;
-    s4.getCell(`A${b4}`).value = `Revenue net of ${pctv}% fee share`;
+    s4.getCell(`A${b4}`).value = onTopv
+      ? `Client invoice incl. ${pctv}% broker markup (on top)`
+      : `Revenue net of ${pctv}% fee share`;
     s4.getCell(`A${b4}`).font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
     s4.getCell(`A${b4}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
     const rc = s4.getCell(`${tot4}${b4}`);
-    rc.value = { formula: `${netRef}*(1-${pctv}/100)` };
+    rc.value = { formula: `${netRef}*(1${onTopv ? '+' : '-'}${pctv}/100)` };
     rc.numFmt = '"$"#,##0';
     rc.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
     rc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };

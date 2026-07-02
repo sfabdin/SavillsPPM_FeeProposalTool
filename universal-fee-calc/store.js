@@ -689,7 +689,7 @@
       t: p.timeline,
       ph: (p.phases || []).map(x => [x.id, x.length]),
       as: [a.hrsPerMo, a.escalation, a.industryAdj, a.discount, a.rateLock, a.billingMode, a.catalogBaseYear,
-           a.feeShare && a.feeShare.enabled, a.feeShare && a.feeShare.pct],
+           a.feeShare && a.feeShare.enabled, a.feeShare && a.feeShare.pct, a.feeShare && a.feeShare.mode],
       r: (p.roles || []).map(r => [r.titleId, r.tierId, r.rateSource, r.contractedRate, r.groupId,
            r.fte, r.fteMonthly]),
     });
@@ -753,8 +753,12 @@
 
     const feeSharePct = (p.assumptions?.feeShare && p.assumptions.feeShare.enabled)
       ? (parseFloat(p.assumptions.feeShare.pct) || 0) : 0;
-    const feeShare = round2(net * (feeSharePct / 100));
-    const revenue = round2(net - feeShare);
+    const feeShareMode = (p.assumptions?.feeShare && p.assumptions.feeShare.mode === 'ontop') ? 'ontop' : 'offtop';
+    const feeShare = round2(net * (feeSharePct / 100));   // broker $ — same in both modes
+    // off-top: broker comes OUT of the fee (Savills keeps net−broker; client pays net).
+    // on-top:  broker is added ON (Savills keeps net; client is billed net+broker).
+    const clientBill = round2(feeShareMode === 'ontop' ? net + feeShare : net);
+    const revenue = round2(feeShareMode === 'ontop' ? net : net - feeShare);
 
     // NTE: the worked/planned total is `net`; the ceiling is a reference cap.
     const feeBasis = (p.assumptions?.feeBasis === 'nte') ? 'nte' : 'fixed';
@@ -773,7 +777,9 @@
       discount: round2(discount),
       net: round2(net),
       feeSharePct,
+      feeShareMode,
       feeShare,
+      clientBill,
       revenue,
       fteMonths: Math.round(fteMonths * 100) / 100,
       byGroup,

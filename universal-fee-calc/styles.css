@@ -852,6 +852,24 @@ html, body {
 .fee-share-ctl .fs-pct input { width: 38px; border: 1px solid var(--hairline); background: var(--sav-cream); text-align: right; font-family: var(--font-display); font-weight: 700; font-size: 12px; color: var(--sav-navy); padding: 2px 4px; }
 .fee-share-ctl .fs-pct input:disabled { opacity: 0.4; }
 .fee-share-ctl .fs-hint { font-family: var(--font-body); font-size: 10px; color: var(--sav-steel); }
+.fee-share-ctl .fs-lbl { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+/* Broker fee mode: off-invoice vs on-top */
+.fee-share-ctl .fs-mode { display: inline-flex; border: 1px solid var(--hairline); background: #fff; }
+.fee-share-ctl .fsm-btn {
+  font-family: var(--font-display); font-weight: 700; font-size: 9.5px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--sav-steel); background: #fff; border: 0; padding: 4px 8px; cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+.fee-share-ctl .fsm-btn + .fsm-btn { border-left: 1px solid var(--hairline); }
+.fee-share-ctl .fsm-btn.on { background: var(--sav-navy); color: #fff; }
+.fee-share-ctl .fsm-btn:not(.on):hover { background: var(--sav-cream); color: var(--sav-navy); }
+/* Broker column in the monthly schedule */
+.monthly-table th.bk-col, .monthly-table td.bk-col {
+  text-align: right; color: var(--sav-red); background: #fbf7f4;
+  border-left: 2px solid var(--sav-red);
+}
+.monthly-table th.bk-col { color: #fff; background: #6b2530; }
+.monthly-table tr.total td.bk-col, .monthly-table tr.total.grand td.bk-col { color: var(--sav-red); background: #f6ece8; }
 .monthly-table tr.fee-share-row td { color: var(--sav-red); }
 .monthly-table tr.revenue-row.total.grand td { background: var(--sav-teal, #2c7a8c); color: #fff; }
 .monthly-table tr.revenue-row.total.grand td.month-col { color: #fff; }

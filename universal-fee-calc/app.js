@@ -76,7 +76,7 @@
       feeBasis: 'fixed',   // 'fixed' = fixed fee (frozen on booking) · 'nte' = not-to-exceed (live forecast)
       nteCeiling: 0,       // NTE cap (locked at booking); revenue = actuals-to-date + planned future, capped here
       billingMode: 'phase', // 'phase' = resource-loaded as accrued · 'flatline' = net ÷ months, even monthly
-      feeShare: { enabled: false, pct: 10 }, // broker referral cut off the revenue side
+      feeShare: { enabled: false, pct: 10, mode: 'offtop' }, // broker cut · 'offtop'=% off invoice · 'ontop'=markup added for client
       catalogBaseYear: CATALOG.baseYear,
     },
   });
@@ -304,13 +304,21 @@
   function netTotal() {
     return grossTotal() - lockCredit() - discountAmt();
   }
-  /* Fee share = broker referral cut taken off the REVENUE side (invoicing),
-     invisible to the client. Proposal fee = what the client pays (netTotal);
-     revenue = proposal fee minus the broker's share. */
+  /* Fee share = broker referral cut. TWO MODES (broker $ is the same either way —
+     base fee × pct — what differs is who absorbs it):
+       • 'offtop' (default): broker takes a % OFF the invoice. Client pays the proposal
+         fee (netTotal); broker gets fee×pct; Savills keeps fee×(1−pct). Effective % of
+         the invoice = pct.
+       • 'ontop': broker % is added ON TOP as a markup. netTotal is what Savills keeps;
+         client pays fee×(1+pct); broker gets fee×pct. Effective % of the invoice =
+         pct/(1+pct). (e.g. 25% on top of $80k = $20k broker on a $100k invoice = 20%.) */
   function feeShareOn() { return !!(state.assumptions.feeShare && state.assumptions.feeShare.enabled); }
+  function feeShareMode() { return (state.assumptions.feeShare && state.assumptions.feeShare.mode) || 'offtop'; }
   function feeSharePct() { return (state.assumptions.feeShare && parseFloat(state.assumptions.feeShare.pct)) || 0; }
-  function feeShareAmt() { return feeShareOn() ? netTotal() * (feeSharePct() / 100) : 0; }
-  function revenueTotal() { return netTotal() - feeShareAmt(); }
+  function feeShareAmt() { return feeShareOn() ? netTotal() * (feeSharePct() / 100) : 0; }   // broker $ — same in both modes
+  function clientBillTotal() { return (feeShareOn() && feeShareMode() === 'ontop') ? netTotal() + feeShareAmt() : netTotal(); }
+  function revenueTotal() { return (feeShareOn() && feeShareMode() === 'offtop') ? netTotal() - feeShareAmt() : netTotal(); }
+  function effectiveBrokerPct() { const cb = clientBillTotal(); return cb > 0 ? (feeShareAmt() / cb) * 100 : 0; }
   /** A phase's display FTE for a role = the rounded average of its months'
       effective FTE. Phase is a derived rollup; months are canonical. */
   function phaseAvgFte(role, phaseId) {
@@ -1848,25 +1856,48 @@
 
   /** Sync the fee-share control to state + enable/disable the % input. */
   function syncFeeShare() {
-    const fs = state.assumptions.feeShare || { enabled: false, pct: 10 };
+    const fs = state.assumptions.feeShare || { enabled: false, pct: 10, mode: 'offtop' };
     const on = $('#fs-on'), pct = $('#fs-pct'), ctl = $('#fee-share-ctl');
     if (on) on.checked = !!fs.enabled;
     if (pct && document.activeElement !== pct) pct.value = fs.pct != null ? fs.pct : 10;
     if (pct) pct.disabled = !fs.enabled;
     if (ctl) ctl.classList.toggle('is-on', !!fs.enabled);
+    // Mode segmented buttons
+    const mode = feeShareMode();
+    const offBtn = $('#fsm-offtop'), onBtn = $('#fsm-ontop'), modeWrap = $('#fs-mode-wrap');
+    if (offBtn) offBtn.classList.toggle('on', mode === 'offtop');
+    if (onBtn) onBtn.classList.toggle('on', mode === 'ontop');
+    if (modeWrap) modeWrap.style.opacity = fs.enabled ? '' : '0.4';
+    // Effective-% readout: on-top markups net to a lower share of the (bigger) invoice.
+    const eff = $('#fs-eff');
+    if (eff) {
+      if (!fs.enabled) { eff.textContent = 'to broker'; }
+      else if (mode === 'ontop') { eff.innerHTML = `added on top · <strong>${(effectiveBrokerPct()).toFixed(1)}%</strong> of invoice`; }
+      else { eff.innerHTML = `off invoice · client pays the fee`; }
+    }
   }
 
-  /** Append "Less fee share" + "Revenue" rows under a monthly grand-total, when fee share is on. */
+  /** Append broker + client/revenue reconciliation rows under a monthly grand-total.
+      off-top: broker comes OUT of the fee → show "Less broker" + "Revenue (net)".
+      on-top:  broker is added ON for the client → show "Plus broker markup" + "Client invoice". */
   function appendFeeShareRows(tbody, visibleGroups) {
     if (!feeShareOn()) return;
     const share = feeShareAmt();
+    const onTop = feeShareMode() === 'ontop';
     const fs = document.createElement('tr');
     fs.className = 'credit-row fee-share-row';
-    fs.innerHTML = `<td class="month-col">Less ${feeSharePct()}% fee share · broker</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(-share)}</td>`;
+    const brokerLabel = onTop
+      ? `Plus ${feeSharePct()}% broker markup · on top`
+      : `Less ${feeSharePct()}% fee share · broker (off invoice)`;
+    fs.innerHTML = `<td class="month-col">${brokerLabel}</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(onTop ? share : -share)}</td><td class="bk-col"></td>`;
     tbody.appendChild(fs);
     const rev = document.createElement('tr');
     rev.className = 'total grand revenue-row';
-    rev.innerHTML = `<td class="month-col">Revenue · net of fee share</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(revenueTotal())}</td>`;
+    if (onTop) {
+      rev.innerHTML = `<td class="month-col">Client invoice · incl. broker</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(clientBillTotal())}</td><td class="bk-col"></td>`;
+    } else {
+      rev.innerHTML = `<td class="month-col">Revenue · net of fee share</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(revenueTotal())}</td><td class="bk-col"></td>`;
+    }
     tbody.appendChild(rev);
   }
 
@@ -1885,22 +1916,35 @@
     const flat = state.assumptions.billingMode === 'flatline';
     const spread = !flat && monthlyMode === 'spread' && d > 0;
 
-    // header: Month + each group + total
+    // Broker column (only when fee share is on). Per-month broker $ = that month's
+    // NET billed × pct — identical in both modes; only its sign/label differs.
+    const bk = feeShareOn();
+    const bkPct = feeSharePct() / 100;
+    const onTop = feeShareMode() === 'ontop';
+    const bkCell = (netAmt) => {
+      const b = netAmt * bkPct;
+      return `<td class="bk-col">${b ? fmtMoneySmall(onTop ? b : -b) : ''}</td>`;
+    };
+    const emptyBk = bk ? '<td class="bk-col"></td>' : '';
+
+    // header: Month + each group + total (+ Broker)
     let hdr = `<tr><th class="month-col">Month</th>`;
     state.groups.forEach(g => {
       const has = state.roles.some(r => r.groupId === g.id);
       if (has) hdr += `<th>${escapeHtml(g.name)}</th>`;
     });
-    hdr += `<th>Monthly ${(flat || spread) ? 'billed' : 'total'}</th></tr>`;
+    hdr += `<th>Monthly ${(flat || spread) ? 'billed' : 'total'}</th>`;
+    if (bk) hdr += `<th class="bk-col" title="Dollar amount to the broker each month">Broker${onTop ? ' (on top)' : ''}</th>`;
+    hdr += `</tr>`;
     thead.innerHTML = hdr;
 
     tbody.innerHTML = '';
     const byPhase = getMonthsByPhase();
     let totalsByGroup = {};
-    let grandGross = 0, grandNet = 0;
+    let grandGross = 0, grandNet = 0, grandNetForBroker = 0;
     state.groups.forEach(g => totalsByGroup[g.id] = 0);
     const visibleGroups = state.groups.filter(g => state.roles.some(r => r.groupId === g.id));
-
+    const SPAN = visibleGroups.length + 2 + (bk ? 1 : 0);   // full-width colspan for caption/phase rows
 
     // ===== FLATLINE billing: net total ÷ months = even fixed monthly =====
     if (flat) {
@@ -1920,14 +1964,14 @@
 
       const cap = document.createElement('tr');
       cap.className = 'spread-caption';
-      cap.innerHTML = `<td colspan="${visibleGroups.length + 2}">Flat monthly fee — net total ÷ ${monthCount} month${monthCount === 1 ? '' : 's'}. Resource loading drives the total; billing is levelized into equal monthly invoices.</td>`;
+      cap.innerHTML = `<td colspan="${SPAN}">Flat monthly fee — net total ÷ ${monthCount} month${monthCount === 1 ? '' : 's'}. Resource loading drives the total; billing is levelized into equal monthly invoices.</td>`;
       tbody.appendChild(cap);
 
       byPhase.forEach(bucket => {
         if (!bucket.months.length) return;
         const phRow = document.createElement('tr');
         phRow.className = 'phase';
-        phRow.innerHTML = `<td colspan="${visibleGroups.length + 2}">${escapeHtml(bucket.phase.name)} · ${bucket.months.length} mo</td>`;
+        phRow.innerHTML = `<td colspan="${SPAN}">${escapeHtml(bucket.phase.name)} · ${bucket.months.length} mo</td>`;
         tbody.appendChild(phRow);
         bucket.months.forEach(m => {
           const tr = document.createElement('tr');
@@ -1939,6 +1983,7 @@
             html += `<td>${fmtMoneySmall(cell)}</td>`;
           });
           html += `<td><strong>${fmtMoneySmall(flatMonthly)}</strong></td>`;
+          if (bk) html += bkCell(flatMonthly);
           tr.innerHTML = html;
           tbody.appendChild(tr);
         });
@@ -1949,12 +1994,13 @@
       let subHtml = `<td class="month-col">Flat monthly fee</td>`;
       visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id] / (monthCount || 1))}</td>`; });
       subHtml += `<td>${fmtMoney(flatMonthly)}</td>`;
+      if (bk) subHtml += bkCell(flatMonthly);
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>`;
+      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${emptyBk}`;
       tbody.appendChild(tr);
       appendFeeShareRows(tbody, visibleGroups);
       return;
@@ -1963,7 +2009,7 @@
     if (spread) {
       const cap = document.createElement('tr');
       cap.className = 'spread-caption';
-      cap.innerHTML = `<td colspan="${visibleGroups.length + 2}">Each month is net of the ${state.assumptions.discount}% client discount${state.assumptions.rateLock ? ' and Rate Lock credit' : ''} — what you actually invoice.</td>`;
+      cap.innerHTML = `<td colspan="${SPAN}">Each month is net of the ${state.assumptions.discount}% client discount${state.assumptions.rateLock ? ' and Rate Lock credit' : ''} — what you actually invoice.</td>`;
       tbody.appendChild(cap);
     }
 
@@ -1971,31 +2017,30 @@
       if (bucket.months.length) {
         const phRow = document.createElement('tr');
         phRow.className = 'phase';
-        phRow.innerHTML = `<td colspan="${visibleGroups.length + 2}">${escapeHtml(bucket.phase.name)} · ${bucket.months.length} mo</td>`;
+        phRow.innerHTML = `<td colspan="${SPAN}">${escapeHtml(bucket.phase.name)} · ${bucket.months.length} mo</td>`;
         tbody.appendChild(phRow);
       }
       bucket.months.forEach(m => {
         const tr = document.createElement('tr');
         let html = `<td class="month-col">${m.label}</td>`;
-        let monthTotal = 0;
+        let monthTotal = 0, monthNet = 0;
         state.groups.forEach(g => {
           if (!state.roles.some(r => r.groupId === g.id)) return;
           const rolesInG = state.roles.filter(r => r.groupId === g.id);
           const gross = rolesInG.reduce((s, r) => s + monthlyFee(r, m, bucket.phase.id), 0);
-          let cell;
-          if (spread) {
-            const lockC = rolesInG.reduce((s, r) => s + monthlyLockCredit(r, m, bucket.phase.id), 0);
-            cell = gross * (1 - d) - lockC;      // net billed this month for this group
-          } else {
-            cell = gross;
-          }
+          const lockC = rolesInG.reduce((s, r) => s + monthlyLockCredit(r, m, bucket.phase.id), 0);
+          const netCell = gross * (1 - d) - lockC;   // true net billed this month for this group
+          const cell = spread ? netCell : gross;
           totalsByGroup[g.id] += cell;
           monthTotal += cell;
+          monthNet += netCell;
           grandGross += gross;
           html += `<td>${fmtMoneySmall(cell)}</td>`;
         });
         grandNet += monthTotal;
+        grandNetForBroker += monthNet;
         html += `<td><strong>${fmtMoneySmall(monthTotal)}</strong></td>`;
+        if (bk) html += bkCell(monthNet);
         tr.innerHTML = html;
         tbody.appendChild(tr);
       });
@@ -2011,12 +2056,13 @@
       let subHtml = `<td class="month-col">Net billed subtotal</td>`;
       visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
       subHtml += `<td>${fmtMoney(grandNet)}</td>`;
+      if (bk) subHtml += bkCell(grandNetForBroker);
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(grandNet)}</td>`;
+      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(grandNet)}</td>${emptyBk}`;
       tbody.appendChild(tr);
       appendFeeShareRows(tbody, visibleGroups);
       return;
@@ -2029,24 +2075,25 @@
     let subHtml = `<td class="month-col">Gross subtotal</td>`;
     visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
     subHtml += `<td>${fmtMoney(grandGross)}</td>`;
+    if (bk) subHtml += bkCell(grandNetForBroker);
     sub.innerHTML = subHtml;
     tbody.appendChild(sub);
 
     if (state.assumptions.rateLock && lock > 0.5) {
       const lr = document.createElement('tr');
       lr.className = 'credit-row';
-      lr.innerHTML = `<td class="month-col">Less Rate Lock credit</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(-lock)}</td>`;
+      lr.innerHTML = `<td class="month-col">Less Rate Lock credit</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(-lock)}</td>${emptyBk}`;
       tbody.appendChild(lr);
     }
     if (state.assumptions.discount > 0) {
       const dr = document.createElement('tr');
       dr.className = 'credit-row';
-      dr.innerHTML = `<td class="month-col">Less ${state.assumptions.discount}% client discount</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(-disc)}</td>`;
+      dr.innerHTML = `<td class="month-col">Less ${state.assumptions.discount}% client discount</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(-disc)}</td>${emptyBk}`;
       tbody.appendChild(dr);
     }
     const tr = document.createElement('tr');
     tr.className = 'total grand';
-    tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>`;
+    tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${emptyBk}`;
     tbody.appendChild(tr);
     appendFeeShareRows(tbody, visibleGroups);
   }
@@ -2073,15 +2120,22 @@
     // Fee share (broker referral cut taken off the revenue side)
     const fsOn = $('#fs-on'), fsPct = $('#fs-pct');
     if (fsOn) fsOn.addEventListener('change', e => {
-      state.assumptions.feeShare = state.assumptions.feeShare || { enabled: false, pct: 10 };
+      state.assumptions.feeShare = state.assumptions.feeShare || { enabled: false, pct: 10, mode: 'offtop' };
       state.assumptions.feeShare.enabled = e.target.checked;
       syncFeeShare(); renderMonthly(); renderSummary(); markDirty();
     });
     if (fsPct) fsPct.addEventListener('input', e => {
-      state.assumptions.feeShare = state.assumptions.feeShare || { enabled: false, pct: 10 };
+      state.assumptions.feeShare = state.assumptions.feeShare || { enabled: false, pct: 10, mode: 'offtop' };
       state.assumptions.feeShare.pct = parseFloat(e.target.value) || 0;
-      renderMonthly(); renderSummary(); markDirty();
+      syncFeeShare(); renderMonthly(); renderSummary(); markDirty();
     });
+    // Broker fee mode: off-invoice (default) vs on-top markup
+    $$('.fsm-btn').forEach(b => b.addEventListener('click', () => {
+      state.assumptions.feeShare = state.assumptions.feeShare || { enabled: false, pct: 10, mode: 'offtop' };
+      if (!state.assumptions.feeShare.enabled) return;   // no-op until fee share is turned on
+      state.assumptions.feeShare.mode = b.dataset.fsm;
+      syncFeeShare(); renderMonthly(); renderSummary(); markDirty();
+    }));
     // Reconcile to proposal
     const fitBtn = $('#fit-btn');
     if (fitBtn) fitBtn.addEventListener('click', fitToTarget);
@@ -2257,6 +2311,7 @@
     lockCredit,
     discountAmt,
     netTotal,
+    feeShareAmt, revenueTotal, clientBillTotal, effectiveBrokerPct, feeShareMode,
     totalFteMonths,
     getTitle,
     getTier,
