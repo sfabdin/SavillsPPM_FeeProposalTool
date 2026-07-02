@@ -879,6 +879,31 @@ window.UFC_buildAndDownloadExcel = async function () {
     const rc = wVal(revRow, `${totCol}${wNet}+${totCol}${fRow}`, WHITE, 12);
     rc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
     s3.getRow(revRow).height = 24;
+
+    // Per-month broker $ (mirrors the on-screen Broker column). Each month's broker =
+    // month gross × (net/gross) × pct — proportional, so it ties to the total broker.
+    const brRow = revRow + 2;
+    s3.getCell(`A${brRow}`).value = onTop
+      ? `Broker markup $ / month · ${pct}% on top`
+      : `Broker $ / month · ${pct}% off invoice`;
+    s3.getCell(`A${brRow}`).font = { name: 'Calibri', bold: true, color: { argb: RED } };
+    monthCols.forEach((mc, i) => {
+      const col = mCol(i);
+      const c = s3.getCell(`${col}${brRow}`);
+      c.value = { formula: `${col}${monthTotRow}*(${totCol}${wNet}/${totCol}${wGross})*(${pct}/100)` };
+      c.numFmt = '"$"#,##0'; c.font = { name: 'Calibri', color: { argb: RED } }; c.alignment = { horizontal: 'right' };
+    });
+    const btc = s3.getCell(`${totCol}${brRow}`);
+    btc.value = { formula: `SUM(${mCol(0)}${brRow}:${mCol(nMonths - 1)}${brRow})` };
+    btc.numFmt = '"$"#,##0'; btc.font = { name: 'Calibri', bold: true, color: { argb: RED } }; btc.alignment = { horizontal: 'right' };
+    // Effective rate note (on-top nets to a smaller share of the bigger invoice)
+    const effRow = brRow + 1;
+    s3.mergeCells(`A${effRow}:${colLetter(4 + nMonths)}${effRow}`);
+    const effPct = onTop ? (pct / (1 + pct / 100) ).toFixed(1) : pct.toFixed(1);
+    s3.getCell(`A${effRow}`).value = onTop
+      ? `Broker markup is ${pct}% of the fee, added on top → ${effPct}% of the client invoice. Savills keeps the fee (net row above).`
+      : `Broker takes ${pct}% off the invoice → Savills revenue is the net row above.`;
+    s3.getCell(`A${effRow}`).font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
   }
 
   /* ============================================================

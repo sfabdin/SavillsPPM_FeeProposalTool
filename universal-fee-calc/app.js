@@ -1877,27 +1877,30 @@
     }
   }
 
-  /** Append broker + client/revenue reconciliation rows under a monthly grand-total.
-      off-top: broker comes OUT of the fee → show "Less broker" + "Revenue (net)".
-      on-top:  broker is added ON for the client → show "Plus broker markup" + "Client invoice". */
-  function appendFeeShareRows(tbody, visibleGroups) {
+  /** Append broker + revenue reconciliation rows under a monthly grand-total.
+      The grand "Total proposed fee" row above is the client-facing number
+      (on-top: grossed up incl. broker; off-top: the fee). Both modes then show
+      the broker coming OUT to reach Savills revenue. */
+  function appendFeeShareRows(tbody, visibleGroups, headlineIsClient) {
     if (!feeShareOn()) return;
     const share = feeShareAmt();
     const onTop = feeShareMode() === 'ontop';
+    // Row 1 — broker adjustment (direction depends on what the headline above shows)
     const fs = document.createElement('tr');
     fs.className = 'credit-row fee-share-row';
-    const brokerLabel = onTop
-      ? `Plus ${feeSharePct()}% broker markup · on top`
-      : `Less ${feeSharePct()}% fee share · broker (off invoice)`;
-    fs.innerHTML = `<td class="month-col">${brokerLabel}</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(onTop ? share : -share)}</td><td class="bk-col"></td>`;
+    let brokerLabel, brokerVal;
+    if (onTop && headlineIsClient) { brokerLabel = `Less ${feeSharePct()}% broker markup · on top`; brokerVal = -share; }
+    else if (onTop) { brokerLabel = `Plus ${feeSharePct()}% broker markup · on top`; brokerVal = share; }
+    else { brokerLabel = `Less ${feeSharePct()}% fee share · broker (off invoice)`; brokerVal = -share; }
+    fs.innerHTML = `<td class="month-col">${brokerLabel}</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(brokerVal)}</td><td class="bk-col"></td>`;
     tbody.appendChild(fs);
+    // Row 2 — the resulting figure
     const rev = document.createElement('tr');
     rev.className = 'total grand revenue-row';
-    if (onTop) {
-      rev.innerHTML = `<td class="month-col">Client invoice · incl. broker</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(clientBillTotal())}</td><td class="bk-col"></td>`;
-    } else {
-      rev.innerHTML = `<td class="month-col">Revenue · net of fee share</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(revenueTotal())}</td><td class="bk-col"></td>`;
-    }
+    let resultLabel, resultVal;
+    if (onTop && !headlineIsClient) { resultLabel = 'Client invoice · incl. broker'; resultVal = clientBillTotal(); }
+    else { resultLabel = 'Revenue · net of fee share'; resultVal = revenueTotal(); }
+    rev.innerHTML = `<td class="month-col">${resultLabel}</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(resultVal)}</td><td class="bk-col"></td>`;
     tbody.appendChild(rev);
   }
 
@@ -1926,6 +1929,11 @@
       return `<td class="bk-col">${b ? fmtMoneySmall(onTop ? b : -b) : ''}</td>`;
     };
     const emptyBk = bk ? '<td class="bk-col"></td>' : '';
+    // On-top billed views (spread/flatline) gross the displayed monthly total up to the
+    // client-facing number (base + broker markup). Bottom mode keeps its gross→net waterfall.
+    const billed = flat || spread;
+    const headlineClient = bk && onTop && billed;
+    const gu = (v) => headlineClient ? v * (1 + bkPct) : v;
 
     // header: Month + each group + total (+ Broker)
     let hdr = `<tr><th class="month-col">Month</th>`;
@@ -1982,7 +1990,7 @@
             totalsByGroup[g.id] += cell;
             html += `<td>${fmtMoneySmall(cell)}</td>`;
           });
-          html += `<td><strong>${fmtMoneySmall(flatMonthly)}</strong></td>`;
+          html += `<td><strong>${fmtMoneySmall(gu(flatMonthly))}</strong></td>`;
           if (bk) html += bkCell(flatMonthly);
           tr.innerHTML = html;
           tbody.appendChild(tr);
@@ -1993,16 +2001,16 @@
       sub.className = 'total';
       let subHtml = `<td class="month-col">Flat monthly fee</td>`;
       visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id] / (monthCount || 1))}</td>`; });
-      subHtml += `<td>${fmtMoney(flatMonthly)}</td>`;
+      subHtml += `<td>${fmtMoney(gu(flatMonthly))}</td>`;
       if (bk) subHtml += bkCell(flatMonthly);
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${emptyBk}`;
+      tr.innerHTML = `<td class="month-col">Total proposed fee${headlineClient ? ' · incl. broker' : ''}</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(headlineClient ? clientBillTotal() : net)}</td>${emptyBk}`;
       tbody.appendChild(tr);
-      appendFeeShareRows(tbody, visibleGroups);
+      appendFeeShareRows(tbody, visibleGroups, headlineClient);
       return;
     }
 
@@ -2039,7 +2047,7 @@
         });
         grandNet += monthTotal;
         grandNetForBroker += monthNet;
-        html += `<td><strong>${fmtMoneySmall(monthTotal)}</strong></td>`;
+        html += `<td><strong>${fmtMoneySmall(gu(monthTotal))}</strong></td>`;
         if (bk) html += bkCell(monthNet);
         tr.innerHTML = html;
         tbody.appendChild(tr);
@@ -2055,16 +2063,16 @@
       sub.className = 'total';
       let subHtml = `<td class="month-col">Net billed subtotal</td>`;
       visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
-      subHtml += `<td>${fmtMoney(grandNet)}</td>`;
+      subHtml += `<td>${fmtMoney(gu(grandNet))}</td>`;
       if (bk) subHtml += bkCell(grandNetForBroker);
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(grandNet)}</td>${emptyBk}`;
+      tr.innerHTML = `<td class="month-col">Total proposed fee${headlineClient ? ' · incl. broker' : ''}</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(headlineClient ? clientBillTotal() : grandNet)}</td>${emptyBk}`;
       tbody.appendChild(tr);
-      appendFeeShareRows(tbody, visibleGroups);
+      appendFeeShareRows(tbody, visibleGroups, headlineClient);
       return;
     }
 
@@ -2095,7 +2103,7 @@
     tr.className = 'total grand';
     tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${emptyBk}`;
     tbody.appendChild(tr);
-    appendFeeShareRows(tbody, visibleGroups);
+    appendFeeShareRows(tbody, visibleGroups, false);
   }
 
   /* ============================================================
