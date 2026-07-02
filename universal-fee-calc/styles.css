@@ -870,6 +870,13 @@ html, body {
 }
 .monthly-table th.bk-col { color: #fff; background: #6b2530; }
 .monthly-table tr.total td.bk-col, .monthly-table tr.total.grand td.bk-col { color: var(--sav-red); background: #f6ece8; }
+/* Invoice-amount column (on-top only) */
+.monthly-table th.inv-col, .monthly-table td.inv-col {
+  text-align: right; color: var(--sav-navy); background: #eef4f4;
+  border-left: 2px solid var(--sav-teal, #2c7a8c);
+}
+.monthly-table th.inv-col { color: #fff; background: var(--sav-teal, #2c7a8c); }
+.monthly-table tr.total td.inv-col, .monthly-table tr.total.grand td.inv-col { color: var(--sav-navy); background: #dcebeb; }
 .monthly-table tr.fee-share-row td { color: var(--sav-red); }
 .monthly-table tr.revenue-row.total.grand td { background: var(--sav-teal, #2c7a8c); color: #fff; }
 .monthly-table tr.revenue-row.total.grand td.month-col { color: #fff; }
