@@ -749,12 +749,21 @@
       const gg = groupGross[grp], gl = groupLock[grp] || 0;
       return { group: grp, net: round2(gg - gl - gg * discPct) };
     });
-    const byMonth = Object.keys(monthNet).sort().map(ym => ({ ym, net: round2(monthNet[ym]) }));
-
     const feeSharePct = (p.assumptions?.feeShare && p.assumptions.feeShare.enabled)
       ? (parseFloat(p.assumptions.feeShare.pct) || 0) : 0;
     const feeShareMode = (p.assumptions?.feeShare && p.assumptions.feeShare.mode === 'ontop') ? 'ontop' : 'offtop';
-    const feeShare = round2(net * (feeSharePct / 100));   // broker $ — same in both modes
+    const fsFrac = feeSharePct / 100;
+    // Materialized monthly billing series — read directly by Revenue Projections / Studio
+    // (no re-derivation downstream). invoice = what the CLIENT is billed (on-top grossed up);
+    // broker = the referral cut that month; net = Savills fee before the broker split.
+    const byMonth = Object.keys(monthNet).sort().map(ym => {
+      const n = round2(monthNet[ym]);
+      const broker = round2(n * fsFrac);
+      const invoice = round2(feeShareMode === 'ontop' ? n + broker : n);
+      return { ym, net: n, broker, invoice };
+    });
+
+    const feeShare = round2(net * fsFrac);   // broker $ — same in both modes
     // off-top: broker comes OUT of the fee (Savills keeps net−broker; client pays net).
     // on-top:  broker is added ON (Savills keeps net; client is billed net+broker).
     const clientBill = round2(feeShareMode === 'ontop' ? net + feeShare : net);
@@ -794,8 +803,15 @@
     const status = record.project && record.project.status;
     const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
     if (!catalog || !catalog.hydrated) return;          // rates not loaded → can't price
-    if (!BOOKED_STATUSES.has(status)) return;           // only snapshot booked records
     const hash = financialsInputsHash(record);
+    if (!BOOKED_STATUSES.has(status)) {
+      // Pursuit: keep a LIVE materialized series so downstream views read (not re-derive).
+      // Refreshes every save; never frozen, never stale.
+      const fin = computeFinancials(record, catalog);
+      if (fin) { fin.inputsHash = hash; fin.stale = false; fin.basis = 'live'; record.financials = fin; }
+      else record.financials = null;                    // nothing priced yet → fall back to live compute
+      return;
+    }
     const isNTE = (record.assumptions && record.assumptions.feeBasis) === 'nte';
     if (isNTE) {
       // Auto-restamp: the forecast tracks the current allocations; never stale.
