@@ -251,10 +251,34 @@
     const parents = STORE.listProjects().filter(p => !STORE.isChangeOrder(p));
     const projects = STORE.visibleProjects(parents);
     ALL = projects.map(p => {
-      const series = STORE.monthlySeries(p, CATALOG);
-      const map = {};
+      const map = {}, brokerMap = {};
       let total = 0;
-      series.forEach(s => { const k = s.year + '-' + s.month; map[k] = (map[k] || 0) + s.amount; total += s.amount; });
+      // Prefer the materialized billing series on the record (booked = frozen contract,
+      // pursuit = live-refreshed on save). map = client INVOICE per month; brokerMap = broker cut.
+      const fin = p.financials;
+      if (fin && Array.isArray(fin.byMonth) && fin.byMonth.length) {
+        fin.byMonth.forEach(s => {
+          const [y, m] = s.ym.split('-').map(Number);   // stored '2026-01' → grid key '2026-1'
+          const k = y + '-' + m;
+          const inv = (s.invoice != null) ? s.invoice : s.net;   // older snapshots: net only
+          map[k] = (map[k] || 0) + inv;
+          brokerMap[k] = (brokerMap[k] || 0) + (s.broker || 0);
+          total += inv;
+        });
+      } else {
+        // Fallback: live compute (older records, or not yet priced when saved).
+        const series = STORE.monthlySeries(p, CATALOG);
+        const fs0 = (p.assumptions && p.assumptions.feeShare) || {};
+        const pct0 = fs0.enabled ? (parseFloat(fs0.pct) || 0) / 100 : 0;
+        const onTop0 = fs0.mode === 'ontop';
+        series.forEach(s => {
+          const k = s.year + '-' + s.month;
+          const inv = onTop0 ? s.amount * (1 + pct0) : s.amount;
+          map[k] = (map[k] || 0) + inv;
+          brokerMap[k] = (brokerMap[k] || 0) + s.amount * pct0;
+          total += inv;
+        });
+      }
       // Add each approved change order's incremental curve on top of the baseline.
       const cos = STORE.approvedChangeOrders ? STORE.approvedChangeOrders(p.id) : [];
       cos.forEach(co => {
@@ -269,7 +293,7 @@
       const serviceLines = STORE.projectServiceLines(p);
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
       const feeSharePct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
-      return { p, pj, rating: STORE.ratingFor(p), map, total, ov: p.monthlyOverrides || null,
+      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, total, ov: p.monthlyOverrides || null,
                coCount: cos.length, feeSharePct,
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim(), projectType: (pj.projectType || '').trim() };
     });
@@ -439,17 +463,20 @@
       });
       html += `<td class="rowtot num" title="${fmtExact(rvt)}">${fmtK(rvt)}</td>`;
       html += '</tr>';
-      // Broker fee-split sub-line (toggle): the monthly broker reduction beneath the total.
+      // Broker fee-split sub-line (toggle): the monthly broker cut beneath the invoice total.
       if (showBroker && r.feeSharePct > 0) {
+        const bm = r.brokerMap || {};
+        let rowBroker = 0;
         html += `<tr class="broker-row"><td class="proj-cell">↳ Broker fee · ${r.feeSharePct}%</td>`;
         cols.forEach((c, i) => {
           const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
           const today = c.key === _ck ? ' today' : '';
-          const b = (r.map[c.key] || 0) * (r.feeSharePct / 100);
+          const b = bm[c.key] || 0;
+          rowBroker += b;
           html += `<td class="num broker${sep}${today}"${b ? ` title="−${fmtExact(b)}"` : ''}>${b ? '−' + fmtK(b) : ''}</td>`;
           if (!excluded) { colBroker[c.key] = (colBroker[c.key] || 0) + b; grandBroker += b; }
         });
-        html += `<td class="rowtot num broker">−${fmtK(rvt * (r.feeSharePct / 100))}</td></tr>`;
+        html += `<td class="rowtot num broker">−${fmtK(rowBroker)}</td></tr>`;
       }
     });
 
