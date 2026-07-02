@@ -330,7 +330,7 @@
           <div class="field">
             <label for="a-ind">Industry standard adjustment %</label>
             <input type="number" id="a-ind" step="0.5">
-            <div class="hint">Trims the high Macro rack rates to a competitive baseline. Changes every displayed rate — floors are unaffected.</div>
+            <div class="hint">Sets how far the Macro rack rate is trimmed down to the <strong>adjusted rate</strong> shown on each role — a higher % lowers the adjusted rate. Cost floors are unaffected.</div>
           </div>
           <div class="field">
             <label for="a-disc">Client discount %</label>
@@ -398,7 +398,7 @@
       <div class="rc-fields">
         <div class="rc-field">
           <label for="fit-target">Target fee</label>
-          <div class="rc-money"><span>$</span><input id="fit-target" type="text" inputmode="numeric" placeholder="0"></div>
+          <div class="rc-money"><span>$</span><input id="fit-target" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></div>
         </div>
         <div class="rc-field">
           <label>Current net</label>
@@ -448,12 +448,18 @@
         <button type="button" class="mt-btn on" id="mt-bottom" data-mode="bottom">Discount at bottom</button>
         <button type="button" class="mt-btn" id="mt-spread" data-mode="spread">Spread across months</button>
       </div>
-      <label class="fee-share-ctl" id="fee-share-ctl">
-        <input type="checkbox" id="fs-on">
-        <span class="fs-text">Fee share</span>
-        <span class="fs-pct"><input type="number" id="fs-pct" min="0" max="100" step="1" value="10">%</span>
-        <span class="fs-hint">to broker · off revenue</span>
-      </label>
+      <div class="fee-share-ctl" id="fee-share-ctl">
+        <label class="fs-lbl">
+          <input type="checkbox" id="fs-on">
+          <span class="fs-text">Fee share</span>
+          <span class="fs-pct"><input type="number" id="fs-pct" min="0" max="100" step="1" value="10" autocomplete="off">%</span>
+        </label>
+        <span class="fs-mode" id="fs-mode-wrap" role="group" aria-label="Broker fee mode">
+          <button type="button" class="fsm-btn on" id="fsm-offtop" data-fsm="offtop" title="Broker takes a percentage off the client invoice — Savills keeps the rest.">off invoice</button>
+          <button type="button" class="fsm-btn" id="fsm-ontop" data-fsm="ontop" title="Broker markup added on top of the fee — the client pays more, Savills keeps the full fee.">on top</button>
+        </span>
+        <span class="fs-hint" id="fs-eff">to broker</span>
+      </div>
     </div>
     <table class="monthly-table" id="monthly-table">
       <thead id="monthly-thead"></thead>
