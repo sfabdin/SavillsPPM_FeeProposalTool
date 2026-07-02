@@ -1931,7 +1931,7 @@
     const billed = flat || spread;
     // The 3rd "Invoice amount" column appears only for on-top in the billed views
     // (flatline/spread). Bottom mode keeps its gross→net waterfall + broker column.
-    const showInvoiceCol = bk && onTop && billed;
+    const showInvoiceCol = bk && onTop;
     // per-row trailing cells; n = the PPM (base) billed amount for that row
     const bkRow = (n) => {
       if (!bk) return '';
@@ -1939,6 +1939,12 @@
       let s = `<td class="bk-col">${b ? fmtMoneySmall(b) : ''}</td>`;
       if (showInvoiceCol) s += `<td class="bk-col inv-col">${fmtMoneySmall(n + b)}</td>`;
       return s;
+    };
+    // broker total with an EMPTY invoice cell — for gross / pre-discount rows in bottom mode
+    const bkTotNoInv = (n) => {
+      if (!bk) return '';
+      const b = n * bkPct;
+      return `<td class="bk-col"><strong>${fmtMoney(b)}</strong></td>` + (showInvoiceCol ? '<td class="bk-col inv-col"></td>' : '');
     };
     // bold total-row trailing cells
     const bkTot = (n) => {
@@ -1958,7 +1964,7 @@
       if (has) hdr += `<th>${escapeHtml(g.name)}</th>`;
     });
     const mainLbl = !bk ? `Monthly ${billed ? 'billed' : 'total'}`
-      : (showInvoiceCol ? 'Monthly PPM billed' : (billed ? 'Monthly billed' : 'Monthly total'));
+      : (showInvoiceCol && billed ? 'Monthly PPM billed' : (billed ? 'Monthly billed' : 'Monthly total'));
     hdr += `<th>${mainLbl}</th>`;
     if (bk) {
       hdr += `<th class="bk-col" title="Dollar amount to the broker each month">Broker${onTop ? ' (on top)' : ''}</th>`;
@@ -2042,6 +2048,13 @@
       tbody.appendChild(cap);
     }
 
+    if (!flat && !spread && bk && onTop) {
+      const cap = document.createElement('tr');
+      cap.className = 'spread-caption';
+      cap.innerHTML = `<td colspan="${SPAN}">Rows show the gross monthly fee (pre-discount) for the audit trail. The <strong>Invoice amount</strong> column is the client's actual monthly bill — net of the ${state.assumptions.discount}% discount${state.assumptions.rateLock ? ' and Rate Lock credit' : ''}, plus the ${feeSharePct()}% broker markup on top.</td>`;
+      tbody.appendChild(cap);
+    }
+
     byPhase.forEach(bucket => {
       if (bucket.months.length) {
         const phRow = document.createElement('tr');
@@ -2104,7 +2117,7 @@
     let subHtml = `<td class="month-col">Gross subtotal</td>`;
     visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
     subHtml += `<td>${fmtMoney(grandGross)}</td>`;
-    subHtml += bkTot(grandNetForBroker);
+    subHtml += bkTotNoInv(grandNetForBroker);
     sub.innerHTML = subHtml;
     tbody.appendChild(sub);
 
