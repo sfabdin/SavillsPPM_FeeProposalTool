@@ -463,10 +463,10 @@
       <div class="sub">The single entry point for every fee Savills PPM develops — built once in the calculator, then flowing downstream to projections, billing, accruals, flash reports and P&amp;L. Capture the number where it's born, and stop re-keying it across fifteen spreadsheets.</div>
     </div>
     <div class="meta">
-      <strong>Version</strong> &nbsp; Draft 2<br>
+      <strong>Version</strong> &nbsp; Draft 3<br>
       <strong>Owner</strong> &nbsp; PPM Leadership<br>
-      <strong>Date</strong> &nbsp; May 2026<br>
-      <strong>Status</strong> &nbsp; Capture + reporting layers live · Box-backed, multi-user
+      <strong>Date</strong> &nbsp; July 2026<br>
+      <strong>Status</strong> &nbsp; Capture, reporting &amp; budget-comparison layers live · Box-backed, multi-user
     </div>
   </header>
 
@@ -499,7 +499,7 @@
 
         <div class="arch-box done">
           <div class="a-label">Universal Fee Calculator</div>
-          <div class="a-desc">Per-project workbench. Role catalog, grid/contracted rates, FTE matrix, cost-rate floor, reconcile-to-target, by-phase or flatlined schedule, Excel export.</div>
+          <div class="a-desc">Per-project workbench. Role catalog, grid/contracted rates, month-canonical FTE matrix (% or hours), cost-rate floor, reconcile-to-target, Fixed Fee or NTE basis, change orders, broker fee share (off-invoice or on-top), version history, autosave, Excel export.</div>
           <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box done">
@@ -512,12 +512,22 @@
           <div class="a-desc">Upload PDF / Excel or paste → extracts roles, rates, phases, fees → validates against the grid → you confirm → saves as a project.</div>
           <span class="a-status">Shipped</span>
         </div>
+        <div class="arch-box done">
+          <div class="a-label">Import Revenues</div>
+          <div class="a-desc">Admin-only bulk loader. Reads the monthly-billing workbook and creates one locked-series project per contract row — fee shares, leader initials and ratings mapped on the way in.</div>
+          <span class="a-status">Shipped</span>
+        </div>
 
         <div class="arch-tier-label">Analytics &amp; intelligence</div>
 
         <div class="arch-box done">
           <div class="a-label">Benchmarking Dashboard</div>
-          <div class="a-desc">Comparables finder, rate spread (min/median/max) by title, below-floor frequency, project comparison. Quoted vs. effective rates.</div>
+          <div class="a-desc">Comparables finder, rate spread (min/median/max) by title, below-floor frequency, side-by-side project comparison with scope &amp; assumptions matrix. Quoted vs. effective rates.</div>
+          <span class="a-status">Shipped</span>
+        </div>
+        <div class="arch-box done">
+          <div class="a-label">Proposal Analytics</div>
+          <div class="a-desc">Win/loss hit rates with lost-reason capture, discount analytics by client / leader / industry / size, proposal funnel metrics, client profiles, proposal health score.</div>
           <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box">
@@ -543,14 +553,14 @@
           <div class="a-desc">Per-project fee-share % flows through the calculator, snapshot, and projections. A toggle in Projections breaks out the monthly broker reduction (total → less broker → net) per project and firm-wide.</div>
           <span class="a-status">Shipped</span>
         </div>
-        <div class="arch-box">
-          <div class="a-label">Flash &amp; Budget Reports</div>
-          <div class="a-desc">Generates the monthly flash report, budget comparison and London summary straight from the same records — no re-keying. Re-run any month on demand.</div>
-          <span class="a-status">Phase 5</span>
+        <div class="arch-box done">
+          <div class="a-label">Revenue Studio</div>
+          <div class="a-desc">Budget vs. actual-trending command center. 2026 Budget / RF1 baselines, drill-down tree (bucket → client → project), monthly stacked chart with target + trending lines, pipeline waterfall, new-business reserve drawdown, exec report tab, leader view (each PE sees only their book), Excel export.</div>
+          <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box">
-          <div class="a-label">Fee-Share &amp; Allocation</div>
-          <div class="a-desc">Tracks fee-share lines (e.g. Hoffman joint deals) and the monthly Change-Mgmt ÷ PPM split that shifts across a project's phases on the same invoice.</div>
+          <div class="a-label">Flash &amp; Accrual Reports</div>
+          <div class="a-desc">Formal monthly flash / accrual output generated from the same records — first cut exists as flash snapshots inside Revenue Projections; a standalone re-runnable report is the remaining build.</div>
           <span class="a-status">Phase 5</span>
         </div>
 
@@ -558,7 +568,7 @@
 
         <div class="arch-box done">
           <div class="a-label">Project Records</div>
-          <div class="a-desc">JSON-shaped record per project: metadata, roles, FTE matrix, phases, rates, contracted/grid, status, contacts, dates.</div>
+          <div class="a-desc">Schema-versioned JSON record per project: metadata, roles, month-canonical FTE, phases, rates, fee basis, materialized monthly billing series (net / broker / invoice), version history, soft-delete tombstones, audit log. Migrations run automatically on load.</div>
           <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box done">
@@ -826,25 +836,24 @@
             <span class="ix">05</span>
             <h3>Projections, accruals &amp; reporting engine. <span style="font-weight: 400; color: var(--sav-steel); font-size: 14px;">The reason this matters.</span></h3>
             <span class="when">In progress</span>
-            <span class="status">First cut live</span>
+            <span class="status">Mostly live</span>
           </div>
           <div class="phase-body">
             <div>
-              <h4>Shipped (v1)</h4>
+              <h4>Shipped</h4>
               <ul>
-                <li><strong>Revenue Projections matrix</strong> — every project's billings by month across years, off the live fee records</li>
-                <li><strong>1–7 projection rating</strong> drives the roll-up; ratings 5–7 greyed &amp; excluded from totals</li>
-                <li><strong>Service-line tagging</strong> per group — slice the forecast to Change Mgmt, Workplace, Relocation, etc.</li>
-                <li>Filters: client, revenue leader (PE / rel. owner), service line, industry, year / quarter / month · probability-weighted total</li>
+                <li><strong>Revenue Projections matrix</strong> — every project's monthly invoice by month across years, read from the materialized billing series stamped on save (net / broker / invoice per month)</li>
+                <li><strong>1–7 projection rating</strong> drives the roll-up; ratings 5–7 greyed &amp; excluded · change orders fold into their parent · broker fee-split toggle · current-month marker · Excel export</li>
+                <li><strong>Revenue Studio</strong> — 2026 Budget / RF1 baselines, drill-down (bucket → client → project), stacked monthly chart with target + trending lines and variance, pipeline waterfall, new-business reserve, exec report, per-leader views</li>
+                <li>Flash snapshots captured per month inside Projections · filters: client, revenue leader, service line, industry, project type, period · probability-weighted total</li>
               </ul>
             </div>
             <div>
               <h4>Still to build</h4>
               <ul>
-                <li><strong>Accruals &amp; billing forecast</strong> as a formal monthly output</li>
-                <li><strong>Flash report + budget comparison</strong> generated from the same records; re-run any month</li>
-                <li><strong>Fee-share</strong> roll-up and the monthly Change-Mgmt ÷ PPM split into the firm forecast</li>
-                <li>Projection sheet as an <em>export</em>, replacing the manual re-entry chain</li>
+                <li><strong>Accruals</strong> as a formal, re-runnable monthly output (flash snapshots exist; the standalone report doesn't)</li>
+                <li><strong>London summary</strong> format reproduced from the same records</li>
+                <li>External <strong>dashboard layer</strong> — leadership visuals fed by the same data (see Enterprise integration)</li>
               </ul>
             </div>
           </div>
@@ -996,7 +1005,7 @@
         <div class="risk">
           <h4>Confidential data &amp; access.</h4>
           <p>Fee data and the rate grid are sensitive. The deployed app ships with neither — it pulls them from Box only after OAuth sign-in. Per-person filtering is currently client-side, so Box folder permission is the real boundary.</p>
-          <div class="mit"><strong>Mitigation:</strong> &nbsp; Lock the Box folder to the trusted group; admin allowlist + per-project grants for everyone else. Server-side per-user filtering is the next hardening step for true project-level isolation.</div> for that pilot.</div>
+          <div class="mit"><strong>Mitigation:</strong> &nbsp; Lock the Box folder to the trusted group; admin allowlist + per-project grants for everyone else. Server-side per-user filtering is the next hardening step for true project-level isolation.</div>
         </div>
       </div>
     </div>
@@ -1007,7 +1016,7 @@
     <div class="cta">
       <div>
         <h2>Where we are, and what's next.</h2>
-        <p>Phases 0–3 are live — author fees, ingest historicals, index every project, benchmark against our own history. Next is the <strong>resource forecast</strong>, then the one that pays for all of it: the <strong>projections &amp; reporting engine</strong> that turns this into the entry point for monthly billing, accruals, the flash report and P&amp;L — entered once, reconciled everywhere. To start it: every active project loaded as a record, the current flash-report &amp; projection formats to reproduce, and alignment with Emily, Jeff &amp; finance.</p>
+        <p>Phases 0–3, 5 and 7 are live — author fees (fixed or NTE, with change orders, versions and broker splits), ingest historicals, bulk-import the billing book, index and benchmark every project, project revenue firm-wide, and compare it against the 2026 Budget / RF1 in the Revenue Studio — all Box-backed and multi-user, with a regression suite (<code>tests.html</code>) guarding the engine. Next: the <strong>resource forecast</strong> (Phase 4), the formal <strong>accrual / flash output</strong>, and the <strong>Clockify-backed P&amp;L</strong> (Phase 6) that closes the loop from sold to delivered.</p>
       </div>
       <div class="actions">
         <a href="Fee Generator.html">Open the Fee Generator</a>

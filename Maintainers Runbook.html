@@ -137,12 +137,12 @@
     <div class="metaline">
       <span><b>Status</b> &nbsp;Live, in production use</span>
       <span><b>Stack</b> &nbsp;Static HTML/JS + Vercel functions + Box</span>
-      <span><b>Updated</b> &nbsp;June 2026</span>
+      <span><b>Updated</b> &nbsp;July 2026</span>
     </div>
   </div>
 
   <h2><span class="n">1</span> What it is</h2>
-  <p class="lead">A multi-page internal app that builds, prices, stores, and reports on client fee proposals. A user assembles a project team (roles &times; tiers &times; monthly allocation), the app prices it against a confidential rate grid with escalation, rate-lock and discount logic, produces a formula-driven Excel proposal, and saves the project to a shared database. That database feeds a projects index, a revenue-projection view, benchmarking, change orders, and downstream reporting (Power BI / Clockify).</p>
+  <p class="lead">A multi-page internal app that builds, prices, stores, and reports on client fee proposals. A user assembles a project team (roles &times; tiers &times; monthly allocation), the app prices it against a confidential rate grid with escalation, rate-lock and discount logic, produces a formula-driven Excel proposal, and saves the project to a shared database. That database feeds a projects index, revenue projections, the Revenue Studio (budget vs. trending), proposal analytics, benchmarking, change orders, and downstream reporting (Power BI / Clockify).</p>
 
   <p>It is <strong>not</strong> a framework app — no build step, no <code>npm install</code> to run it, no React. It is plain HTML, CSS and vanilla JavaScript served as static files, plus two small serverless functions. A developer can open any file and read it directly. That simplicity is deliberate and worth preserving.</p>
 
@@ -156,12 +156,17 @@
     <tr><th>Page</th><th>Purpose</th></tr>
     <tr><td class="k">Fee Generator.html</td><td>Home / hub. Links to every other page. One of the two front doors.</td></tr>
     <tr><td class="k">Projects Index.html</td><td>The project database — every saved record, filtered by who you are. Rolls up change orders and totals by client. The other front door.</td></tr>
-    <tr><td class="k">Universal Fee Calculator.html</td><td>The core tool — build and price a proposal; export Excel; submit Salesforce intake; process change orders.</td></tr>
-    <tr><td class="k">Revenue Projections.html</td><td>Pipeline / revenue forecast across projects, by month and quarter. Exports to Excel exactly as viewed.</td></tr>
+    <tr><td class="k">Universal Fee Calculator.html</td><td>The core tool — build and price a proposal (Fixed Fee or NTE); allocation entered as % FTE or hours; broker fee share (off-invoice or on-top); version history; change orders; autosave; Excel export; Salesforce intake.</td></tr>
+    <tr><td class="k">Revenue Projections.html</td><td>Pipeline / revenue forecast across projects, by month and quarter, read from the stored billing series. Broker-split toggle, current-month marker, flash snapshots. Exports to Excel exactly as viewed.</td></tr>
+    <tr><td class="k">Revenue Studio.html</td><td>Budget vs. trending. 2026 Budget / RF1 baselines, drill-down (bucket → client → project), stacked monthly chart with target + trending lines, pipeline waterfall, exec report tab, per-leader views. Admins + revenue leaders only.</td></tr>
+    <tr><td class="k">Proposal Analytics.html</td><td>Win/loss hit rates with lost reasons, discount analytics, proposal funnel, client profiles, health score.</td></tr>
+    <tr><td class="k">Import Revenues.html</td><td><strong>Admin-only.</strong> Bulk-loads the monthly-billing workbook into locked-series project records.</td></tr>
     <tr><td class="k">Ingestion Studio.html</td><td>Import a historical proposal (PDF/text) via Claude into a structured record.</td></tr>
-    <tr><td class="k">Benchmarking Dashboard.html</td><td>"What have we charged before?" — comparison across saved projects.</td></tr>
+    <tr><td class="k">Benchmarking Dashboard.html</td><td>"What have we charged before?" — rate spreads, comparables, and side-by-side project comparison with a scope &amp; assumptions matrix.</td></tr>
+    <tr><td class="k">tests.html</td><td>Regression suite — 24 assertions on the pricing engine and data layer, run against an in-memory store (never touches real data). <strong>Run before every deploy.</strong></td></tr>
     <tr><td class="k">Enterprise&nbsp;Migration&nbsp;Guide.html<br>Fee System Roadmap.html<br>Maintainers Runbook.html</td><td>Internal reference docs (this is one of them — not part of the app runtime).</td></tr>
   </table>
+  <p>Every page carries a shared hamburger navigation (<code>nav.js</code>); admin-only links are hidden from non-admins.</p>
 
   <h2><span class="n">3</span> File structure</h2>
   <div class="tree"><span class="c">/  (repo root — this IS the Vercel/GitHub root)</span>
@@ -169,24 +174,32 @@
 ├── Projects Index.html
 ├── Universal Fee Calculator.html
 ├── Revenue Projections.html
+├── Revenue Studio.html
+├── Proposal Analytics.html
+├── Import Revenues.html          <span class="c">← admin-only</span>
 ├── Ingestion Studio.html
 ├── Benchmarking Dashboard.html
+├── tests.html                    <span class="c">← regression suite · run before deploy</span>
 ├── oauth-callback.html           <span class="c">← Box sign-in lands here (REQUIRED)</span>
 │
 ├── api/                          <span class="c">← Vercel serverless functions</span>
 │   ├── box-token.js              <span class="c">OAuth token exchange + refresh (holds the secret)</span>
-│   └── extract.js                <span class="c">proposal extraction via Claude (Ingestion)</span>
+│   └── extract.js                <span class="c">proposal extraction via Claude · self-healing model fallback chain</span>
 │
 ├── universal-fee-calc/           <span class="c">← the application code (shared by all pages)</span>
 │   ├── rates-catalog.js          <span class="y">rate ENGINE only — NO confidential numbers</span>
-│   ├── store.js                  <span class="c">data layer, access rules, snapshots, change orders</span>
-│   ├── box-adapter.js            <span class="c">Box sync: auth, pull/push, rates pull, config</span>
-│   ├── boot.js                   <span class="c">gates each page on auth + data load</span>
+│   ├── store.js                  <span class="c">data layer: access rules, snapshots, versions, change orders, migrations, tombstones, audit log</span>
+│   ├── box-adapter.js            <span class="c">Box sync: auth, pull/push, merge, flush-on-close, config</span>
+│   ├── boot.js                   <span class="c">gates each page on auth + data load · runs migrations</span>
+│   ├── nav.js                    <span class="c">shared hamburger navigation</span>
 │   ├── sync-status.js            <span class="c">the "Synced to Box" indicator</span>
 │   ├── app.js                    <span class="c">the calculator engine + UI</span>
 │   ├── intake.js                 <span class="c">Salesforce intake email + drift detection</span>
-│   ├── export-excel.js           <span class="c">the 4-tab Excel export (live formulas)</span>
-│   ├── ingest.js / bench*.js      <span class="c">Ingestion + Benchmarking</span>
+│   ├── export-excel.js           <span class="c">the Excel export (live formulas)</span>
+│   ├── revenue-studio.js / studio.css  <span class="c">Revenue Studio</span>
+│   ├── proposal-analytics.js     <span class="c">Proposal Analytics</span>
+│   ├── import-revenues.js        <span class="c">admin bulk import</span>
+│   ├── ingest.js / bench*.js     <span class="c">Ingestion + Benchmarking</span>
 │   └── styles.css
 │
 ├── design-system/               <span class="c">brand: colours, type, Gotham fonts, logo</span>
@@ -208,8 +221,9 @@
   <p>Every project is one JSON record. Records carry two kinds of value, and the distinction is the most important thing to understand about the data model:</p>
   <ul>
     <li><strong>Inputs</strong> — roles, tiers, monthly allocation %, assumptions, dates, Salesforce ID. On <em>every</em> project. The dollar figures shown on screen are recomputed live from these inputs each time a page renders, so a calculation fix instantly corrects every project with no migration.</li>
-    <li><strong>A frozen <code>financials</code> snapshot</strong> — real dollar figures (gross, rate-lock credit, discount, net, revenue, plus by-month and by-group arrays). This is written onto a record <em>only</em> when it is booked (won / active / closed), and it does <strong>not</strong> recompute — it is a contractual fact frozen at booking. See &sect;11.</li>
+    <li><strong>A frozen <code>financials</code> snapshot</strong> — real dollar figures (gross, rate-lock credit, discount, net, revenue, plus a <code>billingSeries</code> with net / broker / invoice per month and by-group arrays). This is written onto a record when it is booked (won / active / closed), and it does <strong>not</strong> recompute — it is a contractual fact frozen at booking. Pursuits (draft / negotiation) also carry a billing series, but theirs is <em>live-refreshed on every save</em>, never frozen — it exists so Projections read one stored series everywhere instead of recomputing. NTE-basis projects auto-restamp on edit (an NTE plan is an estimate, not a frozen contract). See &sect;11–12.</li>
   </ul>
+  <p>Beyond the record itself, the data layer keeps: <strong>version history</strong> (manual + auto versions per project, with diff and restore), <strong>soft-delete tombstones</strong> (deletes propagate through the multi-user merge instead of resurrecting; purged after 120 days), an append-only <strong>activity log</strong> (create / status change / book / delete, with actor and timestamp, union-merged across users), and a <strong>schema-migration runner</strong> — <code>projects.json</code> carries a schema version and old records upgrade automatically on load.</p>
 
   <div class="box key">
     <span class="tag">Yes, there are dollar numbers in projects.json now</span>
@@ -219,7 +233,7 @@
   <p>All records live in a single file, <code>projects.json</code>, in a Box folder. The app keeps two mirrored copies:</p>
   <ul>
     <li><strong>localStorage</strong> (in the browser) — the fast working copy; every edit writes here instantly.</li>
-    <li><strong>Box</strong> — the shared source of truth. On load the app pulls Box&nbsp;&rarr;&nbsp;local; after edits it debounce-pushes local&nbsp;&rarr;&nbsp;Box. Concurrent saves merge newest-edit-wins per project, guarded by an etag. On sign-out the local copy is cleared so no data lingers on a shared machine.</li>
+    <li><strong>Box</strong> — the shared source of truth. On load the app pulls Box&nbsp;&rarr;&nbsp;local; after edits it debounce-pushes local&nbsp;&rarr;&nbsp;Box, and flushes any pending push the moment the tab hides or closes. Concurrent saves merge newest-edit-wins per project (tombstones win over stale copies; activity logs union), guarded by an etag. On sign-out the local copy is cleared so no data lingers on a shared machine.</li>
   </ul>
   <p>The <strong>Salesforce ID</strong> on each booked record is the join key that links <code>projects.json</code> &rarr; Salesforce &rarr; Clockify. Reporting tools read <code>projects.json</code> from Box directly — they never go through the app.</p>
 
@@ -245,12 +259,13 @@
 
   <h2><span class="n">7</span> The Excel exports</h2>
   <p>Both exports are generated client-side (ExcelJS) with <strong>live formulas, not pasted values</strong> — open any cell to read the math.</p>
-  <p><strong>Calculator (4 tabs):</strong></p>
+  <p><strong>Calculator:</strong></p>
   <ol>
-    <li><strong>Setup &amp; Summary</strong> — project info, assumptions, rates table, headline totals.</li>
+    <li><strong>Setup &amp; Summary</strong> — project info (incl. project type, scope &amp; assumptions), rates table, headline totals.</li>
     <li><strong>Phase Matrix</strong> — FTE allocation by period; phase % shown is the average of its months.</li>
-    <li><strong>Monthly Detail</strong> — role &times; month, every cell a formula (FTE &times; rate &times; escalation &times; hours), with group subtotals, monthly totals, cumulative, and the gross&rarr;net waterfall.</li>
-    <li><strong>Billing Summary</strong> — net invoiced by group, by month (discount + rate-lock baked in), with a reconciliation bridge.</li>
+    <li><strong>Monthly Detail</strong> — role &times; month, every cell a formula (FTE &times; rate &times; escalation &times; hours), with group subtotals, monthly totals, cumulative, the gross&rarr;net waterfall, and — when a broker fee share exists — the per-month broker row and off-invoice / on-top waterfall (omitted entirely when there is no broker).</li>
+    <li><strong>Monthly by Group</strong> — two reconciling sections: pre-discount with the discount removed at the bottom, and discount-baked-in per cell, with a $0 check row tying them.</li>
+    <li><strong>Billing Summary</strong> — net invoiced by group, by month, with a reconciliation bridge.</li>
   </ol>
   <p><strong>Revenue Projections:</strong> a "⤓ Excel" button exports the matrix <strong>exactly as currently viewed</strong> — respects every active filter and the rated-5–7 toggle, mirrors the rating-grouped rows, year/month headers, row totals, the Projected and Probability-weighted totals rows, KPI band, and CO rollups.</p>
 
@@ -299,8 +314,8 @@
     <tr><td class="k">&minus; Rate&nbsp;Lock credit</td><td>&Sigma; max(0, unlockedRate &minus; lockedRate) &times; FTE &times; hrs &nbsp;<span style="color:var(--steel)">(lockedRate is pinned to the start year)</span></td></tr>
     <tr><td class="k">&minus; Client discount</td><td>Gross &times; discount %</td></tr>
     <tr><td class="k"><b>= Net (proposed fee)</b></td><td><b>Gross &minus; Rate&nbsp;Lock credit &minus; discount</b> — what the client pays</td></tr>
-    <tr><td class="k">&minus; Fee share</td><td>Net &times; fee-share % &nbsp;<span style="color:var(--steel)">(broker cut, revenue side, invisible to client)</span></td></tr>
-    <tr><td class="k">= Revenue</td><td>Net &minus; fee share — what Savills keeps</td></tr>
+    <tr><td class="k">&minus; Fee share</td><td>Two broker modes. <strong>Off invoice:</strong> Net &times; fee-share % comes out of Savills revenue (client bill unchanged). <strong>On top:</strong> the broker fee is added to the client invoice (client pays Net + broker; Savills keeps Net). The monthly schedule shows a broker column and, in on-top mode, the invoice amount per month.</td></tr>
+    <tr><td class="k">= Revenue</td><td>What Savills keeps, net of the broker share in either mode</td></tr>
   </table>
   <div class="box key">
     <span class="tag">The rate-lock rule</span>
@@ -425,8 +440,9 @@
   "net": 1669651.00,                      <span class="y">the proposed fee (what the client pays)</span>
   "feeShare": 0,
   "revenue": 1669651.00,                  <span class="c">net of broker fee share</span>
-  "byMonth": [ { "ym": "2027-01", "net": 64210.00 }, ... ],
+  "byMonth": [ { "ym": "2027-01", "net": 64210.00, "broker": 6421.00, "invoice": 64210.00 }, ... ],
   "byGroup": [ { "group": "Core team", "net": 980400.00 }, ... ],
+  "feeBasis": "fixed",                    <span class="c">"fixed" or "nte" (NTE auto-restamps)</span>
   "stale": false                          <span class="c">true if inputs drifted since</span>
 <span class="c">}</span></div>
   <p>This block lives in <code>projects.json</code> <strong>in Box</strong>. Power BI reads it directly via the Box file — no app, no recomputation. <code>byGroup</code> and <code>byMonth</code> tie to <code>net</code>; the snapshot agrees with the live engine to the penny at the moment it is taken.</p>
@@ -486,8 +502,10 @@
     <li><strong>Client-side access limit</strong> (&sect;6) — Box folder permission is the true boundary.</li>
     <li><strong>rates.json must exist in Box</strong> with its id set, or every page gates closed.</li>
     <li><strong>Box logins must match the allowlist emails exactly</strong> (<code>firstinitiallastname@savills.us</code>). A mismatch makes an admin look like a member.</li>
-    <li><strong>Editing a booked project flags it stale</strong> — by design (&sect;11). Restamp or process a change order.</li>
+    <li><strong>Editing a booked project flags it stale</strong> — by design (&sect;11). Restamp or process a change order. NTE projects restamp automatically.</li>
+    <li><strong>Run <code>tests.html</code> before every deploy</strong> — 24 regression assertions on the pricing engine and data layer; all must be green.</li>
     <li><strong>Token refresh</strong> — sign-in survives ~60 days idle; after that the user re-authenticates. Normal.</li>
+    <li><strong>Claude model changes can't break Ingestion</strong> — <code>api/extract.js</code> tries a built-in list of model ids in order and uses the first that responds; a deprecated model is skipped automatically.</li>
   </ul>
 
   <h2><span class="n">16</span> Future work, in priority order</h2>
