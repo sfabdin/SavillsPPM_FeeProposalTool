@@ -544,7 +544,20 @@
     return `${monthNames[t.startMonth-1]} ’${String(t.startYear).slice(-2)} → ${monthNames[t.endMonth-1]} ’${String(t.endYear).slice(-2)}`;
   }
 
+  /* Memoized per-project fee — keyed on id + updatedAt, so it only recomputes
+     when a record actually changes. Eliminates redundant recompute across KPIs,
+     client rollup, sort and the row map within a render AND across re-renders
+     (every filter keystroke). */
+  const _feeCache = new Map();
   function projectFee(p) {
+    const key = p.id + '|' + (p.updatedAt || '');
+    const hit = _feeCache.get(key);
+    if (hit) return hit;
+    const val = computeProjectFee(p);
+    _feeCache.set(key, val);
+    return val;
+  }
+  function computeProjectFee(p) {
     // Imported projects carry their $ in the locked monthly series, not in roles.
     if (p.source && p.source.importedByMonth && !(p.source && p.source.reconciled)) {
       const series = STORE.monthlySeries(p, CATALOG) || [];
@@ -735,7 +748,6 @@
 
   /* ---------- Render ---------- */
   function render() {
-    if (STORE.migrateLeadIds) { try { STORE.migrateLeadIds(); } catch (e) {} }
     const everything = STORE.listProjects();
     buildIdentityBar(everything);
     // Apply the access wall FIRST — members never see other teams' projects.
@@ -890,7 +902,12 @@
   }
 
   /* ---------- Toolbar wiring ---------- */
-  $('#search-input')?.addEventListener('input', e => { filters.search = e.target.value; render(); });
+  let _searchTimer = null;
+  $('#search-input')?.addEventListener('input', e => {
+    filters.search = e.target.value;
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(render, 140);
+  });
   $('#id-user')?.addEventListener('change', e => {
     const v = e.target.value;
     if (v === '__me__') {
@@ -1102,7 +1119,12 @@
   }
 
   // Wait for the data layer (instant on localStorage; pulls from Box when enabled).
-  if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(render); } else { render(); }
+  function boot() {
+    // One-time lead-id normalization for legacy/imported records (NOT per render).
+    if (STORE.migrateLeadIds) { try { STORE.migrateLeadIds(); } catch (e) {} }
+    render();
+  }
+  if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
 })();
 </script>
 <script src="universal-fee-calc/nav.js"></script>

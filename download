@@ -7,16 +7,10 @@ node_modules/
 # Confidential — the rate grid lives in Box, never in the repo
 rates.json
 
-# Confidential source material
-research/
-
-# OS / editor cruft
-.DS_Store
+# Local data / scratch
 *.log
-
-# Working backups / scratch
+.DS_Store
+_repo/
 _changed*/
-_github_repo/
-_github_update/
-screenshots/
 uploads/
+research/

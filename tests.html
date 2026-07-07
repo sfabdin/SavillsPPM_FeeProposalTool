@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Fee System — Regression Tests</title>
+<style>
+  :root { --navy:#25273a; --steel:#6b7280; --teal:#1f8a5b; --red:#ce181e; --hair:rgba(37,39,58,0.12); }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#f3f3f0; color:var(--navy); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; padding:40px 32px 80px; }
+  .wrap { max-width:880px; margin:0 auto; }
+  h1 { font-size:22px; font-weight:900; letter-spacing:-0.01em; margin:0 0 4px; }
+  .sub { color:var(--steel); font-size:13px; margin-bottom:24px; }
+  .summary { display:inline-flex; gap:18px; align-items:baseline; padding:14px 22px; background:#fff; border:1px solid var(--hair); margin-bottom:26px; }
+  .summary .n { font-size:30px; font-weight:900; letter-spacing:-0.02em; }
+  .summary .lbl { font-size:11px; font-weight:800; letter-spacing:0.12em; text-transform:uppercase; color:var(--steel); }
+  .pass .n { color:var(--teal); } .fail .n { color:var(--red); }
+  .grp { font-size:11px; font-weight:800; letter-spacing:0.14em; text-transform:uppercase; color:var(--steel); margin:26px 0 8px; }
+  .row { display:grid; grid-template-columns:26px 1fr auto; gap:12px; align-items:baseline; padding:9px 14px; background:#fff; border:1px solid var(--hair); border-top:0; }
+  .grp + .row { border-top:1px solid var(--hair); }
+  .row .ic { font-weight:900; } .row.ok .ic { color:var(--teal); } .row.no .ic { color:var(--red); }
+  .row .name { font-size:13px; }
+  .row .detail { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; color:var(--steel); }
+  .row.no .detail { color:var(--red); }
+  .foot { margin-top:22px; font-size:12px; color:var(--steel); }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#eceae4; padding:1px 5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Fee System — Regression Tests</h1>
+  <div class="sub">Asserts the invariants the reporting engines depend on. Run this before every deploy — a red row means the math or data layer broke. Uses an in-memory storage shim, so it never touches your real Box-synced data.</div>
+  <div id="summary"></div>
+  <div id="out"></div>
+  <div class="foot">Engine: <code>store.js · computeFinancials / monthlySeries / projectFinancials</code> + data-layer (<code>tombstones · migrations · activity</code>). No Box, no network — pure in-memory.</div>
+</div>
+
+<!-- In-memory storage shim: route the app's localStorage keys to memory so tests
+     can never read or clobber real project data on a shared origin. Installed
+     BEFORE store.js loads. -->
+<script>
+(function () {
+  const mem = {};
+  const proto = Object.getPrototypeOf(localStorage);
+  const real = {
+    get: proto.getItem.bind(localStorage),
+    set: proto.setItem.bind(localStorage),
+    del: proto.removeItem.bind(localStorage),
+  };
+  const isApp = (k) => /^savills-ppm-/.test(k);
+  localStorage.getItem = (k) => isApp(k) ? (k in mem ? mem[k] : null) : real.get(k);
+  localStorage.setItem = (k, v) => { if (isApp(k)) mem[k] = String(v); else real.set(k, v); };
+  localStorage.removeItem = (k) => { if (isApp(k)) delete mem[k]; else real.del(k); };
+})();
+</script>
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script>
+(function () {
+  'use strict';
+  const S = window.UFC_Store, C = window.RATES_CATALOG;
+
+  // Synthetic rate grid (NOT the confidential one): PM @ $200 rack, $100 floor.
+  C.hydrate({ baseYear: 2024, grid: [
+    { id: 'pm',   name: 'Project Manager', group: 'core',     rack: 200, floor: { high: 100, mid: 100, low: 100 }, targetDisc: 0 },
+    { id: 'lead', name: 'Lead',            group: 'core',     rack: 300, floor: { high: 150, mid: 150, low: 150 }, targetDisc: 0 },
+  ] });
+
+  const rate = (role, p) => S.getTierRateFromCatalog(role, C, p);
+  const EPS = 0.02;
+
+  // ---- assert framework ----
+  const results = [];
+  function test(group, name, fn) {
+    let ok = false, detail = '';
+    try { const r = fn(); ok = r === true || r === undefined; if (typeof r === 'string') { ok = false; detail = r; } }
+    catch (e) { ok = false; detail = e.message; }
+    results.push({ group, name, ok, detail });
+  }
+  const near = (a, b, eps) => Math.abs(a - b) <= (eps == null ? EPS : eps);
+  function eq(a, b, label, eps) {
+    if (!near(a, b, eps)) return `${label}: ${round(a)} ≠ ${round(b)} (Δ ${round(a - b)})`;
+    return true;
+  }
+  const round = (n) => Math.round(n * 100) / 100;
+
+  // ---- fixtures ----
+  function base(over) {
+    const a = Object.assign({
+      hrsPerMo: 160, discount: 10, rateLock: false, escalation: 0,
+      industryAdj: 0, catalogBaseYear: 2024,
+      feeShare: { enabled: false, pct: 0, mode: 'offtop' },
+      feeBasis: 'fixed', nteCeiling: 0,
+    }, (over && over.assumptions) || {});
+    return Object.assign({
+      id: 't_' + Math.random().toString(36).slice(2, 9),
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+      project: { name: 'Test', client: 'Acme', status: 'draft' },
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 4, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 4 }],
+      groups: [{ id: 'core', name: 'Core' }],
+      roles: [{ id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'core', fte: { p1: 100 }, fteMonthly: {} }],
+    }, over || {}, { assumptions: a });
+  }
+  const fin = (p) => S.computeFinancials(p, C);
+  const seriesSum = (p) => S.monthlySeries(p, C).reduce((s, m) => s + m.amount, 0);
+
+  /* ============ ENGINE INVARIANTS ============ */
+
+  test('Engine · waterfall', 'prices above zero', () => {
+    const f = fin(base());
+    if (!f) return 'computeFinancials returned null';
+    return f.gross > 0 || 'gross not positive';
+  });
+
+  test('Engine · waterfall', 'net = gross − rateLock − discount', () => {
+    const f = fin(base());
+    return eq(f.net, f.gross - f.rateLockCredit - f.discount, 'net identity');
+  });
+
+  test('Engine · waterfall', 'discount = gross × rate', () => {
+    const f = fin(base({ assumptions: { discount: 10 } }));
+    return eq(f.discount, f.gross * 0.10, 'discount');
+  });
+
+  test('Engine · waterfall', 'discount 0 → net = gross − lock', () => {
+    const f = fin(base({ assumptions: { discount: 0 } }));
+    return eq(f.net, f.gross - f.rateLockCredit, 'net@0disc');
+  });
+
+  test('Engine · rate lock', 'lock OFF → credit = 0', () => {
+    const f = fin(base({ assumptions: { rateLock: false, escalation: 5 } }));
+    return eq(f.rateLockCredit, 0, 'lockCredit');
+  });
+
+  test('Engine · rate lock', 'lock ON, no escalation → credit = 0', () => {
+    const f = fin(base({ assumptions: { rateLock: true, escalation: 0 } }));
+    return eq(f.rateLockCredit, 0, 'lockCredit');
+  });
+
+  test('Engine · rate lock', 'lock ON + escalation across yrs → credit > 0, not double-removed', () => {
+    // 24-month job spanning 2026–2027 with 5% escalation and lock on.
+    const p = base({
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2027 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 24 }],
+      assumptions: { rateLock: true, escalation: 5, discount: 0 },
+    });
+    const f = fin(p);
+    if (!(f.rateLockCredit > 0)) return 'expected positive lock credit';
+    // The classic bug: lock baked into gross AND subtracted again. Guard: net must
+    // equal gross − credit exactly (discount 0), never gross − 2×credit.
+    return eq(f.net, f.gross - f.rateLockCredit, 'net = gross − credit (single removal)');
+  });
+
+  /* ============ MONTHLY DECOMPOSITION ============ */
+
+  test('Engine · monthly', 'Σ byMonth.net = net', () => {
+    const f = fin(base());
+    return eq(f.byMonth.reduce((s, m) => s + m.net, 0), f.net, 'byMonth net sum');
+  });
+
+  test('Engine · monthly', 'Σ byGroup.net = net', () => {
+    const p = base({
+      groups: [{ id: 'core', name: 'Core' }, { id: 'field', name: 'Field' }],
+      roles: [
+        { id: 'r1', titleId: 'pm',   tierId: 'mid', rateSource: 'grid', groupId: 'core',  fte: { p1: 100 }, fteMonthly: {} },
+        { id: 'r2', titleId: 'lead', tierId: 'mid', rateSource: 'grid', groupId: 'field', fte: { p1: 50 },  fteMonthly: {} },
+      ],
+    });
+    const f = fin(p);
+    return eq(f.byGroup.reduce((s, g) => s + g.net, 0), f.net, 'byGroup net sum');
+  });
+
+  test('Engine · monthly', 'monthlySeries sum = net (projections engine agrees)', () => {
+    const p = base();
+    return eq(seriesSum(p), fin(p).net, 'monthlySeries vs computeFinancials');
+  });
+
+  test('Engine · monthly', 'per-month FTE override prices independently', () => {
+    // Zero out month 2026-2 via fteMonthly; net must drop by exactly that month.
+    const p0 = base();
+    const full = fin(p0);
+    const p1 = base();
+    p1.roles[0].fteMonthly = { '2026-2': 0 };
+    const cut = fin(p1);
+    if (!(cut.net < full.net)) return 'zeroing a month did not reduce net';
+    // remaining 3 months intact → net ≈ 3/4 of full (uniform months, no escalation)
+    return eq(cut.net, full.net * 0.75, 'net after one of four months zeroed', 1);
+  });
+
+  /* ============ BROKER FEE SHARE ============ */
+
+  test('Broker · off-top', 'revenue = net − broker, client pays net', () => {
+    const f = fin(base({ assumptions: { feeShare: { enabled: true, pct: 10, mode: 'offtop' } } }));
+    const brokerErr = eq(f.feeShare, f.net * 0.10, 'broker $');
+    if (brokerErr !== true) return brokerErr;
+    const revErr = eq(f.revenue, f.net - f.feeShare, 'revenue');
+    if (revErr !== true) return revErr;
+    return eq(f.clientBill, f.net, 'clientBill = net');
+  });
+
+  test('Broker · on-top', 'client pays net + broker, revenue = net', () => {
+    const f = fin(base({ assumptions: { feeShare: { enabled: true, pct: 10, mode: 'ontop' } } }));
+    const cbErr = eq(f.clientBill, f.net + f.feeShare, 'clientBill = net + broker');
+    if (cbErr !== true) return cbErr;
+    return eq(f.revenue, f.net, 'revenue = net');
+  });
+
+  test('Broker · on-top', 'Σ byMonth.invoice = clientBill (grossed up)', () => {
+    const f = fin(base({ assumptions: { feeShare: { enabled: true, pct: 10, mode: 'ontop' } } }));
+    return eq(f.byMonth.reduce((s, m) => s + m.invoice, 0), f.clientBill, 'invoice sum');
+  });
+
+  test('Broker · off-top', 'Σ byMonth.invoice = net (no gross-up)', () => {
+    const f = fin(base({ assumptions: { feeShare: { enabled: true, pct: 10, mode: 'offtop' } } }));
+    return eq(f.byMonth.reduce((s, m) => s + m.invoice, 0), f.net, 'invoice sum');
+  });
+
+  test('Broker · off vs on', 'same broker $, opposite direction', () => {
+    const off = fin(base({ assumptions: { feeShare: { enabled: true, pct: 10, mode: 'offtop' } } }));
+    const on  = fin(base({ assumptions: { feeShare: { enabled: true, pct: 10, mode: 'ontop' } } }));
+    const sameBroker = eq(off.feeShare, on.feeShare, 'broker $ equal');
+    if (sameBroker !== true) return sameBroker;
+    // off bills net; on bills net+broker → the two client bills differ by exactly one broker amount.
+    return eq(on.clientBill - off.clientBill, on.feeShare, 'client bill differs by one broker');
+  });
+
+  /* ============ NTE ============ */
+
+  test('NTE', 'over-ceiling flag trips when net exceeds cap', () => {
+    const f = fin(base({ assumptions: { feeBasis: 'nte', nteCeiling: 1 } }));
+    return f.overCeiling === true || 'expected overCeiling true';
+  });
+
+  test('NTE', 'under-ceiling flag stays clear', () => {
+    const f = fin(base({ assumptions: { feeBasis: 'nte', nteCeiling: 9e9 } }));
+    return f.overCeiling === false || 'expected overCeiling false';
+  });
+
+  /* ============ DATA LAYER: tombstones ============ */
+
+  test('Data · tombstones', 'delete hides from listProjects but leaves tombstone', () => {
+    const p = S.saveProject(base());
+    const before = S.listProjects().some(x => x.id === p.id);
+    if (!before) return 'saved project not listed';
+    S.deleteProject(p.id);
+    if (S.getProject(p.id) !== null) return 'getProject returned a deleted record';
+    if (S.listProjects().some(x => x.id === p.id)) return 'deleted project still in listProjects';
+    const raw = S.allProjectsRaw()[p.id];
+    return (raw && raw._deleted === true) || 'tombstone missing from raw map';
+  });
+
+  test('Data · tombstones', 'purge removes only OLD tombstones', () => {
+    const p = S.saveProject(base());
+    S.deleteProject(p.id);
+    // fresh tombstone survives a purge
+    S.purgeTombstones(120);
+    if (!S.allProjectsRaw()[p.id]) return 'fresh tombstone was purged';
+    // backdate it and purge again
+    const raw = S.allProjectsRaw();
+    raw[p.id].deletedAt = '2000-01-01T00:00:00Z';
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: raw, activity: [] }));
+    S.purgeTombstones(120);
+    return !S.allProjectsRaw()[p.id] || 'old tombstone was not purged';
+  });
+
+  /* ============ DATA LAYER: migrations ============ */
+
+  test('Data · migrations', 'v1 db upgrades to current schema + gains activity[]', () => {
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 1, projects: {} }));
+    const bumped = S.runMigrations();
+    if (bumped < 1) return 'runMigrations reported no upgrade';
+    const db = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1'));
+    if (db.schemaVersion !== 2) return 'schemaVersion not bumped to 2';
+    return Array.isArray(db.activity) || 'activity[] not created';
+  });
+
+  test('Data · migrations', 'already-current db is a no-op', () => {
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    return S.runMigrations() === 0 || 'expected 0 migrations on current db';
+  });
+
+  /* ============ DATA LAYER: activity log ============ */
+
+  test('Data · activity', 'create + delete are logged', () => {
+    // reset to a clean db
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    const p = base(); delete p.id;   // a real new project has no id until first save
+    const saved = S.saveProject(p);
+    S.deleteProject(saved.id);
+    const acts = S.listActivity(null, saved.id).map(a => a.action);
+    if (!acts.includes('create')) return 'create not logged';
+    return acts.includes('delete') || 'delete not logged';
+  });
+
+  test('Data · activity', 'status change logs book on won', () => {
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    const p = S.saveProject(base());
+    p.project.status = 'won';
+    S.saveProject(p);
+    const acts = S.listActivity(null, p.id).map(a => a.action);
+    return acts.includes('book') || 'expected a book entry on won status';
+  });
+
+  /* ---- render ---- */
+  const pass = results.filter(r => r.ok).length;
+  const fail = results.length - pass;
+  document.getElementById('summary').innerHTML =
+    `<div class="summary ${fail ? 'fail' : 'pass'}"><span class="n">${pass}/${results.length}</span>` +
+    `<span class="lbl">${fail ? fail + ' failing' : 'all passing'}</span></div>`;
+
+  const groups = [];
+  results.forEach(r => { if (!groups.includes(r.group)) groups.push(r.group); });
+  let html = '';
+  groups.forEach(g => {
+    html += `<div class="grp">${g}</div>`;
+    results.filter(r => r.group === g).forEach(r => {
+      html += `<div class="row ${r.ok ? 'ok' : 'no'}"><div class="ic">${r.ok ? '✓' : '✗'}</div>` +
+        `<div class="name">${r.name}</div><div class="detail">${r.ok ? 'ok' : (r.detail || 'failed')}</div></div>`;
+    });
+  });
+  document.getElementById('out').innerHTML = html;
+  window.__testResults = { pass, fail, total: results.length, results };
+})();
+</script>
+</body>
+</html>

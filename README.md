@@ -1,73 +1,73 @@
 # Savills PPM · Fee Proposal Generator
 
 A multi-page, Box-backed system for building, pricing, storing, and reporting on
-fee proposals. Pure static front-end (HTML + vanilla JS) plus two Vercel
-serverless functions. No build step.
+fee proposals. The app is a **front door to Box after OAuth** — all project data
+lives in Box (`projects.json`, `studio.json`); the confidential rate grid
+(`rates.json`) is pulled from Box only after sign-in and is **never** in this repo.
 
-**Read `Maintainers Runbook.html` first** — it documents the architecture, the
-calculation pipeline, caveats, config, deploy steps, and known limits in full.
+## Pages (all wired into the shared hamburger nav)
 
----
+**Build**
+- `Fee Generator.html` — home / launchpad
+- `Universal Fee Calculator.html` — the calculator: roster, phase matrix, monthly
+  schedule, rate lock, discount, broker fee-share (off-top / on-top), NTE ceiling,
+  version history, Excel export
+- `Ingestion Studio.html` — parse a proposal/matrix into a project (Claude extract)
 
-## Structure
+**Manage**
+- `Projects Index.html` — every project; client rollup; per-project fees
+- `Revenue Projections.html` — monthly invoice matrix (reads the materialized
+  billing series), broker split toggle, current-month marker, Excel export
+- `Revenue Studio.html` — budget/RF baselines vs. actuals, scenarios, waterfall,
+  drill-down (bucket → client → project), Exec Report tab
+- `Benchmarking Dashboard.html` — rate spread + scope/assumptions comparison
+- `Proposal Analytics.html` — funnel, win/loss, discount analytics, health score,
+  client profile
 
-```
-/
-├── Fee Generator.html            ← HOME / hub (links to everything below)
-├── Universal Fee Calculator.html ← build & price a proposal (the core tool)
-├── Projects Index.html           ← the project database (all records)
-├── Revenue Projections.html      ← pipeline / revenue forecast
-├── Ingestion Studio.html         ← import a historical proposal (uses Claude)
-├── Benchmarking Dashboard.html   ← "what have we charged before?"
-├── Enterprise Migration Guide.html · Fee System Roadmap.html  ← internal docs
-├── Maintainers Runbook.html      ← THE handoff doc (architecture + math + ops)
-├── oauth-callback.html           ← Box OAuth redirect target (REQUIRED)
-│
-├── api/                          ← Vercel serverless functions
-│   ├── box-token.js              ← Box OAuth token exchange + refresh (holds the secret)
-│   └── extract.js                ← proposal extraction via Claude (Ingestion)
-│
-├── universal-fee-calc/           ← the application code (shared by every page)
-│   ├── rates-catalog.js          ← rate ENGINE only — NO confidential numbers
-│   ├── store.js                  ← data layer, access rules, financials snapshot
-│   ├── box-adapter.js            ← Box sync (auth, pull/push, rates pull, config)
-│   ├── boot.js                   ← gates each page on auth + data load
-│   ├── sync-status.js            ← the on-page "Synced to Box" indicator
-│   ├── app.js                    ← the calculator engine + UI
-│   ├── intake.js                 ← Salesforce intake email + drift detection
-│   ├── ingest.js · bench*.js      ← Ingestion + Benchmarking
-│   ├── export-excel.js           ← the 4-tab Excel export (live formulas)
-│   └── styles.css
-│
-├── design-system/                ← brand: colours, type, Gotham fonts, logo
-├── package.json
-├── .vercelignore                 ← keeps confidential files off the public origin
-└── .gitignore
+**Admin**
+- `Import Revenues.html` — bulk-import monthly billing (admin only)
 
-NOT in this repo (by design — confidential, lives in Box):
-   rates.json   ← the Macro rate grid (rack rates, cost floors, discounts)
-```
+**Docs**
+- `Enterprise Migration Guide.html`, `Fee System Roadmap.html`, `Maintainers Runbook.html`
 
-## The one rule
-The rate numbers must NEVER be committed. The grid lives only in Box as
-`rates.json`; the app pulls it after login and hydrates the engine in memory.
-`.gitignore` blocks it from being committed; `.vercelignore` blocks it (and
-`research/`) from deploying.
+## Modules — `universal-fee-calc/`
+- `store.js` — data layer: projects + studio stores, the calc engines
+  (`computeFinancials`, `monthlySeries`, `projectFinancials`), change-order ledger,
+  version history, **schema migrations**, **tombstone soft-delete**, **activity log**,
+  access wall + leader directory
+- `box-adapter.js` — Box OAuth, pull/push with etag concurrency + union merge
+  (tombstones + activity), flush-on-hide, rates pull, config
+- `boot.js` — gates each page on auth + data load; runs migrations + tombstone purge
+- `sync-status.js` — on-page "Synced to Box" indicator + manual Sync now
+- `nav.js` — shared hamburger nav (admin-aware)
+- `app.js` — calculator engine + UI
+- `intake.js` — Salesforce intake email + drift detection
+- `export-excel.js` — calculator Excel export (setup, matrix, monthly, billing summary)
+- `rates-catalog.js` — rate-grid shell, hydrated from Box `rates.json`
+- `ingest.js`, `import-revenues.js`, `proposal-analytics.js`, `revenue-studio.js`,
+  `bench.js`, `bench-data.js` — page controllers
+- `styles.css`, `studio.css`
 
-## Setup (one-time) — see the Runbook §12–13 for detail
-1. **Box app** (Developer Console): User Auth (OAuth 2.0), PKCE enabled, redirect
-   URI `https://<your-vercel-domain>/oauth-callback.html`, read/write scope.
-2. **Box folder**: put `projects.json` (`{"schemaVersion":1,"projects":{}}`) and
-   the confidential `rates.json` in it; copy both file ids + the folder id into
-   `universal-fee-calc/box-adapter.js` → `BOX_CONFIG`.
-3. **Vercel env vars**: `BOX_CLIENT_ID`, `BOX_CLIENT_SECRET`, `ANTHROPIC_API_KEY`.
-4. Confirm `BOX_CONFIG`: `enabled:true`, `testMode:false`, `clientId`,
-   `dataFileId`, `ratesFileId`, `folderId`.
+## `api/` (Vercel serverless)
+- `extract.js` — proposal extraction via Claude (self-healing model fallback chain)
+- `box-token.js` — OAuth token exchange / refresh
 
-Until `rates.json` exists in Box with its id set, every page shows a
-"Rate card unavailable" gate by design.
+## Testing
+Open `tests.html` in a browser — a self-contained regression suite that asserts the
+engine invariants (waterfall identity, rate-lock single-removal, broker direction,
+monthly decomposition) and the data layer (tombstones, migrations, activity log).
+It uses an in-memory storage shim, so it never touches real Box-synced data.
+**Run it before every deploy** — a red row means the math or data layer broke.
 
-## Access (fail-closed)
-Admins (allowlist in `store.js`) see everything; everyone else sees only their
-own projects; an unrecognized login sees nothing. Box folder permission is the
-true boundary — see Runbook §6.
+## Deploy
+Host on Vercel. Required env vars: `BOX_CLIENT_ID`, `BOX_CLIENT_SECRET`,
+`ANTHROPIC_API_KEY`. `rates.json` is uploaded to the Box folder (not here);
+its file id is set in `box-adapter.js` config.
+
+## Data model
+Project records store **inputs only** (roles, FTE %, assumptions) — never dollar
+figures, which are recomputed live. Booked records additionally freeze a
+`financials` snapshot; pursuits keep a live-refreshed materialized billing series
+that Revenue Projections / Studio read directly. Schema is versioned (`SCHEMA`) with
+a migration pipeline in `store.js`; deletes are soft (tombstones) so they propagate
+across devices through the Box merge.
