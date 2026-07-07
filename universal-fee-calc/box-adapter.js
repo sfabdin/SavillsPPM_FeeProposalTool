@@ -107,6 +107,13 @@
   }
 
   // Async: ALWAYS returns a usable access token (refreshing if expired) or null.
+  // Cross-tab-safe: Box rotates the refresh token on every use, so two tabs that
+  // both try to refresh with the same token would knock each other out (the loser
+  // gets invalid_grant → forced re-login). We coordinate via a short localStorage
+  // lock so only one tab spends the token; the others wait and pick up the freshly
+  // written bundle. The real safety net is the retry below: if we lose the race,
+  // we re-read whatever a peer just rotated in and try once more before giving up.
+  const REFRESH_LOCK = 'ufc_box_refreshing_v1';
   let _refreshing = null;
   async function ensureToken() {
     if (BOX_CONFIG.devToken) return BOX_CONFIG.devToken;
@@ -114,12 +121,53 @@
     const t = readTok();
     if (t && t.access_token && t.exp > Date.now()) return t.access_token;
     if (t && t.refresh_token) {
-      if (!_refreshing) _refreshing = doRefresh(t.refresh_token).finally(() => { _refreshing = null; });
-      try { const nt = await _refreshing; return nt.access_token; }
-      catch (e) { clearToken(); return null; }
+      if (!_refreshing) _refreshing = refreshFlow().finally(() => { _refreshing = null; });
+      try { const nt = await _refreshing; return nt ? nt.access_token : null; }
+      catch (e) { return null; }
     }
     return null;
   }
+
+  // Wait (up to ~8s) for a peer tab that's mid-refresh to write a fresh bundle.
+  async function waitForPeerRefresh() {
+    const lock = localStorage.getItem(REFRESH_LOCK);
+    if (!lock) return null;
+    if (Date.now() - Number(lock) > 10000) { localStorage.removeItem(REFRESH_LOCK); return null; } // stale (tab closed mid-refresh)
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      const t = readTok();
+      if (t && t.access_token && t.exp > Date.now()) return t;   // peer wrote a fresh token
+      if (!localStorage.getItem(REFRESH_LOCK)) break;            // peer finished (maybe failed) — fall through
+    }
+    return null;
+  }
+
+  async function refreshFlow() {
+    const peer = await waitForPeerRefresh();
+    if (peer) return peer;
+
+    const mine = String(Date.now());
+    localStorage.setItem(REFRESH_LOCK, mine);
+    try {
+      const tok = readTok();
+      if (tok && tok.access_token && tok.exp > Date.now()) return tok;   // a peer beat us to it
+      try {
+        return await doRefresh(tok.refresh_token);
+      } catch (e) {
+        // Lost the rotation race? Re-read — a peer may have just rotated a new token in.
+        const fresh = readTok();
+        if (fresh && fresh.access_token && fresh.exp > Date.now()) return fresh;
+        if (fresh && fresh.refresh_token && fresh.refresh_token !== tok.refresh_token) {
+          try { return await doRefresh(fresh.refresh_token); } catch (e2) {}
+        }
+        clearToken();   // genuinely dead — only now force a re-login
+        return null;
+      }
+    } finally {
+      if (localStorage.getItem(REFRESH_LOCK) === mine) localStorage.removeItem(REFRESH_LOCK);
+    }
+  }
+
   async function doRefresh(refresh_token) {
     const res = await fetch(BOX_CONFIG.tokenExchangeUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -256,8 +304,8 @@
     return out;
   }
 
-  /* Merge strategy: newest-updatedAt wins per project. Good enough for a
-     small team; prevents the classic last-write-wins data loss. */
+  /* Merge strategy: newest-updatedAt wins per project (tombstones included, so
+     deletions propagate). Activity log is union-merged by entry id. */
   function mergeDb(remote, local) {
     const out = Store.defaultDb();
     const all = { ...(remote.projects || {}) };
@@ -266,6 +314,14 @@
       if (!rp || (lp.updatedAt || '') >= (rp.updatedAt || '')) all[id] = lp;
     });
     out.projects = all;
+    // Union the append-only activity logs by id, keep most recent 500.
+    const seen = {};
+    [...(remote.activity || []), ...(local.activity || [])].forEach(e => {
+      if (e && e.id) seen[e.id] = e;
+    });
+    out.activity = Object.values(seen)
+      .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''))
+      .slice(-500);
     return out;
   }
 
@@ -299,6 +355,22 @@
     if (!db) { emitSync('synced', ''); return; }
     _pending = db;
     await pushNow();
+  }
+
+  /* Flush the debounced push the moment the tab is hidden or closing, instead of
+     waiting out the debounce — closes the window where a fast close loses the
+     last save. And warn the user if a sync is still pending on unload. */
+  function flushPending() {
+    if (_pending) { clearTimeout(_pushTimer); pushNow(); }
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushPending();
+    });
+    window.addEventListener('pagehide', flushPending);
+    window.addEventListener('beforeunload', (e) => {
+      if (_pending) { flushPending(); e.preventDefault(); e.returnValue = ''; }
+    });
   }
   Box.syncNow = syncNow;
 

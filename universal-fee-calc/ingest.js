@@ -52,13 +52,13 @@
       [/(exec\w*\s+vice|managing director|\bevp\b)/, 'evp'],
       [/executive director/, 'ed'],
       [/senior director/, 'sd'],
+      [/(princip\w*\s+in\s+charge|\bpic\b|princip|president|\bpartner\b)/, 'principal'],
       [/associate director/, 'assoc-dir'],
       [/\bdirector\b/, 'director'],
       [/senior (project|program) manager|senior manager/, 'senior-pm'],
-      [/(assistant|associate) (project|program) manager|senior associate/, 'assistant-pm'],
-      [/coordinator/, 'proj-coord'],
-      [/cost|data analy|reporting|analyst/, 'cost-control'],
-      [/principal|president/, 'principal'],
+      [/(assistant|associate) (project|program) manager|senior associate|\bassociate\b/, 'assistant-pm'],
+      [/coordinator|project support|\bsupport\b|\bassistant\b/, 'proj-coord'],
+      [/cost|data analy|reporting|\banalyst\b/, 'cost-control'],
       [/\bmanager\b/, 'pm'],
       [/project manager|\bpm\b/, 'pm'],
     ];
@@ -152,7 +152,13 @@
   }
 
   function makeRow(d) {
-    const norm = normalizeStaffTitle(d.staffTitle);
+    // Map from the staff title; if that yields no confident hit, try the project
+    // role (proposals often put the real seniority there, e.g. "Principal in Charge").
+    let norm = normalizeStaffTitle(d.staffTitle);
+    if (!norm || norm.via === 'heuristic') {
+      const alt = normalizeStaffTitle(d.projectRole);
+      if (alt && (!norm || alt.via === 'exact' || alt.via === 'contains')) norm = alt;
+    }
     const titleId = norm ? norm.titleId : 'pm';
     const tierId = (d.rate != null) ? bestTier(titleId, d.rate) : (norm ? norm.tierId : 'mid');
     return {
@@ -173,12 +179,18 @@
       live site with the API key), fall back to window.claude in the Anthropic
       preview. Accepts text and/or page images (for vision on designed PDFs). */
   async function callExtractor({ text, images }) {
+    // Keep the request under the serverless body limit (~4.5MB): drop trailing
+    // page images until the payload fits, rather than 413-ing.
+    let imgs = (images || []).slice();
+    const budget = 4_000_000;   // ~4MB of base64 image data (fits Vercel's limit)
+    const sizeOf = (arr) => arr.reduce((s, d) => s + (d ? d.length : 0), 0);
+    while (imgs.length > 1 && sizeOf(imgs) > budget) imgs = imgs.slice(0, imgs.length - 1);
     // 1) Serverless endpoint (production)
     try {
       const res = await fetch('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text || '', images: images || [] }),
+        body: JSON.stringify({ text: text || '', images: imgs }),
       });
       if (res.ok) return await res.json();
       // If the function exists but errored, surface it (don't silently fall back to a worse path)
@@ -204,7 +216,7 @@
       + '"phases":[{"name":string,"weeks":number|null,"startDate":"MON YYYY"|null,"endDate":"MON YYYY"|null,"fee":number|null}],'
       + '"people":[{"name":string,"staffTitle":string,"projectRole":string,"team":string,"allocation":number,"rate":number|null}]}. '
       + 'narrative = 2-4 sentences telling the story (client, period, headcount, structure, total fee, billing). '
-      + 'phases = schedule; weeks duration (months×4.345); per-phase fee if shown. people = roster; allocation is decimal FTE; rate hourly USD; use the NON-DISCOUNTED rate when multiple discount columns exist; correlate rates across sheets; null when unknown; capture EVERY person.\n\nSOURCE:\n'
+      + 'phases = schedule; weeks duration (months×4.345); per-phase fee if shown. people = roster; staffTitle MUST be the real professional title/seniority as written (Principal in Charge, Partner, Director, Senior Manager, Project Support, Coordinator, Analyst) — never flatten everyone to "Project Manager"; allocation is decimal FTE (null if not shown); rate hourly USD; use the NON-DISCOUNTED rate when multiple discount columns exist; correlate rates across sheets; null when unknown; capture EVERY person.\n\nSOURCE:\n'
       + text.slice(0, 20000);
   }
 
@@ -247,28 +259,24 @@
       weeks: (ph.weeks != null && !isNaN(ph.weeks)) ? Number(ph.weeks) : null,
       targetFee: (ph.fee != null && !isNaN(ph.fee)) ? Number(ph.fee) : null,
     }));
-    const totalMonths = Math.max(cleaned.length, monthsBetween(state.project));
-    // weight by weeks; fall back to equal weights when weeks missing
     const weights = cleaned.map(p => (p.weeks && p.weeks > 0) ? p.weeks / WK_PER_MO : null);
     const haveWeeks = weights.some(w => w != null);
-    const wsum = haveWeeks ? weights.reduce((s, w) => s + (w || 0), 0) : cleaned.length;
-    const ideal = cleaned.map((p, i) => haveWeeks
-      ? (weights[i] || 0) / wsum * totalMonths
-      : totalMonths / cleaned.length);
-    // largest-remainder rounding to integers summing to totalMonths (min 1 each)
-    let floors = ideal.map(x => Math.max(1, Math.floor(x)));
-    let used = floors.reduce((s, x) => s + x, 0);
-    let remainder = totalMonths - used;
-    const order = ideal
-      .map((x, i) => ({ i, frac: x - Math.floor(x) }))
-      .sort((a, b) => b.frac - a.frac);
-    let oi = 0;
-    while (remainder > 0 && order.length) { floors[order[oi % order.length].i]++; remainder--; oi++; }
-    while (remainder < 0) { // too many months assigned; trim from smallest, keep >=1
-      const idx = floors.indexOf(Math.max(...floors));
-      if (floors[idx] > 1) { floors[idx]--; remainder++; } else break;
+
+    // ── NO durations stated → DON'T fabricate an even split across a guessed
+    //    12-month timeline. Give each phase a 1-month placeholder and flag it so
+    //    the UI tells the user to set real durations in the calculator.
+    if (!haveWeeks) {
+      return cleaned.map(p => ({ name: p.name, length: 1, weeks: null, targetFee: p.targetFee, needsDuration: true }));
     }
-    return cleaned.map((p, i) => ({ name: p.name, length: floors[i], weeks: p.weeks, targetFee: p.targetFee }));
+
+    // Some/all weeks known: size months from the WEEKS themselves (not a guessed
+    // project timeline). Phases with unknown weeks get the average of known ones.
+    const knownAvg = weights.filter(w => w != null).reduce((s, w) => s + w, 0) / weights.filter(w => w != null).length;
+    const months = weights.map((w, i) => Math.max(1, Math.round((w != null ? w : knownAvg))));
+    return cleaned.map((p, i) => ({
+      name: p.name, length: months[i], weeks: p.weeks, targetFee: p.targetFee,
+      needsDuration: p.weeks == null,
+    }));
   }
 
   function applyDate(str, which) {
@@ -438,19 +446,23 @@
     const totalMo = phases.reduce((s, p) => s + (p.length || 0), 0);
     list.innerHTML = phases.map((p, i) => {
       const wk = (p.weeks != null) ? `${p.weeks} wk` : '';
-      const mo = `${p.length} mo`;
+      const needs = p.needsDuration;
+      const mo = needs ? `<span class="pc-needs">duration not stated — set in calculator</span>` : `${p.length} mo`;
       const fee = (p.targetFee != null) ? money(p.targetFee) : '';
-      return `<div class="phase-chip">
+      return `<div class="phase-chip${needs ? ' is-needs' : ''}">
         <span class="pc-ix">${i + 1}</span>
         <span class="pc-name">${esc(p.name)}</span>
         <span class="pc-dur">${wk ? wk + ' · ' : ''}${mo}</span>
         ${fee ? `<span class="pc-fee">target ${fee}</span>` : ''}
       </div>`;
     }).join('');
+    const anyNeeds = phases.some(p => p.needsDuration);
     const bits = [`${phases.length} phases · ${totalMo} mo`];
     if (state.project.billingMode === 'flatline') bits.push('flat monthly billing');
     if (state.project.oneTimeDiscount) bits.push(`one-time discount ${money(state.project.oneTimeDiscount)}`);
-    $('#phases-note').textContent = bits.join('  ·  ') + ' — fees are reference targets; staffing drives the live fee. Tune per-phase FTE in the calculator.';
+    $('#phases-note').textContent = bits.join('  ·  ') + (anyNeeds
+      ? ' — durations weren\'t stated in the proposal; set them in the calculator. Nothing was assumed.'
+      : ' — fees are reference targets; staffing drives the live fee. Tune per-phase FTE in the calculator.');
   }
 
   function renderSummary() {
@@ -483,7 +495,7 @@
     const groupFor = (team) => (groups.find(g => g.name === (team||'').trim()) || groups[0]).id;
 
     const totalMonths = Math.max(1, monthsBetween(p));
-    let phases = state.phases.length ? state.phases.map(ph => ({ id: uid(), name: ph.name, length: ph.length, weeks: ph.weeks ?? null, targetFee: ph.targetFee ?? null }))
+    let phases = state.phases.length ? state.phases.map(ph => ({ id: uid(), name: ph.name, length: ph.length, weeks: ph.weeks ?? null, targetFee: ph.targetFee ?? null, needsDuration: ph.needsDuration || false }))
                                      : [{ id: uid(), name: 'Full term', length: totalMonths, weeks: null, targetFee: null }];
     // normalise phase lengths to the timeline
     const sum = phases.reduce((s, x) => s + x.length, 0);
@@ -590,7 +602,7 @@
 
   /** Render PDF pages to PNG data-URLs for Claude vision (handles designed/
       tabular proposals that text extraction mangles). Capped for payload size. */
-  async function pdfToImages(file, maxPages = 8) {
+  async function pdfToImages(file, maxPages = 15) {
     const pdfjs = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs');
     pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
     const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
@@ -598,11 +610,14 @@
     const out = [];
     for (let i = 1; i <= n; i++) {
       const page = await doc.getPage(i);
-      const vp = page.getViewport({ scale: 1.6 });
+      // Cap width so JPEG payloads stay small enough to send MANY pages.
+      const raw = page.getViewport({ scale: 1 });
+      const scale = Math.min(1.3, 1100 / raw.width);
+      const vp = page.getViewport({ scale });
       const canvas = document.createElement('canvas');
       canvas.width = vp.width; canvas.height = vp.height;
       await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-      out.push(canvas.toDataURL('image/png'));
+      out.push(canvas.toDataURL('image/jpeg', 0.6));
     }
     return out;
   }

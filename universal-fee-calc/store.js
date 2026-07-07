@@ -6,7 +6,7 @@
   'use strict';
   const KEY = 'savills-ppm-fee-db:v1';
   const STUDIO_KEY = 'savills-ppm-studio-db:v1';   // Revenue Studio — SEPARATE store/file
-  const SCHEMA = 1;
+  const SCHEMA = 2;
 
   const STATUSES = ['draft','submitted','negotiation','won','lost','active','closed','hold'];
   const STATUS_LABELS = {
@@ -146,7 +146,29 @@
   }
 
   function defaultDb() {
-    return { schemaVersion: SCHEMA, projects: {} };
+    return { schemaVersion: SCHEMA, projects: {}, activity: [] };
+  }
+
+  /* ===== Schema migration pipeline =====
+     Each key upgrades the db FROM the prior version. Additive/defensive only —
+     read sites all default their own fields, so an un-migrated db never crashes;
+     this just normalizes shape and stamps the version. Runs once at boot. */
+  const MIGRATIONS = {
+    2: (db) => { if (!Array.isArray(db.activity)) db.activity = []; },
+  };
+  function runMigrations() {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return 0;
+    let db;
+    try { db = JSON.parse(raw); } catch (e) { return 0; }
+    const from = db.schemaVersion || 1;
+    if (from >= SCHEMA) return 0;
+    for (let v = from + 1; v <= SCHEMA; v++) {
+      if (MIGRATIONS[v]) { try { MIGRATIONS[v](db); } catch (e) { console.warn('migration ' + v + ' failed', e); } }
+    }
+    db.schemaVersion = SCHEMA;
+    localStorage.setItem(KEY, JSON.stringify(db));   // local-only normalize; next real save pushes
+    return SCHEMA - from;
   }
 
   function readDb() {
@@ -168,6 +190,36 @@
     // Sync layer: if a remote backend (Box) is attached, mirror local → remote.
     // No-op when nothing is attached, so the offline/localStorage app is unchanged.
     if (typeof _remotePush === 'function') { try { _remotePush(db); } catch (e) { console.warn('remote push failed', e); } }
+  }
+
+  /* ===== Activity log — append-only audit trail =====
+     Rides inside projects.json (so it syncs to Box with the data). Union-merged
+     by entry id in box-adapter's mergeDb, capped to the most recent entries.
+     Records who did what: create, save, status change, book, delete, access grant. */
+  const ACTIVITY_CAP = 500;
+  function logActivity(action, projectId, meta) {
+    try {
+      const db = readDb();
+      if (!Array.isArray(db.activity)) db.activity = [];
+      const actor = (getCurrentUser() && getCurrentUser().username) || 'unknown';
+      db.activity.push({
+        id: 'act_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        ts: new Date().toISOString(),
+        actor, action, projectId: projectId || null, meta: meta || null,
+      });
+      if (db.activity.length > ACTIVITY_CAP) db.activity = db.activity.slice(-ACTIVITY_CAP);
+      // write WITHOUT re-logging; go straight to storage + push
+      db.schemaVersion = SCHEMA;
+      localStorage.setItem(KEY, JSON.stringify(db));
+      if (typeof _remotePush === 'function') { try { _remotePush(db); } catch (e) {} }
+    } catch (e) { /* logging must never break a save */ }
+  }
+  function listActivity(limit, projectId) {
+    const db = readDb();
+    let a = Array.isArray(db.activity) ? db.activity.slice() : [];
+    if (projectId) a = a.filter(x => x.projectId === projectId);
+    a.sort((x, y) => (y.ts || '').localeCompare(x.ts || ''));
+    return limit ? a.slice(0, limit) : a;
   }
 
   /* Remote sync hook — set by a backend adapter (e.g. box-adapter.js) via
@@ -279,8 +331,13 @@
 
   function listProjects() {
     const db = readDb();
-    return Object.values(db.projects).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    return Object.values(db.projects)
+      .filter(p => !p._deleted)
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   }
+
+  /** Raw project map incl. tombstones — for migrations/merge only. */
+  function allProjectsRaw() { return readDb().projects; }
 
   /** One-time cleanup: stamp the canonical leadId on records whose lead was
       stored as initials/free-text (e.g. imported "BLJ"). Resolves via the
@@ -299,12 +356,14 @@
   }
 
   function getProject(id) {
-    return readDb().projects[id] || null;
+    const p = readDb().projects[id];
+    return (p && !p._deleted) ? p : null;
   }
 
   function saveProject(record) {
     const db = readDb();
     const prev = record.id ? db.projects[record.id] : null;
+    const isNew = !record.id;
     if (!record.id) record.id = 'proj_' + Math.random().toString(36).slice(2, 11);
     if (!record.createdAt) record.createdAt = new Date().toISOString();
     record.updatedAt = new Date().toISOString();
@@ -312,13 +371,59 @@
     maybeAutoVersion(record, prev);    // capture a version when status crosses a lifecycle milestone
     db.projects[record.id] = record;
     writeDb(db);
+    // Audit trail (never let logging failure break a save)
+    try {
+      const newStatus = record.project && record.project.status;
+      const oldStatus = prev && prev.project && prev.project.status;
+      if (isNew) {
+        logActivity('create', record.id, { name: record.project && record.project.name, status: newStatus });
+      } else if (oldStatus !== newStatus) {
+        const booked = ['won', 'active', 'closed'].includes(newStatus);
+        logActivity(booked ? 'book' : 'status', record.id, { from: oldStatus, to: newStatus });
+      }
+    } catch (e) {}
     return record;
   }
 
+  /* Soft-delete: leave a tombstone (not a hard delete) so the deletion
+     propagates through the newest-updatedAt-wins Box merge. A hard delete only
+     removes it locally and the record resurrects from another device's copy. */
   function deleteProject(id) {
     const db = readDb();
-    delete db.projects[id];
+    const p = db.projects[id];
+    if (!p) return;
+    const now = new Date().toISOString();
+    db.projects[id] = {
+      id, _deleted: true, deletedAt: now, updatedAt: now,
+      deletedBy: (getCurrentUser() && getCurrentUser().username) || null,
+      // keep a minimal stub for audit/undelete; drop the heavy payload
+      project: { name: (p.project && p.project.name) || '', client: (p.project && p.project.client) || '' },
+    };
     writeDb(db);
+    logActivity('delete', id, { name: db.projects[id].project.name });
+  }
+
+  /** Undo a soft-delete within the retention window (tombstone still present). */
+  function restoreDeleted(id) {
+    const db = readDb();
+    const p = db.projects[id];
+    if (p && p._deleted) { delete db.projects[id]; writeDb(db); }
+    return null;
+  }
+
+  /** Sweep tombstones older than `days` (default 120) so the file doesn't grow
+     unbounded. Runs once on load. */
+  function purgeTombstones(days) {
+    const cutoff = Date.now() - (days || 120) * 86400000;
+    const db = readDb();
+    let purged = 0;
+    Object.entries(db.projects).forEach(([id, p]) => {
+      if (p._deleted && p.deletedAt && new Date(p.deletedAt).getTime() < cutoff) {
+        delete db.projects[id]; purged++;
+      }
+    });
+    if (purged) writeDb(db);
+    return purged;
   }
 
   function exportDb() {
@@ -1437,6 +1542,7 @@
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING,
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
+    allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity,
     saveVersion, listVersions, versionDiff, restoreVersionRecord, rosterDiff,
     proposalHealth,
     exportDb, importDb, downloadJson,
@@ -1450,7 +1556,7 @@
     getCurrentUser, setCurrentUser, isAdmin, userOwnsProject, visibleProjects,
     setRealIdentity, getRealIdentity, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
     REVENUE_LEADERS, leaderById, resolveLeader, leaderDisplay,
-    attachRemote, hydrateFromRemote, defaultDb,
+    attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,
     listBaselines, getBaseline, saveBaseline, deleteBaseline, baselineFromBudget, baselineGridForSlice,
     listScenarios, getScenario, saveScenario, deleteScenario,
