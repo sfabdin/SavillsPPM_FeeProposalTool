@@ -1342,7 +1342,8 @@
      Match is on the Box SSO login (email), case-insensitive.
      Edit this list to grant/revoke all-access.                  */
   const ADMINS = new Set([
-    'salim@savills.us',      // Salim — owner
+    'sabdin@savills.us',      // Salim — owner (current login)
+    'salim@savills.us',      // Salim — owner (legacy login, kept for transition)
     'kyriacos.yerou@savills.com', // Kyri Yerou — developer (note .com)
     'esobel@savills.us',     // Emily Sobel
     'jsantoro@savills.us',   // Jeff Santoro
@@ -1354,6 +1355,7 @@
   /* These logins may use the "Viewing as" impersonation switch to preview
      other people's restricted views. Everyone else never sees the control. */
   const SUPERUSERS = new Set([
+    'sabdin@savills.us',
     'salim@savills.us',
     'kyriacos.yerou@savills.com',
   ]);
