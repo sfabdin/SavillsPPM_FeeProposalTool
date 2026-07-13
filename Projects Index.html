@@ -49,6 +49,24 @@
   .kpi-card.is-yellow { background: var(--sav-yellow); border-color: var(--sav-navy); }
   .kpi-card.is-yellow .lbl,
   .kpi-card.is-yellow .val { color: var(--sav-navy); }
+  .kpi-card .sub {
+    margin-top: 7px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--sav-steel);
+  }
+  .kpi-card .sub strong {
+    font-weight: 900;
+    font-size: 13px;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+    color: var(--sav-navy);
+    margin-left: 2px;
+  }
+  .kpi-card.is-yellow .sub { color: var(--sav-navy); opacity: 0.72; }
+  .kpi-card.is-yellow .sub strong { color: var(--sav-navy); opacity: 1; }
   @media (max-width: 1200px) {
     .kpi-strip { grid-template-columns: repeat(3, 1fr); }
   }
@@ -413,15 +431,16 @@
       <div class="val" id="kpi-count">0</div>
     </div>
     <div class="kpi-card">
-      <div class="lbl">Pipeline (open)</div>
+      <div class="lbl">Pipeline · 2026 (open)</div>
       <div class="val" id="kpi-pipeline">$0</div>
     </div>
     <div class="kpi-card is-yellow">
-      <div class="lbl">Won</div>
+      <div class="lbl">Won · 2026</div>
       <div class="val" id="kpi-won">$0</div>
+      <div class="sub">Booked 2027 <strong id="kpi-won-2027">$0</strong></div>
     </div>
     <div class="kpi-card">
-      <div class="lbl">Weighted forecast</div>
+      <div class="lbl">Weighted forecast · 2026</div>
       <div class="val" id="kpi-weighted">$0</div>
     </div>
     <div class="kpi-card">
@@ -429,7 +448,7 @@
       <div class="val" id="kpi-winrate">—<span class="unit">%</span></div>
     </div>
     <div class="kpi-card is-navy">
-      <div class="lbl">Total all-time</div>
+      <div class="lbl">Total · 2026</div>
       <div class="val" id="kpi-total">$0</div>
     </div>
   </div>
@@ -687,14 +706,39 @@
     });
   }
 
+  /* Per-year billings for a project (revised curve if it has approved COs,
+     else the raw monthly series). Keyed to id+updatedAt so it only recomputes
+     when the record changes. Returns { 2026, 2027 }. */
+  const _yearCache = new Map();
+  function feeByYear(p) {
+    const key = p.id + '|' + (p.updatedAt || '');
+    const hit = _yearCache.get(key);
+    if (hit) return hit;
+    const out = { 2026: 0, 2027: 0 };
+    const rc = STORE.revisedContract(p.id);
+    if (rc.coCount) {
+      rc.byMonth.forEach(m => {
+        const y = parseInt(String(m.ym).split('-')[0], 10);
+        if (out[y] != null) out[y] += m.net || 0;
+      });
+    } else {
+      (STORE.monthlySeries(p, CATALOG) || []).forEach(m => {
+        if (out[m.year] != null) out[m.year] += m.amount || 0;
+      });
+    }
+    _yearCache.set(key, out);
+    return out;
+  }
+
   /* ---------- KPI rollup ---------- */
   function renderKpis(allProjects) {
     // Parents only — change orders fold into their parent's revised contract.
     const parents = allProjects.filter(p => !STORE.isChangeOrder(p));
+    // Every dollar card is scoped to billings landing in CALENDAR 2026 (not
+    // whole-project lifetime value). Booked 2027 is surfaced separately.
     const fees = parents.map(p => {
-      const rc = STORE.revisedContract(p.id);
-      const net = rc.coCount ? rc.revisedNet : projectFee(p).net;
-      return { p, net };
+      const y = feeByYear(p);
+      return { p, net: y[2026], net2027: y[2027] };
     });
     const total = fees.reduce((s, x) => s + x.net, 0);
     // Pipeline = open opportunities being actively pursued (submitted + negotiation).
@@ -704,6 +748,9 @@
     // Won = signed / awarded work (won, active, closed).
     const won = fees.filter(x => ['won','active','closed'].includes(x.p.project?.status))
                    .reduce((s, x) => s + x.net, 0);
+    // Booked 2027 = the same awarded work, billings landing in 2027.
+    const won2027 = fees.filter(x => ['won','active','closed'].includes(x.p.project?.status))
+                   .reduce((s, x) => s + x.net2027, 0);
     // Probability-weighted forecast = every project × its rating confidence.
     const weighted = fees.reduce((s, x) => {
       const w = (STORE.ratingMeta(STORE.ratingFor(x.p)) || {}).weight || 0;
@@ -718,6 +765,7 @@
     $('#kpi-count').textContent = parents.length;
     $('#kpi-pipeline').textContent = fmtMoney(pipeline);
     $('#kpi-won').textContent = fmtMoney(won);
+    $('#kpi-won-2027').textContent = fmtMoney(won2027);
     $('#kpi-weighted').textContent = fmtMoney(weighted);
     $('#kpi-winrate').innerHTML = wr !== null ? `${wr}<span class="unit">%</span>` : '—';
     $('#kpi-total').textContent = fmtMoney(total);
