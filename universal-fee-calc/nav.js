@@ -13,7 +13,7 @@
   const LINKS = [
     { href: 'Fee Generator.html',            label: 'Home',                group: 'Build' },
     { href: 'Universal Fee Calculator.html', label: 'Fee Calculator',      group: 'Build' },
-    { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Build' },
+    { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Admin', admin: true },
     { href: 'Projects Index.html',           label: 'Projects Index',      group: 'Manage' },
     { href: 'Revenue Projections.html',      label: 'Revenue Projections', group: 'Manage' },
     { href: 'Revenue Studio.html',           label: 'Revenue Studio',      group: 'Manage' },
