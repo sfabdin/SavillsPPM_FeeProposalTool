@@ -1748,3 +1748,6 @@ html, body {
 /* monthly reconciliation pass-through rows */
 tr.pt-row td { color: var(--sav-steel); font-style: italic; }
 tr.pt-contract td { background: rgba(0,166,158,0.08); }
+/* pass-through column in the monthly grid */
+.monthly th.pt-col, .monthly td.pt-col { background: rgba(0,166,158,0.06); color: var(--sav-teal); text-align: right; }
+.monthly th.pt-col { color: var(--sav-teal); }

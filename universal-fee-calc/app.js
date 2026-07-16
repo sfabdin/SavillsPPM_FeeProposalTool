@@ -330,6 +330,27 @@
   function ptCostTotal() { return ptOn() ? ptLines().reduce((s, l) => s + (parseFloat(l.cost) || 0), 0) : 0; }
   function ptMarkupTotal() { return ptOn() ? ptLines().reduce((s, l) => s + (parseFloat(l.cost) || 0) * ((parseFloat(l.markupPct) || 0) / 100), 0) : 0; }
   function ptClientTotal() { return ptCostTotal() + ptMarkupTotal(); }
+  /** Per-month CLIENT-BILLED pass-through (cost + markup), keyed 'YYYY-M' to match
+      the monthly grid. Explicit monthly distribution wins; else spread evenly. */
+  function ptBilledMap() {
+    const map = {}; if (!ptOn()) return map;
+    const keys = getMonths().map(m => m.year + '-' + m.month);
+    ptLines().forEach(l => {
+      const cost = parseFloat(l.cost) || 0; if (!cost) return;
+      const gross = 1 + (parseFloat(l.markupPct) || 0) / 100;
+      const mo = (l.monthly && Object.keys(l.monthly).length) ? l.monthly : null;
+      if (mo) {
+        Object.keys(mo).forEach(ym => {
+          const norm = ym.split('-')[0] + '-' + parseInt(ym.split('-')[1], 10);
+          map[norm] = (map[norm] || 0) + (parseFloat(mo[ym]) || 0) * gross;
+        });
+      } else if (keys.length) {
+        const per = cost * gross / keys.length;
+        keys.forEach(k => { map[k] = (map[k] || 0) + per; });
+      }
+    });
+    return map;
+  }
   /** A phase's display FTE for a role = the rounded average of its months'
       effective FTE. Phase is a derived rollup; months are canonical. */
   function phaseAvgFte(role, phaseId) {
@@ -1975,25 +1996,32 @@
       pass-through is on. Builds on the client-facing fee number: + cost (to vendor)
       + markup (Savills revenue) = total client contract; then Savills net revenue.
       Values are whole-project totals in the value column (mirrors the broker rows). */
-  function appendPassThroughRows(tbody, visibleGroups) {
+  function appendPassThroughRows(tbody, visibleGroups, columnShown) {
     if (!ptOn()) return;
-    const N = visibleGroups.length;
     const bk = feeShareOn();
     const showInvoiceCol = bk && feeShareMode() === 'ontop';
+    const N = visibleGroups.length + (columnShown ? 1 : 0);
     const cost = ptCostTotal(), markup = ptMarkupTotal();
-    const feeClient = clientBillTotal();          // fee-side client bill (incl. broker on-top)
-    const feeRev = revenueTotal();                // fee-side Savills revenue
+    const feeClient = clientBillTotal();
+    const feeRev = revenueTotal();
     const cells = (val) => {
       if (showInvoiceCol) return `<td colspan="${N}"></td><td></td><td class="bk-col"></td><td class="bk-col inv-col">${fmtMoney(val)}</td>`;
       if (bk) return `<td colspan="${N}"></td><td>${fmtMoney(val)}</td><td class="bk-col"></td>`;
       return `<td colspan="${N}"></td><td>${fmtMoney(val)}</td>`;
     };
-    const rows = [
-      ['credit-row pt-row',        'Plus pass-through cost · to vendor',            cost],
-      ['credit-row pt-row',        'Plus pass-through markup · Savills revenue',    markup],
-      ['total grand pt-contract',  'Total client contract · incl. pass-through',    feeClient + cost + markup],
-      ['total grand revenue-row',  'Savills net revenue · incl. markup',            feeRev + markup],
-    ];
+    // When the pass-through COLUMN is shown, the grand total already folds in the
+    // client-billed pass-through — so just break out the vendor cost and Savills revenue.
+    const rows = columnShown
+      ? [
+          ['credit-row pt-row',       'of which pass-through cost · to vendor (flows out)', -cost],
+          ['total grand revenue-row', 'Savills net revenue · fee + markup',                feeRev + markup],
+        ]
+      : [
+          ['credit-row pt-row',       'Plus pass-through cost · to vendor',         cost],
+          ['credit-row pt-row',       'Plus pass-through markup · Savills revenue', markup],
+          ['total grand pt-contract', 'Total client contract · incl. pass-through', feeClient + cost + markup],
+          ['total grand revenue-row', 'Savills net revenue · incl. markup',         feeRev + markup],
+        ];
     rows.forEach(([cls, label, val]) => {
       const tr = document.createElement('tr'); tr.className = cls;
       tr.innerHTML = `<td class="month-col">${label}</td>${cells(val)}`;
@@ -2049,12 +2077,21 @@
     const nBk = bk ? (showInvoiceCol ? 2 : 1) : 0;
     const emptyBk = bk ? ('<td class="bk-col"></td>' + (showInvoiceCol ? '<td class="bk-col inv-col"></td>' : '')) : '';
 
-    // header: Month + each group + main total (+ Broker [+ Invoice])
+    // Pass-through billed as its own column (client-billed cost + markup per month).
+    const pt = ptOn();
+    const ptMap = pt ? ptBilledMap() : {};
+    const ptBilledTotal = pt ? Object.values(ptMap).reduce((a, b) => a + b, 0) : 0;
+    const nPt = pt ? 1 : 0;
+    const ptCell = (m) => pt ? `<td class="pt-col">${fmtMoneySmall(ptMap[m.year + '-' + m.month] || 0)}</td>` : '';
+    const ptGap = pt ? '<td class="pt-col"></td>' : '';
+
+    // header: Month + each group + [Pass-through] + main total (+ Broker [+ Invoice])
     let hdr = `<tr><th class="month-col">Month</th>`;
     state.groups.forEach(g => {
       const has = state.roles.some(r => r.groupId === g.id);
       if (has) hdr += `<th>${escapeHtml(g.name)}</th>`;
     });
+    if (pt) hdr += `<th class="pt-col" title="Client-billed pass-through · vendor cost + markup">Pass-through</th>`;
     const mainLbl = !bk ? `Monthly ${billed ? 'billed' : 'total'}`
       : (showInvoiceCol && billed ? 'Monthly PPM billed' : (billed ? 'Monthly billed' : 'Monthly total'));
     hdr += `<th>${mainLbl}</th>`;
@@ -2071,7 +2108,7 @@
     let grandGross = 0, grandNet = 0, grandNetForBroker = 0;
     state.groups.forEach(g => totalsByGroup[g.id] = 0);
     const visibleGroups = state.groups.filter(g => state.roles.some(r => r.groupId === g.id));
-    const SPAN = visibleGroups.length + 2 + nBk;   // full-width colspan for caption/phase rows
+    const SPAN = visibleGroups.length + 2 + nBk + nPt;   // full-width colspan for caption/phase rows
 
     // ===== FLATLINE billing: net total ÷ months = even fixed monthly =====
     if (flat) {
@@ -2109,7 +2146,9 @@
             totalsByGroup[g.id] += cell;
             html += `<td>${fmtMoneySmall(cell)}</td>`;
           });
-          html += `<td><strong>${fmtMoneySmall(flatMonthly)}</strong></td>`;
+          const ptb = pt ? (ptMap[m.year + '-' + m.month] || 0) : 0;
+          html += ptCell(m);
+          html += `<td><strong>${fmtMoneySmall(flatMonthly + ptb)}</strong></td>`;
           html += bkRow(flatMonthly);
           tr.innerHTML = html;
           tbody.appendChild(tr);
@@ -2120,17 +2159,19 @@
       sub.className = 'total';
       let subHtml = `<td class="month-col">Flat monthly fee</td>`;
       visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id] / (monthCount || 1))}</td>`; });
-      subHtml += `<td>${fmtMoney(flatMonthly)}</td>`;
+      const ptAvg = pt ? ptBilledTotal / (monthCount || 1) : 0;
+      if (pt) subHtml += `<td class="pt-col">${fmtMoneySmall(ptAvg)}</td>`;
+      subHtml += `<td>${fmtMoney(flatMonthly + ptAvg)}</td>`;
       subHtml += bkTot(flatMonthly);
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${bkTot(net)}`;
+      tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(net + (pt ? ptClientTotal() : 0))}</td>${bkTot(net)}`;
       tbody.appendChild(tr);
       appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol);
-      appendPassThroughRows(tbody, visibleGroups);
+      appendPassThroughRows(tbody, visibleGroups, pt);
       return;
     }
 
@@ -2174,7 +2215,9 @@
         });
         grandNet += monthTotal;
         grandNetForBroker += monthNet;
-        html += `<td><strong>${fmtMoneySmall(monthTotal)}</strong></td>`;
+        const ptb = pt ? (ptMap[m.year + '-' + m.month] || 0) : 0;
+        html += ptCell(m);
+        html += `<td><strong>${fmtMoneySmall(monthTotal + ptb)}</strong></td>`;
         html += bkRow(monthNet);
         tr.innerHTML = html;
         tbody.appendChild(tr);
@@ -2190,17 +2233,18 @@
       sub.className = 'total';
       let subHtml = `<td class="month-col">Net billed subtotal</td>`;
       visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
-      subHtml += `<td>${fmtMoney(grandNet)}</td>`;
+      if (pt) subHtml += `<td class="pt-col">${fmtMoneySmall(ptBilledTotal)}</td>`;
+      subHtml += `<td>${fmtMoney(grandNet + (pt ? ptBilledTotal : 0))}</td>`;
       subHtml += bkTot(grandNetForBroker);
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(grandNet)}</td>${bkTot(grandNet)}`;
+      tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(grandNet + (pt ? ptClientTotal() : 0))}</td>${bkTot(grandNet)}`;
       tbody.appendChild(tr);
       appendFeeShareRows(tbody, visibleGroups, grandNet, onTop, showInvoiceCol);
-      appendPassThroughRows(tbody, visibleGroups);
+      appendPassThroughRows(tbody, visibleGroups, pt);
       return;
     }
 
@@ -2210,7 +2254,8 @@
     sub.className = 'total';
     let subHtml = `<td class="month-col">Gross subtotal</td>`;
     visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
-    subHtml += `<td>${fmtMoney(grandGross)}</td>`;
+    if (pt) subHtml += `<td class="pt-col">${fmtMoneySmall(ptBilledTotal)}</td>`;
+    subHtml += `<td>${fmtMoney(grandGross + (pt ? ptBilledTotal : 0))}</td>`;
     subHtml += bkTotNoInv(grandNetForBroker);
     sub.innerHTML = subHtml;
     tbody.appendChild(sub);
@@ -2218,21 +2263,21 @@
     if (state.assumptions.rateLock && lock > 0.5) {
       const lr = document.createElement('tr');
       lr.className = 'credit-row';
-      lr.innerHTML = `<td class="month-col">Less Rate Lock credit</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(-lock)}</td>${emptyBk}`;
+      lr.innerHTML = `<td class="month-col">Less Rate Lock credit</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(-lock)}</td>${emptyBk}`;
       tbody.appendChild(lr);
     }
     if (state.assumptions.discount > 0) {
       const dr = document.createElement('tr');
       dr.className = 'credit-row';
-      dr.innerHTML = `<td class="month-col">Less ${state.assumptions.discount}% client discount</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(-disc)}</td>${emptyBk}`;
+      dr.innerHTML = `<td class="month-col">Less ${state.assumptions.discount}% client discount</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(-disc)}</td>${emptyBk}`;
       tbody.appendChild(dr);
     }
     const tr = document.createElement('tr');
     tr.className = 'total grand';
-    tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${bkTot(net)}`;
+    tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(net + (pt ? ptClientTotal() : 0))}</td>${bkTot(net)}`;
     tbody.appendChild(tr);
     appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol);
-    appendPassThroughRows(tbody, visibleGroups);
+    appendPassThroughRows(tbody, visibleGroups, pt);
   }
 
   /* ============================================================
