@@ -2,57 +2,500 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Savills PPM · Import Small Works</title>
+<title>Savills · Universal Fee Calculator</title>
 <link rel="stylesheet" href="design-system/colors_and_type.css">
-<style>
-  body { margin:0; font-family:var(--font-body,Arial,sans-serif); color:var(--sav-navy,#25273A); background:#f3f3f0; }
-  .wrap { max-width:1100px; margin:0 auto; padding:36px 28px 80px; }
-  h1 { font-family:var(--font-display); font-weight:800; font-size:26px; margin:0 0 4px; }
-  .sub { color:#79828C; font-size:13px; margin-bottom:24px; max-width:760px; line-height:1.6; }
-  .card { background:#fff; border:1px solid rgba(37,39,58,0.12); padding:22px 24px; margin-bottom:20px; }
-  .card h2 { font-family:var(--font-display); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; margin:0 0 12px; }
-  .btn { font-family:var(--font-display); font-weight:700; font-size:13px; letter-spacing:0.04em; padding:11px 20px; border:0; cursor:pointer; background:var(--sav-navy); color:#fff; }
-  .btn.go { background:var(--sav-teal,#0E7C7B); }
-  .btn:disabled { opacity:0.4; cursor:not-allowed; }
-  .btn.ghost { background:transparent; color:var(--sav-navy); border:1px solid rgba(37,39,58,0.25); }
-  .stat { display:inline-block; margin-right:28px; }
-  .stat b { font-family:var(--font-display); font-size:22px; display:block; }
-  .stat span { font-size:11px; color:#79828C; text-transform:uppercase; letter-spacing:0.08em; }
-  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:12px; }
-  th,td { text-align:left; padding:6px 9px; border-bottom:1px solid rgba(37,39,58,0.1); }
-  th { font-family:var(--font-display); font-size:9.5px; letter-spacing:0.07em; text-transform:uppercase; color:#79828C; }
-  td.num { text-align:right; font-variant-numeric:tabular-nums; }
-  .tag { font-size:10px; font-weight:700; padding:1px 7px; border-radius:10px; }
-  .tag.b { background:#eef1f4; color:#25273A; } .tag.m { background:#e4f4f2; color:#0a6463; }
-  .msg { font-size:13px; padding:10px 14px; margin-top:12px; }
-  .msg.ok { background:#e8f3ec; color:#1f7a44; } .msg.err { background:#fbe9ea; color:#b3151b; }
-  .note { font-size:12px; color:#79828C; line-height:1.6; }
-  code { background:#EEE8E3; padding:1px 5px; font-size:11px; }
-  #gate { display:none; background:#fff; border:1px solid rgba(37,39,58,0.12); padding:40px; text-align:center; font-size:15px; color:#79828C; }
-</style>
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 </head>
 <body>
 <div class="wrap">
-  <h1>Import Small Works · JPMC</h1>
-  <div class="sub">One-time bulk load of the JPMC Small Works projects from <em>INTERNAL - Macro Fee Tracking</em>. Each becomes its own pass-through-only project (<strong>SMALLWORKS - </strong>name, client JPMC). Contractor WO → billed line (client pays cost + 10%); Managed Vendor → managed line (direct bill, Savills invoices the 10% fee only). Cancelled and zero-value rows are excluded. Existing projects with the same name are skipped — safe to re-run.</div>
 
-  <div id="gate">Import Small Works is for admins only. Sign in with an admin Box account to continue.</div>
-
-  <div id="app" style="display:none;">
-    <div class="card">
-      <h2>1 · Review</h2>
-      <div id="stats"></div>
-      <div style="max-height:420px; overflow:auto;"><table id="preview"></table></div>
-    </div>
-    <div class="card">
-      <h2>2 · Import</h2>
-      <div class="note">Writes the projects into your store; they sync to Box while you're signed in. Financials are stamped on save. Re-running skips any name already present.</div>
-      <div style="margin-top:14px; display:flex; gap:12px; align-items:center;">
-        <button class="btn go" id="commit">Import <span id="commit-n"></span> projects</button>
-        <a class="btn ghost" href="Projects Index.html">Open Projects Index →</a>
+  <!-- ========== Header ========== -->
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div class="title-block">
+      <div class="lbl">
+        <a href="Fee Generator.html" style="color: var(--sav-steel); text-decoration: none; letter-spacing: 0.20em;">Fee Generator</a>
+        &nbsp; · &nbsp; <a href="Projects Index.html" style="color: var(--sav-steel); text-decoration: none; letter-spacing: 0.20em;">Projects Index</a>
+        &nbsp; · &nbsp; Fee Calculator
       </div>
-      <div id="commit-msg"></div>
+      <h1 id="hdr-project">Untitled project</h1>
+      <div class="project-id">
+        <span id="hdr-client"></span> <span id="hdr-status"></span>
+        <span id="hdr-saved" style="margin-left: 12px; font-size: 11px; color: var(--sav-teal); letter-spacing: 0.12em; text-transform: uppercase;"></span>
+      </div>
     </div>
+    <div class="actions">
+      <button class="btn btn-ghost" id="reset-btn">Reset</button>
+      <button class="btn btn-ghost" id="versions-btn">Versions <span id="versions-count" class="ver-count" hidden>0</span></button>
+      <button class="btn btn-secondary" id="save-btn">Save</button>
+      <button class="btn btn-primary" id="xlsx-btn">Download Excel</button>
+      <button class="btn btn-ghost" id="print-btn">Print / PDF</button>
+      <button class="btn btn-secondary" id="intake-btn" style="display:none;">Salesforce Intake →</button>
+    </div>
+  </header>
+
+  <!-- ========== Version history modal ========== -->
+  <div class="ver-overlay" id="ver-overlay" hidden>
+    <div class="ver-modal" role="dialog" aria-label="Proposal version history">
+      <div class="ver-modal-head">
+        <div>
+          <h3>Proposal version history</h3>
+          <p class="ver-sub">Every saved version of this proposal — an audit trail. Versions never change the live numbers.</p>
+        </div>
+        <button class="ver-x" id="ver-close" aria-label="Close">×</button>
+      </div>
+      <div class="ver-modal-actions">
+        <button class="btn btn-secondary" id="ver-save-btn">+ Save current as version</button>
+        <div class="ver-compare" id="ver-compare" hidden>
+          <label>Compare</label>
+          <select id="ver-a"></select>
+          <span class="ver-arrow">→</span>
+          <select id="ver-b"></select>
+        </div>
+      </div>
+      <div class="ver-diff" id="ver-diff" hidden></div>
+      <div class="ver-list" id="ver-list"></div>
+    </div>
+  </div>
+
+  <!-- ========== Booked → Salesforce intake callout ========== -->
+  <div class="intake-callout" id="intake-callout" hidden>
+    <div class="ic-mark" id="ic-mark">⚑</div>
+    <div class="ic-body">
+      <div class="ic-title" id="ic-title">This project is booked — submit the Salesforce intake.</div>
+      <div class="ic-detail" id="ic-detail"></div>
+      <label class="ic-confirm" for="pm-intake-sent">
+        <input type="checkbox" id="pm-intake-sent">
+        <span class="ic-check"></span>
+        <span class="ic-confirm-text">I’ve sent the intake email</span>
+      </label>
+    </div>
+  </div>
+
+  <!-- ========== Change-order banner ========== -->
+  <div class="co-banner" id="co-banner" hidden>
+    <div class="co-mark" id="co-mark">⇄</div>
+    <div class="co-body">
+      <div class="co-title" id="co-title"></div>
+      <div class="co-detail" id="co-detail"></div>
+    </div>
+    <div class="co-actions" id="co-actions"></div>
+  </div>
+
+  <!-- ========== Cover / Setup ========== -->
+  <section class="cover-pane" id="cover-pane">
+    <header class="cover-head">
+      <span class="ix">Setup</span>
+      <h2>Configure project · timeline · team.</h2>
+      <span class="hint">Changes flow live into the matrix below.</span>
+      <button class="toggle" id="cover-toggle">Hide setup</button>
+    </header>
+    <div class="cover-body">
+
+      <!-- Project info -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">01 · Project</span>
+          <h3>Project information.</h3>
+          <span class="hint">Prints on header, Excel cover sheet, and exports. Drives the Projects Index database.</span>
+        </div>
+        <div class="field-grid cols-5">
+          <div class="field">
+            <label for="pm-name">Project name</label>
+            <input type="text" id="pm-name" placeholder="e.g. 383 Madison Migration ’27">
+          </div>
+          <div class="field">
+            <label for="pm-client">Client</label>
+            <input type="text" id="pm-client" placeholder="e.g. JPMorgan Chase">
+          </div>
+          <div class="field">
+            <label for="pm-lead">Savills lead (PE)</label>
+            <select id="pm-lead"></select>
+          </div>
+          <div class="field">
+            <label for="pm-status">Status</label>
+            <select id="pm-status"></select>
+            <div class="field-hint" id="status-hint"></div>
+          </div>
+          <div class="field" id="lost-reason-field" style="display:none;">
+            <label for="pm-lostReason">Lost reason</label>
+            <select id="pm-lostReason"></select>
+            <div class="field-hint">Feeds win/loss analytics.</div>
+          </div>
+          <div class="field">
+            <label for="pm-rating">Projection rating</label>
+            <select id="pm-rating"></select>
+            <div class="field-hint" id="rating-hint"></div>
+          </div>
+          <div class="field">
+            <label for="pm-industry">Industry</label>
+            <select id="pm-industry"></select>
+          </div>
+          <div class="field">
+            <label for="pm-ptype">Project type</label>
+            <select id="pm-ptype"></select>
+          </div>
+          <div class="field" style="grid-column: span 3;">
+            <label for="pm-access">Grant access to (emails)</label>
+            <input type="text" id="pm-access" placeholder="jane@savills.us, john@savills.us">
+            <span class="hint">Comma-separated Box emails. Anyone listed can open &amp; edit after sign-in. Admins always have access.</span>
+          </div>
+        </div>
+        <div class="pt-subs" id="pm-ptype-subs" hidden></div>
+        <div class="assumptions-block" id="assumptions-block">
+          <div class="asm-head">
+            <span class="asm-lbl">Assumptions &amp; exclusions</span>
+            <span class="hint">The conditions this fee is priced under. Prints on the proposal &amp; Excel; makes proposals comparable.</span>
+          </div>
+          <div class="asm-chips" id="pm-assumptions"></div>
+          <div class="asm-add">
+            <input type="text" id="pm-asm-custom" placeholder="Add a custom assumption and press Enter…">
+          </div>
+        </div>
+        <div class="field-grid cols-5" style="margin-top: 18px;">
+          <div class="field">
+            <label for="pm-date">Proposal date</label>
+            <input type="date" id="pm-date">
+          </div>
+          <div class="field">
+            <label for="pm-firstProposal">First proposal date</label>
+            <input type="date" id="pm-firstProposal">
+          </div>
+          <div class="field">
+            <label for="pm-signed">Signed contract date</label>
+            <input type="date" id="pm-signed">
+          </div>
+          <div class="field">
+            <label for="pm-clientContact">Client contact</label>
+            <input type="text" id="pm-clientContact" placeholder="Name · role">
+          </div>
+          <div class="field">
+            <label for="pm-clientRel">Client relationship owner</label>
+            <select id="pm-clientRel"></select>
+          </div>
+        </div>
+        <div class="field-grid" style="grid-template-columns: 1fr; margin-top: 18px; max-width: 600px;">
+          <div class="field">
+            <label for="pm-location">Location</label>
+            <input type="text" id="pm-location" placeholder="e.g. New York, NY">
+          </div>
+        </div>
+        <div class="field-grid" style="grid-template-columns: 1fr; margin-top: 18px;">
+          <div class="field">
+            <label for="pm-notes">Notes</label>
+            <textarea id="pm-notes" rows="2" placeholder="Free-text notes — project ID, PMWeb ID, region, status, or anything worth keeping with the record."></textarea>
+          </div>
+        </div>
+        <div class="field-grid" id="sf-id-row" style="grid-template-columns: 1fr; margin-top: 18px; max-width: 600px;" hidden>
+          <div class="field">
+            <label for="pm-sfid">Salesforce ID</label>
+            <input type="text" id="pm-sfid" placeholder="Paste the Salesforce opportunity ID">
+            <span class="hint">Appears once the project is booked. Bridges this record to Salesforce → Clockify for reporting. Not required to save.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">02 · Timeline</span>
+          <h3>Project period.</h3>
+          <span class="hint">Sets the calendar window the matrix covers.</span>
+        </div>
+        <div class="field-grid" style="grid-template-columns: repeat(4, 1fr); max-width: 720px;">
+          <div class="field">
+            <label for="tl-start-month">Start month</label>
+            <select id="tl-start-month">
+              <option value="1">January</option><option value="2">February</option>
+              <option value="3">March</option><option value="4">April</option>
+              <option value="5">May</option><option value="6">June</option>
+              <option value="7">July</option><option value="8">August</option>
+              <option value="9">September</option><option value="10">October</option>
+              <option value="11">November</option><option value="12">December</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="tl-start-year">Start year</label>
+            <input type="number" id="tl-start-year" min="2020" max="2040" step="1">
+          </div>
+          <div class="field">
+            <label for="tl-end-month">End month</label>
+            <select id="tl-end-month">
+              <option value="1">January</option><option value="2">February</option>
+              <option value="3">March</option><option value="4">April</option>
+              <option value="5">May</option><option value="6">June</option>
+              <option value="7">July</option><option value="8">August</option>
+              <option value="9">September</option><option value="10">October</option>
+              <option value="11">November</option><option value="12">December</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="tl-end-year">End year</label>
+            <input type="number" id="tl-end-year" min="2020" max="2040" step="1">
+          </div>
+        </div>
+        <div class="timeline-info">
+          <span class="ti-lbl">Duration</span>
+          <span class="ti-val" id="tl-count">—</span>
+          <span class="ti-lbl">Window</span>
+          <span class="ti-val" id="tl-range">—</span>
+        </div>
+      </div>
+
+      <!-- Phases -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">03 · Phases</span>
+          <h3>Define phases &amp; assign months.</h3>
+          <span class="hint">Adjust phase lengths with ± steppers. The last phase auto-absorbs the remainder.</span>
+        </div>
+        <div class="phases-wrap">
+          <table class="phases-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Phase name</th>
+                <th class="num">Length (mo)</th>
+                <th>Date range</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="phases-list"></tbody>
+          </table>
+          <button class="add-btn" id="phase-add">+ Add phase</button>
+        </div>
+        <div class="phase-strip-wrap">
+          <div class="phase-strip" id="phase-strip"></div>
+          <div class="phase-strip-months" id="phase-strip-months"></div>
+        </div>
+      </div>
+
+      <!-- Groups -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">04 · Groups</span>
+          <h3>Team groupings for the monthly schedule.</h3>
+          <span class="hint">Roles are assigned to a group, which then drives the columns in the Monthly Schedule below.</span>
+        </div>
+        <ul class="groups-list" id="groups-list"></ul>
+        <button class="add-btn" id="group-add">+ Add group</button>
+      </div>
+
+      <!-- Rates catalog -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">05 · Team</span>
+          <h3>Pick titles from the rates catalog.</h3>
+          <span class="hint">Check a title to add one instance · click +Add to add more (e.g. 5× Tactical Execution Mgr).</span>
+        </div>
+        <div class="catalog-grid" id="catalog-grid"></div>
+
+        <div style="margin-top: 28px;">
+          <div class="roles-head">
+            <h4>Selected roles</h4>
+            <span class="count" id="roles-count">0 roles</span>
+          </div>
+          <div class="roles-list" id="roles-list"></div>
+        </div>
+      </div>
+
+      <!-- Assumptions -->
+      <div class="cover-section">
+        <div class="cs-title">
+          <span class="ix">06 · Assumptions</span>
+          <h3>Global assumptions.</h3>
+          <span class="hint">Catalog base year: <strong id="a-catbase">2025</strong>. Escalation compounds from there.</span>
+        </div>
+        <div class="field-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 18px;">
+          <div class="field">
+            <label for="a-feebasis">Fee basis</label>
+            <select id="a-feebasis">
+              <option value="fixed">Fixed Fee</option>
+              <option value="nte">Not-to-Exceed (NTE)</option>
+            </select>
+            <div class="hint" id="a-feebasis-hint">Fixed: the total is the contract, frozen on booking. NTE: a ceiling is the contract; the monthly forecast flexes with actuals.</div>
+          </div>
+          <div class="field" id="a-nte-field" hidden>
+            <label for="a-nte">NTE ceiling ($)</label>
+            <input type="number" id="a-nte" step="1000" min="0">
+            <div class="hint" id="a-nte-hint">The cap the client gave us. Locked at booking. Planned fee is flagged if it exceeds this.</div>
+          </div>
+        </div>
+        <div class="field-grid" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="field">
+            <label for="a-hrs">Hours per FTE / month</label>
+            <input type="number" id="a-hrs" step="0.01">
+            <div class="hint">Standard 2,080 ÷ 12 = 173.33</div>
+          </div>
+          <div class="field">
+            <label for="a-esc">YoY escalation %</label>
+            <input type="number" id="a-esc" step="0.1">
+            <div class="hint">Compounded annually from catalog base year.</div>
+          </div>
+          <div class="field">
+            <label for="a-ind">Industry standard adjustment %</label>
+            <input type="number" id="a-ind" step="0.5">
+            <div class="hint">Sets how far the Macro rack rate is trimmed down to the <strong>adjusted rate</strong> shown on each role — a higher % lowers the adjusted rate. Cost floors are unaffected.</div>
+          </div>
+          <div class="field">
+            <label for="a-disc">Client discount %</label>
+            <input type="number" id="a-disc" step="0.1">
+            <div class="hint">Client / fixed-fee discount, applied to gross at total-fee level.</div>
+          </div>
+          <div class="field">
+            <label>Rate Lock</label>
+            <label class="toggle-label" for="a-lock">
+              <input type="checkbox" id="a-lock">
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-text">Hold start-year rate<span class="toggle-sub">Credit shown at bottom</span></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ========== Summary cards ========== -->
+  <div class="section-title">
+    <span class="ix">Live result</span>
+    <h2>Headline totals.</h2>
+    <span class="hint">Updates as you adjust setup &amp; FTE %.</span>
+  </div>
+  <div class="summary-row">
+    <div class="sum-card">
+      <div class="lbl">Total FTE months</div>
+      <div class="val" id="sum-fte">0.0<span class="unit">fte-mo</span></div>
+      <div class="delta">Sum of FTE % × months across all roles &amp; phases.</div>
+    </div>
+    <div class="sum-card">
+      <div class="lbl">Gross fee · adjusted</div>
+      <div class="val" id="sum-gross">$0</div>
+      <div class="delta">At industry-adjusted rates, before client discount.</div>
+    </div>
+    <div class="sum-card" id="sum-lock-card">
+      <div class="lbl">Less Rate Lock credit</div>
+      <div class="val" id="sum-lock">$0</div>
+      <div class="delta" id="sum-lock-detail">Off — escalation applied.</div>
+    </div>
+    <div class="sum-card is-yellow">
+      <div class="lbl">Less client discount</div>
+      <div class="val" id="sum-discount">$0</div>
+      <div class="delta" id="sum-discount-pct">0% — applied at total.</div>
+    </div>
+    <div class="sum-card is-navy">
+      <div class="lbl">Net proposed fee</div>
+      <div class="val" id="sum-total">$0</div>
+      <div class="delta">Net of all credits — what client pays.</div>
+    </div>
+  </div>
+
+  <!-- ========== Pass-through / principal billing ========== -->
+  <div class="pt-block" id="pt-block">
+    <div class="pt-head">
+      <label class="pt-toggle"><input type="checkbox" id="pt-on"><span>Pass-through / principal billing</span></label>
+      <span class="pt-note">Vendor cost contracted through Savills. <strong>Pass-through billed</strong> = the client pays cost + markup through us (cost flows out, markup is revenue). <strong>Managed (direct bill)</strong> = the vendor bills the client directly and Savills invoices only the % management fee. Walled off from the client discount, rate lock, and fee math; sits <strong>inside</strong> the NTE ceiling.</span>
+    </div>
+    <div class="pt-body" id="pt-body" hidden>
+      <table class="pt-table">
+        <thead><tr><th class="pt-c-lbl">Line / vendor</th><th class="pt-c-type">Type</th><th class="pt-c-num">Cost (to vendor)</th><th class="pt-c-num">Fee %</th><th class="pt-c-num">Fee $</th><th class="pt-c-num">Client billed</th><th class="pt-c-x"></th></tr></thead>
+        <tbody id="pt-lines"></tbody>
+      </table>
+      <button type="button" class="btn-secondary" id="pt-add">+ Add pass-through line</button>
+      <div class="pt-totals" id="pt-totals"></div>
+    </div>
+  </div>
+
+  <!-- ========== Cost-rate floor banner ========== -->
+  <div class="floor-banner" id="floor-banner" hidden></div>
+
+  <!-- ========== Projections-override reconcile flag ========== -->
+  <div class="proj-flag" id="proj-flag" hidden></div>
+
+  <!-- ========== Reconcile to proposal ========== -->
+  <div class="reconcile" id="reconcile-panel" hidden>
+    <div class="rc-left">
+      <div class="rc-lbl">Reconcile to proposal</div>
+      <div class="rc-fields">
+        <div class="rc-field">
+          <label for="fit-target">Target fee</label>
+          <div class="rc-money"><span>$</span><input id="fit-target" type="text" inputmode="numeric" placeholder="0" autocomplete="off"></div>
+        </div>
+        <div class="rc-field">
+          <label>Current net</label>
+          <div class="rc-current" id="rc-current">$0</div>
+        </div>
+        <div class="rc-field">
+          <label>Delta</label>
+          <div class="rc-delta" id="rc-delta">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="rc-right">
+      <button class="btn btn-primary" id="fit-btn" type="button">Fit to target</button>
+      <div class="rc-note" id="rc-note">Holds the proposal's staffing &amp; rates fixed and solves the client discount to hit the target.</div>
+    </div>
+  </div>
+
+  <!-- ========== Matrix ========== -->
+  <div class="matrix-wrap">
+    <div class="section-title">
+      <span class="ix">Detailed</span>
+      <h2>FTE allocation matrix.</h2>
+      <span class="hint">Click any cell. Phase fees update live.</span>
+      <div class="unit-toggle" id="unit-toggle" role="group" aria-label="Allocation unit">
+        <span class="unit-toggle-lbl">Enter as</span>
+        <button type="button" class="unit-opt is-active" data-unit="percent">% FTE</button>
+        <button type="button" class="unit-opt" data-unit="hours">Hours</button>
+      </div>
+    </div>
+    <table class="matrix-table" id="matrix-table">
+      <thead id="matrix-thead"></thead>
+      <tbody id="matrix-tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- ========== Monthly cashflow ========== -->
+  <div class="monthly">
+    <div class="section-title">
+      <span class="ix">Cashflow</span>
+      <h2>Monthly fee schedule.</h2>
+      <span class="hint">By group, ready for invoicing.</span>
+      <div class="monthly-toggle" role="group" aria-label="Billing mode">
+        <button type="button" class="bm-btn on" id="bm-phase" data-bm="phase">By phase (as accrued)</button>
+        <button type="button" class="bm-btn" id="bm-flat" data-bm="flatline">Flatlined monthly</button>
+      </div>
+      <div class="monthly-toggle" role="group" aria-label="Discount view" id="disc-toggle">
+        <button type="button" class="mt-btn on" id="mt-bottom" data-mode="bottom">Discount at bottom</button>
+        <button type="button" class="mt-btn" id="mt-spread" data-mode="spread">Spread across months</button>
+      </div>
+      <div class="fee-share-ctl" id="fee-share-ctl">
+        <label class="fs-lbl">
+          <input type="checkbox" id="fs-on">
+          <span class="fs-text">Fee share</span>
+          <span class="fs-pct"><input type="number" id="fs-pct" min="0" max="100" step="1" value="10" autocomplete="off">%</span>
+        </label>
+        <span class="fs-mode" id="fs-mode-wrap" role="group" aria-label="Broker fee mode">
+          <button type="button" class="fsm-btn on" id="fsm-offtop" data-fsm="offtop" title="Broker takes a percentage off the client invoice — Savills keeps the rest.">off invoice</button>
+          <button type="button" class="fsm-btn" id="fsm-ontop" data-fsm="ontop" title="Broker markup added on top of the fee — the client pays more, Savills keeps the full fee.">on top</button>
+        </span>
+        <span class="fs-hint" id="fs-eff">to broker</span>
+      </div>
+    </div>
+    <table class="monthly-table" id="monthly-table">
+      <thead id="monthly-thead"></thead>
+      <tbody id="monthly-tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="footnote">
+    <strong>How this works.</strong> &nbsp; The rates catalog (<code>universal-fee-calc/rates-catalog.js</code>) is the production <strong>Macro 2024 Hourly Rate Grid</strong> — the single source of truth for titles and rates. Each title family's <strong>Col B rack rate</strong> is the <strong>Mid</strong> billable tier; <strong>High</strong> and <strong>Low</strong> are ±10% off Mid. Rates are anchored at catalog base year <strong>2024</strong> and escalation compounds forward to each project year. Rate Lock holds rates at the project start year; the would-be escalation is credited at the bottom of the schedule. <br><br>
+    <strong>Cost-rate floor.</strong> &nbsp; <strong>Col E (PowerBI)</strong> — falling back to <strong>Col G (Clockify)</strong> where blank — is the cost rate for each tier. The calculator compares every role's effective billed rate (escalated to start year, net of the client discount) against that floor; any role priced below it is flagged as <em>potentially unprofitable</em> but is <strong>allowed through</strong> — the schedule still exports. These cost rates also drive the later planned-vs-actual margin comparison against Clockify. <br><br>
+    <strong>Staff title vs. project role.</strong> &nbsp; Each line carries a <em>staff title</em> (the rate-grid level that sets the rate &amp; floor) and a free-text <em>project role</em>. The grid's page-2 Title→Rate mapping (57 HR titles) is stored as catalog data for normalising arbitrary titles back to a billable level. <br><br>
+    <strong>Grid vs. contracted rates.</strong> &nbsp; Each role defaults to <em>Grid</em> (tier rate − industry adjustment, escalated). Flip a role to <em>Contracted</em> to type a pre-negotiated client rate: it <strong>bypasses the industry adjustment</strong>, still escalates year-over-year, and the client discount still applies. The staff title/tier stays attached so the cost-floor advisory continues to work. Ingested proposals land as contracted at their observed rate. <br><br>
+    <strong>Reconcile to proposal.</strong> &nbsp; When a record carries a proposal total, the <em>Reconcile to proposal</em> bar back-solves to it by adjusting <strong>only the client discount</strong> — staffing allocations and per-role rates are held to the proposal (they're real). If the target sits above what current rates can bill, it flags the gap to close by raising rates rather than touching allocations. The cost-floor advisory still fires on any role pushed below cost. <br><br>
+    <strong>Export.</strong> &nbsp; Excel export produces three sheets — Setup &amp; Summary, Phase Matrix, Monthly Schedule — with live formulas so procurement can interrogate every number.
   </div>
 </div>
 
@@ -61,70 +504,9 @@
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/boot.js"></script>
 <script src="universal-fee-calc/sync-status.js"></script>
-<script src="universal-fee-calc/smallworks-data.js"></script>
-<script>
-(function(){
-  'use strict';
-  const STORE = window.UFC_Store;
-  const $ = (s) => document.querySelector(s);
-  const fmt = (n) => '$' + Math.round(n).toLocaleString();
-  const RECS = window.SMALLWORKS_RECORDS || [];
-  const MON = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-  // Client-billed + Savills revenue per record (billed: cost×1.1 client / 0.1 rev; managed: 0.1 fee both)
-  function calc(rec){
-    let client=0, rev=0;
-    (rec.passthrough.lines||[]).forEach(l=>{
-      const c=+l.cost||0, mk=(+l.markupPct||0)/100;
-      rev += c*mk;
-      client += (l.mode==='managed') ? c*mk : c*(1+mk);
-    });
-    return { client, rev };
-  }
-
-  function ready(){
-    const admin = STORE.isAdmin && STORE.isAdmin();
-    if (!admin){ $('#gate').style.display='block'; return; }
-    $('#app').style.display='block';
-    const existing = new Set(STORE.listProjects().map(p => (p.project&&p.project.name)||''));
-    let totClient=0, totRev=0, newN=0, dupN=0;
-    let rows = '<tr><th>Project</th><th>Period</th><th>Lines</th><th class="num">Client billed</th><th class="num">Savills rev</th><th>State</th></tr>';
-    RECS.forEach(rec=>{
-      const {client, rev}=calc(rec); totClient+=client; totRev+=rev;
-      const dup = existing.has(rec.project.name); if(dup) dupN++; else newN++;
-      const t=rec.timeline;
-      const lines=(rec.passthrough.lines||[]).map(l=>`<span class="tag ${l.mode==='managed'?'m':'b'}">${l.mode==='managed'?'Managed':'Billed'} ${fmt(+l.cost||0)}</span>`).join(' ');
-      rows += `<tr><td>${rec.project.name.replace(/^SMALLWORKS - /,'')}</td><td>${MON[t.startMonth]} ${t.startYear}</td><td>${lines}</td><td class="num">${fmt(client)}</td><td class="num">${fmt(rev)}</td><td>${dup?'<span style="color:#b3151b">exists — skip</span>':'<span style="color:#0a6463">new</span>'}</td></tr>`;
-    });
-    $('#preview').innerHTML = rows;
-    $('#stats').innerHTML =
-      `<div class="stat"><b>${RECS.length}</b><span>Projects</span></div>`+
-      `<div class="stat"><b>${newN}</b><span>New</span></div>`+
-      `<div class="stat"><b>${dupN}</b><span>Already exist</span></div>`+
-      `<div class="stat"><b>${fmt(totClient)}</b><span>Client billed</span></div>`+
-      `<div class="stat"><b>${fmt(totRev)}</b><span>Savills revenue</span></div>`;
-    $('#commit-n').textContent = newN;
-    $('#commit').disabled = newN===0;
-
-    $('#commit').addEventListener('click', ()=>{
-      const have = new Set(STORE.listProjects().map(p => (p.project&&p.project.name)||''));
-      let added=0, skipped=0;
-      RECS.forEach(rec=>{
-        if (have.has(rec.project.name)){ skipped++; return; }
-        // fresh copy without id so the store assigns one + stamps financials
-        const clone = JSON.parse(JSON.stringify(rec));
-        delete clone.id;
-        STORE.saveProject(clone);
-        have.add(rec.project.name); added++;
-      });
-      $('#commit-msg').innerHTML = `<div class="msg ok">Imported ${added} project${added===1?'':'s'}${skipped?` · skipped ${skipped} already present`:''}. They'll sync to Box now — open the Projects Index to confirm.</div>`;
-      $('#commit').disabled = true;
-    });
-  }
-
-  if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(ready); else document.addEventListener('DOMContentLoaded', ready);
-})();
-</script>
+<script src="universal-fee-calc/intake.js"></script>
+<script src="universal-fee-calc/app.js"></script>
+<script src="universal-fee-calc/export-excel.js"></script>
 <script src="universal-fee-calc/nav.js"></script>
 </body>
 </html>
