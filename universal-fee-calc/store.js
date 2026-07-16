@@ -456,6 +456,7 @@
       project: record.project || {}, timeline: record.timeline || {},
       roles: record.roles || [], phases: record.phases || [],
       groups: record.groups || [], assumptions: record.assumptions || {},
+      passthrough: record.passthrough || null,
     }));
   }
 
@@ -797,6 +798,8 @@
            a.feeShare && a.feeShare.enabled, a.feeShare && a.feeShare.pct, a.feeShare && a.feeShare.mode],
       r: (p.roles || []).map(r => [r.titleId, r.tierId, r.rateSource, r.contractedRate, r.groupId,
            r.fte, r.fteMonthly]),
+      pt: (p.passthrough && p.passthrough.enabled) ? (p.passthrough.lines || []).map(l =>
+           [l.label, l.cost, l.markupPct, l.monthly]) : 0,
     });
     // djb2 → short hex
     let h = 5381; for (let i = 0; i < sig.length; i++) h = ((h << 5) + h + sig.charCodeAt(i)) | 0;
@@ -858,26 +861,76 @@
       ? (parseFloat(p.assumptions.feeShare.pct) || 0) : 0;
     const feeShareMode = (p.assumptions?.feeShare && p.assumptions.feeShare.mode === 'ontop') ? 'ontop' : 'offtop';
     const fsFrac = feeSharePct / 100;
+
+    // ---- Pass-through / principal billing (vendor cost billed THROUGH Savills) ----
+    // Not fee: the COST flows straight out to the vendor; only the MARKUP is Savills
+    // revenue. Walled off from discount / rate-lock / escalation. Distributed per
+    // line across the timeline (explicit monthly overrides, else spread evenly).
+    const pt = p.passthrough || {};
+    const ptLines = (pt.enabled && Array.isArray(pt.lines)) ? pt.lines : [];
+    const ymAll = months.map(m => m.year + '-' + String(m.month).padStart(2, '0'));
+    const ptCostM = {}, ptMarkM = {};
+    let ptCostTot = 0, ptMarkTot = 0;
+    ptLines.forEach(line => {
+      const cost = parseFloat(line.cost) || 0;
+      const mk = (parseFloat(line.markupPct) || 0) / 100;
+      if (!cost) return;
+      // Explicit monthly distribution wins; otherwise spread evenly across all months.
+      const dist = {};
+      const explicit = line.monthly && Object.keys(line.monthly).length;
+      if (explicit) {
+        Object.keys(line.monthly).forEach(ym => {
+          const norm = ym.split('-')[0] + '-' + String(parseInt(ym.split('-')[1], 10)).padStart(2, '0');
+          dist[norm] = (dist[norm] || 0) + (parseFloat(line.monthly[ym]) || 0);
+        });
+      } else if (ymAll.length) {
+        const per = cost / ymAll.length;
+        ymAll.forEach(ym => { dist[ym] = per; });
+      }
+      Object.keys(dist).forEach(ym => {
+        const c = dist[ym];
+        ptCostM[ym] = (ptCostM[ym] || 0) + c;
+        ptMarkM[ym] = (ptMarkM[ym] || 0) + c * mk;
+        ptCostTot += c;
+        ptMarkTot += c * mk;
+      });
+    });
+    const ptCostTotal = round2(ptCostTot);
+    const ptMarkupTotal = round2(ptMarkTot);
+    const ptClientTotal = round2(ptCostTot + ptMarkTot);   // what the client is billed for pass-through
+
     // Materialized monthly billing series — read directly by Revenue Projections / Studio
-    // (no re-derivation downstream). invoice = what the CLIENT is billed (on-top grossed up);
-    // broker = the referral cut that month; net = Savills fee before the broker split.
-    const byMonth = Object.keys(monthNet).sort().map(ym => {
-      const n = round2(monthNet[ym]);
+    // (no re-derivation downstream). invoice = TOTAL the CLIENT is billed (fee on-top grossed
+    // up + pass-through cost + markup); broker = referral cut; net = Savills fee before broker;
+    // passCost = vendor cost (flows out); passMarkup = Savills margin on pass-through.
+    const ymUnion = Array.from(new Set([...Object.keys(monthNet), ...Object.keys(ptCostM)])).sort();
+    const byMonth = ymUnion.map(ym => {
+      const n = round2(monthNet[ym] || 0);
       const broker = round2(n * fsFrac);
-      const invoice = round2(feeShareMode === 'ontop' ? n + broker : n);
-      return { ym, net: n, broker, invoice };
+      const feeInvoice = round2(feeShareMode === 'ontop' ? n + broker : n);
+      const passCost = round2(ptCostM[ym] || 0);
+      const passMarkup = round2(ptMarkM[ym] || 0);
+      const invoice = round2(feeInvoice + passCost + passMarkup);
+      // Savills revenue this month = fee revenue (mode-aware) + pass-through markup.
+      const feeRev = feeShareMode === 'ontop' ? n : round2(n - broker);
+      const revenue = round2(feeRev + passMarkup);
+      return { ym, net: n, broker, feeInvoice, passCost, passMarkup, invoice, revenue };
     });
 
     const feeShare = round2(net * fsFrac);   // broker $ — same in both modes
     // off-top: broker comes OUT of the fee (Savills keeps net−broker; client pays net).
     // on-top:  broker is added ON (Savills keeps net; client is billed net+broker).
-    const clientBill = round2(feeShareMode === 'ontop' ? net + feeShare : net);
-    const revenue = round2(feeShareMode === 'ontop' ? net : net - feeShare);
+    const feeClientBill = round2(feeShareMode === 'ontop' ? net + feeShare : net);
+    const feeRevenue = round2(feeShareMode === 'ontop' ? net : net - feeShare);
+    const clientBill = round2(feeClientBill + ptClientTotal);          // TOTAL client contract value
+    const revenue = round2(feeRevenue + ptMarkupTotal);               // Savills net revenue
 
-    // NTE: the worked/planned total is `net`; the ceiling is a reference cap.
+    // NTE: pass-through sits INSIDE the ceiling — the client-facing planned total
+    // (fee net + pass-through client billing) is what the cap governs.
     const feeBasis = (p.assumptions?.feeBasis === 'nte') ? 'nte' : 'fixed';
     const nteCeiling = round2(parseFloat(p.assumptions?.nteCeiling) || 0);
-    const overCeiling = feeBasis === 'nte' && nteCeiling > 0 && net > nteCeiling + 0.005;
+    const nteBase = round2(net + ptClientTotal);
+    const overCeiling = feeBasis === 'nte' && nteCeiling > 0 && nteBase > nteCeiling + 0.005;
 
     return {
       computedAt: new Date().toISOString(),
@@ -895,6 +948,11 @@
       feeShare,
       clientBill,
       revenue,
+      passThroughCost: ptCostTotal,
+      passThroughMarkup: ptMarkupTotal,
+      passThroughClient: ptClientTotal,
+      feeClientBill,
+      feeRevenue,
       fteMonths: Math.round(fteMonths * 100) / 100,
       byGroup,
       byMonth,

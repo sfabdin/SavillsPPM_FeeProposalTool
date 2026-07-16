@@ -79,6 +79,9 @@
       feeShare: { enabled: false, pct: 10, mode: 'offtop' }, // broker cut · 'offtop'=% off invoice · 'ontop'=markup added for client
       catalogBaseYear: CATALOG.baseYear,
     },
+    // Pass-through / principal billing: vendor cost billed THROUGH Savills.
+    // Cost flows straight out to the vendor; only the markup is Savills revenue.
+    passthrough: { enabled: false, lines: [] },
   });
 
   let state = DEFAULT_STATE();
@@ -319,6 +322,14 @@
   function clientBillTotal() { return (feeShareOn() && feeShareMode() === 'ontop') ? netTotal() + feeShareAmt() : netTotal(); }
   function revenueTotal() { return (feeShareOn() && feeShareMode() === 'offtop') ? netTotal() - feeShareAmt() : netTotal(); }
   function effectiveBrokerPct() { const cb = clientBillTotal(); return cb > 0 ? (feeShareAmt() / cb) * 100 : 0; }
+  /* Pass-through / principal billing. Cost flows to the vendor; only markup is revenue.
+     Walled off from discount / rate-lock / NTE fee math — reads only its own lines. */
+  function ptState() { return state.passthrough || (state.passthrough = { enabled: false, lines: [] }); }
+  function ptOn() { return !!(ptState().enabled && (ptState().lines || []).length); }
+  function ptLines() { return ptState().lines || []; }
+  function ptCostTotal() { return ptOn() ? ptLines().reduce((s, l) => s + (parseFloat(l.cost) || 0), 0) : 0; }
+  function ptMarkupTotal() { return ptOn() ? ptLines().reduce((s, l) => s + (parseFloat(l.cost) || 0) * ((parseFloat(l.markupPct) || 0) / 100), 0) : 0; }
+  function ptClientTotal() { return ptCostTotal() + ptMarkupTotal(); }
   /** A phase's display FTE for a role = the rounded average of its months'
       effective FTE. Phase is a derived rollup; months are canonical. */
   function phaseAvgFte(role, phaseId) {
@@ -383,6 +394,7 @@
     renderSelectedRoles();
     renderAssumptions();
     renderSummary();
+    renderPassthrough();
     renderMatrix();
     renderMonthly();
     renderFloorCheck();
@@ -1486,6 +1498,56 @@
     }
   }
 
+  /* ----- Pass-through / principal billing editor ----- */
+  function renderPassthrough() {
+    const pt = ptState();
+    const on = $('#pt-on'), body = $('#pt-body');
+    if (!on) return;
+    on.checked = !!pt.enabled;
+    if (body) body.hidden = !pt.enabled;
+    if (!pt.enabled) return;
+    const tb = $('#pt-lines');
+    if (tb) {
+      if (!pt.lines.length) {
+        tb.innerHTML = `<tr class="pt-empty"><td colspan="6">No lines yet — add a vendor / pass-through cost below.</td></tr>`;
+      } else {
+        tb.innerHTML = pt.lines.map(l => {
+          const cost = parseFloat(l.cost) || 0;
+          const mk = parseFloat(l.markupPct) || 0;
+          const mkAmt = cost * mk / 100;
+          return `<tr data-id="${l.id}">
+            <td class="pt-c-lbl"><input type="text" class="pt-label" data-id="${l.id}" value="${escapeHtml(l.label || '')}" placeholder="e.g. AV vendor — direct contract"></td>
+            <td class="pt-c-num"><input type="number" class="pt-cost" data-id="${l.id}" min="0" step="1000" value="${cost || ''}" placeholder="0"></td>
+            <td class="pt-c-num"><input type="number" class="pt-mk" data-id="${l.id}" min="0" step="0.5" value="${l.markupPct != null ? l.markupPct : ''}" placeholder="0">%</td>
+            <td class="pt-c-num pt-ro">${fmtMoney(mkAmt)}</td>
+            <td class="pt-c-num pt-ro">${fmtMoney(cost + mkAmt)}</td>
+            <td class="pt-c-x"><button type="button" class="icon-btn pt-rm" data-id="${l.id}" title="Remove line">×</button></td>
+          </tr>`;
+        }).join('');
+      }
+    }
+    const tot = $('#pt-totals');
+    if (tot) {
+      const c = ptCostTotal(), m = ptMarkupTotal();
+      tot.innerHTML = `
+        <span class="pt-t"><b>Cost (pass-through)</b> ${fmtMoney(c)}</span>
+        <span class="pt-t"><b>Markup · Savills revenue</b> ${fmtMoney(m)}</span>
+        <span class="pt-t pt-t-strong"><b>Client billed for pass-through</b> ${fmtMoney(c + m)}</span>`;
+    }
+    // wire line inputs
+    $$('.pt-label').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.label = e.target.value; markDirty(); } }));
+    $$('.pt-cost').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.cost = e.target.value; onPtChange(); } }));
+    $$('.pt-mk').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.markupPct = e.target.value; onPtChange(); } }));
+    $$('.pt-rm').forEach(b => b.addEventListener('click', e => { const id = e.target.dataset.id; ptState().lines = ptLines().filter(x => x.id !== id); onPtChange(); }));
+  }
+  function onPtChange() { renderPassthrough(); renderSummary(); renderMonthly(); if (typeof updateNteHint === 'function') updateNteHint(); markDirty(); }
+  function wirePassthrough() {
+    const on = $('#pt-on');
+    if (on) on.addEventListener('change', e => { ptState().enabled = e.target.checked; if (e.target.checked && !ptLines().length) ptState().lines.push({ id: uid(), label: '', cost: '', markupPct: '' }); onPtChange(); });
+    const add = $('#pt-add');
+    if (add) add.addEventListener('click', () => { ptState().lines.push({ id: uid(), label: '', cost: '', markupPct: '' }); onPtChange(); });
+  }
+
   /* ----- Summary ----- */
   function renderSummary() {
     const gross = grossTotal();
@@ -1909,6 +1971,36 @@
     tbody.appendChild(rev);
   }
 
+  /** Pass-through reconciliation rows under the monthly grand total. Shown whenever
+      pass-through is on. Builds on the client-facing fee number: + cost (to vendor)
+      + markup (Savills revenue) = total client contract; then Savills net revenue.
+      Values are whole-project totals in the value column (mirrors the broker rows). */
+  function appendPassThroughRows(tbody, visibleGroups) {
+    if (!ptOn()) return;
+    const N = visibleGroups.length;
+    const bk = feeShareOn();
+    const showInvoiceCol = bk && feeShareMode() === 'ontop';
+    const cost = ptCostTotal(), markup = ptMarkupTotal();
+    const feeClient = clientBillTotal();          // fee-side client bill (incl. broker on-top)
+    const feeRev = revenueTotal();                // fee-side Savills revenue
+    const cells = (val) => {
+      if (showInvoiceCol) return `<td colspan="${N}"></td><td></td><td class="bk-col"></td><td class="bk-col inv-col">${fmtMoney(val)}</td>`;
+      if (bk) return `<td colspan="${N}"></td><td>${fmtMoney(val)}</td><td class="bk-col"></td>`;
+      return `<td colspan="${N}"></td><td>${fmtMoney(val)}</td>`;
+    };
+    const rows = [
+      ['credit-row pt-row',        'Plus pass-through cost · to vendor',            cost],
+      ['credit-row pt-row',        'Plus pass-through markup · Savills revenue',    markup],
+      ['total grand pt-contract',  'Total client contract · incl. pass-through',    feeClient + cost + markup],
+      ['total grand revenue-row',  'Savills net revenue · incl. markup',            feeRev + markup],
+    ];
+    rows.forEach(([cls, label, val]) => {
+      const tr = document.createElement('tr'); tr.className = cls;
+      tr.innerHTML = `<td class="month-col">${label}</td>${cells(val)}`;
+      tbody.appendChild(tr);
+    });
+  }
+
   function renderMonthly() {
     const thead = $('#monthly-thead');
     const tbody = $('#monthly-tbody');
@@ -2038,6 +2130,7 @@
       tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${bkTot(net)}`;
       tbody.appendChild(tr);
       appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol);
+      appendPassThroughRows(tbody, visibleGroups);
       return;
     }
 
@@ -2107,6 +2200,7 @@
       tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(grandNet)}</td>${bkTot(grandNet)}`;
       tbody.appendChild(tr);
       appendFeeShareRows(tbody, visibleGroups, grandNet, onTop, showInvoiceCol);
+      appendPassThroughRows(tbody, visibleGroups);
       return;
     }
 
@@ -2138,6 +2232,7 @@
     tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${bkTot(net)}`;
     tbody.appendChild(tr);
     appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol);
+    appendPassThroughRows(tbody, visibleGroups);
   }
 
   /* ============================================================
@@ -2146,6 +2241,7 @@
   function wireControls() {
     wireUnitToggle();
     wireVersions();
+    wirePassthrough();
     // Monthly schedule discount-view toggle
     $$('.mt-btn').forEach(b => b.addEventListener('click', () => {
       monthlyMode = b.dataset.mode;
@@ -2340,6 +2436,9 @@
   // expose for export script
   window.__UFC__ = {
     getState: () => state,
+    setState: (s) => { state = s; },
+    renderPassthrough, renderMonthly, renderSummary,
+    ptCostTotal, ptMarkupTotal, ptClientTotal, ptOn,
     getMonths,
     getMonthsByPhase,
     rateForYear,

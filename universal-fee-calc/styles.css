@@ -1722,3 +1722,29 @@ html, body {
 .ver-row .vr-net span { font-size: 10px; color: var(--sav-steel); font-weight: 600; }
 .ver-row .vr-restore { border: 1px solid var(--sav-navy); background: #fff; color: var(--sav-navy); font-family: var(--font-display); font-size: 11px; font-weight: 700; padding: 4px 11px; cursor: pointer; }
 .ver-row .vr-restore:hover { background: var(--sav-navy); color: #fff; }
+
+/* ===== Pass-through / principal billing ===== */
+.pt-block { margin: 22px 0 8px; border: 1px solid rgba(37,39,58,0.14); background: #fff; }
+.pt-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; padding: 14px 18px; background: #f7f8fa; border-bottom: 1px solid rgba(37,39,58,0.10); }
+.pt-toggle { display: inline-flex; align-items: center; gap: 9px; font-family: var(--font-display); font-weight: 800; font-size: 14px; color: var(--sav-navy); cursor: pointer; white-space: nowrap; }
+.pt-toggle input { width: 16px; height: 16px; accent-color: var(--sav-navy); cursor: pointer; }
+.pt-note { font-family: var(--font-body); font-size: 11.5px; line-height: 1.5; color: var(--sav-steel); max-width: 720px; }
+.pt-note strong { color: var(--sav-navy); }
+.pt-body { padding: 16px 18px 18px; }
+.pt-table { width: 100%; border-collapse: collapse; font-family: var(--font-display); }
+.pt-table th { text-align: left; font-size: 10px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sav-steel); padding: 4px 10px 8px; border-bottom: 1px solid rgba(37,39,58,0.12); }
+.pt-table th.pt-c-num { text-align: right; }
+.pt-table td { padding: 5px 10px; vertical-align: middle; }
+.pt-table td.pt-c-num { text-align: right; }
+.pt-table td.pt-ro { font-weight: 700; color: var(--sav-navy); font-variant-numeric: tabular-nums; }
+.pt-table input[type=text], .pt-table input[type=number] { font-family: var(--font-body); font-size: 13px; padding: 6px 8px; border: 1px solid rgba(37,39,58,0.22); background: #fff; color: var(--sav-navy); width: 100%; }
+.pt-table td.pt-c-num input { text-align: right; width: 108px; }
+.pt-table .pt-empty td { color: var(--sav-steel); font-family: var(--font-body); font-style: italic; padding: 12px 10px; }
+.pt-block .btn-secondary { margin-top: 10px; }
+.pt-totals { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(37,39,58,0.12); }
+.pt-t { font-family: var(--font-display); font-size: 15px; font-weight: 800; color: var(--sav-navy); font-variant-numeric: tabular-nums; }
+.pt-t b { display: block; font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 3px; }
+.pt-t-strong { color: var(--sav-teal); }
+/* monthly reconciliation pass-through rows */
+tr.pt-row td { color: var(--sav-steel); font-style: italic; }
+tr.pt-contract td { background: rgba(0,166,158,0.08); }
