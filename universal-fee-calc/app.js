@@ -327,25 +327,31 @@
   function ptState() { return state.passthrough || (state.passthrough = { enabled: false, lines: [] }); }
   function ptOn() { return !!(ptState().enabled && (ptState().lines || []).length); }
   function ptLines() { return ptState().lines || []; }
-  function ptCostTotal() { return ptOn() ? ptLines().reduce((s, l) => s + (parseFloat(l.cost) || 0), 0) : 0; }
+  function ptIsManaged(l) { return l && l.mode === 'managed'; }
+  // Cost that flows OUT to the vendor — billed lines only (managed = direct bill, no pass-through).
+  function ptCostTotal() { return ptOn() ? ptLines().reduce((s, l) => s + (ptIsManaged(l) ? 0 : (parseFloat(l.cost) || 0)), 0) : 0; }
+  // Markup fee = Savills revenue — both modes.
   function ptMarkupTotal() { return ptOn() ? ptLines().reduce((s, l) => s + (parseFloat(l.cost) || 0) * ((parseFloat(l.markupPct) || 0) / 100), 0) : 0; }
-  function ptClientTotal() { return ptCostTotal() + ptMarkupTotal(); }
-  /** Per-month CLIENT-BILLED pass-through (cost + markup), keyed 'YYYY-M' to match
-      the monthly grid. Explicit monthly distribution wins; else spread evenly. */
+  // What the client is billed THROUGH Savills: billed = cost + markup; managed = markup fee only.
+  function ptClientTotal() { return ptOn() ? ptLines().reduce((s, l) => { const c = parseFloat(l.cost) || 0, m = c * ((parseFloat(l.markupPct) || 0) / 100); return s + (ptIsManaged(l) ? m : c + m); }, 0) : 0; }
+  /** Per-month CLIENT-BILLED pass-through (through Savills), keyed 'YYYY-M'. Billed lines =
+      cost + markup; managed lines = markup fee only. Explicit monthly distribution wins. */
   function ptBilledMap() {
     const map = {}; if (!ptOn()) return map;
     const keys = getMonths().map(m => m.year + '-' + m.month);
     ptLines().forEach(l => {
       const cost = parseFloat(l.cost) || 0; if (!cost) return;
-      const gross = 1 + (parseFloat(l.markupPct) || 0) / 100;
+      const mkFrac = (parseFloat(l.markupPct) || 0) / 100;
+      const managed = ptIsManaged(l);
+      const toClient = (c) => managed ? c * mkFrac : c * (1 + mkFrac);
       const mo = (l.monthly && Object.keys(l.monthly).length) ? l.monthly : null;
       if (mo) {
         Object.keys(mo).forEach(ym => {
           const norm = ym.split('-')[0] + '-' + parseInt(ym.split('-')[1], 10);
-          map[norm] = (map[norm] || 0) + (parseFloat(mo[ym]) || 0) * gross;
+          map[norm] = (map[norm] || 0) + toClient(parseFloat(mo[ym]) || 0);
         });
       } else if (keys.length) {
-        const per = cost * gross / keys.length;
+        const per = toClient(cost) / keys.length;
         keys.forEach(k => { map[k] = (map[k] || 0) + per; });
       }
     });
@@ -1536,12 +1542,15 @@
           const cost = parseFloat(l.cost) || 0;
           const mk = parseFloat(l.markupPct) || 0;
           const mkAmt = cost * mk / 100;
+          const managed = l.mode === 'managed';
+          const clientBilled = managed ? mkAmt : cost + mkAmt;
           return `<tr data-id="${l.id}">
             <td class="pt-c-lbl"><input type="text" class="pt-label" data-id="${l.id}" value="${escapeHtml(l.label || '')}" placeholder="e.g. AV vendor — direct contract"></td>
-            <td class="pt-c-num"><input type="number" class="pt-cost" data-id="${l.id}" min="0" step="1000" value="${cost || ''}" placeholder="0"></td>
-            <td class="pt-c-num"><input type="number" class="pt-mk" data-id="${l.id}" min="0" step="0.5" value="${l.markupPct != null ? l.markupPct : ''}" placeholder="0">%</td>
-            <td class="pt-c-num pt-ro">${fmtMoney(mkAmt)}</td>
-            <td class="pt-c-num pt-ro">${fmtMoney(cost + mkAmt)}</td>
+            <td class="pt-c-type"><select class="pt-mode" data-id="${l.id}"><option value="billed" ${!managed ? 'selected' : ''}>Pass-through billed</option><option value="managed" ${managed ? 'selected' : ''}>Managed · direct bill</option></select></td>
+            <td class="pt-c-num"><input type="text" inputmode="decimal" class="pt-cost" data-id="${l.id}" value="${cost || ''}" placeholder="0"></td>
+            <td class="pt-c-num"><input type="text" inputmode="decimal" class="pt-mk" data-id="${l.id}" value="${l.markupPct != null && l.markupPct !== '' ? l.markupPct : ''}" placeholder="0"><span class="pt-pct">%</span></td>
+            <td class="pt-c-num pt-ro pt-fee" data-id="${l.id}">${fmtMoney(mkAmt)}</td>
+            <td class="pt-c-num pt-ro pt-client" data-id="${l.id}">${fmtMoney(clientBilled)}</td>
             <td class="pt-c-x"><button type="button" class="icon-btn pt-rm" data-id="${l.id}" title="Remove line">×</button></td>
           </tr>`;
         }).join('');
@@ -1549,17 +1558,41 @@
     }
     const tot = $('#pt-totals');
     if (tot) {
-      const c = ptCostTotal(), m = ptMarkupTotal();
+      const c = ptCostTotal(), m = ptMarkupTotal(), cb = ptClientTotal();
       tot.innerHTML = `
-        <span class="pt-t"><b>Cost (pass-through)</b> ${fmtMoney(c)}</span>
-        <span class="pt-t"><b>Markup · Savills revenue</b> ${fmtMoney(m)}</span>
-        <span class="pt-t pt-t-strong"><b>Client billed for pass-through</b> ${fmtMoney(c + m)}</span>`;
+        <span class="pt-t"><b>Cost passed through (out)</b> ${fmtMoney(c)}</span>
+        <span class="pt-t"><b>Fee · Savills revenue</b> ${fmtMoney(m)}</span>
+        <span class="pt-t pt-t-strong"><b>Client billed through Savills</b> ${fmtMoney(cb)}</span>`;
     }
-    // wire line inputs
+    // wire line inputs — text/number inputs update state + derived cells IN PLACE
+    // (never rebuild the rows on keystroke, or the focused field would deselect).
     $$('.pt-label').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.label = e.target.value; markDirty(); } }));
-    $$('.pt-cost').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.cost = e.target.value; onPtChange(); } }));
-    $$('.pt-mk').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.markupPct = e.target.value; onPtChange(); } }));
+    $$('.pt-cost').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.cost = e.target.value; refreshPtLive(); } }));
+    $$('.pt-mk').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.markupPct = e.target.value; refreshPtLive(); } }));
+    $$('.pt-mode').forEach(s => s.addEventListener('change', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.mode = e.target.value; refreshPtLive(); } }));
     $$('.pt-rm').forEach(b => b.addEventListener('click', e => { const id = e.target.dataset.id; ptState().lines = ptLines().filter(x => x.id !== id); onPtChange(); }));
+  }
+  /** Recompute derived cells + totals + summary/monthly WITHOUT rebuilding the
+      input rows, so the field being typed in keeps focus. */
+  function refreshPtLive() {
+    ptLines().forEach(l => {
+      const cost = parseFloat(l.cost) || 0;
+      const mkAmt = cost * (parseFloat(l.markupPct) || 0) / 100;
+      const clientBilled = (l.mode === 'managed') ? mkAmt : cost + mkAmt;
+      const feeCell = document.querySelector(`.pt-fee[data-id="${l.id}"]`);
+      const cliCell = document.querySelector(`.pt-client[data-id="${l.id}"]`);
+      if (feeCell) feeCell.textContent = fmtMoney(mkAmt);
+      if (cliCell) cliCell.textContent = fmtMoney(clientBilled);
+    });
+    const tot = $('#pt-totals');
+    if (tot) {
+      const c = ptCostTotal(), m = ptMarkupTotal(), cb = ptClientTotal();
+      tot.innerHTML = `
+        <span class="pt-t"><b>Cost passed through (out)</b> ${fmtMoney(c)}</span>
+        <span class="pt-t"><b>Fee · Savills revenue</b> ${fmtMoney(m)}</span>
+        <span class="pt-t pt-t-strong"><b>Client billed through Savills</b> ${fmtMoney(cb)}</span>`;
+    }
+    renderSummary(); renderMonthly(); if (typeof updateNteHint === 'function') updateNteHint(); markDirty();
   }
   function onPtChange() { renderPassthrough(); renderSummary(); renderMonthly(); if (typeof updateNteHint === 'function') updateNteHint(); markDirty(); }
   function wirePassthrough() {
@@ -2035,9 +2068,9 @@
     syncBillingToggle();
     syncFeeShare();
     const months = getMonths();
-    if (!state.roles.length || !months.length) {
+    if (!months.length || (!state.roles.length && !ptOn())) {
       thead.innerHTML = '';
-      tbody.innerHTML = `<tr><td class="empty-matrix" colspan="3">Add roles + a valid timeline to see monthly schedule.</td></tr>`;
+      tbody.innerHTML = `<tr><td class="empty-matrix" colspan="3">Add roles (or a pass-through line) + a valid timeline to see the monthly schedule.</td></tr>`;
       return;
     }
     const d = (state.assumptions.discount || 0) / 100;

@@ -799,7 +799,7 @@
       r: (p.roles || []).map(r => [r.titleId, r.tierId, r.rateSource, r.contractedRate, r.groupId,
            r.fte, r.fteMonthly]),
       pt: (p.passthrough && p.passthrough.enabled) ? (p.passthrough.lines || []).map(l =>
-           [l.label, l.cost, l.markupPct, l.monthly]) : 0,
+           [l.label, l.cost, l.markupPct, l.mode, l.monthly]) : 0,
     });
     // djb2 → short hex
     let h = 5381; for (let i = 0; i < sig.length; i++) h = ((h << 5) + h + sig.charCodeAt(i)) | 0;
@@ -849,7 +849,7 @@
         monthNet[ymKey] = (monthNet[ymKey] || 0) + (g - l - g * discPct);   // net accrued this month
       });
     });
-    if (!(gross > 0)) return null;                          // nothing priced — don't freeze $0
+    if (!(gross > 0) && !(p.passthrough && p.passthrough.enabled && (p.passthrough.lines || []).some(l => (parseFloat(l.cost) || 0) > 0))) return null;   // nothing priced & no pass-through — don't freeze $0
 
     const discount = gross * discPct;
     const net = gross - lock - discount;
@@ -869,13 +869,16 @@
     const pt = p.passthrough || {};
     const ptLines = (pt.enabled && Array.isArray(pt.lines)) ? pt.lines : [];
     const ymAll = months.map(m => m.year + '-' + String(m.month).padStart(2, '0'));
-    const ptCostM = {}, ptMarkM = {};
-    let ptCostTot = 0, ptMarkTot = 0;
+    // Per-month: passClientM = billed THROUGH Savills; passCostM = vendor cost that
+    // flows OUT (billed lines only — managed vendors bill the client direct, so no
+    // cost passes through us); passMarkM = the markup fee (revenue, both modes).
+    const passClientM = {}, passCostM = {}, passMarkM = {};
+    let ptClientTot = 0, ptCostTot = 0, ptMarkTot = 0;
     ptLines.forEach(line => {
       const cost = parseFloat(line.cost) || 0;
       const mk = (parseFloat(line.markupPct) || 0) / 100;
       if (!cost) return;
-      // Explicit monthly distribution wins; otherwise spread evenly across all months.
+      const managed = line.mode === 'managed';   // direct-bill: Savills invoices only the fee
       const dist = {};
       const explicit = line.monthly && Object.keys(line.monthly).length;
       if (explicit) {
@@ -889,32 +892,38 @@
       }
       Object.keys(dist).forEach(ym => {
         const c = dist[ym];
-        ptCostM[ym] = (ptCostM[ym] || 0) + c;
-        ptMarkM[ym] = (ptMarkM[ym] || 0) + c * mk;
-        ptCostTot += c;
-        ptMarkTot += c * mk;
+        const markup = c * mk;
+        // managed → client billed = markup fee only; billed → cost + markup.
+        const client = managed ? markup : (c + markup);
+        passClientM[ym] = (passClientM[ym] || 0) + client;
+        passMarkM[ym] = (passMarkM[ym] || 0) + markup;
+        if (!managed) passCostM[ym] = (passCostM[ym] || 0) + c;   // only billed cost flows through us
+        ptClientTot += client;
+        ptMarkTot += markup;
+        if (!managed) ptCostTot += c;
       });
     });
     const ptCostTotal = round2(ptCostTot);
     const ptMarkupTotal = round2(ptMarkTot);
-    const ptClientTotal = round2(ptCostTot + ptMarkTot);   // what the client is billed for pass-through
+    const ptClientTotal = round2(ptClientTot);   // what the client is billed for pass-through (through Savills)
 
     // Materialized monthly billing series — read directly by Revenue Projections / Studio
     // (no re-derivation downstream). invoice = TOTAL the CLIENT is billed (fee on-top grossed
-    // up + pass-through cost + markup); broker = referral cut; net = Savills fee before broker;
-    // passCost = vendor cost (flows out); passMarkup = Savills margin on pass-through.
-    const ymUnion = Array.from(new Set([...Object.keys(monthNet), ...Object.keys(ptCostM)])).sort();
+    // up + pass-through billed through Savills); broker = referral cut; net = Savills fee before
+    // broker; passCost = vendor cost (flows out); passMarkup = Savills margin on pass-through.
+    const ymUnion = Array.from(new Set([...Object.keys(monthNet), ...Object.keys(passClientM)])).sort();
     const byMonth = ymUnion.map(ym => {
       const n = round2(monthNet[ym] || 0);
       const broker = round2(n * fsFrac);
       const feeInvoice = round2(feeShareMode === 'ontop' ? n + broker : n);
-      const passCost = round2(ptCostM[ym] || 0);
-      const passMarkup = round2(ptMarkM[ym] || 0);
-      const invoice = round2(feeInvoice + passCost + passMarkup);
+      const passCost = round2(passCostM[ym] || 0);
+      const passMarkup = round2(passMarkM[ym] || 0);
+      const passClient = round2(passClientM[ym] || 0);
+      const invoice = round2(feeInvoice + passClient);
       // Savills revenue this month = fee revenue (mode-aware) + pass-through markup.
       const feeRev = feeShareMode === 'ontop' ? n : round2(n - broker);
       const revenue = round2(feeRev + passMarkup);
-      return { ym, net: n, broker, feeInvoice, passCost, passMarkup, invoice, revenue };
+      return { ym, net: n, broker, feeInvoice, passCost, passMarkup, passClient, invoice, revenue };
     });
 
     const feeShare = round2(net * fsFrac);   // broker $ — same in both modes

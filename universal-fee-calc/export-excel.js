@@ -917,20 +917,26 @@ window.UFC_buildAndDownloadExcel = async function () {
     s3.getCell(`A${pr}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
     s3.getCell(`${totCol}${pr}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
     s3.getRow(pr).height = 22; pr++;
-    let ptCostSum = 0, ptMkSum = 0;
+    let ptCostSum = 0, ptMkSum = 0, ptClientSum = 0;
     ptX.lines.forEach(l => {
       const cost = parseFloat(l.cost) || 0; if (!cost) return;
       const mkPct = parseFloat(l.markupPct) || 0;
       const mk = cost * mkPct / 100;
-      ptCostSum += cost; ptMkSum += mk;
-      wLabel(pr, `  ${l.label || 'Pass-through line'} · cost ${'$' + Math.round(cost).toLocaleString()} + ${mkPct}% markup → client billed`, NAVY);
-      wVal(pr, `${(cost + mk).toFixed(2)}`, NAVY);
+      const managed = l.mode === 'managed';
+      const clientBilled = managed ? mk : cost + mk;
+      if (!managed) ptCostSum += cost;
+      ptMkSum += mk; ptClientSum += clientBilled;
+      const desc = managed
+        ? `managed · direct bill · ${mkPct}% fee → client billed (fee only)`
+        : `cost ${'$' + Math.round(cost).toLocaleString()} + ${mkPct}% markup → client billed`;
+      wLabel(pr, `  ${l.label || 'Pass-through line'} · ${desc}`, NAVY);
+      wVal(pr, `${clientBilled.toFixed(2)}`, NAVY);
       pr++;
     });
-    wLabel(pr, 'Pass-through cost · to vendor (not revenue)', STEEL); wVal(pr, `${ptCostSum.toFixed(2)}`, STEEL); pr++;
-    wLabel(pr, 'Pass-through markup · Savills revenue', TEAL); wVal(pr, `${ptMkSum.toFixed(2)}`, TEAL); pr++;
+    wLabel(pr, 'Pass-through cost · to vendor, flows out (billed lines only)', STEEL); wVal(pr, `${ptCostSum.toFixed(2)}`, STEEL); pr++;
+    wLabel(pr, 'Fee · Savills revenue (all lines)', TEAL); wVal(pr, `${ptMkSum.toFixed(2)}`, TEAL); pr++;
     wLabel(pr, 'Total client contract · fee + pass-through', NAVY);
-    wVal(pr, `${totCol}${wNet}+${(ptCostSum + ptMkSum).toFixed(2)}`, NAVY, 12); pr++;
+    wVal(pr, `${totCol}${wNet}+${ptClientSum.toFixed(2)}`, NAVY, 12); pr++;
     wLabel(pr, 'Savills net revenue · fee + markup', TEAL);
     wVal(pr, `${totCol}${s3NetRow}+${ptMkSum.toFixed(2)}`, TEAL, 12);
   }
