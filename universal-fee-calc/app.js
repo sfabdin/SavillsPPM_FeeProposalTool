@@ -759,6 +759,7 @@
     }
     $('#pm-date').value = f.proposalDate || '';
     $('#pm-location').value = f.location;
+    { const nt = $('#pm-notes'); if (nt) nt.value = f.notes || ''; }
 
     // Status dropdown
     const statusSel = $('#pm-status');
@@ -2382,6 +2383,7 @@
     });
     $('#pm-date').addEventListener('input',  e => { state.project.proposalDate = e.target.value; markDirty(); });
     $('#pm-location').addEventListener('input', e => { state.project.location = e.target.value; markDirty(); });
+    { const nt = $('#pm-notes'); if (nt) nt.addEventListener('input', e => { state.project.notes = e.target.value; markDirty(); }); }
     $('#pm-status').addEventListener('change', e => {
       state.project.status = e.target.value;
       const statusLabel = STORE.STATUS_LABELS[e.target.value] || '';

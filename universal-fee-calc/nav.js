@@ -20,6 +20,7 @@
     { href: 'Benchmarking Dashboard.html',   label: 'Benchmarking',        group: 'Manage' },
     { href: 'Proposal Analytics.html',        label: 'Proposal Analytics',  group: 'Manage' },
     { href: 'Import Revenues.html',          label: 'Import Revenues',     group: 'Admin', admin: true },
+    { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Admin', admin: true },
     { href: 'Enterprise Migration Guide.html', label: 'Migration Guide',   group: 'Docs' },
     { href: 'Fee System Roadmap.html',       label: 'Roadmap',             group: 'Docs' },
     { href: 'Maintainers Runbook.html',      label: 'Maintainer’s Runbook', group: 'Docs' },
