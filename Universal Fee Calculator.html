@@ -385,6 +385,22 @@
     </div>
   </div>
 
+  <!-- ========== Pass-through / principal billing ========== -->
+  <div class="pt-block" id="pt-block">
+    <div class="pt-head">
+      <label class="pt-toggle"><input type="checkbox" id="pt-on"><span>Pass-through / principal billing</span></label>
+      <span class="pt-note">Vendor cost contracted &amp; billed <em>through</em> Savills. The cost flows straight out to the vendor — only the markup % is Savills revenue. Walled off from the client discount, rate lock, and fee math; sits <strong>inside</strong> the NTE ceiling.</span>
+    </div>
+    <div class="pt-body" id="pt-body" hidden>
+      <table class="pt-table">
+        <thead><tr><th class="pt-c-lbl">Line / vendor</th><th class="pt-c-num">Cost (to vendor)</th><th class="pt-c-num">Markup %</th><th class="pt-c-num">Markup $</th><th class="pt-c-num">Client billed</th><th class="pt-c-x"></th></tr></thead>
+        <tbody id="pt-lines"></tbody>
+      </table>
+      <button type="button" class="btn-secondary" id="pt-add">+ Add pass-through line</button>
+      <div class="pt-totals" id="pt-totals"></div>
+    </div>
+  </div>
+
   <!-- ========== Cost-rate floor banner ========== -->
   <div class="floor-banner" id="floor-banner" hidden></div>
 
