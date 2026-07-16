@@ -110,6 +110,17 @@
   table.proj tr.totals.net-after-broker td.proj-cell { background: #0e7c7b; color: #fff; }
   table.proj tr.totals.net-after-broker td.rowtot { background: #0a6463; }
   table.proj tr.totals.broker-total td.num, table.proj tr.totals.net-after-broker td.num { color: #fff; }
+  /* Pass-through split rows (teal) */
+  table.proj tr.pass-row td { background: #f2faf9; color: #0a6463; font-size: 11px; padding: 5px 10px; }
+  table.proj tr.pass-row td.proj-cell { position: sticky; left: 0; z-index: 2; background: #f2faf9; color: #0a6463; font-style: italic; padding-left: 22px; }
+  table.proj tr.pass-row td.rowtot { background: #e4f4f2; color: #0a6463; }
+  table.proj tr.totals.pass-total td { background: #0e7c7b; color: #d6f5f2; font-size: 12px; }
+  table.proj tr.totals.pass-total td.proj-cell { background: #0e7c7b; color: #d6f5f2; }
+  table.proj tr.totals.pass-total td.rowtot { background: #0a6463; color: #fff; }
+  table.proj tr.totals.net-after-pass td { background: #25273a; color: #fff; }
+  table.proj tr.totals.net-after-pass td.proj-cell { background: #25273a; color: #fff; }
+  table.proj tr.totals.net-after-pass td.rowtot { background: #1a1c2b; }
+  table.proj tr.totals.pass-total td.num, table.proj tr.totals.net-after-pass td.num { color: #fff; }
 
   /* Rating ribbon on project cell */
   td.proj-cell { border-left: 4px solid transparent; }
@@ -160,6 +171,7 @@
     <div class="actions">
       <label class="ctl-toggle"><input type="checkbox" id="show-excluded" checked> Show rated 5–7</label>
       <label class="ctl-toggle"><input type="checkbox" id="show-broker"> Broker fee split</label>
+      <label class="ctl-toggle"><input type="checkbox" id="show-pass"> Pass-through split</label>
       <button class="btn" id="edit-toggle" title="Edit ratings and override monthly billings">✎ Edit</button>
       <button class="btn" id="xlsx-export" title="Download the matrix exactly as shown">⤓ Excel</button>
       <a class="btn" href="Fee Generator.html">← Home</a>
@@ -241,6 +253,7 @@
 
   let showExcluded = true;
   let showBroker = false;
+  let showPass = false;
   let editMode = false;
   let ALL = [];                 // prepared rows (built once)
   let LAST_VIEW = null;         // last rendered model, for Excel export
@@ -251,10 +264,11 @@
     const parents = STORE.listProjects().filter(p => !STORE.isChangeOrder(p));
     const projects = STORE.visibleProjects(parents);
     ALL = projects.map(p => {
-      const map = {}, brokerMap = {};
+      const map = {}, brokerMap = {}, passMap = {};
       let total = 0;
       // Prefer the materialized billing series on the record (booked = frozen contract,
-      // pursuit = live-refreshed on save). map = client INVOICE per month; brokerMap = broker cut.
+      // pursuit = live-refreshed on save). map = client INVOICE per month (incl. pass-through);
+      // brokerMap = broker cut; passMap = pass-through vendor cost (flows out, not revenue).
       const fin = p.financials;
       if (fin && Array.isArray(fin.byMonth) && fin.byMonth.length) {
         fin.byMonth.forEach(s => {
@@ -263,6 +277,7 @@
           const inv = (s.invoice != null) ? s.invoice : s.net;   // older snapshots: net only
           map[k] = (map[k] || 0) + inv;
           brokerMap[k] = (brokerMap[k] || 0) + (s.broker || 0);
+          passMap[k] = (passMap[k] || 0) + (s.passCost || 0);
           total += inv;
         });
       } else {
@@ -293,8 +308,9 @@
       const serviceLines = STORE.projectServiceLines(p);
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
       const feeSharePct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
-      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, total, ov: p.monthlyOverrides || null,
-               coCount: cos.length, feeSharePct,
+      const ptCost = (fin && fin.passThroughCost) || 0;
+      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, total, ov: p.monthlyOverrides || null,
+               coCount: cos.length, feeSharePct, ptCost,
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim(), projectType: (pj.projectType || '').trim() };
     });
     populateFilters();
@@ -419,6 +435,7 @@
     // Column totals (ratings 1–4 only) + weighted (all, × confidence)
     const colTot = {}, colWt = {};
     const colBroker = {}; let grandBroker = 0;
+    const colPass = {}; let grandPass = 0;
     cols.forEach(c => { colTot[c.key] = 0; colWt[c.key] = 0; });
     let grandTot = 0, grandWt = 0;
 
@@ -478,6 +495,21 @@
         });
         html += `<td class="rowtot num broker">−${fmtK(rowBroker)}</td></tr>`;
       }
+      // Pass-through pull-out sub-line (toggle): vendor cost billed through, flows out.
+      if (showPass && r.ptCost > 0) {
+        const pm = r.passMap || {};
+        let rowPass = 0;
+        html += `<tr class="pass-row"><td class="proj-cell">↳ Pass-through cost</td>`;
+        cols.forEach((c, i) => {
+          const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
+          const today = c.key === _ck ? ' today' : '';
+          const b = pm[c.key] || 0;
+          rowPass += b;
+          html += `<td class="num pass${sep}${today}"${b ? ` title="−${fmtExact(b)}"` : ''}>${b ? '−' + fmtK(b) : ''}</td>`;
+          if (!excluded) { colPass[c.key] = (colPass[c.key] || 0) + b; grandPass += b; }
+        });
+        html += `<td class="rowtot num pass">−${fmtK(rowPass)}</td></tr>`;
+      }
     });
 
     // Probability-weighted totals — every pursuit × its rating confidence (visible cols only).
@@ -501,6 +533,16 @@
       html += '<tr class="totals net-after-broker"><td class="proj-cell">Net of broker fee</td>';
       cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const n = (colTot[c.key] || 0) - (colBroker[c.key] || 0); html += `<td class="num${sep}">${n ? fmtK(n) : '·'}</td>`; });
       html += `<td class="rowtot num">${fmtK(grandTot - grandBroker)}</td></tr>`;
+    }
+
+    // Pass-through rolled-up total (toggle) — cost billed through Savills, netted to revenue
+    if (showPass && grandPass > 0) {
+      html += '<tr class="totals pass-total"><td class="proj-cell">↳ Pass-through cost · all lines</td>';
+      cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const b = colPass[c.key] || 0; html += `<td class="num${sep}">${b ? '−' + fmtK(b) : '·'}</td>`; });
+      html += `<td class="rowtot num">−${fmtK(grandPass)}</td></tr>`;
+      html += '<tr class="totals net-after-pass"><td class="proj-cell">Savills revenue · net of pass-through</td>';
+      cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const n = (colTot[c.key] || 0) - (colBroker[c.key] || 0) - (colPass[c.key] || 0); html += `<td class="num${sep}">${n ? fmtK(n) : '·'}</td>`; });
+      html += `<td class="rowtot num">${fmtK(grandTot - grandBroker - grandPass)}</td></tr>`;
     }
 
     html += '</tbody>';
@@ -881,6 +923,7 @@
   });
   $('#show-excluded')?.addEventListener('change', e => { showExcluded = e.target.checked; build(); });
   $('#show-broker')?.addEventListener('change', e => { showBroker = e.target.checked; build(); });
+  $('#show-pass')?.addEventListener('change', e => { showPass = e.target.checked; build(); });
   $('#xlsx-export')?.addEventListener('click', exportProjections);
   ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => {
     $('#' + id)?.addEventListener('change', () => { $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.'; build(); });
