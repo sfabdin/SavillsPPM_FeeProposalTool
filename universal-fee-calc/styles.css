@@ -1247,6 +1247,23 @@ html, body {
   padding: 8px 16px;
   border-right: 0;
 }
+.matrix-table tbody tr.group-head td .gh-name { vertical-align: middle; }
+.matrix-table tbody tr.group-head td .gh-span {
+  margin-left: 14px; font-weight: 600; font-size: 9.5px; letter-spacing: 0.08em;
+  color: rgba(255,255,255,0.62); text-transform: none;
+}
+.matrix-table tbody tr.group-head td .gh-shift {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: 14px; vertical-align: middle;
+}
+.matrix-table tbody tr.group-head td .gh-shift-lbl {
+  font-size: 8.5px; letter-spacing: 0.1em; color: rgba(255,255,255,0.5); text-transform: uppercase;
+}
+.matrix-table tbody tr.group-head td .gh-shift-btn {
+  appearance: none; border: 1px solid rgba(255,255,255,0.28); background: rgba(255,255,255,0.08);
+  color: #fff; width: 20px; height: 18px; line-height: 1; border-radius: 3px; cursor: pointer;
+  font-size: 9px; padding: 0; transition: background .12s;
+}
+.matrix-table tbody tr.group-head td .gh-shift-btn:hover { background: var(--sav-teal); border-color: var(--sav-teal); }
 .matrix-table tbody tr.subtotal td {
   background: var(--sav-cream);
   font-weight: 700;

@@ -139,6 +139,7 @@
     { name: 'Technology & Infrastructure Deployment', subs: ['Technology relocations', 'Broadcast projects', 'Infrastructure migrations', 'Workplace technology implementations'] },
     { name: 'Specialized Consulting & Advisory', subs: ['Process improvement', 'Organizational assessments', 'Strategic planning', 'Custom client advisory engagements', 'Business case development'] },
     { name: 'Development Management', subs: ['New development', 'Core & shell', "Owner's representation"] },
+    { name: 'Cost Management', subs: ['Estimating', 'Cost planning & control', 'Change order management', 'Value engineering', 'Contingency management'] },
   ];
   function projectTypeSubs(name) {
     const t = PROJECT_TYPES.find(x => x.name === name);
