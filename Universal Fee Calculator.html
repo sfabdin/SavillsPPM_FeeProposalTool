@@ -275,7 +275,13 @@
       <div class="cover-section">
         <div class="cs-title">
           <span class="ix">04 · Groups</span>
-          <h3>Team groupings for the monthly schedule.</h3>
+          <h3>Team groupings for the monthly schedule.<span class="ppm-info" data-info="Groups do double duty as **concurrent scopes**. Each group gets its own column and subtotal in the monthly schedule, so you can price a Relocation team and a Cost Management team side by side under one contract.
+
+Because months are the source of truth, **overlapping scopes just sum** — two teams both active in September both contribute that month.
+
+In the matrix, each group header shows its **active window** and a **shift** control (◀ ▶). Use shift to slide a whole scope's staffing earlier or later when a milestone slips — every person moves together, values intact.
+
+Example: RFP-for-developer pushes out 2 months → click ▶ twice on that group; the team's whole curve moves, the total is unchanged."></span></h3>
           <span class="hint">Roles are assigned to a group, which then drives the columns in the Monthly Schedule below.</span>
         </div>
         <ul class="groups-list" id="groups-list"></ul>
@@ -309,7 +315,11 @@
         </div>
         <div class="field-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 18px;">
           <div class="field">
-            <label for="a-feebasis">Fee basis</label>
+            <label for="a-feebasis">Fee basis<span class="ppm-info" data-info="**Fixed Fee** — the total is the contract. It freezes onto the record when the project is booked; monthly allocations can still be reshaped but the total holds.
+
+**NTE (Not-to-Exceed)** — the ceiling is the contract. Plan the number here, then once booked the total locks as a cap and the monthly forecast flexes with actuals. Past months lock as actuals; future months stay planned. You're flagged if planned spend exceeds the cap.
+
+Example: client gives a $250k NTE → set the ceiling, staff to ~$250k, book it; as months become actuals the forecast trues up under the cap."></span></label>
             <select id="a-feebasis">
               <option value="fixed">Fixed Fee</option>
               <option value="nte">Not-to-Exceed (NTE)</option>
@@ -334,7 +344,11 @@
             <div class="hint">Compounded annually from catalog base year.</div>
           </div>
           <div class="field">
-            <label for="a-ind">Industry standard adjustment %</label>
+            <label for="a-ind">Industry standard adjustment %<span class="ppm-info" data-info="Trims the Macro **rack rate** down to the **adjusted rate** shown on each role. A higher % lowers the adjusted (billed) rate.
+
+**Cost floors are never touched** — so raising this shrinks margin and can push a role below its floor (it'll flag red). This adjusts what you charge, not what the person costs.
+
+Example: 10% takes a $300 rack rate to a $270 adjusted rate; the floor stays wherever the grid sets it."></span></label>
             <input type="number" id="a-ind" step="0.5">
             <div class="hint">Sets how far the Macro rack rate is trimmed down to the <strong>adjusted rate</strong> shown on each role — a higher % lowers the adjusted rate. Cost floors are unaffected.</div>
           </div>
@@ -344,7 +358,11 @@
             <div class="hint">Client / fixed-fee discount, applied to gross at total-fee level.</div>
           </div>
           <div class="field">
-            <label>Rate Lock</label>
+            <label>Rate Lock<span class="ppm-info" data-info="Holds this year's rates for the whole engagement (no YoY escalation), then shows the escalation you absorbed as a **credit line** so the client sees the concession.
+
+It calculates the escalated figure **once** and books the difference as the credit — it does not also strip it from the bottom. The headline already includes the lock; the credit line just reveals it. No double-counting.
+
+Example: a Jan–Feb 2027 slice that would escalate +3% shows the un-escalated fee up top and the ~3% you gave back as the credit."></span></label>
             <label class="toggle-label" for="a-lock">
               <input type="checkbox" id="a-lock">
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
@@ -394,7 +412,15 @@
   <!-- ========== Pass-through / principal billing ========== -->
   <div class="pt-block" id="pt-block">
     <div class="pt-head">
-      <label class="pt-toggle"><input type="checkbox" id="pt-on"><span>Pass-through / principal billing</span></label>
+      <label class="pt-toggle"><input type="checkbox" id="pt-on"><span>Pass-through / principal billing</span></label><span class="ppm-info" data-info="For vendor cost contracted **through** Savills. Two types, set per line:
+
+**Pass-through billed** — the client pays cost + markup through us. The cost flows out; only the **markup is Savills revenue**. Use for a contractor WO we invoice.
+
+**Managed vendor** — the vendor bills the client direct; we only charge a **management %**. The cost never touches our books — just the fee is revenue.
+
+Either type can stand alone: a project can be pass-through **only**, with no staffed roles (e.g. Small Works).
+
+Example: $70k contractor WO at 10% → client billed $77k, Savills revenue $7k. $5k managed vendor at 10% → client pays vendor direct, Savills revenue $500."></span>
       <span class="pt-note">Vendor cost contracted through Savills. <strong>Pass-through billed</strong> = the client pays cost + markup through us (cost flows out, markup is revenue). <strong>Managed (direct bill)</strong> = the vendor bills the client directly and Savills invoices only the % management fee. Walled off from the client discount, rate lock, and fee math; sits <strong>inside</strong> the NTE ceiling.</span>
     </div>
     <div class="pt-body" id="pt-body" hidden>
@@ -433,7 +459,11 @@
       </div>
     </div>
     <div class="rc-right">
-      <button class="btn btn-primary" id="fit-btn" type="button">Fit to target</button>
+      <button class="btn btn-primary" id="fit-btn" type="button">Fit to target</button><span class="ppm-info" data-info="Solves the **client discount** so the computed fee lands exactly on the stated target — to the penny. It holds staffing and rates fixed and only moves the discount.
+
+Use it when the proposal quotes a round number and you want the matrix to reconcile to it without hand-tuning.
+
+Example: matrix computes $612,340 but the proposal says $600,000 → Fit to target sets the discount so it reads $600,000.00."></span>
       <div class="rc-note" id="rc-note">Holds the proposal's staffing &amp; rates fixed and solves the client discount to hit the target.</div>
     </div>
   </div>
@@ -469,11 +499,25 @@
       <div class="monthly-toggle" role="group" aria-label="Discount view" id="disc-toggle">
         <button type="button" class="mt-btn on" id="mt-bottom" data-mode="bottom">Discount at bottom</button>
         <button type="button" class="mt-btn" id="mt-spread" data-mode="spread">Spread across months</button>
-      </div>
+      </div><span class="ppm-info" data-info="How the client discount shows in the monthly schedule — the **total is identical** either way.
+
+**Discount at bottom** — months show the gross fee; the discount is one credit line at the bottom. Best when the client wants to see list price and the concession separately.
+
+**Spread across months** — the discount is baked into each month's number. Best for a clean net invoice schedule.
+
+Example: $600k at 5% off — bottom shows $50k/mo then −$30k credit; spread shows $47.5k/mo. Both total $570k."></span>
       <div class="fee-share-ctl" id="fee-share-ctl">
         <label class="fs-lbl">
           <input type="checkbox" id="fs-on">
-          <span class="fs-text">Fee share</span>
+          <span class="fs-text">Fee share</span><span class="ppm-info" data-info="Splits fee with a co-broker. Two modes — they are **not** the same number:
+
+**Off invoice** — the broker takes their % **out of** the fee. The client pays the same; Savills keeps the rest. Our revenue drops.
+
+**On top** — the markup is added **on top** of the fee. The client pays more; Savills keeps the full fee and passes the broker share through.
+
+The monthly schedule shows a separate broker line either way, and the broker split carries into Revenue Projections (toggle there).
+
+Example: $625k fee, 10% — off invoice → client $625k, Savills keeps $562.5k. On top → client $687.5k, Savills keeps $625k."></span>
           <span class="fs-pct"><input type="number" id="fs-pct" min="0" max="100" step="1" value="10" autocomplete="off">%</span>
         </label>
         <span class="fs-mode" id="fs-mode-wrap" role="group" aria-label="Broker fee mode">
@@ -507,6 +551,7 @@
 <script src="universal-fee-calc/intake.js"></script>
 <script src="universal-fee-calc/app.js"></script>
 <script src="universal-fee-calc/export-excel.js"></script>
+<script src="universal-fee-calc/guide.js"></script>
 <script src="universal-fee-calc/nav.js"></script>
 </body>
 </html>

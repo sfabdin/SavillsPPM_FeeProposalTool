@@ -169,8 +169,12 @@
       <h1>Revenue projections.</h1>
     </div>
     <div class="actions">
-      <label class="ctl-toggle"><input type="checkbox" id="show-excluded" checked> Show rated 5–7</label>
-      <label class="ctl-toggle"><input type="checkbox" id="show-broker"> Broker fee split</label>
+      <label class="ctl-toggle"><input type="checkbox" id="show-excluded" checked> Show rated 5–7</label><span class="ppm-info" data-info="Projects are rated **1–7** by confidence. **1–4** are the forecast set (1 = booked/active, 2–4 = weighted pipeline). **5–7** are low-likelihood — shown greyed for context but excluded from projected totals.
+
+Uncheck to hide 5–7 entirely and see only what counts toward the forecast."></span>
+      <label class="ctl-toggle"><input type="checkbox" id="show-broker"> Broker fee split</label><span class="ppm-info" data-info="Reveals a red sub-line under each project that has a co-broker split, plus a rolled-up broker total row. The reduction is drawn from the calculator's fee-share setting (off-invoice or on-top) — same math, shown per month.
+
+Off by default so the page reads as clean invoice revenue. Turn on to see what goes to brokers."></span>
       <label class="ctl-toggle"><input type="checkbox" id="show-pass"> Pass-through split</label>
       <button class="btn" id="edit-toggle" title="Edit ratings and override monthly billings">✎ Edit</button>
       <button class="btn" id="xlsx-export" title="Download the matrix exactly as shown">⤓ Excel</button>
@@ -937,6 +941,7 @@
   if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
 })();
 </script>
+<script src="universal-fee-calc/guide.js"></script>
 <script src="universal-fee-calc/nav.js"></script>
 </body>
 </html>

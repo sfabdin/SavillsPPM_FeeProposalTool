@@ -455,7 +455,9 @@
 
   <!-- ===== Client rollup ===== -->
   <details class="client-rollup" id="client-rollup">
-    <summary><span class="cr-caret">▸</span> By client <span class="cr-hint" id="cr-hint"></span></summary>
+    <summary><span class="cr-caret">▸</span> By client <span class="ppm-info" data-info="Rolls every project up by client — net fee, count, and weighted forecast per client. Collapsible; click a client to expand its projects.
+
+Weighted forecast = each project's fee × its rating confidence, so a client's number reflects how likely their pipeline is to land."></span><span class="cr-hint" id="cr-hint"></span></summary>
     <div class="cr-body" id="cr-body"></div>
   </details>
 
@@ -1175,6 +1177,7 @@
   if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
 })();
 </script>
+<script src="universal-fee-calc/guide.js"></script>
 <script src="universal-fee-calc/nav.js"></script>
 </body>
 </html>
