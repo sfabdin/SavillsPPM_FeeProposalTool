@@ -244,6 +244,59 @@
     if (role.fteMonthly && role.fteMonthly[mk] != null) return role.fteMonthly[mk];
     return role.fte[phaseId] || 0;
   }
+
+  /* ----- Option A: group-as-scope helpers -----
+     Groups double as concurrent scopes. Months are canonical, so overlapping
+     scopes already sum correctly; these helpers just make a scope's active
+     window legible and let you slide a whole team when a milestone slips. */
+  const absIdx = (y, m) => y * 12 + (m - 1);          // "YYYY-M" → absolute month index
+  function parseMk(mk) { const [y, m] = mk.split('-').map(Number); return { y, m }; }
+  function mkFromIdx(i) { return Math.floor(i / 12) + '-' + ((i % 12) + 1); }
+  /** Active month span for a group: earliest → latest month with any nonzero allocation. */
+  function groupActiveSpan(groupId) {
+    let lo = Infinity, hi = -Infinity;
+    state.roles.filter(r => r.groupId === groupId).forEach(r => {
+      Object.keys(r.fteMonthly || {}).forEach(mk => {
+        if ((r.fteMonthly[mk] || 0) <= 0) return;
+        const { y, m } = parseMk(mk); const i = absIdx(y, m);
+        if (i < lo) lo = i; if (i > hi) hi = i;
+      });
+    });
+    if (lo === Infinity) return null;
+    const lab = (i) => `${MONTH_NAMES[i % 12]} ${Math.floor(i / 12)}`;
+    return { lo, hi, months: (hi - lo + 1), label: lo === hi ? lab(lo) : `${lab(lo)} – ${lab(hi)}` };
+  }
+  /** Slide every role in a group by delta months (keys remapped, values kept).
+      Refuses if any allocation would land outside the project timeline. */
+  function shiftGroupMonths(groupId, delta) {
+    if (!delta) return;
+    const tl = getMonths().map(m => absIdx(m.year, m.month));
+    const loT = Math.min(...tl), hiT = Math.max(...tl);
+    const roles = state.roles.filter(r => r.groupId === groupId);
+    // preflight: would any nonzero allocation fall off the timeline?
+    for (const r of roles) {
+      for (const mk of Object.keys(r.fteMonthly || {})) {
+        if ((r.fteMonthly[mk] || 0) <= 0) continue;
+        const { y, m } = parseMk(mk); const ni = absIdx(y, m) + delta;
+        if (ni < loT || ni > hiT) {
+          alert('That shift would push this scope past the project timeline. Extend the project dates first, then shift.');
+          return;
+        }
+      }
+    }
+    roles.forEach(r => {
+      const next = {};
+      Object.keys(r.fteMonthly || {}).forEach(mk => {
+        const { y, m } = parseMk(mk); const ni = absIdx(y, m) + delta;
+        next[mkFromIdx(ni)] = r.fteMonthly[mk];
+      });
+      r.fteMonthly = next;
+      // phase display values are recomputed from months on render; clear stale mirror
+      state.phases.forEach(p => { if (r.fte) r.fte[p.id] = phaseAvgFte(r, p.id); });
+    });
+    renderMatrix(); renderMonthly(); renderSummary();
+    markDirty();
+  }
   /** Recompute a phase's stored fte as the average of its months' effective FTE
       (called after a per-month edit, so the collapsed phase reflects the months). */
   function recomputePhaseAvg(role, phase) {
@@ -759,6 +812,7 @@
     }
     $('#pm-date').value = f.proposalDate || '';
     $('#pm-location').value = f.location;
+    { const nt = $('#pm-notes'); if (nt) nt.value = f.notes || ''; }
 
     // Status dropdown
     const statusSel = $('#pm-status');
@@ -1547,10 +1601,10 @@
           return `<tr data-id="${l.id}">
             <td class="pt-c-lbl"><input type="text" class="pt-label" data-id="${l.id}" value="${escapeHtml(l.label || '')}" placeholder="e.g. AV vendor — direct contract"></td>
             <td class="pt-c-type"><select class="pt-mode" data-id="${l.id}"><option value="billed" ${!managed ? 'selected' : ''}>Pass-through billed</option><option value="managed" ${managed ? 'selected' : ''}>Managed · direct bill</option></select></td>
-            <td class="pt-c-num"><input type="number" class="pt-cost" data-id="${l.id}" min="0" step="1000" value="${cost || ''}" placeholder="0"></td>
-            <td class="pt-c-num"><input type="number" class="pt-mk" data-id="${l.id}" min="0" step="0.5" value="${l.markupPct != null ? l.markupPct : ''}" placeholder="0">%</td>
-            <td class="pt-c-num pt-ro">${fmtMoney(mkAmt)}</td>
-            <td class="pt-c-num pt-ro">${fmtMoney(clientBilled)}</td>
+            <td class="pt-c-num"><input type="text" inputmode="decimal" class="pt-cost" data-id="${l.id}" value="${cost || ''}" placeholder="0"></td>
+            <td class="pt-c-num"><input type="text" inputmode="decimal" class="pt-mk" data-id="${l.id}" value="${l.markupPct != null && l.markupPct !== '' ? l.markupPct : ''}" placeholder="0"><span class="pt-pct">%</span></td>
+            <td class="pt-c-num pt-ro pt-fee" data-id="${l.id}">${fmtMoney(mkAmt)}</td>
+            <td class="pt-c-num pt-ro pt-client" data-id="${l.id}">${fmtMoney(clientBilled)}</td>
             <td class="pt-c-x"><button type="button" class="icon-btn pt-rm" data-id="${l.id}" title="Remove line">×</button></td>
           </tr>`;
         }).join('');
@@ -1564,12 +1618,35 @@
         <span class="pt-t"><b>Fee · Savills revenue</b> ${fmtMoney(m)}</span>
         <span class="pt-t pt-t-strong"><b>Client billed through Savills</b> ${fmtMoney(cb)}</span>`;
     }
-    // wire line inputs
+    // wire line inputs — text/number inputs update state + derived cells IN PLACE
+    // (never rebuild the rows on keystroke, or the focused field would deselect).
     $$('.pt-label').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.label = e.target.value; markDirty(); } }));
-    $$('.pt-cost').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.cost = e.target.value; onPtChange(); } }));
-    $$('.pt-mk').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.markupPct = e.target.value; onPtChange(); } }));
+    $$('.pt-cost').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.cost = e.target.value; refreshPtLive(); } }));
+    $$('.pt-mk').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.markupPct = e.target.value; refreshPtLive(); } }));
+    $$('.pt-mode').forEach(s => s.addEventListener('change', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.mode = e.target.value; refreshPtLive(); } }));
     $$('.pt-rm').forEach(b => b.addEventListener('click', e => { const id = e.target.dataset.id; ptState().lines = ptLines().filter(x => x.id !== id); onPtChange(); }));
-    $$('.pt-mode').forEach(s => s.addEventListener('change', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.mode = e.target.value; onPtChange(); } }));
+  }
+  /** Recompute derived cells + totals + summary/monthly WITHOUT rebuilding the
+      input rows, so the field being typed in keeps focus. */
+  function refreshPtLive() {
+    ptLines().forEach(l => {
+      const cost = parseFloat(l.cost) || 0;
+      const mkAmt = cost * (parseFloat(l.markupPct) || 0) / 100;
+      const clientBilled = (l.mode === 'managed') ? mkAmt : cost + mkAmt;
+      const feeCell = document.querySelector(`.pt-fee[data-id="${l.id}"]`);
+      const cliCell = document.querySelector(`.pt-client[data-id="${l.id}"]`);
+      if (feeCell) feeCell.textContent = fmtMoney(mkAmt);
+      if (cliCell) cliCell.textContent = fmtMoney(clientBilled);
+    });
+    const tot = $('#pt-totals');
+    if (tot) {
+      const c = ptCostTotal(), m = ptMarkupTotal(), cb = ptClientTotal();
+      tot.innerHTML = `
+        <span class="pt-t"><b>Cost passed through (out)</b> ${fmtMoney(c)}</span>
+        <span class="pt-t"><b>Fee · Savills revenue</b> ${fmtMoney(m)}</span>
+        <span class="pt-t pt-t-strong"><b>Client billed through Savills</b> ${fmtMoney(cb)}</span>`;
+    }
+    renderSummary(); renderMonthly(); if (typeof updateNteHint === 'function') updateNteHint(); markDirty();
   }
   function onPtChange() { renderPassthrough(); renderSummary(); renderMonthly(); if (typeof updateNteHint === 'function') updateNteHint(); markDirty(); }
   function wirePassthrough() {
@@ -1719,7 +1796,18 @@
       if (!rolesInGroup.length) return;
       const ghdr = document.createElement('tr');
       ghdr.className = 'group-head';
-      ghdr.innerHTML = `<td colspan="${matrixColumns().length + 2}">${escapeHtml(g.name)}</td>`;
+      const span = groupActiveSpan(g.id);
+      const spanLbl = span
+        ? `<span class="gh-span" title="Active window for this scope — earliest to latest month with staffing">${escapeHtml(span.label)} · ${span.months} mo</span>`
+        : '';
+      const shiftCtl = span
+        ? `<span class="gh-shift" title="Slide this whole scope's staffing earlier or later — use when a milestone slips">
+             <button class="gh-shift-btn" data-shift="${g.id}" data-delta="-1" title="Shift 1 month earlier">◀</button>
+             <span class="gh-shift-lbl">shift</span>
+             <button class="gh-shift-btn" data-shift="${g.id}" data-delta="1" title="Shift 1 month later">▶</button>
+           </span>`
+        : '';
+      ghdr.innerHTML = `<td colspan="${matrixColumns().length + 2}"><span class="gh-name">${escapeHtml(g.name)}</span>${spanLbl}${shiftCtl}</td>`;
       tbody.appendChild(ghdr);
       rolesInGroup.forEach(r => {
         const title = getTitle(r.titleId);
@@ -1813,6 +1901,10 @@
       const pid = e.target.dataset.toggle;
       if (expandedPhases.has(pid)) expandedPhases.delete(pid); else expandedPhases.add(pid);
       renderMatrix();
+    }));
+    // Option A: slide a whole scope's staffing when a milestone slips
+    $$('#matrix-tbody .gh-shift-btn').forEach(b => b.addEventListener('click', e => {
+      shiftGroupMonths(e.currentTarget.dataset.shift, parseInt(e.currentTarget.dataset.delta, 10));
     }));
   }
 
@@ -2359,6 +2451,7 @@
     });
     $('#pm-date').addEventListener('input',  e => { state.project.proposalDate = e.target.value; markDirty(); });
     $('#pm-location').addEventListener('input', e => { state.project.location = e.target.value; markDirty(); });
+    { const nt = $('#pm-notes'); if (nt) nt.addEventListener('input', e => { state.project.notes = e.target.value; markDirty(); }); }
     $('#pm-status').addEventListener('change', e => {
       state.project.status = e.target.value;
       const statusLabel = STORE.STATUS_LABELS[e.target.value] || '';

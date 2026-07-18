@@ -139,6 +139,7 @@
     { name: 'Technology & Infrastructure Deployment', subs: ['Technology relocations', 'Broadcast projects', 'Infrastructure migrations', 'Workplace technology implementations'] },
     { name: 'Specialized Consulting & Advisory', subs: ['Process improvement', 'Organizational assessments', 'Strategic planning', 'Custom client advisory engagements', 'Business case development'] },
     { name: 'Development Management', subs: ['New development', 'Core & shell', "Owner's representation"] },
+    { name: 'Cost Management', subs: ['Estimating', 'Cost planning & control', 'Change order management', 'Value engineering', 'Contingency management'] },
   ];
   function projectTypeSubs(name) {
     const t = PROJECT_TYPES.find(x => x.name === name);
@@ -769,7 +770,18 @@
     });
     const discount = (gross) * discPct;
     const net = gross - lockCredit - discount;
-    return { gross, lockCredit, discount, net, fteMonths };
+    // Pass-through lines carry Savills revenue as the markup (the fee %), walled
+    // off from discount / rate-lock. Both modes (billed / managed) earn the markup.
+    // Projects with NO priced roles (e.g. Small Works) live entirely here.
+    const pt = p.passthrough || {};
+    const ptLines = (pt.enabled && Array.isArray(pt.lines)) ? pt.lines : [];
+    let ptMarkup = 0;
+    ptLines.forEach(l => {
+      const c = parseFloat(l.cost) || 0;
+      const mk = (parseFloat(l.markupPct) || 0) / 100;
+      ptMarkup += c * mk;
+    });
+    return { gross: gross + ptMarkup, lockCredit, discount, net: net + ptMarkup, fteMonths, passThroughMarkup: ptMarkup };
   }
 
   /* ============================================================
