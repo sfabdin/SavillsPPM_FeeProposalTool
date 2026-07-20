@@ -765,7 +765,7 @@
         const unlocked = tierRate * Math.pow(1 + esc, mObj.year - baseYear);
         const locked   = tierRate * Math.pow(1 + esc, startYear - baseYear);
         gross += fte * unlocked * hrs;
-        if (lockOn) lockCredit += Math.max(0, (unlocked - locked) * fte * hrs);
+        if (lockOn) lockCredit += Math.max(0, (unlocked - locked) * fte * hrs) * (1 - discPct);
       });
     });
     const discount = (gross) * discPct;
@@ -852,7 +852,7 @@
         const unlocked = base * Math.pow(1 + esc, m.year - anchorYear);
         const locked = base * Math.pow(1 + esc, startYear - anchorYear);
         const g = fte * unlocked * hrs;
-        const l = lockOn ? Math.max(0, (unlocked - locked) * fte * hrs) : 0;
+        const l = lockOn ? Math.max(0, (unlocked - locked) * fte * hrs) * (1 - discPct) : 0;
         gross += g; lock += l;
         const grp = r.groupId || 'core';
         groupGross[grp] = (groupGross[grp] || 0) + g;
@@ -1293,7 +1293,7 @@
         const locked = base * Math.pow(1 + esc, startYear - anchorYear);
         // Published (unlocked) gross; Rate Lock surfaces once as lockC below.
         gross += fte * unlocked * hrs;
-        if (lockOn) lockC += Math.max(0, (unlocked - locked) * fte * hrs);
+        if (lockOn) lockC += Math.max(0, (unlocked - locked) * fte * hrs) * (1 - discPct);
       });
       totalGross += gross; totalLock += lockC;
       return { year: m.year, month: m.month, gross, lockC };

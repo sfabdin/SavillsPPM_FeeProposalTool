@@ -317,13 +317,21 @@
     return fte * rate * state.assumptions.hrsPerMo;
   }
 
-  /** Rate Lock credit = (unlocked - locked) × hours × FTE, per role per month. Always positive when lock is on. */
-  function monthlyLockCredit(role, monthObj, phaseId) {
+  /** Rate Lock credit — RAW (pre-discount): (unlocked − locked) × hours × FTE, per role per month. Always positive when lock is on. */
+  function monthlyLockCreditRaw(role, monthObj, phaseId) {
     if (!state.assumptions.rateLock) return 0;
     const fte = effectiveFte(role, monthObj, phaseId) / 100;
     if (!fte) return 0;
     const diff = unlockedRateForYear(role, monthObj.year) - rateForYear(role, monthObj.year);
     return Math.max(0, diff) * fte * state.assumptions.hrsPerMo;
+  }
+  /** Rate Lock credit on the DISCOUNTED basis. The same (1 − discount) that scales the
+      fee scales the credit, so gross − credit − discount reconciles exactly to
+      lockedRate × (1 − discount) × hours × FTE — and the credit stays consistent when a
+      team is shifted across months (it never re-derives off the changing total). */
+  function monthlyLockCredit(role, monthObj, phaseId) {
+    const d = (state.assumptions.discount || 0) / 100;
+    return monthlyLockCreditRaw(role, monthObj, phaseId) * (1 - d);
   }
 
   /** Fee for a role over one phase (sum of months in that phase). */
@@ -353,6 +361,15 @@
   }
   function lockCredit() {
     return state.roles.reduce((s, r) => s + roleLockCredit(r), 0);
+  }
+  /** Total RAW (pre-discount) rate-lock credit — used only by fit-to-target's solve. */
+  function lockCreditRaw() {
+    let s = 0;
+    state.roles.forEach(r => state.phases.forEach(p => {
+      const months = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
+      months.forEach(m => { s += monthlyLockCreditRaw(r, m, p.id); });
+    }));
+    return s;
   }
   function discountAmt() {
     return grossTotal() * (state.assumptions.discount / 100);
@@ -691,11 +708,11 @@
 
   /** Back-solve to the target by adjusting ONLY the client discount — staffing
       allocations and per-role rates are held fixed (they come from the actual
-      proposal). net = gross − lockCredit − discount×gross, so for a target net
-      we solve discount = (gross − lock − target) / gross. If the target is
-      ABOVE gross at current rates, discount can't help (it can't go negative) —
-      we flag that and leave it for a manual rate change. Floor advisory still
-      applies after. */
+      proposal). The rate-lock credit rides the discount too, so
+      net = (gross − lockRaw) × (1 − discount); for a target net we solve
+      discount = 1 − target / (gross − lockRaw). If the target is ABOVE what current
+      rates can bill, discount can't help (it can't go negative) — we flag that and
+      leave it for a manual rate change. Floor advisory still applies after. */
   function fitToTarget() {
     const target = currentTargetFee();
     if (target == null || target <= 0) {
@@ -708,8 +725,8 @@
     }
 
     const grossNow = grossTotal();
-    const lock = lockCredit();
-    const maxNet = grossNow - lock;            // net with 0% discount — the ceiling
+    const lockRaw = lockCreditRaw();
+    const maxNet = grossNow - lockRaw;         // net with 0% discount — the ceiling
 
     // No allocations loaded (e.g. an ingested proposal with a fee but a blank
     // matrix) → SEED allocations to hit the target instead of failing.
@@ -718,7 +735,7 @@
       return;
     }
 
-    let d = (grossNow - lock - target) / grossNow;
+    let d = (grossNow - lockRaw > 0) ? 1 - target / (grossNow - lockRaw) : 1;
     let undershoot = false;                    // target is above what current rates can bill
     if (d < 0) { d = 0; undershoot = true; }
     d = Math.min(0.95, d);
