@@ -1,7 +1,9 @@
 /* ============================================================
    VERCEL SERVERLESS FUNCTION · Clockify → aggregated actuals CSV
    ------------------------------------------------------------
-   Path:  /api/clockify?start=2026-01-01&end=2026-06-30
+   Paths:
+     /api/clockify?start=2026-01-01&end=2026-06-30   → actuals CSV
+     /api/clockify?list=projects                     → project list CSV
 
    WHY THIS EXISTS
      The Staffing & Bandwidth page needs ACTUAL hours by
@@ -42,6 +44,25 @@ export default async function handler(req, res) {
   const key = process.env.CLOCKIFY_API_KEY;
   const ws = process.env.CLOCKIFY_WORKSPACE_ID;
   if (!key || !ws) { res.status(501).json({ error: 'not configured', detail: 'Set CLOCKIFY_API_KEY and CLOCKIFY_WORKSPACE_ID in Vercel env vars.' }); return; }
+
+  // ---- project list mode: canonical names for the one-time matrix rename ----
+  if (req.query.list === 'projects') {
+    try {
+      const out = [];
+      for (let page = 1; page <= 10; page++) {
+        const r = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/projects?page-size=500&page=${page}&archived=false`, { headers: { 'X-Api-Key': key } });
+        if (!r.ok) { res.status(502).json({ error: 'clockify ' + r.status, detail: (await r.text()).slice(0, 300) }); return; }
+        const batch = await r.json();
+        batch.forEach(p => out.push([p.name || '', p.clientName || '']));
+        if (batch.length < 500) break;
+      }
+      const csv = 'Project,Client\n' + out.map(r2 => r2.map(csvCell).join(',')).join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).send(csv);
+    } catch (e) { res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) }); }
+    return;
+  }
 
   const start = String(req.query.start || '').slice(0, 10);
   const end = String(req.query.end || '').slice(0, 10);
