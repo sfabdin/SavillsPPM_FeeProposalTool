@@ -38,10 +38,14 @@
   }
   function isNewHireName(n) { return /\[new hire\]/i.test(n || ''); }
   function cleanName(n) { return String(n || '').replace(/\[new hire\]/ig, '').trim().replace(/\s+/g, ' '); }
+  /* Known name changes — old name (normalized) → current name. Applied at seed,
+     re-import, and match time so both names resolve to ONE person. */
+  const NAME_ALIASES = { 'sarah alim': 'Sarah Abdin' };
+  function canonicalName(n) { const c = cleanName(n); return NAME_ALIASES[c.toLowerCase()] || c; }
   function nkey(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
   /** Tolerant name match (surname fallback), mirrors the fee store. */
   function namesMatch(a, b) {
-    const x = nkey(cleanName(a)), y = nkey(cleanName(b));
+    const x = nkey(canonicalName(a)), y = nkey(canonicalName(b));
     if (!x || !y) return false;
     if (x === y) return true;
     const xl = x.split(' ').pop(), yl = y.split(' ').pop();
@@ -73,11 +77,11 @@
     db.people = {}; db.allocations = [];
     const peopleSeen = {};
     seed.forEach(r => {
-      const pid = slug(r.person);
+      const pid = slug(canonicalName(r.person) + (isNewHireName(r.person) ? ' newhire' : ''));
       if (!peopleSeen[pid]) {
         peopleSeen[pid] = true;
         db.people[pid] = {
-          id: pid, name: cleanName(r.person), isNewHire: isNewHireName(r.person),
+          id: pid, name: canonicalName(r.person), isNewHire: isNewHireName(r.person),
           title: '', homeTeam: '', capacityPct: 100, active: true,
         };
       }
@@ -104,6 +108,20 @@
       if (!p.mappings) p.mappings = { users: {}, projects: {} };
       if (!p.meta) p.meta = { monthHours: DEFAULT_MONTH_HOURS };
       if (p.meta.monthHours == null) p.meta.monthHours = DEFAULT_MONTH_HOURS;
+      // apply known name changes to an existing store: display name + unify ids
+      Object.values(p.people).forEach(per => { const c = NAME_ALIASES[nkey(per.name)]; if (c) per.name = c; });
+      let remapped = false;
+      Object.keys(NAME_ALIASES).forEach(oldName => {
+        const oldId = slug(oldName), newId = slug(NAME_ALIASES[oldName]);
+        if (oldId === newId || !p.people[oldId]) return;
+        if (p.people[newId]) delete p.people[oldId];                       // merged already — drop dupe
+        else { p.people[newId] = p.people[oldId]; p.people[newId].id = newId; delete p.people[oldId]; }
+        p.allocations.forEach(a => { if (a.personId === oldId) a.personId = newId; });
+        Object.keys(p.actuals).forEach(k => { if (k.startsWith(oldId + '|')) { p.actuals[newId + k.slice(oldId.length)] = (p.actuals[newId + k.slice(oldId.length)] || 0) + p.actuals[k]; delete p.actuals[k]; } });
+        if (p.mappings && p.mappings.users) Object.keys(p.mappings.users).forEach(k => { if (p.mappings.users[k] === oldId) p.mappings.users[k] = newId; });
+        remapped = true;
+      });
+      if (remapped) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch (e) {} }
       _dbCache = p;
       return p;
     } catch (e) { console.error('staff db read failed', e); return (_dbCache = seedFromMatrix(defaultDb())); }
@@ -273,12 +291,46 @@
     _feeIndex = feeRecords().map(p => ({ id: p.id, name: (p.project && p.project.name) || '', key: projKey((p.project && p.project.name) || '') }));
     return _feeIndex;
   }
+  /** Token-based name similarity — the smart part of project mapping. Splits
+      names into significant words (drops filler + punctuation + SF-id-ish
+      tokens), scores overlap. "JPMC — 270 Park Relocation" ↔ "270P" style
+      abbreviations get partial-prefix credit. */
+  const STOP_WORDS = new Set(['the', 'of', 'and', 'a', 'an', 'for', 'to', 'at', 'in', 'on', 'llc', 'inc', 'corp', 'project', 'phase']);
+  function nameTokens(s) {
+    return String(s || '').toLowerCase().replace(/&/g, ' and ').split(/[^a-z0-9]+/)
+      .filter(t => t && t.length > 1 && !STOP_WORDS.has(t) && !/^opp\d/.test(t));
+  }
+  function tokenScore(a, b) {
+    const ta = nameTokens(a), tb = nameTokens(b);
+    if (!ta.length || !tb.length) return 0;
+    const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+    let hit = 0;
+    small.forEach(t => {
+      if (big.includes(t)) { hit += 1; return; }
+      // prefix credit: "270p" ~ "270", "reloc" ~ "relocation"
+      if (big.some(bt => (bt.length >= 3 && t.startsWith(bt)) || (t.length >= 3 && bt.startsWith(t)))) hit += 0.75;
+    });
+    return hit / small.length;          // 1 = every significant word of the shorter name found
+  }
+
   function matchFeeProject(name) {
     const k = projKey(name); if (!k) return null;
+    // 0) saved manual link wins
+    const feeMap = (readDb().mappings || {}).fee || {};
+    const mapped = feeMap[nkey(name)];
+    if (mapped) { const hit = feeIndex().find(p => p.id === mapped); if (hit) return { id: hit.id, name: hit.name, via: 'mapped' }; }
     const idx = feeIndex();
+    // 1) exact normalized name
     let hit = idx.find(p => p.key === k);
-    if (!hit) hit = idx.find(p => p.key && (p.key.includes(k) || k.includes(p.key)) && Math.abs(p.key.length - k.length) < 8);
-    return hit ? { id: hit.id, name: hit.name } : null;
+    if (hit) return { id: hit.id, name: hit.name, via: 'name' };
+    // 2) containment (old behavior, kept for tight names)
+    hit = idx.find(p => p.key && (p.key.includes(k) || k.includes(p.key)) && Math.abs(p.key.length - k.length) < 8);
+    if (hit) return { id: hit.id, name: hit.name, via: 'name' };
+    // 3) token scoring — best fee project sharing ≥70% of significant words
+    let best = null, bestScore = 0;
+    idx.forEach(p => { const s = tokenScore(name, p.name); if (s > bestScore) { bestScore = s; best = p; } });
+    if (best && bestScore >= 0.7) return { id: best.id, name: best.name, via: 'tokens', score: Math.round(bestScore * 100) };
+    return null;
   }
 
   /** Salesforce-ID index over fee-tool projects — Clockify project names carry
@@ -316,8 +368,15 @@
     }
     hit = all.find(pn => (projKey(pn).includes(k) || k.includes(projKey(pn))) && Math.abs(projKey(pn).length - k.length) < 8);
     if (hit) return { name: hit, via: 'fuzzy' };
+    // token scoring against matrix project names
+    let best = null, bestScore = 0;
+    all.forEach(pn => { const s = tokenScore(raw, pn); if (s > bestScore) { bestScore = s; best = pn; } });
+    if (best && bestScore >= 0.7) return { name: best, via: 'tokens' };
     return null;
   }
+
+  /** Fee-tool projects for pickers: [{id, name}] */
+  function listFeeProjects() { return feeIndex().map(p => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name)); }
 
   // ---------- ENGINE: expected vs actual ----------
   function capacityHours(person) { return monthHours() * ((person && person.capacityPct != null ? person.capacityPct : 100) / 100); }
@@ -580,6 +639,13 @@
     if (matrixProject) db.mappings.projects[nkey(clockifyName)] = matrixProject; else delete db.mappings.projects[nkey(clockifyName)];
     writeDb(db);
   }
+  /** Manual matrix-project → fee-tool-project link (map once, shared via staff.json). */
+  function setFeeMapping(matrixProject, feeProjectId) {
+    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    db.mappings.fee = db.mappings.fee || {};
+    if (feeProjectId) db.mappings.fee[nkey(matrixProject)] = feeProjectId; else delete db.mappings.fee[nkey(matrixProject)];
+    writeDb(db);
+  }
 
   // ---------- Matrix ingest — JS's staffing sheet (xlsx or csv), repeatable ----------
   function excelSerialToYm(n) { const d = new Date(Date.UTC(1899, 11, 30) + n * 86400000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
@@ -706,8 +772,8 @@
     const fresh = defaultDb();
     fresh.actuals = keepActuals; fresh.meta = db.meta || fresh.meta;
     rows.forEach(r => {
-      const pid = slug(r.person);
-      if (!fresh.people[pid]) fresh.people[pid] = { id: pid, name: cleanName(r.person), isNewHire: isNewHireName(r.person), title: '', homeTeam: '', capacityPct: 100, active: true };
+      const pid = slug(canonicalName(r.person) + (isNewHireName(r.person) ? ' newhire' : ''));
+      if (!fresh.people[pid]) fresh.people[pid] = { id: pid, name: canonicalName(r.person), isNewHire: isNewHireName(r.person), title: '', homeTeam: '', capacityPct: 100, active: true };
       if (keep[pid]) Object.assign(fresh.people[pid], keep[pid]);
       fresh.allocations.push({ id: 'al_' + Math.random().toString(36).slice(2, 9), personId: pid, project: r.proj, client: r.client, status: r.status || 'Active', type: r.type || 'Awarded', start: r.start, end: r.end, pct: +r.pct || 0, note: r.note || '' });
     });
@@ -733,11 +799,11 @@
     listAllocations, saveAllocation, deleteAllocation, personIdForName,
     distinctProjects, distinctClients, allocationWindow, defaultWindow,
     // engine
-    personLoad, personAllocationsIn, bandwidthGrid, projectRollup, matchFeeProject,
+    personLoad, personAllocationsIn, bandwidthGrid, projectRollup, matchFeeProject, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
     // clockify
     analyzeClockify, commitClockify, clearActuals,
-    getMappings, setUserMapping, setProjectMapping,
+    getMappings, setUserMapping, setProjectMapping, setFeeMapping, tokenScore,
     // helpers
     namesMatch, cleanName, isNewHireName,
   };

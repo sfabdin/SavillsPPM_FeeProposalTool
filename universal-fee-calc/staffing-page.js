@@ -23,8 +23,8 @@
      an unrecognized/blank login sees the denial panel, never data.
      ============================================================ */
   const STAFF_ADMINS = new Set([
-    'sabdin@savills.us',     // Salim Abdin — owner
-    'salim@savills.us',      // Salim — legacy login
+    'sabdin@savills.us',     // Sarah Abdin — owner
+    'salim@savills.us',      // Sarah — legacy login
     'mglatt@savills.us',     // Michael Glatt
     'jsantoro@savills.us',   // Jeff Santoro
     'esobel@savills.us',     // Emily Sobel
@@ -45,7 +45,7 @@
       </header>
       <div class="empty" style="padding:70px 40px">
         <div style="font-family:var(--font-display);font-weight:800;font-size:20px;color:var(--sav-navy);margin-bottom:10px">This tool is limited to staffing leadership.</div>
-        <div style="max-width:460px;margin:0 auto;line-height:1.6">${canEsc ? 'You&rsquo;re previewing as' : 'You&rsquo;re signed in as'} <strong>${(u && u.username) ? String(u.username).replace(/[&<>"]/g,'') : '(no identity)'}</strong>, which isn't on the access list.${canEsc ? ' This is what they would see.' : ' If you need bandwidth or allocation information, contact Salim Abdin.'}</div>
+        <div style="max-width:460px;margin:0 auto;line-height:1.6">${canEsc ? 'You&rsquo;re previewing as' : 'You&rsquo;re signed in as'} <strong>${(u && u.username) ? String(u.username).replace(/[&<>"]/g,'') : '(no identity)'}</strong>, which isn't on the access list.${canEsc ? ' This is what they would see.' : ' If you need bandwidth or allocation information, contact Sarah Abdin.'}</div>
         <div style="margin-top:22px;display:flex;gap:10px;justify-content:center">
           ${canEsc ? '<button class="btn btn-primary" id="deny-back">← Back to my view</button>' : ''}
           <a href="Fee Generator.html" class="btn btn-secondary" style="text-decoration:none">Fee System home</a>
@@ -275,6 +275,7 @@
     if (q) rows = rows.filter(r => (r.project + ' ' + r.client).toLowerCase().includes(q));
     if (state.projClient) rows = rows.filter(r => r.client === state.projClient);
     const maxFte = Math.max(1, ...rows.map(r => r.peakFte));
+    const feeOpts = S.listFeeProjects().map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
 
     const clientOpts = ['<option value="">All clients</option>'].concat(S.distinctClients().map(c => `<option ${state.projClient === c ? 'selected' : ''}>${esc(c)}</option>`)).join('');
     const toolbar = `<div class="toolbar"><input type="search" id="pj-search" placeholder="Filter project or client…" value="${esc(state.projSearch)}"><select id="pj-client">${clientOpts}</select><span class="grow"></span><span class="note-txt">${rows.length} projects · ${rows.filter(r => r.feeProject).length} linked to the fee tool</span></div>`;
@@ -282,7 +283,9 @@
     let body = '';
     rows.forEach(r => {
       const spark = `<span class="fte-spark">${ms.map(m => { const v = r.byMonth[m] || 0; const h = Math.max(1, Math.round(v / maxFte * 26)); return `<i style="height:${h}px" title="${S.ymLabel(m)}: ${v.toFixed(2)} FTE"></i>`; }).join('')}</span>`;
-      const link = r.feeProject ? `<a class="link-fee" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.feeProject.id)}" title="Open in fee tool">fee ↗</a>` : '<span class="no-link">not in fee tool</span>';
+      const link = r.feeProject
+        ? `<a class="link-fee" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.feeProject.id)}" title="Open in fee tool · matched by ${esc(r.feeProject.via || 'name')}${r.feeProject.score ? ' (' + r.feeProject.score + '%)' : ''}">fee ${r.feeProject.via === 'tokens' ? '≈' : r.feeProject.via === 'mapped' ? '⚯' : ''}↗</a>${r.feeProject.via === 'tokens' ? `<button class="row-act-link" data-fee-confirm="${esc(r.project)}" data-fee-id="${esc(r.feeProject.id)}" title="Confirm this smart match — saves it permanently">✓</button>` : ''}`
+        : `<select class="fee-link-sel" data-fee-link="${esc(r.project)}" title="Link this matrix project to a fee-tool project — saved once, shared"><option value="">link to fee…</option>${feeOpts}</select>`;
       body += `<tr>
         <td class="pname"><span class="expand-btn" data-exp="${esc(r.project)}">${state.expandedProjects.has(r.project) ? '▾' : '▸'}</span> ${esc(r.project)} ${link}</td>
         <td>${esc(r.client || '—')}</td>
@@ -305,6 +308,8 @@
     $('#pj-search').oninput = (e) => { state.projSearch = e.target.value; renderProjects(); const el = $('#pj-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     const pjc = $('#pj-client'); if (pjc) pjc.onchange = (e) => { state.projClient = e.target.value; renderProjects(); };
     $$('#p-projects [data-exp]').forEach(b => b.onclick = () => { const p = b.dataset.exp; if (state.expandedProjects.has(p)) state.expandedProjects.delete(p); else state.expandedProjects.add(p); renderProjects(); });
+    $$('#p-projects [data-fee-link]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setFeeMapping(sel.dataset.feeLink, sel.value); toast('Linked — saved for everyone.'); renderProjects(); });
+    $$('#p-projects [data-fee-confirm]').forEach(b => b.onclick = () => { S.setFeeMapping(b.dataset.feeConfirm, b.dataset.feeId); toast('Match confirmed — saved.'); renderProjects(); });
   }
 
   /* ---------- ACTUALS vs EXPECTED ---------- */

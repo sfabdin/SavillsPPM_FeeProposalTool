@@ -166,7 +166,7 @@ window.STAFF_SEED = [
 {"proj":"JPMC - 270P","status":"Active","type":"Awarded","client":"JPMC","person":"Artie Benoit","start":"2026-02","end":"2026-12","pct":100,"note":""},
 {"proj":"JPMC - 270P","status":"Active","type":"Awarded","client":"JPMC","person":"Alli Hochberg","start":"2026-02","end":"2026-06","pct":50,"note":"Leave as of July 2026"},
 {"proj":"JPMC - 270P","status":"Active","type":"Awarded","client":"JPMC","person":"Amanda Hirsh","start":"2026-02","end":"2026-12","pct":50,"note":""},
-{"proj":"JPMC - 270P","status":"Active","type":"Awarded","client":"JPMC","person":"Sarah Alim","start":"2026-02","end":"2026-12","pct":100,"note":""},
+{"proj":"JPMC - 270P","status":"Active","type":"Awarded","client":"JPMC","person":"Sarah Abdin","start":"2026-02","end":"2026-12","pct":100,"note":""},
 {"proj":"JPMC - 270P","status":"Active","type":"Awarded","client":"JPMC","person":"Sabrina Jones","start":"2026-02","end":"2026-12","pct":50,"note":"Ari to free up Sabrina?"},
 {"proj":"JPMC - 270P","status":"Pursuit","type":"Opportunity","client":"JPMC","person":"Ariel Levin","start":"2026-07","end":"2026-12","pct":50,"note":"Ari to free up Sabrina?"},
 {"proj":"JPMC - 270P","status":"Active","type":"Awarded","client":"JPMC","person":"Timothy Carey","start":"2026-04","end":"2026-12","pct":50,"note":""},
