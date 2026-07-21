@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Staffing &amp; Bandwidth</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<style>
+  a { color: var(--sav-teal); }
+  a:hover { color: var(--sav-navy); }
+  .head .title-block h1 a { color: inherit; text-decoration: none; }
+
+  /* ── controls ── */
+  .controls { display:flex; align-items:flex-end; gap:22px; flex-wrap:wrap; background:#fff; border:1px solid rgba(37,39,58,0.12); padding:14px 18px; margin-bottom:20px; }
+  .ctl { display:flex; flex-direction:column; gap:5px; }
+  .ctl label { font-family:var(--font-display); font-weight:700; font-size:9px; letter-spacing:0.14em; text-transform:uppercase; color:var(--sav-steel); }
+  .ctl select, .ctl input { font-family:var(--font-body); font-size:13px; padding:7px 10px; border:1px solid rgba(37,39,58,0.22); background:#fff; color:var(--sav-navy); }
+  .ctl input[type=number]{ width:78px; }
+  .ctl.grow { flex:1; }
+  .ctl .chk { display:inline-flex; align-items:center; gap:7px; font-family:var(--font-body); font-size:12.5px; color:var(--sav-navy); cursor:pointer; padding-bottom:6px; }
+
+  /* ── tabs ── */
+  .tabs { display:flex; gap:2px; border-bottom:2px solid var(--sav-navy); margin-bottom:22px; }
+  .tab { font-family:var(--font-display); font-weight:700; font-size:12.5px; letter-spacing:0.04em; padding:11px 20px; background:transparent; border:0; color:var(--sav-steel); cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
+  .tab:hover { color:var(--sav-navy); }
+  .tab.active { color:var(--sav-navy); border-bottom-color:var(--sav-yellow); }
+  .tab .cnt { font-family:var(--font-body); font-weight:600; font-size:11px; color:var(--sav-steel); margin-left:6px; }
+  .panel { display:none; }
+  .panel.active { display:block; }
+
+  /* ── KPI strip ── */
+  .kpi-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:22px; }
+  .kpi-card { background:#fff; border:1px solid rgba(37,39,58,0.10); padding:15px 18px; }
+  .kpi-card .k-num { font-family:var(--font-display); font-weight:800; font-size:28px; line-height:1; color:var(--sav-navy); font-variant-numeric:tabular-nums; }
+  .kpi-card .k-lbl { font-size:10px; letter-spacing:0.07em; text-transform:uppercase; color:var(--sav-steel); margin-top:8px; }
+  .kpi-card.warn .k-num { color:#C0392B; }
+  .kpi-card.accent .k-num { color:var(--sav-teal); }
+
+  /* ── heatmap ── */
+  .hm-wrap { overflow-x:auto; border:1px solid rgba(37,39,58,0.12); background:#fff; }
+  table.hm { border-collapse:collapse; font-size:12px; width:100%; }
+  table.hm th, table.hm td { text-align:center; padding:0; }
+  table.hm thead th { font-family:var(--font-display); font-size:9.5px; letter-spacing:0.04em; text-transform:uppercase; color:var(--sav-steel); background:#faf9f7; padding:9px 6px; border-bottom:1px solid rgba(37,39,58,0.14); position:sticky; top:0; z-index:2; white-space:nowrap; }
+  table.hm th.who, table.hm td.who { text-align:left; padding:7px 12px; position:sticky; left:0; background:#fff; z-index:1; min-width:210px; box-shadow:1px 0 0 rgba(37,39,58,0.1); }
+  table.hm thead th.who { z-index:3; background:#faf9f7; }
+  table.hm tbody tr:hover td { background:#fbf8ee; }
+  table.hm tbody tr:hover td.who { background:#fbf8ee; }
+  .who-name { font-family:var(--font-display); font-weight:600; font-size:13px; color:var(--sav-navy); cursor:pointer; }
+  .who-name:hover { color:var(--sav-teal); }
+  .who-meta { font-size:10px; color:var(--sav-steel); margin-top:2px; display:flex; gap:8px; align-items:center; }
+  .nh-tag { font-family:var(--font-display); font-weight:700; font-size:8px; letter-spacing:0.05em; text-transform:uppercase; color:#8a6d00; background:#fdf3c7; padding:1px 5px; border-radius:2px; }
+  .cell { display:block; padding:9px 6px; font-variant-numeric:tabular-nums; font-weight:600; color:var(--sav-navy); min-width:44px; border-left:1px solid rgba(37,39,58,0.05); }
+  .cell.past { opacity:0.5; }
+  .u0 { color:#c9cdd3; font-weight:400; }
+  .u1 { background:#eef4f4; }               /* under */
+  .u2 { background:#cfe6e4; }               /* healthy 86-100 */
+  .u3 { background:#fce7c2; color:#7a5600; }/* over 101-120 */
+  .u4 { background:#f6c9c2; color:#8f2418; }/* over 121-150 */
+  .u5 { background:#e4453a; color:#fff; }   /* >150 */
+  td.pk { font-family:var(--font-display); font-weight:800; font-variant-numeric:tabular-nums; padding:0 12px; background:#fff; border-left:1px solid rgba(37,39,58,0.12); }
+  td.pk.over { color:#C0392B; }
+
+  /* person detail drawer */
+  .drawer-row td { padding:0 !important; background:#faf9f7 !important; }
+  .drawer { padding:12px 18px 16px 22px; }
+  .drawer h4 { font-family:var(--font-display); font-size:12px; margin:0 0 8px; color:var(--sav-navy); }
+  table.mini { border-collapse:collapse; font-size:11.5px; width:100%; }
+  table.mini th, table.mini td { padding:5px 9px; text-align:right; border-top:1px solid rgba(37,39,58,0.08); }
+  table.mini th:first-child, table.mini td:first-child { text-align:left; }
+  table.mini thead th { color:var(--sav-steel); font-family:var(--font-display); font-size:9px; letter-spacing:0.05em; text-transform:uppercase; border-top:0; }
+  .status-p { font-size:9px; color:#8a6d00; background:#fdf3c7; padding:1px 5px; border-radius:2px; font-weight:700; }
+
+  /* ── data tables (allocations / projects / variance) ── */
+  .toolbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+  .toolbar input[type=search], .toolbar select { font-family:var(--font-body); font-size:13px; padding:8px 11px; border:1px solid rgba(37,39,58,0.22); }
+  .toolbar input[type=search]{ min-width:220px; }
+  .toolbar .grow { flex:1; }
+  table.dt { width:100%; border-collapse:collapse; font-size:12.5px; background:#fff; }
+  table.dt th, table.dt td { padding:8px 11px; border-top:1px solid rgba(37,39,58,0.09); text-align:left; vertical-align:middle; }
+  table.dt thead th { font-family:var(--font-display); font-size:9.5px; letter-spacing:0.05em; text-transform:uppercase; color:var(--sav-steel); border-top:none; border-bottom:1px solid rgba(37,39,58,0.14); background:#faf9f7; position:sticky; top:0; }
+  table.dt thead th.num, table.dt td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  table.dt tbody tr:hover { background:#fbfbfa; }
+  .pname { font-family:var(--font-display); font-weight:600; color:var(--sav-navy); }
+  .badge { font-size:9.5px; font-weight:700; padding:2px 7px; border-radius:3px; letter-spacing:0.03em; }
+  .badge.active { color:#1f7a44; background:#e6f3ea; }
+  .badge.pursuit { color:#8a6d00; background:#fdf3c7; }
+  .link-fee { font-size:9px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--sav-teal); border:1px solid rgba(14,124,123,0.35); padding:1px 6px; border-radius:3px; text-decoration:none; margin-left:8px; }
+  .link-fee:hover { background:var(--sav-teal); color:#fff; }
+  .no-link { font-size:9px; color:#b0b5bc; letter-spacing:0.03em; margin-left:8px; }
+  .row-act { display:inline-flex; gap:4px; }
+  .row-act button { border:0; background:transparent; cursor:pointer; font-family:var(--font-display); font-weight:700; font-size:11px; color:var(--sav-steel); padding:4px 7px; }
+  .row-act button:hover { background:var(--sav-navy); color:#fff; }
+  .row-act button.del:hover { background:var(--sav-red); }
+  .expand-btn { cursor:pointer; color:var(--sav-steel); font-weight:700; }
+  .fte-spark { display:inline-flex; align-items:flex-end; gap:2px; height:26px; }
+  .fte-spark i { width:6px; background:var(--sav-teal); display:block; min-height:1px; }
+  .empty { padding:44px; text-align:center; color:var(--sav-steel); font-size:13px; background:#fff; border:1px solid rgba(37,39,58,0.1); }
+  .legend { font-size:11px; color:var(--sav-steel); margin:10px 2px 0; display:flex; gap:16px; flex-wrap:wrap; align-items:center; }
+  .legend .sw { display:inline-block; width:13px; height:13px; border-radius:2px; vertical-align:-2px; margin-right:5px; }
+
+  /* variance cells */
+  td.vpos { color:#1f7a44; }   /* actual > expected (over-run) shown neutral-green? use amber */
+  .var-over { color:#C0392B; font-weight:700; }
+  .var-under { color:#8a6d00; }
+  .var-ok { color:#1f7a44; }
+  .vmini { font-size:10px; color:var(--sav-steel); }
+
+  /* ── import panel ── */
+  .import-card { background:#fff; border:1px solid rgba(37,39,58,0.12); padding:22px 24px; margin-bottom:20px; }
+  .import-card h3 { font-family:var(--font-display); font-size:15px; margin:0 0 6px; color:var(--sav-navy); }
+  .import-card p { font-size:12.5px; color:var(--sav-steel); line-height:1.55; margin:0 0 14px; max-width:720px; }
+  .import-card code { background:#f0efec; padding:1px 5px; font-size:11.5px; }
+  .drop { border:2px dashed rgba(37,39,58,0.28); background:#faf9f7; padding:26px; text-align:center; cursor:pointer; transition:.15s; }
+  .drop:hover, .drop.over { border-color:var(--sav-teal); background:#f0f7f6; }
+  .drop .big { font-family:var(--font-display); font-weight:700; font-size:14px; color:var(--sav-navy); }
+  .drop .sm { font-size:11.5px; color:var(--sav-steel); margin-top:5px; }
+  .report { margin-top:18px; border-top:1px solid rgba(37,39,58,0.12); padding-top:16px; }
+  .report .rrow { display:flex; gap:26px; flex-wrap:wrap; margin-bottom:14px; }
+  .report .rstat b { font-family:var(--font-display); font-size:20px; color:var(--sav-navy); display:block; font-variant-numeric:tabular-nums; }
+  .report .rstat span { font-size:9.5px; letter-spacing:0.06em; text-transform:uppercase; color:var(--sav-steel); }
+  .unmatched { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+  .unmatched .um { background:#fff8ee; border:1px solid #f0dfc0; padding:12px 14px; }
+  .unmatched .um.empty-ok { background:#eef7f0; border-color:#cbe6d3; }
+  .unmatched h5 { font-family:var(--font-display); font-size:11px; margin:0 0 8px; color:#8a6d00; letter-spacing:0.02em; }
+  .unmatched.ok h5 { color:#1f7a44; }
+  .unmatched ul { margin:0; padding:0; list-style:none; font-size:11.5px; color:var(--sav-navy); max-height:150px; overflow:auto; }
+  .unmatched li { display:flex; justify-content:space-between; padding:2px 0; }
+  .unmatched li span { color:var(--sav-steel); }
+  .imp-actions { display:flex; gap:10px; align-items:center; }
+  .note-txt { font-size:11px; color:var(--sav-steel); }
+  .meta-line { font-size:11.5px; color:var(--sav-steel); margin-bottom:14px; }
+  .meta-line b { color:var(--sav-navy); font-family:var(--font-display); }
+
+  /* ── modal ── */
+  .modal-ov { position:fixed; inset:0; background:rgba(37,39,58,0.45); z-index:200; display:none; align-items:center; justify-content:center; }
+  .modal-ov.open { display:flex; }
+  .modal { background:#fff; width:520px; max-width:92vw; max-height:90vh; overflow:auto; box-shadow:0 20px 60px rgba(37,39,58,0.3); }
+  .modal .mh { background:var(--sav-navy); color:#fff; padding:16px 22px; display:flex; justify-content:space-between; align-items:center; }
+  .modal .mh h3 { margin:0; font-family:var(--font-display); font-size:15px; }
+  .modal .mh button { background:0; border:0; color:#fff; font-size:22px; cursor:pointer; line-height:1; }
+  .modal .mb { padding:20px 22px; display:grid; grid-template-columns:1fr 1fr; gap:14px 16px; }
+  .modal .mb .fld { display:flex; flex-direction:column; gap:5px; }
+  .modal .mb .fld.full { grid-column:1/-1; }
+  .modal .mb label { font-family:var(--font-display); font-weight:700; font-size:9px; letter-spacing:0.12em; text-transform:uppercase; color:var(--sav-steel); }
+  .modal .mb input, .modal .mb select, .modal .mb textarea { font-family:var(--font-body); font-size:13px; padding:8px 10px; border:1px solid rgba(37,39,58,0.25); width:100%; box-sizing:border-box; }
+  .modal .mf { padding:14px 22px; border-top:1px solid rgba(37,39,58,0.12); display:flex; justify-content:flex-end; gap:10px; }
+  @media print { #ppm-nav-btn { display:none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div class="title-block">
+      <h1><a href="Fee Generator.html">Staffing &amp; Bandwidth</a></h1>
+      <p class="tagline">Who is working on what, how loaded they are, and — once Clockify is in — planned hours vs. actuals. Interim planning layer until every project is fully staffed in the fee tool.</p>
+    </div>
+  </header>
+
+  <div class="identity-bar">
+    <span class="id-label">Viewing as</span>
+    <select id="id-user"></select>
+    <span class="id-role" id="id-role"></span>
+    <span class="id-note" id="id-note"></span>
+  </div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label>Window start</label>
+      <select id="win-start"></select>
+    </div>
+    <div class="ctl">
+      <label>Months</label>
+      <select id="win-len">
+        <option value="6">6</option>
+        <option value="12" selected>12</option>
+        <option value="18">18</option>
+        <option value="24">24</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label>Hrs / mo @ 100%</label>
+      <input type="number" id="month-hrs" min="80" max="220" step="1">
+    </div>
+    <div class="ctl grow"></div>
+    <div class="ctl">
+      <label>&nbsp;</label>
+      <label class="chk"><input type="checkbox" id="inc-pursuit" checked> Include pursuits / opportunities</label>
+    </div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="bandwidth">Bandwidth</button>
+    <button class="tab" data-tab="allocations">Allocations <span class="cnt" id="cnt-alloc"></span></button>
+    <button class="tab" data-tab="projects">By Project <span class="cnt" id="cnt-proj"></span></button>
+    <button class="tab" data-tab="actuals">Actuals vs. Expected</button>
+  </div>
+
+  <section class="panel active" id="p-bandwidth"></section>
+  <section class="panel" id="p-allocations"></section>
+  <section class="panel" id="p-projects"></section>
+  <section class="panel" id="p-actuals"></section>
+
+</div>
+
+<!-- allocation add/edit modal -->
+<div class="modal-ov" id="alloc-modal">
+  <div class="modal">
+    <div class="mh"><h3 id="am-title">Allocation</h3><button id="am-close">&times;</button></div>
+    <div class="mb">
+      <div class="fld full"><label>Person</label><input id="am-person" list="am-people" placeholder="Type a name — new or existing"></div>
+      <datalist id="am-people"></datalist>
+      <div class="fld"><label>Project</label><input id="am-project" list="am-projects" placeholder="Project name"></div>
+      <datalist id="am-projects"></datalist>
+      <div class="fld"><label>Client</label><input id="am-client" list="am-clients" placeholder="Client"></div>
+      <datalist id="am-clients"></datalist>
+      <div class="fld"><label>Status</label><select id="am-status"><option>Active</option><option>Pursuit</option></select></div>
+      <div class="fld"><label>Type</label><select id="am-type"><option>Awarded</option><option>Opportunity</option></select></div>
+      <div class="fld"><label>Start month</label><input id="am-start" type="month"></div>
+      <div class="fld"><label>End month</label><input id="am-end" type="month"></div>
+      <div class="fld"><label>Allocation %</label><input id="am-pct" type="number" min="0" max="100" step="5"></div>
+      <div class="fld full"><label>Comment / decision note</label><textarea id="am-note" rows="2" placeholder="e.g. Offboard when Fanatics FBG completes; MG to weigh in"></textarea></div>
+    </div>
+    <div class="mf">
+      <button class="btn btn-ghost" id="am-cancel">Cancel</button>
+      <button class="btn btn-primary" id="am-save">Save allocation</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="clockify-file" accept=".csv,text/csv" style="display:none">
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/staff-seed.js"></script>
+<script src="universal-fee-calc/staff.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+<script src="universal-fee-calc/staffing-page.js"></script>
+</body>
+</html>
