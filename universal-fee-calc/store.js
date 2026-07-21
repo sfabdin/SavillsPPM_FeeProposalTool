@@ -139,6 +139,7 @@
     { name: 'Technology & Infrastructure Deployment', subs: ['Technology relocations', 'Broadcast projects', 'Infrastructure migrations', 'Workplace technology implementations'] },
     { name: 'Specialized Consulting & Advisory', subs: ['Process improvement', 'Organizational assessments', 'Strategic planning', 'Custom client advisory engagements', 'Business case development'] },
     { name: 'Development Management', subs: ['New development', 'Core & shell', "Owner's representation"] },
+    { name: 'Cost Management', subs: ['Estimating', 'Cost planning & control', 'Change order management', 'Value engineering', 'Contingency management'] },
   ];
   function projectTypeSubs(name) {
     const t = PROJECT_TYPES.find(x => x.name === name);
@@ -456,6 +457,7 @@
       project: record.project || {}, timeline: record.timeline || {},
       roles: record.roles || [], phases: record.phases || [],
       groups: record.groups || [], assumptions: record.assumptions || {},
+      passthrough: record.passthrough || null,
     }));
   }
 
@@ -763,12 +765,23 @@
         const unlocked = tierRate * Math.pow(1 + esc, mObj.year - baseYear);
         const locked   = tierRate * Math.pow(1 + esc, startYear - baseYear);
         gross += fte * unlocked * hrs;
-        if (lockOn) lockCredit += Math.max(0, (unlocked - locked) * fte * hrs);
+        if (lockOn) lockCredit += Math.max(0, (unlocked - locked) * fte * hrs) * (1 - discPct);
       });
     });
     const discount = (gross) * discPct;
     const net = gross - lockCredit - discount;
-    return { gross, lockCredit, discount, net, fteMonths };
+    // Pass-through lines carry Savills revenue as the markup (the fee %), walled
+    // off from discount / rate-lock. Both modes (billed / managed) earn the markup.
+    // Projects with NO priced roles (e.g. Small Works) live entirely here.
+    const pt = p.passthrough || {};
+    const ptLines = (pt.enabled && Array.isArray(pt.lines)) ? pt.lines : [];
+    let ptMarkup = 0;
+    ptLines.forEach(l => {
+      const c = parseFloat(l.cost) || 0;
+      const mk = (parseFloat(l.markupPct) || 0) / 100;
+      ptMarkup += c * mk;
+    });
+    return { gross: gross + ptMarkup, lockCredit, discount, net: net + ptMarkup, fteMonths, passThroughMarkup: ptMarkup };
   }
 
   /* ============================================================
@@ -797,6 +810,8 @@
            a.feeShare && a.feeShare.enabled, a.feeShare && a.feeShare.pct, a.feeShare && a.feeShare.mode],
       r: (p.roles || []).map(r => [r.titleId, r.tierId, r.rateSource, r.contractedRate, r.groupId,
            r.fte, r.fteMonthly]),
+      pt: (p.passthrough && p.passthrough.enabled) ? (p.passthrough.lines || []).map(l =>
+           [l.label, l.cost, l.markupPct, l.mode, l.monthly]) : 0,
     });
     // djb2 → short hex
     let h = 5381; for (let i = 0; i < sig.length; i++) h = ((h << 5) + h + sig.charCodeAt(i)) | 0;
@@ -823,8 +838,19 @@
     const phaseOfMonth = {};
     (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOfMonth[m.year + '-' + m.month] = ph.id; }));
 
-    let gross = 0, lock = 0, fteMonths = 0;
-    const groupGross = {}, groupLock = {}, monthNet = {};
+    // Per-month effective discount. Normally the single global discount; after a
+    // Rate Grid Reconciliation run a project carries a per-month override vector
+    // (rateReconcile.byMonth: ym → discount) that holds each month's billing
+    // constant when the underlying grid changes. Absent → identical to before.
+    const reconMap = (p.rateReconcile && p.rateReconcile.byMonth) || null;
+    const dFor = (ymKey) => (reconMap && reconMap[ymKey] != null) ? reconMap[ymKey] : discPct;
+
+    let gross = 0, fteMonths = 0;
+    // Accumulate GRID-VALUE (discount-independent) per month so a per-month
+    // discount can be applied uniformly afterward: gU = unlocked gross, lRaw =
+    // raw (pre-discount) rate-lock credit.
+    const groupGU = {}, groupLRaw = {}, monthGU = {}, monthLRaw = {};
+    const groupMonthGU = {}, groupMonthLRaw = {};
     p.roles.forEach(r => {
       const { base, anchorYear } = resolveRoleRate(r, catalog, p);
       months.forEach(m => {
@@ -837,47 +863,119 @@
         const unlocked = base * Math.pow(1 + esc, m.year - anchorYear);
         const locked = base * Math.pow(1 + esc, startYear - anchorYear);
         const g = fte * unlocked * hrs;
-        const l = lockOn ? Math.max(0, (unlocked - locked) * fte * hrs) : 0;
-        gross += g; lock += l;
+        const lRaw = lockOn ? Math.max(0, (unlocked - locked) * fte * hrs) : 0;
+        gross += g;
         const grp = r.groupId || 'core';
-        groupGross[grp] = (groupGross[grp] || 0) + g;
-        groupLock[grp] = (groupLock[grp] || 0) + l;
         const ymKey = m.year + '-' + String(m.month).padStart(2, '0');
-        monthNet[ymKey] = (monthNet[ymKey] || 0) + (g - l - g * discPct);   // net accrued this month
+        groupGU[grp] = (groupGU[grp] || 0) + g;
+        groupLRaw[grp] = (groupLRaw[grp] || 0) + lRaw;
+        monthGU[ymKey] = (monthGU[ymKey] || 0) + g;
+        monthLRaw[ymKey] = (monthLRaw[ymKey] || 0) + lRaw;
+        (groupMonthGU[grp] = groupMonthGU[grp] || {})[ymKey] = (groupMonthGU[grp][ymKey] || 0) + g;
+        (groupMonthLRaw[grp] = groupMonthLRaw[grp] || {})[ymKey] = (groupMonthLRaw[grp][ymKey] || 0) + lRaw;
       });
     });
-    if (!(gross > 0)) return null;                          // nothing priced — don't freeze $0
+    if (!(gross > 0) && !(p.passthrough && p.passthrough.enabled && (p.passthrough.lines || []).some(l => (parseFloat(l.cost) || 0) > 0))) return null;   // nothing priced & no pass-through — don't freeze $0
 
-    const discount = gross * discPct;
+    // Apply the (per-month) discount to grid values → net, credit, discount, monthNet.
+    const monthNet = {};
+    let lock = 0, discount = 0;
+    Object.keys(monthGU).forEach(ym => {
+      const d = dFor(ym), gU = monthGU[ym], lR = monthLRaw[ym] || 0;
+      monthNet[ym] = (gU - lR) * (1 - d);           // held constant by the reconcile vector
+      lock += lR * (1 - d);
+      discount += gU * d;
+    });
     const net = gross - lock - discount;
-    const byGroup = Object.keys(groupGross).map(grp => {
-      const gg = groupGross[grp], gl = groupLock[grp] || 0;
-      return { group: grp, net: round2(gg - gl - gg * discPct) };
+    const byGroup = Object.keys(groupGU).map(grp => {
+      const gm = groupMonthGU[grp] || {}, lm = groupMonthLRaw[grp] || {};
+      let gnet = 0;
+      Object.keys(gm).forEach(ym => { gnet += (gm[ym] - (lm[ym] || 0)) * (1 - dFor(ym)); });
+      return { group: grp, net: round2(gnet) };
     });
     const feeSharePct = (p.assumptions?.feeShare && p.assumptions.feeShare.enabled)
       ? (parseFloat(p.assumptions.feeShare.pct) || 0) : 0;
     const feeShareMode = (p.assumptions?.feeShare && p.assumptions.feeShare.mode === 'ontop') ? 'ontop' : 'offtop';
     const fsFrac = feeSharePct / 100;
+
+    // ---- Pass-through / principal billing (vendor cost billed THROUGH Savills) ----
+    // Not fee: the COST flows straight out to the vendor; only the MARKUP is Savills
+    // revenue. Walled off from discount / rate-lock / escalation. Distributed per
+    // line across the timeline (explicit monthly overrides, else spread evenly).
+    const pt = p.passthrough || {};
+    const ptLines = (pt.enabled && Array.isArray(pt.lines)) ? pt.lines : [];
+    const ymAll = months.map(m => m.year + '-' + String(m.month).padStart(2, '0'));
+    // Per-month: passClientM = billed THROUGH Savills; passCostM = vendor cost that
+    // flows OUT (billed lines only — managed vendors bill the client direct, so no
+    // cost passes through us); passMarkM = the markup fee (revenue, both modes).
+    const passClientM = {}, passCostM = {}, passMarkM = {};
+    let ptClientTot = 0, ptCostTot = 0, ptMarkTot = 0;
+    ptLines.forEach(line => {
+      const cost = parseFloat(line.cost) || 0;
+      const mk = (parseFloat(line.markupPct) || 0) / 100;
+      if (!cost) return;
+      const managed = line.mode === 'managed';   // direct-bill: Savills invoices only the fee
+      const dist = {};
+      const explicit = line.monthly && Object.keys(line.monthly).length;
+      if (explicit) {
+        Object.keys(line.monthly).forEach(ym => {
+          const norm = ym.split('-')[0] + '-' + String(parseInt(ym.split('-')[1], 10)).padStart(2, '0');
+          dist[norm] = (dist[norm] || 0) + (parseFloat(line.monthly[ym]) || 0);
+        });
+      } else if (ymAll.length) {
+        const per = cost / ymAll.length;
+        ymAll.forEach(ym => { dist[ym] = per; });
+      }
+      Object.keys(dist).forEach(ym => {
+        const c = dist[ym];
+        const markup = c * mk;
+        // managed → client billed = markup fee only; billed → cost + markup.
+        const client = managed ? markup : (c + markup);
+        passClientM[ym] = (passClientM[ym] || 0) + client;
+        passMarkM[ym] = (passMarkM[ym] || 0) + markup;
+        if (!managed) passCostM[ym] = (passCostM[ym] || 0) + c;   // only billed cost flows through us
+        ptClientTot += client;
+        ptMarkTot += markup;
+        if (!managed) ptCostTot += c;
+      });
+    });
+    const ptCostTotal = round2(ptCostTot);
+    const ptMarkupTotal = round2(ptMarkTot);
+    const ptClientTotal = round2(ptClientTot);   // what the client is billed for pass-through (through Savills)
+
     // Materialized monthly billing series — read directly by Revenue Projections / Studio
-    // (no re-derivation downstream). invoice = what the CLIENT is billed (on-top grossed up);
-    // broker = the referral cut that month; net = Savills fee before the broker split.
-    const byMonth = Object.keys(monthNet).sort().map(ym => {
-      const n = round2(monthNet[ym]);
+    // (no re-derivation downstream). invoice = TOTAL the CLIENT is billed (fee on-top grossed
+    // up + pass-through billed through Savills); broker = referral cut; net = Savills fee before
+    // broker; passCost = vendor cost (flows out); passMarkup = Savills margin on pass-through.
+    const ymUnion = Array.from(new Set([...Object.keys(monthNet), ...Object.keys(passClientM)])).sort();
+    const byMonth = ymUnion.map(ym => {
+      const n = round2(monthNet[ym] || 0);
       const broker = round2(n * fsFrac);
-      const invoice = round2(feeShareMode === 'ontop' ? n + broker : n);
-      return { ym, net: n, broker, invoice };
+      const feeInvoice = round2(feeShareMode === 'ontop' ? n + broker : n);
+      const passCost = round2(passCostM[ym] || 0);
+      const passMarkup = round2(passMarkM[ym] || 0);
+      const passClient = round2(passClientM[ym] || 0);
+      const invoice = round2(feeInvoice + passClient);
+      // Savills revenue this month = fee revenue (mode-aware) + pass-through markup.
+      const feeRev = feeShareMode === 'ontop' ? n : round2(n - broker);
+      const revenue = round2(feeRev + passMarkup);
+      return { ym, net: n, broker, feeInvoice, passCost, passMarkup, passClient, invoice, revenue };
     });
 
     const feeShare = round2(net * fsFrac);   // broker $ — same in both modes
     // off-top: broker comes OUT of the fee (Savills keeps net−broker; client pays net).
     // on-top:  broker is added ON (Savills keeps net; client is billed net+broker).
-    const clientBill = round2(feeShareMode === 'ontop' ? net + feeShare : net);
-    const revenue = round2(feeShareMode === 'ontop' ? net : net - feeShare);
+    const feeClientBill = round2(feeShareMode === 'ontop' ? net + feeShare : net);
+    const feeRevenue = round2(feeShareMode === 'ontop' ? net : net - feeShare);
+    const clientBill = round2(feeClientBill + ptClientTotal);          // TOTAL client contract value
+    const revenue = round2(feeRevenue + ptMarkupTotal);               // Savills net revenue
 
-    // NTE: the worked/planned total is `net`; the ceiling is a reference cap.
+    // NTE: pass-through sits INSIDE the ceiling — the client-facing planned total
+    // (fee net + pass-through client billing) is what the cap governs.
     const feeBasis = (p.assumptions?.feeBasis === 'nte') ? 'nte' : 'fixed';
     const nteCeiling = round2(parseFloat(p.assumptions?.nteCeiling) || 0);
-    const overCeiling = feeBasis === 'nte' && nteCeiling > 0 && net > nteCeiling + 0.005;
+    const nteBase = round2(net + ptClientTotal);
+    const overCeiling = feeBasis === 'nte' && nteCeiling > 0 && nteBase > nteCeiling + 0.005;
 
     return {
       computedAt: new Date().toISOString(),
@@ -895,6 +993,11 @@
       feeShare,
       clientBill,
       revenue,
+      passThroughCost: ptCostTotal,
+      passThroughMarkup: ptMarkupTotal,
+      passThroughClient: ptClientTotal,
+      feeClientBill,
+      feeRevenue,
       fteMonths: Math.round(fteMonths * 100) / 100,
       byGroup,
       byMonth,
@@ -1214,7 +1317,7 @@
         const locked = base * Math.pow(1 + esc, startYear - anchorYear);
         // Published (unlocked) gross; Rate Lock surfaces once as lockC below.
         gross += fte * unlocked * hrs;
-        if (lockOn) lockC += Math.max(0, (unlocked - locked) * fte * hrs);
+        if (lockOn) lockC += Math.max(0, (unlocked - locked) * fte * hrs) * (1 - discPct);
       });
       totalGross += gross; totalLock += lockC;
       return { year: m.year, month: m.month, gross, lockC };
@@ -1236,6 +1339,124 @@
   /** Imported broker (fee-share) series for a project, by month. */
   function importedBrokerSeries(p) {
     return (p.source && p.source.brokerByMonth) || null;
+  }
+
+  /* ============================================================
+     RATE GRID RECONCILIATION
+     ------------------------------------------------------------
+     One-time batch: ingest a NEW rate grid and, per project, solve a
+     per-MONTH reconciling discount so every frozen monthly billing figure
+     (financials.byMonth[].net) holds EXACTLY against the new rack rates.
+     The project total falls out as the sum of held months. Dry-run first;
+     commit snapshots a version, writes the per-month vector, and re-stamps
+     (billing unchanged). Floor breaches / uplifts / unsolvable months are
+     FLAGGED, never auto-changed. */
+  function reconcileTierFloor(newCat, role, p) {
+    const title = newCat?.titles?.find(t => t.id === role.titleId);
+    if (!title) return null;
+    const tier = title.tiers.find(x => x.id === role.tierId)
+      || title.tiers.find(x => x.id === 'mid') || title.tiers[0];
+    return tier ? (tier.costFloor ?? null) : null;
+  }
+  /** Dry-run: reconcile ONE project to `newCat`. Returns per-month rows + flags. */
+  function reconcileToGrid(p, newCat) {
+    const fin = p.financials;
+    if (!fin || !Array.isArray(fin.byMonth) || !fin.byMonth.length)
+      return { status: 'no-frozen', reason: 'No frozen billing series — book/stamp the project first.' };
+    if (p.source && p.source.importedByMonth && !(p.roles || []).length)
+      return { status: 'no-grid', reason: 'Imported $ with no staffing — not grid-priced.' };
+    const frozen = {}; fin.byMonth.forEach(x => { frozen[x.ym] = x.net; });
+    const hrs = p.assumptions?.hrsPerMo || 173.33;
+    const esc = (p.assumptions?.escalation || 0) / 100;
+    const startYear = p.timeline?.startYear || (p.assumptions?.catalogBaseYear || 2024);
+    const lockOn = !!p.assumptions?.rateLock;
+    const months = enumerateMonths(p.timeline);
+    const byPhase = computeMonthsByPhase(p);
+    const phaseOfMonth = {};
+    (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOfMonth[m.year + '-' + m.month] = ph.id; }));
+    // New-grid gross (unlocked) + raw lock per month; plus floor watch per role/month.
+    const newGU = {}, newLRaw = {}; const flags = [];
+    p.roles.forEach(r => {
+      const { base, anchorYear } = resolveRoleRate(r, newCat, p);
+      const floor = reconcileTierFloor(newCat, r, p);
+      months.forEach(m => {
+        const mk = m.year + '-' + m.month;
+        const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte?.[phaseOfMonth[mk]] || 0)) / 100;
+        if (!fte || !base) return;
+        const ym = m.year + '-' + String(m.month).padStart(2, '0');
+        const unlocked = base * Math.pow(1 + esc, m.year - anchorYear);
+        const locked = base * Math.pow(1 + esc, startYear - anchorYear);
+        newGU[ym] = (newGU[ym] || 0) + fte * unlocked * hrs;
+        newLRaw[ym] = (newLRaw[ym] || 0) + (lockOn ? Math.max(0, (unlocked - locked) * fte * hrs) : 0);
+        r.__floorYm = floor;   // stash for post-discount check below
+      });
+    });
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const round4 = (n) => Math.round(n * 10000) / 10000;
+    const vector = {}; const rows = []; let heldTot = 0, frozenTot = 0;
+    const yms = Array.from(new Set([...Object.keys(frozen), ...Object.keys(newGU)])).sort();
+    yms.forEach(ym => {
+      const fN = round2(frozen[ym] || 0);
+      const base = (newGU[ym] || 0) - (newLRaw[ym] || 0);   // new-grid net base at 0% discount
+      frozenTot += fN;
+      let d = null, held = fN, note = '';
+      if (base <= 0.005) {
+        if (Math.abs(fN) > 0.005) { note = 'unsolvable'; flags.push({ ym, type: 'unsolvable', detail: `frozen $${fN.toFixed(0)} but new grid prices $0 this month` }); held = 0; }
+      } else {
+        const dRaw = 1 - fN / base;            // FULL precision — penny-exact on recompute
+        d = dRaw;
+        vector[ym] = dRaw;
+        if (dRaw < 0) flags.push({ ym, type: 'uplift', detail: `new grid lower — needs ${(dRaw * 100).toFixed(1)}% uplift to hold` });
+      }
+      heldTot += held;
+      rows.push({ ym, frozenNet: fN, newBase: round2(base), discount: d == null ? null : round4(d), held: round2(held), delta: round2(held - fN) });
+    });
+    // Floor watch: with the solved per-month discount, is any role below the new floor?
+    p.roles.forEach(r => {
+      const { base, anchorYear } = resolveRoleRate(r, newCat, p);
+      const floor = reconcileTierFloor(newCat, r, p);
+      if (!base || floor == null) return;
+      months.forEach(m => {
+        const mk = m.year + '-' + m.month;
+        const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte?.[phaseOfMonth[mk]] || 0)) / 100;
+        if (!fte) return;
+        const ym = m.year + '-' + String(m.month).padStart(2, '0');
+        const d = vector[ym]; if (d == null) return;
+        const yr = lockOn ? startYear : m.year;
+        const effRate = base * Math.pow(1 + esc, yr - anchorYear) * (1 - d);
+        if (effRate < floor - 0.005) flags.push({ ym, type: 'floor', detail: `${r.role || r.titleId}: billed $${effRate.toFixed(0)}/hr < floor $${floor.toFixed(0)}` });
+      });
+    });
+    return {
+      status: 'ok',
+      grid: newCat.source || 'new grid',
+      rows, vector, flags,
+      frozenTotal: round2(frozenTot), heldTotal: round2(heldTot),
+      totalDelta: round2(heldTot - frozenTot),
+      exceptions: flags.length,
+    };
+  }
+  /** Commit a reconciliation: snapshot a version, store the per-month vector +
+      grid tag, and re-stamp financials (billing held by the vector). */
+  function commitReconcile(id, newCat, report) {
+    const db = readDb();
+    const r = db.projects[id];
+    if (!r || !report || report.status !== 'ok') return null;
+    writeDb(db);
+    saveVersion(id, { note: `Pre-reconciliation snapshot (→ ${newCat.source || 'new grid'})`, auto: true });
+    const r2 = readDb().projects[id];
+    r2.rateReconcile = {
+      grid: newCat.source || 'new grid',
+      committedAt: new Date().toISOString(),
+      byMonth: report.vector,
+      exceptions: report.flags,
+    };
+    if (r2.assumptions) r2.assumptions.catalogSource = newCat.source || 'new grid';
+    const fin = computeFinancials(r2, newCat);   // honors rateReconcile → billing holds
+    if (fin) { fin.inputsHash = financialsInputsHash(r2); fin.stale = false; fin.basis = r2.financials?.basis || 'booked'; r2.financials = fin; }
+    r2.updatedAt = new Date().toISOString();
+    const db2 = readDb(); db2.projects[id] = r2; writeDb(db2);
+    return r2;
   }
 
   /** Reconciliation: imported $ vs. calculated $ (from current staffing) per
@@ -1342,10 +1563,12 @@
      Match is on the Box SSO login (email), case-insensitive.
      Edit this list to grant/revoke all-access.                  */
   const ADMINS = new Set([
-    'salim@savills.us',      // Salim — owner
+    'sabdin@savills.us',      // Salim — owner (current login)
+    'salim@savills.us',      // Salim — owner (legacy login, kept for transition)
     'kyriacos.yerou@savills.com', // Kyri Yerou — developer (note .com)
     'esobel@savills.us',     // Emily Sobel
     'jsantoro@savills.us',   // Jeff Santoro
+    'mglatt@savills.us',     // Michael Glatt
     'mhadim@savills.us',     // Maria Hadim
     'kspiegel@savills.us',   // Kathy Spiegel
     'eglatt@savills.us',     // Emily Glatt
@@ -1354,6 +1577,7 @@
   /* These logins may use the "Viewing as" impersonation switch to preview
      other people's restricted views. Everyone else never sees the control. */
   const SUPERUSERS = new Set([
+    'sabdin@savills.us',
     'salim@savills.us',
     'kyriacos.yerou@savills.com',
   ]);
@@ -1544,6 +1768,7 @@
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
     allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity,
     saveVersion, listVersions, versionDiff, restoreVersionRecord, rosterDiff,
+    reconcileToGrid, commitReconcile,
     proposalHealth,
     exportDb, importDb, downloadJson,
     FLASH_LABELS, captureSnapshot, getSnapshots, deleteSnapshot, periodKey,
