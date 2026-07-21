@@ -65,10 +65,11 @@
     tab: 'bandwidth',
     winStart: null, winLen: 12, incPursuit: true,
     allocSearch: '', allocStatus: '', allocProject: '',
-    projSearch: '',
-    varProject: '',
+    projSearch: '', projClient: '',
+    varProject: '', varPerson: '', varGroup: 'project',
+    bwSearch: '', bwOver: false, bwProject: '',
     expandedPeople: new Set(), expandedProjects: new Set(),
-    clockifyReport: null,
+    clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
   };
 
@@ -98,10 +99,38 @@
   }
 
   /* ---------- BANDWIDTH ---------- */
+  /* Shared bandwidth filters (heatmap + single-month view). Project filter
+     keeps people ON that project; their load still counts ALL their work. */
+  function bwToolbar() {
+    const projOpts = ['<option value="">All projects</option>'].concat(S.distinctProjects().map(p => `<option ${state.bwProject === p ? 'selected' : ''}>${esc(p)}</option>`)).join('');
+    return `<div class="toolbar">
+      <input type="search" id="bw-search" placeholder="Filter people…" value="${esc(state.bwSearch)}">
+      <select id="bw-project" title="Show only people allocated to this project (their load still counts everything)">${projOpts}</select>
+      <label class="chk" style="font-size:12.5px;display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="bw-over" ${state.bwOver ? 'checked' : ''}> Only over-allocated</label>
+      <span class="grow"></span>
+    </div>`;
+  }
+  function bwFilter(rows, loadOf) {
+    let out = rows;
+    const q = state.bwSearch.toLowerCase();
+    if (q) out = out.filter(r => r.person.name.toLowerCase().includes(q));
+    if (state.bwOver) out = out.filter(r => loadOf(r) > 100);
+    if (state.bwProject) {
+      const ppl = new Set(S.listAllocations().filter(a => a.project === state.bwProject).map(a => a.personId));
+      out = out.filter(r => ppl.has(r.person.id));
+    }
+    return out;
+  }
+  function wireBwToolbar(rerender) {
+    const si = $('#bw-search'); if (si) si.oninput = (e) => { state.bwSearch = e.target.value; rerender(); const el = $('#bw-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    const pj = $('#bw-project'); if (pj) pj.onchange = (e) => { state.bwProject = e.target.value; rerender(); };
+    const ov = $('#bw-over'); if (ov) ov.onchange = (e) => { state.bwOver = e.target.checked; rerender(); };
+  }
+
   function renderBandwidth() {
     const ms = months();
     if (ms.length === 1) { renderMonthFocus(ms[0]); return; }
-    const rows = S.bandwidthGrid(ms, { includePursuit: state.incPursuit }).filter(r => r.activeMonths > 0);
+    const rows = bwFilter(S.bandwidthGrid(ms, { includePursuit: state.incPursuit }).filter(r => r.activeMonths > 0), (r) => r.peak);
     rows.sort((a, b) => b.peak - a.peak || a.person.name.localeCompare(b.person.name));
     const over = rows.filter(r => r.peak > 100).length;
     const nh = rows.filter(r => r.person.isNewHire).length;
@@ -134,14 +163,15 @@
       <span style="margin-left:auto">Click a name for their project breakdown.</span>
     </div>`;
 
-    $('#p-bandwidth').innerHTML = kpis + `<div class="hm-wrap"><table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table></div>` + legend;
+    $('#p-bandwidth').innerHTML = kpis + bwToolbar() + `<div class="hm-wrap"><table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table></div>` + legend;
+    wireBwToolbar(renderBandwidth);
     $$('#p-bandwidth .who-name').forEach(el => el.onclick = () => { const id = el.dataset.exp; if (state.expandedPeople.has(id)) state.expandedPeople.delete(id); else state.expandedPeople.add(id); renderBandwidth(); });
   }
 
   /* Single-month focus: everyone's load THIS month with their project mix,
      heaviest first — the "who can take work in July?" pivot. */
   function renderMonthFocus(ym) {
-    const rows = S.bandwidthGrid([ym], { includePursuit: state.incPursuit }).filter(r => (r.byMonth[ym] || 0) > 0);
+    const rows = bwFilter(S.bandwidthGrid([ym], { includePursuit: state.incPursuit }).filter(r => (r.byMonth[ym] || 0) > 0), (r) => r.byMonth[ym] || 0);
     rows.sort((a, b) => (b.byMonth[ym] || 0) - (a.byMonth[ym] || 0) || a.person.name.localeCompare(b.person.name));
     const over = rows.filter(r => r.byMonth[ym] > 100).length;
     const free = rows.filter(r => r.byMonth[ym] <= 85).length;
@@ -167,7 +197,8 @@
       </div>`;
     });
     const legend = `<div class="legend"><span>Tick mark = 100% capacity. Chips show each project's share; amber chips are pursuits.</span><span style="margin-left:auto">◀ ▶ in the toolbar pivots month to month.</span></div>`;
-    $('#p-bandwidth').innerHTML = kpis + `<div style="border:1px solid rgba(37,39,58,0.12)"><div class="mv-row" style="background:#faf9f7;border-top:0;font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel)"><div>Person</div><div>Load · ${esc(S.ymLabel(ym))}</div><div>Projects this month</div></div>${body || '<div class="empty" style="border:0">Nobody staffed this month.</div>'}</div>` + legend;
+    $('#p-bandwidth').innerHTML = kpis + bwToolbar() + `<div style="border:1px solid rgba(37,39,58,0.12)"><div class="mv-row" style="background:#faf9f7;border-top:0;font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel)"><div>Person</div><div>Load · ${esc(S.ymLabel(ym))}</div><div>Projects this month</div></div>${body || '<div class="empty" style="border:0">Nobody staffed this month.</div>'}</div>` + legend;
+    wireBwToolbar(() => renderMonthFocus(ym));
   }
 
   function personDrawer(person, ms) {
@@ -242,9 +273,11 @@
     let rows = S.projectRollup(ms, { includePursuit: state.incPursuit });
     const q = state.projSearch.toLowerCase();
     if (q) rows = rows.filter(r => (r.project + ' ' + r.client).toLowerCase().includes(q));
+    if (state.projClient) rows = rows.filter(r => r.client === state.projClient);
     const maxFte = Math.max(1, ...rows.map(r => r.peakFte));
 
-    const toolbar = `<div class="toolbar"><input type="search" id="pj-search" placeholder="Filter project or client…" value="${esc(state.projSearch)}"><span class="grow"></span><span class="note-txt">${rows.length} projects · ${rows.filter(r => r.feeProject).length} linked to the fee tool</span></div>`;
+    const clientOpts = ['<option value="">All clients</option>'].concat(S.distinctClients().map(c => `<option ${state.projClient === c ? 'selected' : ''}>${esc(c)}</option>`)).join('');
+    const toolbar = `<div class="toolbar"><input type="search" id="pj-search" placeholder="Filter project or client…" value="${esc(state.projSearch)}"><select id="pj-client">${clientOpts}</select><span class="grow"></span><span class="note-txt">${rows.length} projects · ${rows.filter(r => r.feeProject).length} linked to the fee tool</span></div>`;
 
     let body = '';
     rows.forEach(r => {
@@ -270,6 +303,7 @@
     const table = rows.length ? `<table class="dt"><thead><tr><th>Project</th><th>Client</th><th class="num">Headcount</th><th class="num">Peak FTE</th><th>FTE over window</th></tr></thead><tbody>${body}</tbody></table>` : `<div class="empty">No projects match.</div>`;
     $('#p-projects').innerHTML = toolbar + table;
     $('#pj-search').oninput = (e) => { state.projSearch = e.target.value; renderProjects(); const el = $('#pj-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    const pjc = $('#pj-client'); if (pjc) pjc.onchange = (e) => { state.projClient = e.target.value; renderProjects(); };
     $$('#p-projects [data-exp]').forEach(b => b.onclick = () => { const p = b.dataset.exp; if (state.expandedProjects.has(p)) state.expandedProjects.delete(p); else state.expandedProjects.add(p); renderProjects(); });
   }
 
@@ -281,39 +315,56 @@
 
     if (state.clockifyReport) html += reportBlock(state.clockifyReport);
 
-    if (has) {
+    {
       const ms = months();
+      const showMonths = ms.length <= 6;              // per-month columns when the window is tight
       const projFilter = state.varProject;
-      let rows = S.varianceMatrix(ms, { project: projFilter || undefined });
-      // group by project
+      let rows = S.varianceMatrix(ms, { project: projFilter || undefined, person: state.varPerson || undefined });
+      const byPerson = state.varGroup === 'person';
+      // group by project or by person
       const byProj = {};
-      rows.forEach(r => { (byProj[r.project] = byProj[r.project] || []).push(r); });
-      const projNames = Object.keys(byProj).sort();
+      rows.forEach(r => { const k = byPerson ? r.person.id : r.project; (byProj[k] = byProj[k] || []).push(r); });
+      const projNames = Object.keys(byProj).sort((a, b) => byPerson ? (S.getPerson(a) || { name: a }).name.localeCompare((S.getPerson(b) || { name: b }).name) : a.localeCompare(b));
       const totExp = rows.reduce((s, r) => s + r.expected, 0), totAct = rows.reduce((s, r) => s + r.actual, 0);
 
       const projOpts = ['<option value="">All projects</option>'].concat(S.distinctProjects().map(p => `<option ${projFilter === p ? 'selected' : ''}>${esc(p)}</option>`)).join('');
-      // Contract total across the visible projects (fee tool — titles × FTE, no names)
+      const pplOpts = ['<option value="">All people</option>'].concat(S.listPeople().map(p => `<option value="${esc(p.id)}" ${state.varPerson === p.id ? 'selected' : ''}>${esc(p.name)}</option>`)).join('');
+      // Contract only applies when grouped by project (the contract has no names)
       let totContract = 0; const contractByProj = {};
-      projNames.forEach(pn => { const cp = S.contractPlan(pn, ms); if (cp) { contractByProj[pn] = cp; totContract += cp.total; } });
+      (byPerson ? [...new Set(rows.map(r => r.project))] : projNames).forEach(pn => { const cp = S.contractPlan(pn, ms); if (cp) { contractByProj[pn] = cp; totContract += cp.total; } });
+      // monthly sums for the trend chart
+      const planM = {}, actM = {}, conM = {};
+      ms.forEach(m => { planM[m] = 0; actM[m] = 0; conM[m] = 0; });
+      rows.forEach(r => ms.forEach(m => { const c = r.byMonth[m]; planM[m] += c.e; actM[m] += c.a; }));
+      Object.values(contractByProj).forEach(cp => ms.forEach(m => { conM[m] += cp.byMonth[m] || 0; }));
       html += `<div class="kpi-strip">
         <div class="kpi-card accent"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">① Matrix plan (JS sheet) · hrs</div></div>
         <div class="kpi-card"><div class="k-num">${fmtH(totContract)}</div><div class="k-lbl">② Per contract (fee tool) · hrs</div></div>
         <div class="kpi-card"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">③ Actual (Clockify) · hrs</div></div>
         <div class="kpi-card ${Math.abs(totAct - totExp) > totExp * 0.1 ? 'warn' : ''}"><div class="k-num">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)}</div><div class="k-lbl">Actual − matrix plan</div></div>
       </div>`;
-      html += `<div class="toolbar"><select id="var-project">${projOpts}</select><span class="grow"></span><span class="note-txt">① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.</span></div>`;
+      html += `<div class="toolbar">
+        <select id="var-group" title="Group rows by project or by person"><option value="project" ${!byPerson ? 'selected' : ''}>Group: by project</option><option value="person" ${byPerson ? 'selected' : ''}>Group: by person</option></select>
+        <select id="var-project">${projOpts}</select>
+        <select id="var-person">${pplOpts}</select>
+        <span class="grow"></span><span class="note-txt">① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.</span></div>`;
+      html += compareChart(ms, planM, conM, actM, projFilter);
 
       if (!projNames.length) html += `<div class="empty">No matched allocations or actuals in this window.</div>`;
       projNames.forEach(pn => {
         const list = byProj[pn].sort((a, b) => b.actual - a.actual);
         const pe = list.reduce((s, r) => s + r.expected, 0), pa = list.reduce((s, r) => s + r.actual, 0);
+        const cardTitle = byPerson ? (S.getPerson(pn) || { name: pn }).name : pn;
+        const cardSub = byPerson ? ((S.getPerson(pn) || {}).title || '') : (list[0].client || '');
+        const rowLabel = (r) => byPerson ? r.project : r.person.name;
         let b = '';
         list.forEach(r => {
           const vcls = varCls(r.expected, r.actual);
-          b += `<tr><td class="pname" style="font-weight:600">${esc(r.person.name)}</td><td class="num">${fmtH(r.expected)}</td><td class="num">${fmtH(r.actual)}</td><td class="num ${vcls}">${r.variance >= 0 ? '+' : ''}${fmtH(r.variance)}</td><td class="num vmini">${r.expected ? Math.round(r.actual / r.expected * 100) + '%' : '—'}</td></tr>`;
+          const mcells = showMonths ? ms.map(m => { const c = r.byMonth[m]; const cls = (c.e || c.a) ? varCls(c.e, c.a) : ''; return `<td class="num ${cls}" style="white-space:nowrap">${c.a ? fmtH(c.a) : '·'}<span class="vmini"> /${c.e ? fmtH(c.e) : '0'}</span></td>`; }).join('') : '';
+          b += `<tr><td class="pname" style="font-weight:600">${esc(rowLabel(r))}</td>${mcells}<td class="num">${fmtH(r.expected)}</td><td class="num">${fmtH(r.actual)}</td><td class="num ${vcls}">${r.variance >= 0 ? '+' : ''}${fmtH(r.variance)}</td><td class="num vmini">${r.expected ? Math.round(r.actual / r.expected * 100) + '%' : '—'}</td></tr>`;
         });
         const pcls = varCls(pe, pa);
-        const cp = contractByProj[pn];
+        const cp = byPerson ? null : contractByProj[pn];
         const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cp.total)}</b>` : `<span style="color:#b0b5bc">no contract staffing</span>`;
         let contractTbl = '';
         if (cp && cp.roles.length) {
@@ -324,18 +375,47 @@
         }
         html += `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;border-bottom:1px solid rgba(37,39,58,0.1)">
-            <div class="pname" style="font-size:14px">${esc(pn)} <span class="note-txt">· ${esc(list[0].client || '')}</span></div>
+            <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span></div>
             <div class="note-txt">① matrix <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · ${contractCell} · ③ actual <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)} vs plan</span></div>
           </div>
-          <table class="dt"><thead><tr><th>Person</th><th class="num">① Plan hrs</th><th class="num">③ Actual hrs</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}</tbody></table>
+          <table class="dt"><thead><tr><th>${byPerson ? 'Project' : 'Person'}</th>${showMonths ? ms.map(m => `<th class="num">${esc(S.ymLabel(m))}</th>`).join('') : ''}<th class="num">① Plan hrs</th><th class="num">③ Actual hrs</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}
+          ${cp ? `<tr style="background:#f4f6f7"><td class="vmini" style="font-weight:700">② Contract (titles)</td>${showMonths ? ms.map(m => `<td class="num vmini">${cp.byMonth[m] ? fmtH(cp.byMonth[m]) : '·'}</td>`).join('') : ''}<td class="num vmini" style="font-weight:700">${fmtH(cp.total)}</td><td class="num vmini">${fmtH(pa)}</td><td class="num vmini ${varCls(cp.total, pa)}">${pa >= cp.total ? '+' : ''}${fmtH(pa - cp.total)}</td><td class="num vmini">${cp.total ? Math.round(pa / cp.total * 100) + '%' : '—'}</td></tr>` : ''}
+          </tbody></table>
           ${contractTbl}
         </div>`;
       });
-      const vp = $('#var-project'); if (vp) vp.onchange = (e) => { state.varProject = e.target.value; renderActuals(); };
     }
     $('#p-actuals').innerHTML = html;
     wireImport();
-    if (has) { const vp = $('#var-project'); if (vp) vp.onchange = (e) => { state.varProject = e.target.value; renderActuals(); }; }
+    const vp2 = $('#var-project'); if (vp2) vp2.onchange = (e) => { state.varProject = e.target.value; renderActuals(); };
+    const vpp = $('#var-person'); if (vpp) vpp.onchange = (e) => { state.varPerson = e.target.value; renderActuals(); };
+    const vg = $('#var-group'); if (vg) vg.onchange = (e) => { state.varGroup = e.target.value; renderActuals(); };
+  }
+
+  /* Grouped-bar trend chart: ① plan / ② contract / ③ actual per month. */
+  function compareChart(ms, planM, conM, actM, projFilter) {
+    const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 14, padB = 30, padR = 8;
+    const max = Math.max(1, ...ms.map(m => Math.max(planM[m] || 0, conM[m] || 0, actM[m] || 0)));
+    const y = (v) => padT + (H - padT - padB) * (1 - v / max);
+    const gw = (W - padL - padR) / ms.length;
+    let s = '';
+    for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += `<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="rgba(37,39,58,.08)"></line><text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#79828C">${Math.round(v).toLocaleString()}</text>`; }
+    const bw = Math.max(8, Math.min(26, (gw - 26) / 3));
+    const names = ['① Matrix plan', '② Contract', '③ Actual'];
+    ms.forEach((m, i) => {
+      const x0 = padL + i * gw + (gw - 3 * bw - 8) / 2;
+      [[planM[m] || 0, '#0E7C7B', ''], [conM[m] || 0, '#9aa3ad', ''], [actM[m] || 0, '#FFDF00', 'stroke="#25273A" stroke-width="1"']].forEach(([v, c, st], j) => {
+        const xx = x0 + j * (bw + 4), yy = y(v);
+        s += `<rect x="${xx}" y="${yy}" width="${bw}" height="${Math.max(0, H - padB - yy)}" fill="${c}" ${st}><title>${names[j]} · ${S.ymLabel(m)}: ${Math.round(v).toLocaleString()} h</title></rect>`;
+      });
+      s += `<text x="${padL + i * gw + gw / 2}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#25273A" font-weight="600">${esc(S.ymLabel(m))}</text>`;
+    });
+    return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);padding:14px 16px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
+        <div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">Hours by month — ${projFilter ? esc(projFilter) : 'all projects'}</div>
+        <div class="note-txt"><span style="color:#0E7C7B">■</span> ① Matrix plan&nbsp;&nbsp;<span style="color:#9aa3ad">■</span> ② Contract&nbsp;&nbsp;<span style="color:#e8c400">■</span> ③ Actual · hover a bar for the number</div>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block">${s}</svg></div>`;
   }
 
   function varCls(exp, act) { if (!exp && !act) return ''; if (!exp) return 'var-over'; const r = act / exp; if (r > 1.1) return 'var-over'; if (r < 0.85) return 'var-under'; return 'var-ok'; }
@@ -358,8 +438,10 @@
   function reportBlock(rep) {
     if (rep.error) return `<div class="import-card" style="border-color:#e0b4ae"><p style="color:#8f2418;margin:0"><strong>Couldn't read that file.</strong> ${esc(rep.error)}</p></div>`;
     const uu = rep.unmatchedUsers, up = rep.unmatchedProjects;
-    const umUsers = `<div class="um ${uu.length ? '' : 'empty-ok'}"><h5>${uu.length ? uu.length + ' unmatched people' : 'All people matched ✓'}</h5>${uu.length ? `<ul>${uu.slice(0, 30).map(u => `<li>${esc(u.name || '(blank)')}<span>${fmtH(u.hours)} h</span></li>`).join('')}</ul>` : '<div class="note-txt">Every Clockify user maps to a roster name.</div>'}</div>`;
-    const umProj = `<div class="um ${up.length ? '' : 'empty-ok'}"><h5>${up.length ? up.length + ' unmatched projects' : 'All projects matched ✓'}</h5>${up.length ? `<ul>${up.slice(0, 30).map(u => `<li>${esc(u.name || '(blank)')}<span>${fmtH(u.hours)} h</span></li>`).join('')}</ul>` : '<div class="note-txt">Every Clockify project maps to the matrix.</div>'}</div>`;
+    const pplSel = (name) => `<select data-map-user="${esc(name)}" style="font-size:11px;max-width:170px"><option value="">map to…</option><option value="__ignore__">Ignore (not delivery)</option>${S.listPeople().map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select>`;
+    const projSel = (name) => `<select data-map-proj="${esc(name)}" style="font-size:11px;max-width:190px"><option value="">map to…</option><option value="__ignore__">Ignore (internal/etc)</option>${S.distinctProjects().map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}</select>`;
+    const umUsers = `<div class="um ${uu.length ? '' : 'empty-ok'}"><h5>${uu.length ? uu.length + ' unmatched people — map once, remembered forever' : 'All people matched ✓'}</h5>${uu.length ? `<ul>${uu.slice(0, 30).map(u => `<li><span style="flex:1;color:var(--sav-navy)">${esc(u.name || '(blank)')}</span><span>${fmtH(u.hours)} h</span>&nbsp;${pplSel(u.name)}</li>`).join('')}</ul>` : '<div class="note-txt">Every Clockify user maps to a roster name.</div>'}</div>`;
+    const umProj = `<div class="um ${up.length ? '' : 'empty-ok'}"><h5>${up.length ? up.length + ' unmatched projects — map once, remembered forever' : 'All projects matched ✓'}</h5>${up.length ? `<ul>${up.slice(0, 30).map(u => `<li><span style="flex:1;color:var(--sav-navy)">${esc(u.name || '(blank)')}</span><span>${fmtH(u.hours)} h</span>&nbsp;${projSel(u.name)}</li>`).join('')}</ul>` : '<div class="note-txt">Every Clockify project maps to the matrix.</div>'}</div>`;
     return `<div class="import-card">
       <div class="report" style="border-top:0;padding-top:0">
         <div class="rrow">
@@ -374,7 +456,7 @@
           <button class="btn btn-primary" id="commit-merge">Commit — replace these months</button>
           <button class="btn btn-ghost" id="commit-add">Add to existing</button>
           <button class="btn btn-ghost" id="commit-cancel">Cancel</button>
-          <span class="note-txt">Unmatched people are skipped (they carry no capacity). Fix names in Clockify or add them to the roster, then re-import.</span>
+          <span class="note-txt">Unmatched people are skipped (they carry no capacity). Pick a mapping next to any unmatched name — it re-checks instantly and the mapping is saved for every future import.</span>
         </div>
       </div>
     </div>`;
@@ -390,9 +472,13 @@
     }
     if (fileInput) fileInput.onchange = () => { if (fileInput.files[0]) readClockify(fileInput.files[0]); fileInput.value = ''; };
     const ca = $('#clear-actuals'); if (ca) ca.onclick = (e) => { e.preventDefault(); if (confirm('Clear all imported actual hours?')) { S.clearActuals(); state.clockifyReport = null; renderActuals(); } };
-    const cm = $('#commit-merge'); if (cm) cm.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'replace'); state.clockifyReport = null; renderActuals(); toast(`Imported ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped (unmatched)` : ''}.`); };
-    const cadd = $('#commit-add'); if (cadd) cadd.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'merge'); state.clockifyReport = null; renderActuals(); toast(`Added ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped` : ''}.`); };
-    const cc = $('#commit-cancel'); if (cc) cc.onclick = () => { state.clockifyReport = null; renderActuals(); };
+    const cm = $('#commit-merge'); if (cm) cm.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'replace'); state.clockifyReport = null; state.clockifyRaw = null; renderActuals(); toast(`Imported ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped (unmatched)` : ''}.`); };
+    const cadd = $('#commit-add'); if (cadd) cadd.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'merge'); state.clockifyReport = null; state.clockifyRaw = null; renderActuals(); toast(`Added ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped` : ''}.`); };
+    const cc = $('#commit-cancel'); if (cc) cc.onclick = () => { state.clockifyReport = null; state.clockifyRaw = null; renderActuals(); };
+    // mapping selects — save + instantly re-analyze the same file
+    const reanalyze = () => { if (state.clockifyRaw) { state.clockifyReport = S.analyzeClockify(state.clockifyRaw, months()[0]); renderActuals(); } };
+    $$('#p-actuals [data-map-user]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setUserMapping(sel.dataset.mapUser, sel.value); toast('Mapping saved — re-checked.'); reanalyze(); });
+    $$('#p-actuals [data-map-proj]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setProjectMapping(sel.dataset.mapProj, sel.value); toast('Mapping saved — re-checked.'); reanalyze(); });
     const note = $('#pull-note');
     const setNote = (msg, bad) => { if (note) { note.textContent = msg; note.style.color = bad ? '#8f2418' : ''; } };
     const pa = $('#pull-api');
@@ -405,7 +491,8 @@
       try {
         const res = await fetch('/api/clockify?start=' + start + '&end=' + end);
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
-        state.clockifyReport = S.analyzeClockify(await res.text(), ms[0]);
+        state.clockifyRaw = await res.text();
+        state.clockifyReport = S.analyzeClockify(state.clockifyRaw, ms[0]);
         renderActuals();
       } catch (e) { setNote('Clockify pull failed: ' + e.message + (String(e.message).includes('configured') || String(e.message).includes('501') ? ' — set CLOCKIFY_API_KEY + CLOCKIFY_WORKSPACE_ID in Vercel.' : ''), true); pa.disabled = false; }
     };
@@ -414,7 +501,8 @@
       setNote('Pulling clockify-actuals.csv from Box…'); pb.disabled = true;
       try {
         if (!window.UFC_Box || !window.UFC_Box.pullActuals) throw new Error('Box layer not loaded');
-        state.clockifyReport = S.analyzeClockify(await window.UFC_Box.pullActuals(), months()[0]);
+        state.clockifyRaw = await window.UFC_Box.pullActuals();
+        state.clockifyReport = S.analyzeClockify(state.clockifyRaw, months()[0]);
         renderActuals();
       } catch (e) { setNote('Box pull failed: ' + e.message, true); pb.disabled = false; }
     };
@@ -424,7 +512,8 @@
     const rd = new FileReader();
     rd.onload = () => {
       const defMonth = months()[0];
-      state.clockifyReport = S.analyzeClockify(String(rd.result), defMonth);
+      state.clockifyRaw = String(rd.result);
+      state.clockifyReport = S.analyzeClockify(state.clockifyRaw, defMonth);
       renderActuals();
     };
     rd.readAsText(file);

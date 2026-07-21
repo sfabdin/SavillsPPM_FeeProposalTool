@@ -60,7 +60,7 @@
   function isPastYM(ym) { return ym < currentYM(); }
 
   // ---------- store ----------
-  function defaultDb() { return { schemaVersion: SCHEMA, people: {}, allocations: [], actuals: {}, meta: { monthHours: DEFAULT_MONTH_HOURS } }; }
+  function defaultDb() { return { schemaVersion: SCHEMA, people: {}, allocations: [], actuals: {}, mappings: { users: {}, projects: {} }, meta: { monthHours: DEFAULT_MONTH_HOURS } }; }
 
   /* Parsed-db cache — the engine calls readDb() thousands of times per render
      (per person × project × month); without this every call re-JSON.parses the
@@ -101,6 +101,7 @@
       const p = JSON.parse(raw);
       if (!p.people || !p.allocations) return (_dbCache = seedFromMatrix(defaultDb()));
       if (!p.actuals) p.actuals = {};
+      if (!p.mappings) p.mappings = { users: {}, projects: {} };
       if (!p.meta) p.meta = { monthHours: DEFAULT_MONTH_HOURS };
       if (p.meta.monthHours == null) p.meta.monthHours = DEFAULT_MONTH_HOURS;
       _dbCache = p;
@@ -114,6 +115,7 @@
   function hydrateFromRemote(db) {
     if (!db || !db.people || !db.allocations) return false;
     if (!db.actuals) db.actuals = {};
+    if (!db.mappings) db.mappings = { users: {}, projects: {} };
     if (!db.meta) db.meta = { monthHours: DEFAULT_MONTH_HOURS };
     db.schemaVersion = SCHEMA;
     localStorage.setItem(KEY, JSON.stringify(db));
@@ -508,17 +510,23 @@
       const proj = r[cProject]; if (!proj) return;
       const hrs = toHours(r[cDur]); if (!hrs) return;
       const ym = toYm(cDate ? r[cDate] : '', defaultMonth); if (!ym) return;
+      // saved mappings first — '__ignore__' drops the row (e.g. non-delivery staff)
+      const maps = db.mappings || { users: {}, projects: {} };
+      const uMap = maps.users[nkey(uname)];
+      const pMap = maps.projects[nkey(proj)];
+      if (uMap === '__ignore__' || pMap === '__ignore__') return;
       monthsSeen.add(ym);
-      // match person
-      let person = Object.values(db.people).find(p => namesMatch(p.name, uname));
+      // match person: saved mapping → name match
+      let person = (uMap && db.people[uMap]) ? db.people[uMap] : Object.values(db.people).find(p => namesMatch(p.name, uname));
       const personId = person ? person.id : ('unmatched:' + nkey(uname));
       if (!person) unmatchedUsers[uname] = (unmatchedUsers[uname] || 0) + hrs;
       if (person && cTitle && r[cTitle] && !titles[personId]) titles[personId] = String(r[cTitle]).trim();
-      // match project: exact name → Salesforce ID in the Clockify name → fuzzy
-      const res = resolveClockifyProject(proj);
-      const projName = res ? res.name : proj;
-      if (res && res.via === 'salesforce') sfHits++;
-      if (!res) unmatchedProjects[proj] = (unmatchedProjects[proj] || 0) + hrs;
+      // match project: saved mapping → exact name → Salesforce ID → fuzzy
+      let projName, via = null;
+      if (pMap) { projName = pMap; via = 'mapped'; }
+      else { const res = resolveClockifyProject(proj); projName = res ? res.name : proj; via = res && res.via; }
+      if (via === 'salesforce') sfHits++;
+      if (!via) unmatchedProjects[proj] = (unmatchedProjects[proj] || 0) + hrs;
       const key = actualKey(personId, projName, ym);
       agg[key] = (agg[key] || 0) + hrs;
       totalHours += hrs; rowCount++;
@@ -558,6 +566,20 @@
   }
 
   function clearActuals() { const db = readDb(); db.actuals = {}; delete db.meta.clockifyImportedAt; delete db.meta.clockifyMonths; writeDb(db); }
+
+  /* ---------- saved Clockify → roster mappings (map once, keeps forever;
+     lives in staff.json so the whole team shares it) ---------- */
+  function getMappings() { const db = readDb(); return db.mappings || { users: {}, projects: {} }; }
+  function setUserMapping(clockifyName, personId) {
+    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    if (personId) db.mappings.users[nkey(clockifyName)] = personId; else delete db.mappings.users[nkey(clockifyName)];
+    writeDb(db);
+  }
+  function setProjectMapping(clockifyName, matrixProject) {
+    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    if (matrixProject) db.mappings.projects[nkey(clockifyName)] = matrixProject; else delete db.mappings.projects[nkey(clockifyName)];
+    writeDb(db);
+  }
 
   // ---------- Matrix ingest — JS's staffing sheet (xlsx or csv), repeatable ----------
   function excelSerialToYm(n) { const d = new Date(Date.UTC(1899, 11, 30) + n * 86400000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
@@ -715,6 +737,7 @@
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
     // clockify
     analyzeClockify, commitClockify, clearActuals,
+    getMappings, setUserMapping, setProjectMapping,
     // helpers
     namesMatch, cleanName, isNewHireName,
   };
