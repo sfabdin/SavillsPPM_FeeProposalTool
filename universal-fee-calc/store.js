@@ -838,8 +838,19 @@
     const phaseOfMonth = {};
     (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOfMonth[m.year + '-' + m.month] = ph.id; }));
 
-    let gross = 0, lock = 0, fteMonths = 0;
-    const groupGross = {}, groupLock = {}, monthNet = {};
+    // Per-month effective discount. Normally the single global discount; after a
+    // Rate Grid Reconciliation run a project carries a per-month override vector
+    // (rateReconcile.byMonth: ym → discount) that holds each month's billing
+    // constant when the underlying grid changes. Absent → identical to before.
+    const reconMap = (p.rateReconcile && p.rateReconcile.byMonth) || null;
+    const dFor = (ymKey) => (reconMap && reconMap[ymKey] != null) ? reconMap[ymKey] : discPct;
+
+    let gross = 0, fteMonths = 0;
+    // Accumulate GRID-VALUE (discount-independent) per month so a per-month
+    // discount can be applied uniformly afterward: gU = unlocked gross, lRaw =
+    // raw (pre-discount) rate-lock credit.
+    const groupGU = {}, groupLRaw = {}, monthGU = {}, monthLRaw = {};
+    const groupMonthGU = {}, groupMonthLRaw = {};
     p.roles.forEach(r => {
       const { base, anchorYear } = resolveRoleRate(r, catalog, p);
       months.forEach(m => {
@@ -852,22 +863,35 @@
         const unlocked = base * Math.pow(1 + esc, m.year - anchorYear);
         const locked = base * Math.pow(1 + esc, startYear - anchorYear);
         const g = fte * unlocked * hrs;
-        const l = lockOn ? Math.max(0, (unlocked - locked) * fte * hrs) * (1 - discPct) : 0;
-        gross += g; lock += l;
+        const lRaw = lockOn ? Math.max(0, (unlocked - locked) * fte * hrs) : 0;
+        gross += g;
         const grp = r.groupId || 'core';
-        groupGross[grp] = (groupGross[grp] || 0) + g;
-        groupLock[grp] = (groupLock[grp] || 0) + l;
         const ymKey = m.year + '-' + String(m.month).padStart(2, '0');
-        monthNet[ymKey] = (monthNet[ymKey] || 0) + (g - l - g * discPct);   // net accrued this month
+        groupGU[grp] = (groupGU[grp] || 0) + g;
+        groupLRaw[grp] = (groupLRaw[grp] || 0) + lRaw;
+        monthGU[ymKey] = (monthGU[ymKey] || 0) + g;
+        monthLRaw[ymKey] = (monthLRaw[ymKey] || 0) + lRaw;
+        (groupMonthGU[grp] = groupMonthGU[grp] || {})[ymKey] = (groupMonthGU[grp][ymKey] || 0) + g;
+        (groupMonthLRaw[grp] = groupMonthLRaw[grp] || {})[ymKey] = (groupMonthLRaw[grp][ymKey] || 0) + lRaw;
       });
     });
     if (!(gross > 0) && !(p.passthrough && p.passthrough.enabled && (p.passthrough.lines || []).some(l => (parseFloat(l.cost) || 0) > 0))) return null;   // nothing priced & no pass-through — don't freeze $0
 
-    const discount = gross * discPct;
+    // Apply the (per-month) discount to grid values → net, credit, discount, monthNet.
+    const monthNet = {};
+    let lock = 0, discount = 0;
+    Object.keys(monthGU).forEach(ym => {
+      const d = dFor(ym), gU = monthGU[ym], lR = monthLRaw[ym] || 0;
+      monthNet[ym] = (gU - lR) * (1 - d);           // held constant by the reconcile vector
+      lock += lR * (1 - d);
+      discount += gU * d;
+    });
     const net = gross - lock - discount;
-    const byGroup = Object.keys(groupGross).map(grp => {
-      const gg = groupGross[grp], gl = groupLock[grp] || 0;
-      return { group: grp, net: round2(gg - gl - gg * discPct) };
+    const byGroup = Object.keys(groupGU).map(grp => {
+      const gm = groupMonthGU[grp] || {}, lm = groupMonthLRaw[grp] || {};
+      let gnet = 0;
+      Object.keys(gm).forEach(ym => { gnet += (gm[ym] - (lm[ym] || 0)) * (1 - dFor(ym)); });
+      return { group: grp, net: round2(gnet) };
     });
     const feeSharePct = (p.assumptions?.feeShare && p.assumptions.feeShare.enabled)
       ? (parseFloat(p.assumptions.feeShare.pct) || 0) : 0;
@@ -1317,6 +1341,124 @@
     return (p.source && p.source.brokerByMonth) || null;
   }
 
+  /* ============================================================
+     RATE GRID RECONCILIATION
+     ------------------------------------------------------------
+     One-time batch: ingest a NEW rate grid and, per project, solve a
+     per-MONTH reconciling discount so every frozen monthly billing figure
+     (financials.byMonth[].net) holds EXACTLY against the new rack rates.
+     The project total falls out as the sum of held months. Dry-run first;
+     commit snapshots a version, writes the per-month vector, and re-stamps
+     (billing unchanged). Floor breaches / uplifts / unsolvable months are
+     FLAGGED, never auto-changed. */
+  function reconcileTierFloor(newCat, role, p) {
+    const title = newCat?.titles?.find(t => t.id === role.titleId);
+    if (!title) return null;
+    const tier = title.tiers.find(x => x.id === role.tierId)
+      || title.tiers.find(x => x.id === 'mid') || title.tiers[0];
+    return tier ? (tier.costFloor ?? null) : null;
+  }
+  /** Dry-run: reconcile ONE project to `newCat`. Returns per-month rows + flags. */
+  function reconcileToGrid(p, newCat) {
+    const fin = p.financials;
+    if (!fin || !Array.isArray(fin.byMonth) || !fin.byMonth.length)
+      return { status: 'no-frozen', reason: 'No frozen billing series — book/stamp the project first.' };
+    if (p.source && p.source.importedByMonth && !(p.roles || []).length)
+      return { status: 'no-grid', reason: 'Imported $ with no staffing — not grid-priced.' };
+    const frozen = {}; fin.byMonth.forEach(x => { frozen[x.ym] = x.net; });
+    const hrs = p.assumptions?.hrsPerMo || 173.33;
+    const esc = (p.assumptions?.escalation || 0) / 100;
+    const startYear = p.timeline?.startYear || (p.assumptions?.catalogBaseYear || 2024);
+    const lockOn = !!p.assumptions?.rateLock;
+    const months = enumerateMonths(p.timeline);
+    const byPhase = computeMonthsByPhase(p);
+    const phaseOfMonth = {};
+    (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOfMonth[m.year + '-' + m.month] = ph.id; }));
+    // New-grid gross (unlocked) + raw lock per month; plus floor watch per role/month.
+    const newGU = {}, newLRaw = {}; const flags = [];
+    p.roles.forEach(r => {
+      const { base, anchorYear } = resolveRoleRate(r, newCat, p);
+      const floor = reconcileTierFloor(newCat, r, p);
+      months.forEach(m => {
+        const mk = m.year + '-' + m.month;
+        const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte?.[phaseOfMonth[mk]] || 0)) / 100;
+        if (!fte || !base) return;
+        const ym = m.year + '-' + String(m.month).padStart(2, '0');
+        const unlocked = base * Math.pow(1 + esc, m.year - anchorYear);
+        const locked = base * Math.pow(1 + esc, startYear - anchorYear);
+        newGU[ym] = (newGU[ym] || 0) + fte * unlocked * hrs;
+        newLRaw[ym] = (newLRaw[ym] || 0) + (lockOn ? Math.max(0, (unlocked - locked) * fte * hrs) : 0);
+        r.__floorYm = floor;   // stash for post-discount check below
+      });
+    });
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const round4 = (n) => Math.round(n * 10000) / 10000;
+    const vector = {}; const rows = []; let heldTot = 0, frozenTot = 0;
+    const yms = Array.from(new Set([...Object.keys(frozen), ...Object.keys(newGU)])).sort();
+    yms.forEach(ym => {
+      const fN = round2(frozen[ym] || 0);
+      const base = (newGU[ym] || 0) - (newLRaw[ym] || 0);   // new-grid net base at 0% discount
+      frozenTot += fN;
+      let d = null, held = fN, note = '';
+      if (base <= 0.005) {
+        if (Math.abs(fN) > 0.005) { note = 'unsolvable'; flags.push({ ym, type: 'unsolvable', detail: `frozen $${fN.toFixed(0)} but new grid prices $0 this month` }); held = 0; }
+      } else {
+        const dRaw = 1 - fN / base;            // FULL precision — penny-exact on recompute
+        d = dRaw;
+        vector[ym] = dRaw;
+        if (dRaw < 0) flags.push({ ym, type: 'uplift', detail: `new grid lower — needs ${(dRaw * 100).toFixed(1)}% uplift to hold` });
+      }
+      heldTot += held;
+      rows.push({ ym, frozenNet: fN, newBase: round2(base), discount: d == null ? null : round4(d), held: round2(held), delta: round2(held - fN) });
+    });
+    // Floor watch: with the solved per-month discount, is any role below the new floor?
+    p.roles.forEach(r => {
+      const { base, anchorYear } = resolveRoleRate(r, newCat, p);
+      const floor = reconcileTierFloor(newCat, r, p);
+      if (!base || floor == null) return;
+      months.forEach(m => {
+        const mk = m.year + '-' + m.month;
+        const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : (r.fte?.[phaseOfMonth[mk]] || 0)) / 100;
+        if (!fte) return;
+        const ym = m.year + '-' + String(m.month).padStart(2, '0');
+        const d = vector[ym]; if (d == null) return;
+        const yr = lockOn ? startYear : m.year;
+        const effRate = base * Math.pow(1 + esc, yr - anchorYear) * (1 - d);
+        if (effRate < floor - 0.005) flags.push({ ym, type: 'floor', detail: `${r.role || r.titleId}: billed $${effRate.toFixed(0)}/hr < floor $${floor.toFixed(0)}` });
+      });
+    });
+    return {
+      status: 'ok',
+      grid: newCat.source || 'new grid',
+      rows, vector, flags,
+      frozenTotal: round2(frozenTot), heldTotal: round2(heldTot),
+      totalDelta: round2(heldTot - frozenTot),
+      exceptions: flags.length,
+    };
+  }
+  /** Commit a reconciliation: snapshot a version, store the per-month vector +
+      grid tag, and re-stamp financials (billing held by the vector). */
+  function commitReconcile(id, newCat, report) {
+    const db = readDb();
+    const r = db.projects[id];
+    if (!r || !report || report.status !== 'ok') return null;
+    writeDb(db);
+    saveVersion(id, { note: `Pre-reconciliation snapshot (→ ${newCat.source || 'new grid'})`, auto: true });
+    const r2 = readDb().projects[id];
+    r2.rateReconcile = {
+      grid: newCat.source || 'new grid',
+      committedAt: new Date().toISOString(),
+      byMonth: report.vector,
+      exceptions: report.flags,
+    };
+    if (r2.assumptions) r2.assumptions.catalogSource = newCat.source || 'new grid';
+    const fin = computeFinancials(r2, newCat);   // honors rateReconcile → billing holds
+    if (fin) { fin.inputsHash = financialsInputsHash(r2); fin.stale = false; fin.basis = r2.financials?.basis || 'booked'; r2.financials = fin; }
+    r2.updatedAt = new Date().toISOString();
+    const db2 = readDb(); db2.projects[id] = r2; writeDb(db2);
+    return r2;
+  }
+
   /** Reconciliation: imported $ vs. calculated $ (from current staffing) per
       month, with variance. Drives the calculator's side-by-side panel so
       allocations can be tuned to match the imported total without disturbing
@@ -1426,6 +1568,7 @@
     'kyriacos.yerou@savills.com', // Kyri Yerou — developer (note .com)
     'esobel@savills.us',     // Emily Sobel
     'jsantoro@savills.us',   // Jeff Santoro
+    'mglatt@savills.us',     // Michael Glatt
     'mhadim@savills.us',     // Maria Hadim
     'kspiegel@savills.us',   // Kathy Spiegel
     'eglatt@savills.us',     // Emily Glatt
@@ -1625,6 +1768,7 @@
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
     allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity,
     saveVersion, listVersions, versionDiff, restoreVersionRecord, rosterDiff,
+    reconcileToGrid, commitReconcile,
     proposalHealth,
     exportDb, importDb, downloadJson,
     FLASH_LABELS, captureSnapshot, getSnapshots, deleteSnapshot, periodKey,

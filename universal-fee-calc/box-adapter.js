@@ -50,6 +50,7 @@
     dataFileId: '2265137344562',          // projects.json in Box
     ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
     studioFileId: '2302220793247',        // studio.json in Box (Revenue Studio baselines + scenarios)
+    actualsFileId: '',                    // clockify-actuals.csv in Box — hours by user×project×month. '' = not configured (page falls back to manual drop / API proxy)
     folderId: '387228486391',             // used only to (re)create the file if missing
     pushDebounceMs: 1500,
 
@@ -71,6 +72,7 @@
     isAuthed: () => !!getToken(),
     pushNow,         // force an immediate flush
     pullRates,       // fetch the confidential rate grid (post-login only)
+    pullActuals,     // fetch the Clockify actuals CSV (clockify-actuals.csv in Box)
   };
   window.UFC_Box = Box;
 
@@ -373,6 +375,16 @@
     });
   }
   Box.syncNow = syncNow;
+
+  // ---- Clockify actuals CSV (SEPARATE small file, written by the scheduled
+  // Clockify pull or dropped into the Box folder by hand). Read-only here. ----
+  async function pullActuals() {
+    const id = BOX_CONFIG.actualsFileId;
+    if (!id || /PASTE/.test(id)) throw new Error('actuals file id not configured — set actualsFileId in box-adapter.js');
+    const res = await boxFetch('/files/' + id + '/content');
+    if (!res.ok) throw new Error('actuals pull failed: ' + res.status);
+    return await res.text();
+  }
 
   // ---- Revenue Studio file (studio.json) — SEPARATE from projects.json ----
   let _studioEtag = null;
