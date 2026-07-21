@@ -1,0 +1,89 @@
+/* ============================================================
+   VERCEL SERVERLESS FUNCTION · Clockify → aggregated actuals CSV
+   ------------------------------------------------------------
+   Path:  /api/clockify?start=2026-01-01&end=2026-06-30
+
+   WHY THIS EXISTS
+     The Staffing & Bandwidth page needs ACTUAL hours by
+     user × project × month. Pulling raw time entries is huge and slow;
+     Clockify's Reports API aggregates server-side, so ONE request
+     returns a few hundred rows no matter how many entries exist.
+     The API key must never live in browser code, so this proxy holds
+     it as an environment variable and returns a small CSV the page's
+     existing importer ingests directly.
+
+   SETUP (Vercel project → Settings → Environment Variables)
+     CLOCKIFY_API_KEY       = Profile → Advanced → API Key  (use a
+                              reporting/service account, not a personal one)
+     CLOCKIFY_WORKSPACE_ID  = Workspace Settings URL: /workspaces/{THIS}/…
+
+   RESPONSE  text/csv:
+     User,Project,Client,Duration (decimal),Start Date
+   (Start Date = first of the month — the importer buckets by month.)
+   ============================================================ */
+
+const MONTHS = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+function normMonth(name) {
+  const s = String(name || '').trim();
+  let m;
+  if ((m = s.match(/^(\d{4})-(\d{2})/))) return m[1] + '-' + m[2];                    // 2026-04…
+  if ((m = s.match(/^([A-Za-z]{3,9})[ ,]+(\d{4})$/))) {                                // Apr 2026 / April 2026
+    const mm = MONTHS[m[1].slice(0, 3).toLowerCase()];
+    if (mm) return m[2] + '-' + mm;
+  }
+  if ((m = s.match(/^(\d{1,2})\/(\d{4})$/))) return m[2] + '-' + String(+m[1]).padStart(2, '0'); // 04/2026
+  const d = new Date(s);
+  if (!isNaN(d)) return d.toISOString().slice(0, 7);
+  return null;
+}
+function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+
+export default async function handler(req, res) {
+  const key = process.env.CLOCKIFY_API_KEY;
+  const ws = process.env.CLOCKIFY_WORKSPACE_ID;
+  if (!key || !ws) { res.status(501).json({ error: 'not configured', detail: 'Set CLOCKIFY_API_KEY and CLOCKIFY_WORKSPACE_ID in Vercel env vars.' }); return; }
+
+  const start = String(req.query.start || '').slice(0, 10);
+  const end = String(req.query.end || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    res.status(400).json({ error: 'pass start=YYYY-MM-DD&end=YYYY-MM-DD' }); return;
+  }
+
+  try {
+    // Summary report, grouped USER → PROJECT → MONTH — aggregated server-side.
+    const rep = await fetch(`https://reports.api.clockify.me/v1/workspaces/${ws}/reports/summary`, {
+      method: 'POST',
+      headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dateRangeStart: start + 'T00:00:00.000',
+        dateRangeEnd: end + 'T23:59:59.999',
+        summaryFilter: { groups: ['USER', 'PROJECT', 'MONTH'] },
+        exportType: 'JSON',
+      }),
+    });
+    if (!rep.ok) { res.status(502).json({ error: 'clockify ' + rep.status, detail: (await rep.text()).slice(0, 400) }); return; }
+    const data = await rep.json();
+
+    // Flatten nested groups → rows. duration is in seconds.
+    const rows = [];
+    (data.groupOne || []).forEach(user => {
+      (user.children || []).forEach(proj => {
+        const client = proj.clientName || '';
+        (proj.children || []).forEach(mon => {
+          const ym = normMonth(mon.name);
+          const hrs = Math.round(((mon.duration || 0) / 3600) * 100) / 100;
+          if (!ym || !hrs) return;
+          rows.push([user.name || '', proj.name || '', client, hrs, ym + '-01']);
+        });
+      });
+    });
+
+    const csv = 'User,Project,Client,Duration (decimal),Start Date\n'
+      + rows.map(r => r.map(csvCell).join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(csv);
+  } catch (e) {
+    res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) });
+  }
+}
