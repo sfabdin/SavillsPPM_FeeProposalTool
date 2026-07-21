@@ -71,6 +71,7 @@
     expandedPeople: new Set(), expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
+    canonProposals: null,
   };
 
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
@@ -232,6 +233,7 @@
       <select id="al-project">${projOpts}</select>
       <span class="grow"></span>
       <span class="note-txt" id="matrix-meta"></span>
+      <button class="btn btn-ghost" id="canon-sync" title="Pull Clockify's project list and rename matrix projects to the canonical names — one-time mapping, remembered for future sheet imports">⇄ Sync names from Clockify</button>
       <button class="btn btn-ghost" id="matrix-reimport" title="Replace all allocations from a fresh export of the staffing sheet (Data tab or CSV). Actuals and roster edits are kept.">⇪ Re-import JS sheet</button>
       <button class="btn btn-primary" id="al-add">+ Add allocation</button>
     </div>`;
@@ -262,6 +264,8 @@
     const mm = $('#matrix-meta');
     if (mm) { const meta = S.readDb().meta || {}; mm.textContent = meta.matrixImportedAt ? `Matrix: ${meta.matrixSource || 'seed v43'} · ${new Date(meta.matrixImportedAt).toLocaleDateString()}` : ''; }
     const mr = $('#matrix-reimport'); if (mr) mr.onclick = () => $('#matrix-file').click();
+    const cs = $('#canon-sync'); if (cs) cs.onclick = startCanonSync;
+    if (state.canonProposals) renderCanonReview();
     const clr = $('#al-clear'); if (clr) clr.onclick = (e) => { e.preventDefault(); state.allocSearch = state.allocStatus = state.allocProject = ''; renderAllocations(); };
     $$('#p-allocations [data-edit]').forEach(b => b.onclick = () => openAllocModal(b.dataset.edit));
     $$('#p-allocations [data-del]').forEach(b => b.onclick = () => { const a = S.listAllocations().find(x => x.id === b.dataset.del); if (a && confirm(`Delete ${(S.getPerson(a.personId) || {}).name} on ${a.project}?`)) { S.deleteAllocation(b.dataset.del); renderAll(); } });
@@ -599,6 +603,53 @@
       });
       setStoreNote('box');
     } catch (e) { setStoreNote('error', e.message); }
+  }
+
+  /* ---------- canonical name sync (Clockify → matrix renames) ---------- */
+  async function startCanonSync() {
+    const btn = $('#canon-sync'); if (btn) { btn.disabled = true; btn.textContent = 'Pulling project list…'; }
+    try {
+      const res = await fetch('/api/clockify?list=projects');
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
+      const rows = S.parseCsvRows(await res.text()).map(o => ({ name: o.Project || o.project || Object.values(o)[0] || '', client: o.Client || o.client || '' }));
+      if (!rows.length) throw new Error('empty project list');
+      state.canonProposals = S.proposeCanonical(rows);
+      renderAllocations();
+    } catch (e) { alert('Could not pull the Clockify project list: ' + e.message + '\n\nAlternative: export any Clockify report as CSV and drop it on the Compare tab — unmatched projects can be mapped there.'); if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync names from Clockify'; } }
+  }
+  function renderCanonReview() {
+    const props = state.canonProposals; if (!props) return;
+    const need = props.filter(p => p.kind !== 'exact');
+    const exact = props.length - need.length;
+    let rows = '';
+    need.forEach((p, i) => {
+      const badge = p.kind === 'strong' ? `<span class="badge active">${p.score}%</span>` : p.kind === 'weak' ? `<span class="badge pursuit">${p.score}%</span>` : p.kind === 'saved' ? `<span class="badge active">saved</span>` : `<span class="no-link" style="margin:0">no Clockify yet</span>`;
+      rows += `<tr>
+        <td class="pname">${esc(p.matrix)}</td>
+        <td>${badge}</td>
+        <td>${p.match ? esc(p.match) + (p.client ? ` <span class="vmini">· ${esc(p.client)}</span>` : '') : '<span class="vmini">keeps its JS-sheet name; will canonicalize once it exists in Clockify</span>'}</td>
+        <td>${p.match ? `<label class="chk" style="justify-content:flex-end"><input type="checkbox" data-canon-i="${i}" ${p.kind !== 'weak' ? 'checked' : ''}> rename</label>` : ''}</td>
+      </tr>`;
+    });
+    const panel = `<div class="import-card" id="canon-panel" style="margin-top:16px">
+      <h3>Sync names from Clockify — review</h3>
+      <p><b>${exact}</b> of ${props.length} matrix projects already match Clockify exactly. Review the rest: checked rows get renamed to the canonical Clockify name (allocations + actuals follow), and the old→new mapping is remembered so future JS-sheet imports auto-rename. Strong matches are pre-checked; weak ones (amber) need your eye.</p>
+      <table class="dt"><thead><tr><th>Matrix (JS sheet)</th><th>Match</th><th>Clockify canonical</th><th style="text-align:right">Rename?</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="imp-actions" style="margin-top:14px">
+        <button class="btn btn-primary" id="canon-commit">Commit renames</button>
+        <button class="btn btn-ghost" id="canon-cancel">Cancel</button>
+      </div>
+    </div>`;
+    $('#p-allocations').insertAdjacentHTML('afterbegin', panel);
+    $('#canon-cancel').onclick = () => { state.canonProposals = null; renderAllocations(); };
+    $('#canon-commit').onclick = () => {
+      const pairs = [];
+      $$('#canon-panel [data-canon-i]').forEach(cb => { if (cb.checked) { const p = need[+cb.dataset.canonI]; if (p && p.match) pairs.push({ from: p.matrix, to: p.match }); } });
+      const n = S.commitRenames(pairs);
+      state.canonProposals = null;
+      renderAll();
+      toast(`Renamed ${pairs.length} projects (${n} allocations updated) — mapping saved.`);
+    };
   }
 
   /* ---------- matrix file re-import ---------- */

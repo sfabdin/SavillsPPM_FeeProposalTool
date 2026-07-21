@@ -647,6 +647,46 @@
     writeDb(db);
   }
 
+  /* ---------- canonical name sync (Clockify project list → matrix renames) ----------
+     One-time comparative match; the rename table (old JS-sheet name → canonical
+     Clockify name) persists in mappings.renames so future sheet re-imports
+     auto-rename on the way in. */
+  /** Propose matches: for each matrix project, the best Clockify candidate.
+      canon = [{name, client}] parsed from the project-list CSV. */
+  function proposeCanonical(canonRows) {
+    const canon = canonRows.filter(c => c.name);
+    const renames = ((readDb().mappings || {}).renames) || {};
+    return distinctProjects().map(mp => {
+      const already = canon.find(c => nkey(c.name) === nkey(mp));
+      if (already) return { matrix: mp, match: already.name, client: already.client, score: 100, kind: 'exact' };
+      const saved = renames[nkey(mp)];
+      if (saved) return { matrix: mp, match: saved, client: '', score: 100, kind: 'saved' };
+      let best = null, bestScore = 0;
+      canon.forEach(c => { const s = tokenScore(mp, c.name); if (s > bestScore) { bestScore = s; best = c; } });
+      if (best && bestScore >= 0.55) return { matrix: mp, match: best.name, client: best.client, score: Math.round(bestScore * 100), kind: bestScore >= 0.8 ? 'strong' : 'weak' };
+      return { matrix: mp, match: null, client: '', score: 0, kind: 'none' };
+    });
+  }
+  /** Commit renames: [{from, to}] — rewrites allocation project names AND actuals
+      keys, saves the rename table for future imports. */
+  function commitRenames(pairs) {
+    const db = readDb();
+    db.mappings = db.mappings || { users: {}, projects: {} };
+    db.mappings.renames = db.mappings.renames || {};
+    let n = 0;
+    pairs.forEach(({ from, to }) => {
+      if (!from || !to || from === to) return;
+      db.allocations.forEach(a => { if (a.project === from) { a.project = to; n++; } });
+      Object.keys(db.actuals).forEach(k => { const parts = k.split('|'); if (parts[1] === from) { const nk2 = parts[0] + '|' + to + '|' + parts[2]; db.actuals[nk2] = (db.actuals[nk2] || 0) + db.actuals[k]; delete db.actuals[k]; } });
+      db.mappings.renames[nkey(from)] = to;
+      // keep any fee link pointing at the old name
+      if (db.mappings.fee && db.mappings.fee[nkey(from)]) { db.mappings.fee[nkey(to)] = db.mappings.fee[nkey(from)]; delete db.mappings.fee[nkey(from)]; }
+    });
+    db.meta.canonSyncedAt = new Date().toISOString();
+    writeDb(db);
+    return n;
+  }
+
   // ---------- Matrix ingest — JS's staffing sheet (xlsx or csv), repeatable ----------
   function excelSerialToYm(n) { const d = new Date(Date.UTC(1899, 11, 30) + n * 86400000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
   function anyToYm(v) {
@@ -767,6 +807,8 @@
       per-person capacity/title edits; stamps the source for the meta line. */
   function importMatrix(rows, sourceName) {
     const db = readDb();
+    const renames = ((db.mappings || {}).renames) || {};
+    rows.forEach(r => { const c = renames[nkey(r.proj)]; if (c) r.proj = c; });   // auto-canonicalize on the way in
     const keepActuals = db.actuals || {};
     const keep = {}; Object.values(db.people).forEach(p => { keep[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam }; });
     const fresh = defaultDb();
@@ -804,6 +846,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, tokenScore,
+    proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers
     namesMatch, cleanName, isNewHireName,
   };
