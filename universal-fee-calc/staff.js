@@ -62,6 +62,12 @@
   // ---------- store ----------
   function defaultDb() { return { schemaVersion: SCHEMA, people: {}, allocations: [], actuals: {}, meta: { monthHours: DEFAULT_MONTH_HOURS } }; }
 
+  /* Parsed-db cache — the engine calls readDb() thousands of times per render
+     (per person × project × month); without this every call re-JSON.parses the
+     whole store and the Compare tab freezes. All writes flow through writeDb /
+     hydrateFromRemote in this module, which refresh the cache. */
+  let _dbCache = null;
+
   function seedFromMatrix(db) {
     const seed = (typeof window !== 'undefined' && window.STAFF_SEED) || [];
     db.people = {}; db.allocations = [];
@@ -88,16 +94,18 @@
   }
 
   function readDb() {
+    if (_dbCache) return _dbCache;
     try {
       const raw = localStorage.getItem(KEY);
       if (!raw) { const db = seedFromMatrix(defaultDb()); writeDb(db); return db; }
       const p = JSON.parse(raw);
-      if (!p.people || !p.allocations) return seedFromMatrix(defaultDb());
+      if (!p.people || !p.allocations) return (_dbCache = seedFromMatrix(defaultDb()));
       if (!p.actuals) p.actuals = {};
       if (!p.meta) p.meta = { monthHours: DEFAULT_MONTH_HOURS };
       if (p.meta.monthHours == null) p.meta.monthHours = DEFAULT_MONTH_HOURS;
+      _dbCache = p;
       return p;
-    } catch (e) { console.error('staff db read failed', e); return seedFromMatrix(defaultDb()); }
+    } catch (e) { console.error('staff db read failed', e); return (_dbCache = seedFromMatrix(defaultDb())); }
   }
   /* Remote sync — staff.json in Box (same pattern as studio.json). attachRemote
      is wired by the page after boot; hydrate never re-triggers a push. */
@@ -109,6 +117,7 @@
     if (!db.meta) db.meta = { monthHours: DEFAULT_MONTH_HOURS };
     db.schemaVersion = SCHEMA;
     localStorage.setItem(KEY, JSON.stringify(db));
+    _dbCache = db;
     return true;
   }
   function writeDb(db) {
@@ -117,6 +126,7 @@
     db.meta.updatedAt = new Date().toISOString();
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser && window.UFC_Store.getCurrentUser(); if (u && u.username) db.meta.updatedBy = u.username; } catch (e) {}
     localStorage.setItem(KEY, JSON.stringify(db));
+    _dbCache = db;
     if (_push) { try { _push(db); } catch (e) { console.warn('staff push failed', e); } }
   }
 
@@ -248,14 +258,17 @@
   }
 
   /** Best-effort match of a matrix project name to a fee-tool project. */
-  let _feeIndex = null;
+  let _feeIndex = null, _feeRecords = null;
+  /** Fee-tool project records, parsed ONCE per page load — UFC_Store.getProject
+      re-parses the whole projects.json every call, which froze the Compare tab. */
+  function feeRecords() {
+    if (_feeRecords) return _feeRecords;
+    try { const S2 = window.UFC_Store; _feeRecords = (S2 && S2.listProjects) ? S2.listProjects() : []; } catch (e) { _feeRecords = []; }
+    return _feeRecords;
+  }
   function feeIndex() {
     if (_feeIndex) return _feeIndex;
-    _feeIndex = [];
-    try {
-      const S = window.UFC_Store;
-      if (S && S.listProjects) _feeIndex = S.listProjects().map(p => ({ id: p.id, name: (p.project && p.project.name) || '', key: projKey((p.project && p.project.name) || '') }));
-    } catch (e) {}
+    _feeIndex = feeRecords().map(p => ({ id: p.id, name: (p.project && p.project.name) || '', key: projKey((p.project && p.project.name) || '') }));
     return _feeIndex;
   }
   function matchFeeProject(name) {
@@ -273,8 +286,7 @@
     if (_sfIndex) return _sfIndex;
     _sfIndex = [];
     try {
-      const S2 = window.UFC_Store;
-      if (S2 && S2.listProjects) S2.listProjects().forEach(p => {
+      feeRecords().forEach(p => {
         const sf = String((p.project && p.project.salesforceId) || '').trim().toLowerCase();
         if (sf.length >= 4) _sfIndex.push({ sf, id: p.id, name: (p.project && p.project.name) || '' });
       });
@@ -375,7 +387,7 @@
     const link = matchFeeProject(projectName);
     if (!link) return null;
     const S2 = window.UFC_Store;
-    const p = S2 && S2.getProject && S2.getProject(link.id);
+    const p = feeRecords().find(x => x.id === link.id);
     if (!p || !p.roles || !p.roles.length || !p.timeline) return null;
     const hrs = (p.assumptions && p.assumptions.hrsPerMo) || 173.33;
     const byPhase = S2.computeMonthsByPhase(p);
