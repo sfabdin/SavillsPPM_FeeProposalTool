@@ -376,9 +376,9 @@
           b += `<tr><td class="pname sticky-col" style="font-weight:600">${esc(rowLabel(r))}</td>${mcells}<td class="num">${fmtH(r.expected)}</td><td class="num">${fmtH(r.actual)}</td><td class="num ${vcls}">${r.variance >= 0 ? '+' : ''}${fmtH(r.variance)}</td><td class="num vmini">${r.expected ? Math.round(r.actual / r.expected * 100) + '%' : '—'}</td></tr>`;
         });
         // TOTAL row — per-month plan/actual/% summed over people
+        const pcls = varCls(pe, pa);
         const totCells = msDesc.map(m => { let e = 0, a = 0; list.forEach(r => { e += r.byMonth[m].e; a += r.byMonth[m].a; }); const pct = e ? Math.round(a / e * 100) + '%' : (a ? '—' : ''); return `<td class="num ${e || a ? varCls(e, a) : ''}" style="white-space:nowrap">${(e || a) ? `<b>${fmtH(a)}</b><span class="vmini"> /${fmtH(e)}</span><div class="vmini">${pct}</div>` : '·'}</td>`; }).join('');
         const totRow = `<tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total</td>${totCells}<td class="num" style="font-weight:800">${fmtH(pe)}</td><td class="num" style="font-weight:800">${fmtH(pa)}</td><td class="num ${pcls}" style="font-weight:800">${pa >= pe ? '+' : ''}${fmtH(pa - pe)}</td><td class="num vmini" style="font-weight:700">${pe ? Math.round(pa / pe * 100) + '%' : '—'}</td></tr>`;
-        const pcls = varCls(pe, pa);
         const cp = byPerson ? null : contractByProj[pn];
         const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cp.total)}</b>` : `<span style="color:#b0b5bc">no contract staffing</span>`;
         let contractTbl = '';
@@ -672,10 +672,16 @@
     $('#cnt-proj').textContent = '(' + S.distinctProjects().length + ')';
   }
   function renderActive() {
-    if (state.tab === 'bandwidth') renderBandwidth();
-    else if (state.tab === 'allocations') renderAllocations();
-    else if (state.tab === 'projects') renderProjects();
-    else if (state.tab === 'actuals') renderActuals();
+    const panel = $('#p-' + state.tab);
+    try {
+      if (state.tab === 'bandwidth') renderBandwidth();
+      else if (state.tab === 'allocations') renderAllocations();
+      else if (state.tab === 'projects') renderProjects();
+      else if (state.tab === 'actuals') renderActuals();
+    } catch (e) {
+      console.error('render failed', e);
+      if (panel) panel.innerHTML = `<div class="empty" style="color:#8f2418"><b>This view hit an error:</b> ${esc(e.message)}<br><span class="vmini">${esc((e.stack || '').split('\n')[1] || '')}</span></div>`;
+    }
   }
   function renderAll() { buildIdentityBar(); renderCounts(); renderActive(); }
 
