@@ -51,6 +51,7 @@
     ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
     studioFileId: '2302220793247',        // studio.json in Box (Revenue Studio baselines + scenarios)
     actualsFileId: '',                    // clockify-actuals.csv in Box — hours by user×project×month. '' = not configured (page falls back to manual drop / API proxy)
+    staffFileId: '',                      // staff.json in Box — the LIVING staffing matrix (allocations + notes + actuals). '' = local-only until configured
     folderId: '387228486391',             // used only to (re)create the file if missing
     pushDebounceMs: 1500,
 
@@ -73,6 +74,8 @@
     pushNow,         // force an immediate flush
     pullRates,       // fetch the confidential rate grid (post-login only)
     pullActuals,     // fetch the Clockify actuals CSV (clockify-actuals.csv in Box)
+    pullStaff,       // fetch staff.json (staffing matrix + notes + actuals)
+    uploadStaff,     // push staff.json (debounced by the staffing page)
   };
   window.UFC_Box = Box;
 
@@ -384,6 +387,41 @@
     const res = await boxFetch('/files/' + id + '/content');
     if (!res.ok) throw new Error('actuals pull failed: ' + res.status);
     return await res.text();
+  }
+
+  // ---- Staffing matrix file (staff.json) — the living strategy doc.
+  // Same newest-wins whole-file pattern as studio.json. ----
+  let _staffEtag = null;
+  async function pullStaff() {
+    const id = BOX_CONFIG.staffFileId;
+    if (!id || /PASTE/.test(id)) return null;                    // not configured → local only
+    const meta = await boxFetch('/files/' + id + '?fields=etag');
+    if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; }
+    const res = await boxFetch('/files/' + id + '/content');
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('staff pull failed: ' + res.status);
+    const txt = await res.text();
+    if (!txt || !txt.trim()) return null;                        // empty placeholder file
+    try { return JSON.parse(txt); } catch (e) { return null; }   // not yet valid JSON → seed from local
+  }
+  async function uploadStaff(db) {
+    const id = BOX_CONFIG.staffFileId;
+    if (!id || /PASTE/.test(id)) return;                         // local-only until configured
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'staff.json' }));
+    form.append('file', new Blob([JSON.stringify(db)], { type: 'application/json' }), 'staff.json');
+    const res = await fetch('https://upload.box.com/api/2.0/files/' + id + '/content', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, ...(_staffEtag ? { 'If-Match': _staffEtag } : {}) },
+      body: form,
+    });
+    if (res.status === 412) {                                    // someone else saved — refresh etag, retry once
+      const meta = await boxFetch('/files/' + id + '?fields=etag');
+      if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; return uploadStaff(db); }
+    }
+    if (!res.ok) throw new Error('staff push failed: ' + res.status);
+    try { const j = await res.json(); if (j.entries && j.entries[0]) _staffEtag = j.entries[0].etag; } catch (e) {}
   }
 
   // ---- Revenue Studio file (studio.json) — SEPARATE from projects.json ----

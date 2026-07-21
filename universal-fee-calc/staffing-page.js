@@ -37,6 +37,7 @@
   }
   function renderDenied() {
     const u = STORE.getCurrentUser();
+    const canEsc = STORE.canImpersonate && STORE.canImpersonate();
     document.querySelector('.wrap').innerHTML = `
       <header class="head">
         <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
@@ -44,9 +45,14 @@
       </header>
       <div class="empty" style="padding:70px 40px">
         <div style="font-family:var(--font-display);font-weight:800;font-size:20px;color:var(--sav-navy);margin-bottom:10px">This tool is limited to staffing leadership.</div>
-        <div style="max-width:460px;margin:0 auto;line-height:1.6">You're signed in as <strong>${(u && u.username) ? String(u.username).replace(/[&<>"]/g,'') : '(no identity)'}</strong>, which isn't on the access list. If you need bandwidth or allocation information, contact Salim Abdin.</div>
-        <div style="margin-top:22px"><a href="Fee Generator.html" class="btn btn-secondary" style="text-decoration:none">← Back to the Fee System</a></div>
+        <div style="max-width:460px;margin:0 auto;line-height:1.6">${canEsc ? 'You&rsquo;re previewing as' : 'You&rsquo;re signed in as'} <strong>${(u && u.username) ? String(u.username).replace(/[&<>"]/g,'') : '(no identity)'}</strong>, which isn't on the access list.${canEsc ? ' This is what they would see.' : ' If you need bandwidth or allocation information, contact Salim Abdin.'}</div>
+        <div style="margin-top:22px;display:flex;gap:10px;justify-content:center">
+          ${canEsc ? '<button class="btn btn-primary" id="deny-back">← Back to my view</button>' : ''}
+          <a href="Fee Generator.html" class="btn btn-secondary" style="text-decoration:none">Fee System home</a>
+        </div>
       </div>`;
+    const b = document.getElementById('deny-back');
+    if (b) b.onclick = () => { STORE.clearImpersonation(); window.location.reload(); };
   }
 
   const $ = (s) => document.querySelector(s);
@@ -94,6 +100,7 @@
   /* ---------- BANDWIDTH ---------- */
   function renderBandwidth() {
     const ms = months();
+    if (ms.length === 1) { renderMonthFocus(ms[0]); return; }
     const rows = S.bandwidthGrid(ms, { includePursuit: state.incPursuit }).filter(r => r.activeMonths > 0);
     rows.sort((a, b) => b.peak - a.peak || a.person.name.localeCompare(b.person.name));
     const over = rows.filter(r => r.peak > 100).length;
@@ -131,6 +138,38 @@
     $$('#p-bandwidth .who-name').forEach(el => el.onclick = () => { const id = el.dataset.exp; if (state.expandedPeople.has(id)) state.expandedPeople.delete(id); else state.expandedPeople.add(id); renderBandwidth(); });
   }
 
+  /* Single-month focus: everyone's load THIS month with their project mix,
+     heaviest first — the "who can take work in July?" pivot. */
+  function renderMonthFocus(ym) {
+    const rows = S.bandwidthGrid([ym], { includePursuit: state.incPursuit }).filter(r => (r.byMonth[ym] || 0) > 0);
+    rows.sort((a, b) => (b.byMonth[ym] || 0) - (a.byMonth[ym] || 0) || a.person.name.localeCompare(b.person.name));
+    const over = rows.filter(r => r.byMonth[ym] > 100).length;
+    const free = rows.filter(r => r.byMonth[ym] <= 85).length;
+    const avg = rows.length ? rows.reduce((s, r) => s + r.byMonth[ym], 0) / rows.length : 0;
+    const kpis = `<div class="kpi-strip">
+      <div class="kpi-card"><div class="k-num">${rows.length}</div><div class="k-lbl">People staffed · ${esc(S.ymLabel(ym))}</div></div>
+      <div class="kpi-card ${over ? 'warn' : ''}"><div class="k-num">${over}</div><div class="k-lbl">Over 100% this month</div></div>
+      <div class="kpi-card accent"><div class="k-num">${free}</div><div class="k-lbl">With headroom (≤85%)</div></div>
+      <div class="kpi-card"><div class="k-num">${Math.round(avg)}%</div><div class="k-lbl">Avg load</div></div>
+    </div>`;
+    const barCol = (v) => v > 150 ? '#e4453a' : v > 120 ? '#e08a7d' : v > 100 ? '#e8b563' : v > 85 ? '#5ba8a5' : '#a9cfcd';
+    let body = '';
+    rows.forEach(r => {
+      const v = Math.round(r.byMonth[ym] || 0);
+      const allocs = S.personAllocationsIn(r.person.id, ym).filter(a => state.incPursuit || (a.status !== 'Pursuit' && a.type !== 'Opportunity'));
+      const chips = allocs.sort((a, b) => b.pct - a.pct).map(a => `<span class="mv-chip ${(a.status === 'Pursuit' || a.type === 'Opportunity') ? 'pursuit' : ''}" title="${esc(a.note || '')}"><b>${a.pct}%</b> ${esc(a.project)}</span>`).join('');
+      const w = Math.min(100, v / 1.6);   // bar scaled to 160% full-width
+      body += `<div class="mv-row">
+        <div><div class="who-name" style="cursor:default">${esc(r.person.name)}</div>${r.person.isNewHire ? '<div class="who-meta"><span class="nh-tag">New hire</span></div>' : ''}</div>
+        <div style="display:flex;align-items:center;gap:10px"><span class="mv-load" style="color:${v > 100 ? '#C0392B' : 'var(--sav-navy)'}">${v}%</span>
+          <div class="mv-bar" style="flex:1"><i style="width:${w}%;background:${barCol(v)}"></i><span class="cap" style="left:${100 / 1.6}%"></span></div></div>
+        <div class="mv-projs">${chips}</div>
+      </div>`;
+    });
+    const legend = `<div class="legend"><span>Tick mark = 100% capacity. Chips show each project's share; amber chips are pursuits.</span><span style="margin-left:auto">◀ ▶ in the toolbar pivots month to month.</span></div>`;
+    $('#p-bandwidth').innerHTML = kpis + `<div style="border:1px solid rgba(37,39,58,0.12)"><div class="mv-row" style="background:#faf9f7;border-top:0;font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel)"><div>Person</div><div>Load · ${esc(S.ymLabel(ym))}</div><div>Projects this month</div></div>${body || '<div class="empty" style="border:0">Nobody staffed this month.</div>'}</div>` + legend;
+  }
+
   function personDrawer(person, ms) {
     const allocs = S.listAllocations().filter(a => a.personId === person.id && (state.incPursuit || (a.status !== 'Pursuit' && a.type !== 'Opportunity')));
     // keep those active anywhere in-window
@@ -161,6 +200,8 @@
       <select id="al-status"><option value="">All statuses</option><option ${state.allocStatus === 'Active' ? 'selected' : ''}>Active</option><option ${state.allocStatus === 'Pursuit' ? 'selected' : ''}>Pursuit</option></select>
       <select id="al-project">${projOpts}</select>
       <span class="grow"></span>
+      <span class="note-txt" id="matrix-meta"></span>
+      <button class="btn btn-ghost" id="matrix-reimport" title="Replace all allocations from a fresh export of the staffing sheet (Data tab or CSV). Actuals and roster edits are kept.">⇪ Re-import JS sheet</button>
       <button class="btn btn-primary" id="al-add">+ Add allocation</button>
     </div>`;
 
@@ -187,6 +228,9 @@
     $('#al-status').onchange = (e) => { state.allocStatus = e.target.value; renderAllocations(); };
     $('#al-project').onchange = (e) => { state.allocProject = e.target.value; renderAllocations(); };
     $('#al-add').onclick = () => openAllocModal(null);
+    const mm = $('#matrix-meta');
+    if (mm) { const meta = S.readDb().meta || {}; mm.textContent = meta.matrixImportedAt ? `Matrix: ${meta.matrixSource || 'seed v43'} · ${new Date(meta.matrixImportedAt).toLocaleDateString()}` : ''; }
+    const mr = $('#matrix-reimport'); if (mr) mr.onclick = () => $('#matrix-file').click();
     const clr = $('#al-clear'); if (clr) clr.onclick = (e) => { e.preventDefault(); state.allocSearch = state.allocStatus = state.allocProject = ''; renderAllocations(); };
     $$('#p-allocations [data-edit]').forEach(b => b.onclick = () => openAllocModal(b.dataset.edit));
     $$('#p-allocations [data-del]').forEach(b => b.onclick = () => { const a = S.listAllocations().find(x => x.id === b.dataset.del); if (a && confirm(`Delete ${(S.getPerson(a.personId) || {}).name} on ${a.project}?`)) { S.deleteAllocation(b.dataset.del); renderAll(); } });
@@ -248,12 +292,16 @@
       const totExp = rows.reduce((s, r) => s + r.expected, 0), totAct = rows.reduce((s, r) => s + r.actual, 0);
 
       const projOpts = ['<option value="">All projects</option>'].concat(S.distinctProjects().map(p => `<option ${projFilter === p ? 'selected' : ''}>${esc(p)}</option>`)).join('');
-      html += `<div class="kpi-strip" style="grid-template-columns:repeat(3,1fr)">
-        <div class="kpi-card accent"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">Expected hrs (planned) · window</div></div>
-        <div class="kpi-card"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">Actual hrs logged</div></div>
-        <div class="kpi-card ${Math.abs(totAct - totExp) > totExp * 0.1 ? 'warn' : ''}"><div class="k-num">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)}</div><div class="k-lbl">Variance (actual − expected)</div></div>
+      // Contract total across the visible projects (fee tool — titles × FTE, no names)
+      let totContract = 0; const contractByProj = {};
+      projNames.forEach(pn => { const cp = S.contractPlan(pn, ms); if (cp) { contractByProj[pn] = cp; totContract += cp.total; } });
+      html += `<div class="kpi-strip">
+        <div class="kpi-card accent"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">① Matrix plan (JS sheet) · hrs</div></div>
+        <div class="kpi-card"><div class="k-num">${fmtH(totContract)}</div><div class="k-lbl">② Per contract (fee tool) · hrs</div></div>
+        <div class="kpi-card"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">③ Actual (Clockify) · hrs</div></div>
+        <div class="kpi-card ${Math.abs(totAct - totExp) > totExp * 0.1 ? 'warn' : ''}"><div class="k-num">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)}</div><div class="k-lbl">Actual − matrix plan</div></div>
       </div>`;
-      html += `<div class="toolbar"><select id="var-project">${projOpts}</select><span class="grow"></span><span class="note-txt">Expected = capacity (${S.monthHours()} hrs/mo × cap%) × allocation%. Over-run in <span class="var-over">red</span>, under-run in <span class="var-under">amber</span>.</span></div>`;
+      html += `<div class="toolbar"><select id="var-project">${projOpts}</select><span class="grow"></span><span class="note-txt">① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.</span></div>`;
 
       if (!projNames.length) html += `<div class="empty">No matched allocations or actuals in this window.</div>`;
       projNames.forEach(pn => {
@@ -265,14 +313,22 @@
           b += `<tr><td class="pname" style="font-weight:600">${esc(r.person.name)}</td><td class="num">${fmtH(r.expected)}</td><td class="num">${fmtH(r.actual)}</td><td class="num ${vcls}">${r.variance >= 0 ? '+' : ''}${fmtH(r.variance)}</td><td class="num vmini">${r.expected ? Math.round(r.actual / r.expected * 100) + '%' : '—'}</td></tr>`;
         });
         const pcls = varCls(pe, pa);
-        const plan = S.feePlanHours(pn, ms);
-        const planChip = plan ? ` · <span title="Planned hours in the fee tool for this window — the baseline the matrix converges to once the proposal is fully staffed">fee-tool plan <b style="color:var(--sav-teal)">${fmtH(plan.total)}</b></span>` : '';
+        const cp = contractByProj[pn];
+        const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cp.total)}</b>` : `<span style="color:#b0b5bc">no contract staffing</span>`;
+        let contractTbl = '';
+        if (cp && cp.roles.length) {
+          contractTbl = `<div style="padding:8px 16px 12px;border-top:1px dashed rgba(37,39,58,0.12);background:#faf9f7">
+            <div style="font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel);margin-bottom:5px">② Per contract · ${esc(cp.feeProject.name)} <span style="text-transform:none;letter-spacing:0">(titles — match people to these when staffing)</span></div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">${cp.roles.map(r => `<span class="mv-chip" style="background:#e7eef0"><b>${fmtH(r.hours)}h</b> ${esc(r.title)} · ${r.fteMonths} FTE-mo</span>`).join('')}</div>
+          </div>`;
+        }
         html += `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;border-bottom:1px solid rgba(37,39,58,0.1)">
             <div class="pname" style="font-size:14px">${esc(pn)} <span class="note-txt">· ${esc(list[0].client || '')}</span></div>
-            <div class="note-txt">exp <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · act <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)}</span>${planChip}</div>
+            <div class="note-txt">① matrix <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · ${contractCell} · ③ actual <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)} vs plan</span></div>
           </div>
-          <table class="dt"><thead><tr><th>Person</th><th class="num">Expected hrs</th><th class="num">Actual hrs</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}</tbody></table>
+          <table class="dt"><thead><tr><th>Person</th><th class="num">① Plan hrs</th><th class="num">③ Actual hrs</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}</tbody></table>
+          ${contractTbl}
         </div>`;
       });
       const vp = $('#var-project'); if (vp) vp.onchange = (e) => { state.varProject = e.target.value; renderActuals(); };
@@ -417,6 +473,49 @@
   }
 
   /* ---------- shell ---------- */
+  /* ---------- staff.json sync (Box) — makes the matrix + notes a shared,
+     living document instead of per-browser state ---------- */
+  function setStoreNote(mode, extra) {
+    const el = $('#store-note'); if (!el) return;
+    if (mode === 'box') { el.innerHTML = '● Shared · saves to <b>staff.json</b> in Box'; el.style.color = '#1f7a44'; }
+    else if (mode === 'error') { el.textContent = '⚠ Box save failed — working locally. ' + (extra || ''); el.style.color = '#C0392B'; }
+    else { el.textContent = 'Local to this browser — set staffFileId in box-adapter.js to share'; el.style.color = ''; }
+  }
+  async function wireStaffSync() {
+    const Box = window.UFC_Box;
+    const configured = Box && Box.enabled && Box.config && Box.config.staffFileId && !/PASTE/.test(Box.config.staffFileId);
+    if (!configured) { setStoreNote('local'); return; }
+    try {
+      const remote = await Box.pullStaff();
+      if (remote) S.hydrateFromRemote(remote);              // Box is the source of truth
+      else await Box.uploadStaff(S.readDb());               // first run: seed staff.json from local
+      let t = null;
+      S.attachRemote((db) => {
+        clearTimeout(t);
+        t = setTimeout(async () => {
+          try { Box.emitSync && Box.emitSync('syncing', 'staff.json'); await Box.uploadStaff(db); Box.emitSync && Box.emitSync('synced', ''); setStoreNote('box'); }
+          catch (e) { Box.emitSync && Box.emitSync('error', 'staff.json: ' + e.message); setStoreNote('error', e.message); }
+        }, 1200);
+      });
+      setStoreNote('box');
+    } catch (e) { setStoreNote('error', e.message); }
+  }
+
+  /* ---------- matrix file re-import ---------- */
+  function wireMatrixImport() {
+    const fi = $('#matrix-file'); if (!fi) return;
+    fi.onchange = async () => {
+      const f = fi.files[0]; fi.value = ''; if (!f) return;
+      const res = await S.parseMatrixFile(f);
+      if (res.error) { alert('Import failed — ' + res.error); return; }
+      const people = new Set(res.rows.map(r => r.person)).size, projects = new Set(res.rows.map(r => r.proj)).size;
+      if (!confirm(`Replace the allocation matrix with “${f.name}”?\n\n${res.rows.length} allocations · ${people} people · ${projects} projects.\n\nClockify actuals and roster capacity/title edits are KEPT. Manually-added allocations and note edits made here since the last import are REPLACED by the sheet.`)) return;
+      const out = S.importMatrix(res.rows, f.name);
+      renderAll();
+      toast(`Matrix replaced — ${out.allocations} allocations, ${out.people} people.`);
+    };
+  }
+
   function renderCounts() {
     $('#cnt-alloc').textContent = '(' + S.listAllocations().length + ')';
     $('#cnt-proj').textContent = '(' + S.distinctProjects().length + ')';
@@ -441,9 +540,14 @@
 
   function init() {
     if (!staffAccessOk()) { renderDenied(); return; }
-    buildWindowOptions();
+    wireMatrixImport();
+    wireStaffSync().then(() => {
+      buildWindowOptions();
     $('#month-hrs').value = S.monthHours();
     $('#win-start').onchange = (e) => { state.winStart = e.target.value; renderActive(); };
+    const step = (d) => { const nv = S.ymAdd(state.winStart, d); const sel = $('#win-start'); if ([...sel.options].some(o => o.value === nv)) { state.winStart = nv; sel.value = nv; renderActive(); } };
+    $('#win-prev').onclick = () => step(-1);
+    $('#win-next').onclick = () => step(1);
     $('#win-len').onchange = (e) => { state.winLen = +e.target.value; renderActive(); };
     $('#month-hrs').onchange = (e) => { S.setMonthHours(+e.target.value); renderActive(); };
     $('#inc-pursuit').onchange = (e) => { state.incPursuit = e.target.checked; renderActive(); };
@@ -451,6 +555,7 @@
     $('#am-close').onclick = closeAllocModal; $('#am-cancel').onclick = closeAllocModal; $('#am-save').onclick = saveAllocModal;
     $('#alloc-modal').onclick = (e) => { if (e.target.id === 'alloc-modal') closeAllocModal(); };
     renderAll();
+    });
   }
 
   if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(init); else document.addEventListener('ufc:ready', init);

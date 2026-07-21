@@ -99,7 +99,26 @@
       return p;
     } catch (e) { console.error('staff db read failed', e); return seedFromMatrix(defaultDb()); }
   }
-  function writeDb(db) { db.schemaVersion = SCHEMA; localStorage.setItem(KEY, JSON.stringify(db)); }
+  /* Remote sync — staff.json in Box (same pattern as studio.json). attachRemote
+     is wired by the page after boot; hydrate never re-triggers a push. */
+  let _push = null;
+  function attachRemote(fn) { _push = typeof fn === 'function' ? fn : null; }
+  function hydrateFromRemote(db) {
+    if (!db || !db.people || !db.allocations) return false;
+    if (!db.actuals) db.actuals = {};
+    if (!db.meta) db.meta = { monthHours: DEFAULT_MONTH_HOURS };
+    db.schemaVersion = SCHEMA;
+    localStorage.setItem(KEY, JSON.stringify(db));
+    return true;
+  }
+  function writeDb(db) {
+    db.schemaVersion = SCHEMA;
+    db.meta = db.meta || {};
+    db.meta.updatedAt = new Date().toISOString();
+    try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser && window.UFC_Store.getCurrentUser(); if (u && u.username) db.meta.updatedBy = u.username; } catch (e) {}
+    localStorage.setItem(KEY, JSON.stringify(db));
+    if (_push) { try { _push(db); } catch (e) { console.warn('staff push failed', e); } }
+  }
 
   /** Wipe + re-seed from the (possibly refreshed) window.STAFF_SEED. Keeps
       actuals and roster capacity edits? — no: full matrix reset. Actuals kept. */
@@ -136,6 +155,8 @@
     if (a.personId && !db.people[a.personId]) {
       db.people[a.personId] = { id: a.personId, name: a.personName || a.personId, isNewHire: false, title: '', homeTeam: '', capacityPct: 100, active: true };
     }
+    a.updatedAt = new Date().toISOString();
+    try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u && u.username) a.updatedBy = u.username; } catch (e) {}
     if (!a.id) { a.id = 'al_' + Math.random().toString(36).slice(2, 9); db.allocations.push(a); }
     else { const i = db.allocations.findIndex(x => x.id === a.id); if (i >= 0) db.allocations[i] = a; else db.allocations.push(a); }
     writeDb(db); return a;
@@ -343,6 +364,14 @@
       matrix converges to. Returns null when the project isn't in the fee tool
       or carries no staffing. { byMonth:{ym:hrs}, total, feeProject } */
   function feePlanHours(projectName, months) {
+    const cp = contractPlan(projectName, months);
+    return cp ? { byMonth: cp.byMonth, total: cp.total, feeProject: cp.feeProject } : null;
+  }
+
+  /** CONTRACT plan — the fee-tool staffing for a window, with a per-TITLE
+      breakdown (contract knows titles + allocations, not names). Rate-free.
+      { byMonth:{ym:hrs}, total, roles:[{title, fteMonths, hours}], feeProject } */
+  function contractPlan(projectName, months) {
     const link = matchFeeProject(projectName);
     if (!link) return null;
     const S2 = window.UFC_Store;
@@ -353,20 +382,30 @@
     const phaseOf = {};
     (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
     const inWin = new Set(months);
-    const byMonth = {}; let total = 0, any = false;
+    const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    const titleOf = (r) => {
+      const t = cat && cat.titles && cat.titles.find(x => x.id === r.titleId);
+      return (r.projectRole || '').trim() || (t && (t.name || t.label)) || r.titleId || 'Role';
+    };
+    const byMonth = {}; const roleAgg = {}; let total = 0, any = false;
     S2.enumerateMonths(p.timeline).forEach(m => {
       const ym = m.year + '-' + String(m.month).padStart(2, '0');
       if (!inWin.has(ym)) return;
       const mk = m.year + '-' + m.month;              // fee tool keys are non-padded
-      let h = 0;
       p.roles.forEach(r => {
         const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : ((r.fte && r.fte[phaseOf[mk]]) || 0)) / 100;
-        h += fte * hrs;
+        if (!fte) return;
+        const h = fte * hrs;
+        byMonth[ym] = (byMonth[ym] || 0) + h;
+        const tl = titleOf(r);
+        const ra = roleAgg[tl] || (roleAgg[tl] = { title: tl, fteMonths: 0, hours: 0 });
+        ra.fteMonths += fte; ra.hours += h;
+        total += h; any = true;
       });
-      if (h > 0) any = true;
-      byMonth[ym] = h; total += h;
     });
-    return any ? { byMonth, total: Math.round(total * 10) / 10, feeProject: link } : null;
+    if (!any) return null;
+    const roles = Object.values(roleAgg).map(r => ({ title: r.title, fteMonths: Math.round(r.fteMonths * 100) / 100, hours: Math.round(r.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours);
+    return { byMonth, total: Math.round(total * 10) / 10, roles, feeProject: link };
   }
 
   function actualsMeta() { const m = readDb().meta || {}; return { importedAt: m.clockifyImportedAt, rows: Object.keys(readDb().actuals).length, months: m.clockifyMonths || [] }; }
@@ -443,6 +482,8 @@
     const cDurDec = findCol(sample, ['timeh', 'timedecimal', 'durationdecimal', 'durationh', 'durationhours', 'timehours', 'timeh']);
     const cDur = cDurDec || findCol(sample, ['duration', 'time']);
     const cDate = findCol(sample, ['startdate', 'date', 'day']);
+    const cTitle = findCol(sample, ['jobtitle', 'title', 'position']);
+    const titles = {};
     if (!cProject) return { error: 'Could not find a "Project" column. Export a Clockify Detailed or Summary report as CSV.' };
     if (!cDur) return { error: 'Could not find a duration/time column. Include "Duration (decimal)" or "Time (h)" in the export.' };
 
@@ -460,6 +501,7 @@
       let person = Object.values(db.people).find(p => namesMatch(p.name, uname));
       const personId = person ? person.id : ('unmatched:' + nkey(uname));
       if (!person) unmatchedUsers[uname] = (unmatchedUsers[uname] || 0) + hrs;
+      if (person && cTitle && r[cTitle] && !titles[personId]) titles[personId] = String(r[cTitle]).trim();
       // match project: exact name → Salesforce ID in the Clockify name → fuzzy
       const res = resolveClockifyProject(proj);
       const projName = res ? res.name : proj;
@@ -470,7 +512,7 @@
       totalHours += hrs; rowCount++;
     });
     return {
-      ok: true, agg, totalHours: Math.round(totalHours * 10) / 10, rowCount, sfHits,
+      ok: true, agg, totalHours: Math.round(totalHours * 10) / 10, rowCount, sfHits, titles,
       months: [...monthsSeen].sort(),
       matchedUsers: Object.keys(db.people).length,
       unmatchedUsers: Object.entries(unmatchedUsers).map(([k, v]) => ({ name: k, hours: Math.round(v * 10) / 10 })).sort((a, b) => b.hours - a.hours),
@@ -497,11 +539,149 @@
     });
     db.meta.clockifyImportedAt = new Date().toISOString();
     db.meta.clockifyMonths = [...new Set([...(db.meta.clockifyMonths || []), ...report.months])].sort();
+    // Clockify carries the job title — fill roster titles that are still blank.
+    Object.entries(report.titles || {}).forEach(([pid, t]) => { if (db.people[pid] && !db.people[pid].title) db.people[pid].title = t; });
     writeDb(db);
     return { written, skipped };
   }
 
   function clearActuals() { const db = readDb(); db.actuals = {}; delete db.meta.clockifyImportedAt; delete db.meta.clockifyMonths; writeDb(db); }
+
+  // ---------- Matrix ingest — JS's staffing sheet (xlsx or csv), repeatable ----------
+  function excelSerialToYm(n) { const d = new Date(Date.UTC(1899, 11, 30) + n * 86400000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
+  function anyToYm(v) {
+    if (v == null || v === '') return null;
+    const s = String(v).trim();
+    if (/^\d{4,6}(\.\d+)?$/.test(s)) { const n = +s; if (n > 20000 && n < 80000) return excelSerialToYm(n); }  // Excel serial
+    return toYm(s, null);
+  }
+  const MATRIX_HEADS = {
+    proj: ['projectname', 'project'], status: ['status'], type: ['type'],
+    client: ['clientname', 'client'], person: ['personallocated', 'person', 'name', 'resource'],
+    start: ['allocationstartdate', 'startdate', 'start'], end: ['allocationenddate', 'enddate', 'end'],
+    pct: ['allocation', 'allocationpct', 'pct', 'percent'], note: ['comments', 'comment', 'notes', 'note'],
+  };
+  function mapMatrixHeader(cells) {
+    const norm = cells.map(h => String(h || '').toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const col = {};
+    Object.keys(MATRIX_HEADS).forEach(k => {
+      for (const cand of MATRIX_HEADS[k]) { const i = norm.findIndex(h => h === cand || (cand.length > 4 && h.startsWith(cand))); if (i >= 0) { col[k] = i; return; } }
+      const i2 = norm.findIndex(h => MATRIX_HEADS[k].some(c => h.includes(c)));
+      if (i2 >= 0) col[k] = i2;
+    });
+    return (col.proj != null && col.person != null && col.pct != null) ? col : null;
+  }
+  function matrixRowsFromGrid(grid) {
+    // find the header row (first row that maps), then read the rest
+    for (let h = 0; h < Math.min(grid.length, 8); h++) {
+      const col = mapMatrixHeader(grid[h]);
+      if (!col) continue;
+      const rows = [];
+      for (let i = h + 1; i < grid.length; i++) {
+        const r = grid[i];
+        const proj = (r[col.proj] || '').toString().trim();
+        const person = (r[col.person] || '').toString().trim();
+        if (!proj || !person) continue;
+        rows.push({
+          proj, person,
+          status: col.status != null ? String(r[col.status] || '').trim() : '',
+          type: col.type != null ? String(r[col.type] || '').trim() : '',
+          client: col.client != null ? String(r[col.client] || '').trim() : '',
+          start: col.start != null ? anyToYm(r[col.start]) : null,
+          end: col.end != null ? anyToYm(r[col.end]) : null,
+          pct: col.pct != null ? (parseFloat(String(r[col.pct]).replace('%', '')) || 0) : 0,
+          note: col.note != null ? String(r[col.note] || '').trim() : '',
+        });
+      }
+      return rows;
+    }
+    return null;
+  }
+  /** Parse an uploaded staffing-matrix file (.xlsx Data tab, or CSV export).
+      Returns { rows } or { error }. */
+  async function parseMatrixFile(file) {
+    try {
+      if (/\.xlsx?$/i.test(file.name)) {
+        const grid = await xlsxSheetGrid(await file.arrayBuffer(), 'data');
+        if (!grid) return { error: 'Could not find a "Data" tab (or any sheet with Project / Person / Allocation % columns).' };
+        const rows = matrixRowsFromGrid(grid);
+        return rows && rows.length ? { rows } : { error: 'No allocation rows found — expected columns like Project Name, Person Allocated, Allocation %.' };
+      }
+      const parsed = parseCsv(String(await file.text()));
+      if (!parsed.length) return { error: 'Empty file.' };
+      const grid = [Object.keys(parsed[0])].concat(parsed.map(o => Object.values(o)));
+      const rows = matrixRowsFromGrid(grid);
+      return rows && rows.length ? { rows } : { error: 'Could not map the CSV columns — expected Project Name, Person Allocated, Allocation %…' };
+    } catch (e) { return { error: 'Parse failed: ' + (e && e.message || e) }; }
+  }
+  /** Minimal XLSX reader: unzips in-browser (DecompressionStream) and returns the
+      named sheet (fallback: first sheet that maps) as a 2-D grid of strings. */
+  async function xlsxSheetGrid(buf, wantName) {
+    const bytes = new Uint8Array(buf);
+    const u16 = (o) => bytes[o] | (bytes[o + 1] << 8);
+    const u32 = (o) => (bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16) | (bytes[o + 3] << 24)) >>> 0;
+    let e = -1; for (let i = bytes.length - 22; i >= 0; i--) { if (u32(i) === 0x06054b50) { e = i; break; } }
+    if (e < 0) return null;
+    let p = u32(e + 16); const cc = u16(e + 10); const files = {};
+    for (let i = 0; i < cc; i++) {
+      if (u32(p) !== 0x02014b50) break;
+      const comp = u16(p + 10), cs = u32(p + 20), nl = u16(p + 28), el = u16(p + 30), cl = u16(p + 32), lho = u32(p + 42);
+      files[new TextDecoder().decode(bytes.slice(p + 46, p + 46 + nl))] = { comp, cs, lho };
+      p += 46 + nl + el + cl;
+    }
+    async function ex(n) {
+      const f = files[n]; if (!f) return null;
+      const lh = f.lho, nl = u16(lh + 26), el = u16(lh + 28), st = lh + 30 + nl + el, d = bytes.slice(st, st + f.cs);
+      if (f.comp === 0) return new TextDecoder().decode(d);
+      const stream = new Response(d).body.pipeThrough(new DecompressionStream('deflate-raw'));
+      return new TextDecoder().decode(new Uint8Array(await new Response(stream).arrayBuffer()));
+    }
+    const unesc = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+    const wb = await ex('xl/workbook.xml'); if (!wb) return null;
+    const rels = await ex('xl/_rels/workbook.xml.rels') || '';
+    const relMap = {}; [...rels.matchAll(/Id="([^"]*)"[^>]*Target="([^"]*)"/g)].forEach(m => relMap[m[1]] = m[2].replace(/^\//, ''));
+    const sheets = [...wb.matchAll(/<sheet [^>]*name="([^"]*)"[^>]*r:id="([^"]*)"/g)].map(m => ({ name: unesc(m[1]), path: 'xl/' + (relMap[m[2]] || '').replace(/^xl\//, '') }));
+    const ssXml = await ex('xl/sharedStrings.xml') || '';
+    const ss = []; for (const m of ssXml.matchAll(/<si>([\s\S]*?)<\/si>/g)) ss.push(unesc([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(x => x[1]).join('')));
+    async function grid(sheetPath) {
+      const xml = await ex(sheetPath); if (!xml) return null;
+      const colN = (c) => { let n = 0; for (const ch of c) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
+      const out = [];
+      for (const rm of xml.matchAll(/<row r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
+        const row = [];
+        for (const cm of rm[2].matchAll(/<c r="([A-Z]+)\d+"(?:[^>]*t="([^"]*)")?[^>]*>(?:<is><t[^>]*>([\s\S]*?)<\/t><\/is>|<v>([\s\S]*?)<\/v>)?/g)) {
+          let v = cm[3] != null ? unesc(cm[3]) : cm[4];
+          if (cm[2] === 's' && v != null) v = ss[+v];
+          row[colN(cm[1])] = v == null ? '' : v;
+        }
+        out.push(row);
+      }
+      return out;
+    }
+    const want = sheets.find(s => s.name.toLowerCase().trim() === String(wantName).toLowerCase());
+    if (want) { const g = await grid(want.path); if (g && matrixRowsFromGrid(g)) return g; }
+    for (const s of sheets) { const g = await grid(s.path); if (g && matrixRowsFromGrid(g)) return g; }
+    return null;
+  }
+  /** Replace the allocation matrix with freshly-parsed rows. Keeps actuals and
+      per-person capacity/title edits; stamps the source for the meta line. */
+  function importMatrix(rows, sourceName) {
+    const db = readDb();
+    const keepActuals = db.actuals || {};
+    const keep = {}; Object.values(db.people).forEach(p => { keep[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam }; });
+    const fresh = defaultDb();
+    fresh.actuals = keepActuals; fresh.meta = db.meta || fresh.meta;
+    rows.forEach(r => {
+      const pid = slug(r.person);
+      if (!fresh.people[pid]) fresh.people[pid] = { id: pid, name: cleanName(r.person), isNewHire: isNewHireName(r.person), title: '', homeTeam: '', capacityPct: 100, active: true };
+      if (keep[pid]) Object.assign(fresh.people[pid], keep[pid]);
+      fresh.allocations.push({ id: 'al_' + Math.random().toString(36).slice(2, 9), personId: pid, project: r.proj, client: r.client, status: r.status || 'Active', type: r.type || 'Awarded', start: r.start, end: r.end, pct: +r.pct || 0, note: r.note || '' });
+    });
+    fresh.meta.matrixImportedAt = new Date().toISOString();
+    fresh.meta.matrixSource = sourceName || 'upload';
+    writeDb(fresh);
+    return { people: Object.keys(fresh.people).length, allocations: fresh.allocations.length };
+  }
 
   // ---------- export ----------
   function exportJson() { return JSON.stringify(readDb(), null, 2); }
@@ -511,7 +691,8 @@
     // month utils
     ymLabel, ymAdd, monthsBetween, currentYM, isPastYM, ymCmp,
     // store
-    readDb, reseedMatrix, resetAll, exportJson,
+    readDb, reseedMatrix, resetAll, exportJson, attachRemote, hydrateFromRemote,
+    parseMatrixFile, importMatrix,
     // roster
     listPeople, getPerson, savePerson, monthHours, setMonthHours, capacityHours,
     // allocations
@@ -519,7 +700,7 @@
     distinctProjects, distinctClients, allocationWindow, defaultWindow,
     // engine
     personLoad, personAllocationsIn, bandwidthGrid, projectRollup, matchFeeProject,
-    expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours,
+    expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
     // clockify
     analyzeClockify, commitClockify, clearActuals,
     // helpers
