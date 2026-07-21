@@ -51,6 +51,17 @@
   .nh-tag { font-family:var(--font-display); font-weight:700; font-size:8px; letter-spacing:0.05em; text-transform:uppercase; color:#8a6d00; background:#fdf3c7; padding:1px 5px; border-radius:2px; }
   .cell { display:block; padding:9px 6px; font-variant-numeric:tabular-nums; font-weight:600; color:var(--sav-navy); min-width:44px; border-left:1px solid rgba(37,39,58,0.05); }
   .cell.past { opacity:0.5; }
+  /* single-month focus view */
+  .mv-row { display:grid; grid-template-columns:220px 120px 1fr; gap:14px; align-items:center; padding:9px 16px; border-top:1px solid rgba(37,39,58,0.08); background:#fff; }
+  .mv-row:hover { background:#fbf8ee; }
+  .mv-bar { height:16px; background:#f0efec; position:relative; border-radius:2px; overflow:visible; }
+  .mv-bar i { display:block; height:100%; border-radius:2px; }
+  .mv-bar .cap { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--sav-navy); opacity:.55; }
+  .mv-load { font-family:var(--font-display); font-weight:800; font-size:14px; font-variant-numeric:tabular-nums; }
+  .mv-projs { display:flex; flex-wrap:wrap; gap:5px; }
+  .mv-chip { font-size:10.5px; padding:2px 8px; border-radius:3px; background:#eef4f4; color:var(--sav-navy); }
+  .mv-chip b { font-family:var(--font-display); }
+  .mv-chip.pursuit { background:#fdf3c7; color:#8a6d00; }
   .u0 { color:#c9cdd3; font-weight:400; }
   .u1 { background:#eef4f4; }               /* under */
   .u2 { background:#cfe6e4; }               /* healthy 86-100 */
@@ -168,11 +179,17 @@
   <div class="controls">
     <div class="ctl">
       <label>Window start</label>
-      <select id="win-start"></select>
+      <div style="display:flex;gap:4px;align-items:stretch">
+        <button class="btn btn-ghost" id="win-prev" title="Previous month" style="padding:4px 10px;border-width:1px">◀</button>
+        <select id="win-start"></select>
+        <button class="btn btn-ghost" id="win-next" title="Next month" style="padding:4px 10px;border-width:1px">▶</button>
+      </div>
     </div>
     <div class="ctl">
       <label>Months</label>
       <select id="win-len">
+        <option value="1">1 · single month</option>
+        <option value="3">3</option>
         <option value="6">6</option>
         <option value="12" selected>12</option>
         <option value="18">18</option>
@@ -184,6 +201,7 @@
       <input type="number" id="month-hrs" min="80" max="220" step="1">
     </div>
     <div class="ctl grow"></div>
+    <div class="ctl" style="align-self:center"><span class="note-txt" id="store-note"></span></div>
     <div class="ctl">
       <label>&nbsp;</label>
       <label class="chk"><input type="checkbox" id="inc-pursuit" checked> Include pursuits / opportunities</label>
@@ -194,7 +212,7 @@
     <button class="tab active" data-tab="bandwidth">Bandwidth</button>
     <button class="tab" data-tab="allocations">Allocations <span class="cnt" id="cnt-alloc"></span></button>
     <button class="tab" data-tab="projects">By Project <span class="cnt" id="cnt-proj"></span></button>
-    <button class="tab" data-tab="actuals">Actuals vs. Expected</button>
+    <button class="tab" data-tab="actuals">Compare · Plan / Contract / Actual</button>
   </div>
 
   <section class="panel active" id="p-bandwidth"></section>
@@ -230,6 +248,7 @@
 </div>
 
 <input type="file" id="clockify-file" accept=".csv,text/csv" style="display:none">
+<input type="file" id="matrix-file" accept=".xlsx,.csv" style="display:none">
 
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
