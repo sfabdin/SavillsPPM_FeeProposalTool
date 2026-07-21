@@ -321,8 +321,11 @@
     if (state.clockifyReport) html += reportBlock(state.clockifyReport);
 
     {
-      const ms = months();
-      const showMonths = ms.length <= 6;              // per-month columns when the window is tight
+      const msAsc = months();
+      const ms = msAsc;
+      // Display order: NEWEST month leftmost (current month first, then back in time)
+      const msDesc = msAsc.slice().reverse();
+      const showMonths = true;
       const projFilter = state.varProject;
       let rows = S.varianceMatrix(ms, { project: projFilter || undefined, person: state.varPerson || undefined });
       const byPerson = state.varGroup === 'person';
@@ -365,9 +368,12 @@
         let b = '';
         list.forEach(r => {
           const vcls = varCls(r.expected, r.actual);
-          const mcells = showMonths ? ms.map(m => { const c = r.byMonth[m]; const cls = (c.e || c.a) ? varCls(c.e, c.a) : ''; return `<td class="num ${cls}" style="white-space:nowrap">${c.a ? fmtH(c.a) : '·'}<span class="vmini"> /${c.e ? fmtH(c.e) : '0'}</span></td>`; }).join('') : '';
-          b += `<tr><td class="pname" style="font-weight:600">${esc(rowLabel(r))}</td>${mcells}<td class="num">${fmtH(r.expected)}</td><td class="num">${fmtH(r.actual)}</td><td class="num ${vcls}">${r.variance >= 0 ? '+' : ''}${fmtH(r.variance)}</td><td class="num vmini">${r.expected ? Math.round(r.actual / r.expected * 100) + '%' : '—'}</td></tr>`;
+          const mcells = msDesc.map(m => { const c = r.byMonth[m]; const cls = (c.e || c.a) ? varCls(c.e, c.a) : ''; const pct = c.e ? Math.round(c.a / c.e * 100) + '%' : (c.a ? '—' : ''); return `<td class="num ${cls}" style="white-space:nowrap">${(c.a || c.e) ? `<b>${fmtH(c.a)}</b><span class="vmini"> /${c.e ? fmtH(c.e) : '0'}</span><div class="vmini">${pct}</div>` : '·'}</td>`; }).join('');
+          b += `<tr><td class="pname sticky-col" style="font-weight:600">${esc(rowLabel(r))}</td>${mcells}<td class="num">${fmtH(r.expected)}</td><td class="num">${fmtH(r.actual)}</td><td class="num ${vcls}">${r.variance >= 0 ? '+' : ''}${fmtH(r.variance)}</td><td class="num vmini">${r.expected ? Math.round(r.actual / r.expected * 100) + '%' : '—'}</td></tr>`;
         });
+        // TOTAL row — per-month plan/actual/% summed over people
+        const totCells = msDesc.map(m => { let e = 0, a = 0; list.forEach(r => { e += r.byMonth[m].e; a += r.byMonth[m].a; }); const pct = e ? Math.round(a / e * 100) + '%' : (a ? '—' : ''); return `<td class="num ${e || a ? varCls(e, a) : ''}" style="white-space:nowrap">${(e || a) ? `<b>${fmtH(a)}</b><span class="vmini"> /${fmtH(e)}</span><div class="vmini">${pct}</div>` : '·'}</td>`; }).join('');
+        const totRow = `<tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total</td>${totCells}<td class="num" style="font-weight:800">${fmtH(pe)}</td><td class="num" style="font-weight:800">${fmtH(pa)}</td><td class="num ${pcls}" style="font-weight:800">${pa >= pe ? '+' : ''}${fmtH(pa - pe)}</td><td class="num vmini" style="font-weight:700">${pe ? Math.round(pa / pe * 100) + '%' : '—'}</td></tr>`;
         const pcls = varCls(pe, pa);
         const cp = byPerson ? null : contractByProj[pn];
         const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cp.total)}</b>` : `<span style="color:#b0b5bc">no contract staffing</span>`;
@@ -383,9 +389,9 @@
             <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span></div>
             <div class="note-txt">① matrix <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · ${contractCell} · ③ actual <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)} vs plan</span></div>
           </div>
-          <table class="dt"><thead><tr><th>${byPerson ? 'Project' : 'Person'}</th>${showMonths ? ms.map(m => `<th class="num">${esc(S.ymLabel(m))}</th>`).join('') : ''}<th class="num">① Plan hrs</th><th class="num">③ Actual hrs</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}
-          ${cp ? `<tr style="background:#f4f6f7"><td class="vmini" style="font-weight:700">② Contract (titles)</td>${showMonths ? ms.map(m => `<td class="num vmini">${cp.byMonth[m] ? fmtH(cp.byMonth[m]) : '·'}</td>`).join('') : ''}<td class="num vmini" style="font-weight:700">${fmtH(cp.total)}</td><td class="num vmini">${fmtH(pa)}</td><td class="num vmini ${varCls(cp.total, pa)}">${pa >= cp.total ? '+' : ''}${fmtH(pa - cp.total)}</td><td class="num vmini">${cp.total ? Math.round(pa / cp.total * 100) + '%' : '—'}</td></tr>` : ''}
-          </tbody></table>
+          <div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">${byPerson ? 'Project' : 'Person'}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">act /plan · %</div></th>`).join('')}<th class="num">① Plan hrs</th><th class="num">③ Actual hrs</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}${totRow}
+          ${cp ? `<tr style="background:#f4f6f7"><td class="vmini sticky-col" style="font-weight:700">② Contract (titles)</td>${msDesc.map(m => `<td class="num vmini">${cp.byMonth[m] ? fmtH(cp.byMonth[m]) : '·'}</td>`).join('')}<td class="num vmini" style="font-weight:700">${fmtH(cp.total)}</td><td class="num vmini">${fmtH(pa)}</td><td class="num vmini ${varCls(cp.total, pa)}">${pa >= cp.total ? '+' : ''}${fmtH(pa - cp.total)}</td><td class="num vmini">${cp.total ? Math.round(pa / cp.total * 100) + '%' : '—'}</td></tr>` : ''}
+          </tbody></table></div>
           ${contractTbl}
         </div>`;
       });

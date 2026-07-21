@@ -24,10 +24,9 @@
   const KEY = 'savills-ppm-staff-db:v1';
   const SCHEMA = 1;
 
-  /* Working hours in a month at 100% capacity. The fee engine bills at
-     173.33 hrs/mo; people don't LOG that many (PTO, internal, non-billable),
-     so capacity defaults lower and is user-tunable on the page. */
-  const DEFAULT_MONTH_HOURS = 160;
+  /* Working hours in a month at 100% capacity — per SA: assume 172 h/mo for
+     Clockify comparisons. User-tunable on the page. */
+  const DEFAULT_MONTH_HOURS = 172;
 
   const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -108,6 +107,7 @@
       if (!p.mappings) p.mappings = { users: {}, projects: {} };
       if (!p.meta) p.meta = { monthHours: DEFAULT_MONTH_HOURS };
       if (p.meta.monthHours == null) p.meta.monthHours = DEFAULT_MONTH_HOURS;
+      if (p.meta.monthHours === 160) p.meta.monthHours = DEFAULT_MONTH_HOURS;   // migrate old default → 172
       // apply known name changes to an existing store: display name + unify ids
       Object.values(p.people).forEach(per => { const c = NAME_ALIASES[nkey(per.name)]; if (c) per.name = c; });
       let remapped = false;
