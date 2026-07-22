@@ -652,6 +652,10 @@
 
   function clearActuals() { const db = readDb(); db.actuals = {}; delete db.meta.clockifyImportedAt; delete db.meta.clockifyMonths; writeDb(db); }
 
+  /* ---------- entry-lateness stats (from /api/clockify?lateness=1) ---------- */
+  function setLateness(rows) { const db = readDb(); db.lateness = rows; db.meta.latenessAt = new Date().toISOString(); writeDb(db); }
+  function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
+
   /* ---------- saved Clockify → roster mappings (map once, keeps forever;
      lives in staff.json so the whole team shares it) ---------- */
   function getMappings() { const db = readDb(); return db.mappings || { users: {}, projects: {} }; }
@@ -885,6 +889,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, tokenScore,
+    setLateness, getLateness,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers
     namesMatch, cleanName, isNewHireName,

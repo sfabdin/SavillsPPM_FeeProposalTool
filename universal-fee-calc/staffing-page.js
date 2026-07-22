@@ -765,10 +765,16 @@
      allocations in a month but no hours are behind. Current month is judged
      pro-rata by working days elapsed. ---------- */
   function renderCompliance() {
-    if (!S.hasActuals()) { $('#p-compliance').innerHTML = '<div class="empty">No Clockify actuals loaded — pull them on the Compare tab first. Compliance is computed from logged hours by month.</div>'; return; }
+    const late = S.getLateness();
+    const lateBar = `<div class="toolbar">
+      <button class="btn btn-secondary" id="pull-lateness">⟳ Pull entry lateness (API)</button>
+      <span class="note-txt" id="late-note">${late.at ? 'Lateness last pulled ' + new Date(late.at).toLocaleString() : 'Lateness = when an entry was CREATED vs the day the work happened (decoded from Clockify entry IDs). One aggregated call — fast.'}</span>
+      <span class="grow"></span>
+    </div>`;
+    if (!S.hasActuals()) { $('#p-compliance').innerHTML = lateBar + '<div class="empty">No Clockify actuals loaded — pull them on the Compare tab first. Compliance is computed from logged hours by month.</div>'; wireLateness(); return; }
     const nowYm = S.currentYM();
     const ms = months().filter(m => m <= nowYm);
-    if (!ms.length) { $('#p-compliance').innerHTML = '<div class="empty">Window is entirely in the future — step back to see logged months.</div>'; return; }
+    if (!ms.length) { $('#p-compliance').innerHTML = lateBar + '<div class="empty">Window is entirely in the future — step back to see logged months.</div>'; wireLateness(); return; }
     // pro-rata factor for the current month (day-of-month / ~30)
     const now = new Date();
     const prorata = Math.min(1, now.getUTCDate() / 30);
@@ -806,6 +812,24 @@
     const chronic = rows.filter(r => r.expectedMonths >= 3 && r.compliance < 0.5);
     const stars = rows.filter(r => r.expectedMonths >= 3 && r.compliance >= 0.95).sort((a, b) => b.expectedMonths - a.expectedMonths);
 
+    // ---- lateness join: rows from the API, per person over the window ----
+    const lateRows = late.rows.filter(r => ms.includes(r.ym));
+    const latePP = {};
+    lateRows.forEach(r => {
+      const person = S.listPeople().find(p => S.namesMatch(p.name, r.user));
+      const pid = person ? person.id : 'x:' + r.user;
+      const a = latePP[pid] || (latePP[pid] = { name: person ? person.name : r.user, entries: 0, lagW: 0, maxLag: 0, w3: 0, w7: 0 });
+      a.entries += r.entries; a.lagW += r.avgLag * r.entries; a.maxLag = Math.max(a.maxLag, r.maxLag);
+      a.w3 += r.pctWithin3 * r.entries / 100; a.w7 += r.pctWithin7 * r.entries / 100;
+    });
+    const lateList = Object.values(latePP).map(a => ({ ...a, avgLag: a.entries ? a.lagW / a.entries : 0, p3: a.entries ? a.w3 / a.entries * 100 : 0, p7: a.entries ? a.w7 / a.entries * 100 : 0 })).filter(a => a.entries >= 5);
+    const worstLag = lateList.slice().sort((x, y) => y.avgLag - x.avgLag).slice(0, 12);
+    const teamLag = lateList.length ? lateList.reduce((s, a) => s + a.lagW, 0) / lateList.reduce((s, a) => s + a.entries, 0) : null;
+    const teamP7 = lateList.length ? lateList.reduce((s, a) => s + a.w7, 0) / lateList.reduce((s, a) => s + a.entries, 0) * 100 : null;
+    const latenessCard = late.rows.length ? `
+        <div class="ins-card"><h3>🐌 Latest loggers <span>· days between doing the work and entering it · team avg <b>${teamLag != null ? teamLag.toFixed(1) : '—'}d</b> · ${teamP7 != null ? Math.round(teamP7) : '—'}% within a week</span></h3><table class="dt"><thead><tr><th>Person</th><th class="num">Avg lag</th><th class="num">Worst</th><th class="num">≤3 days</th><th class="num">≤7 days</th></tr></thead><tbody>${worstLag.map(a => `<tr><td class="pname">${esc(a.name)}</td><td class="num ${a.avgLag > 7 ? 'var-over' : a.avgLag > 3 ? 'var-under' : 'var-ok'}">${a.avgLag.toFixed(1)}d</td><td class="num">${Math.round(a.maxLag)}d</td><td class="num">${Math.round(a.p3)}%</td><td class="num">${Math.round(a.p7)}%</td></tr>`).join('')}</tbody></table></div>` : `
+        <div class="ins-card"><h3>🐌 Entry lateness</h3><div class="empty" style="border:0">Not pulled yet — click “⟳ Pull entry lateness” above. It answers “who logs late and by how many days”, decoded from entry creation timestamps.</div></div>`;
+
     const cellFor = (c, ym) => {
       if (!c) return '<td><span class="cell u0">·</span></td>';
       const p = Math.round(c.pct * 100);
@@ -818,7 +842,7 @@
       ms.forEach(ym => body += cellFor(r.byMonth[ym], ym));
       body += `<td class="pk ${r.compliance < 0.5 ? 'over' : ''}">${Math.round(r.compliance * 100)}%</td></tr>`;
     });
-    $('#p-compliance').innerHTML = `
+    $('#p-compliance').innerHTML = lateBar + `
       <div class="kpi-strip">
         <div class="kpi-card ${teamPct < 0.7 ? 'warn' : 'accent'}"><div class="k-num">${Math.round(teamPct * 100)}%</div><div class="k-lbl">Team compliance · months ≥80% logged</div></div>
         <div class="kpi-card ${behindNow.length ? 'warn' : ''}"><div class="k-num">${behindNow.length}</div><div class="k-lbl">Behind right now (latest month &lt;80%)</div></div>
@@ -826,6 +850,7 @@
         <div class="kpi-card"><div class="k-num">${rows.length}</div><div class="k-lbl">People expected to log</div></div>
       </div>
       <div class="ins-grid" style="margin-bottom:16px">
+        ${latenessCard}
         <div class="ins-card"><h3>⏰ Most behind <span>· hours missing vs capacity across the window</span></h3><table class="dt"><thead><tr><th>Person</th><th class="num">Logged</th><th class="num">Capacity</th><th class="num">Missing</th><th class="num">Latest month</th></tr></thead><tbody>${rows.filter(r => r.behindHrs > 8).slice(0, 12).map(r => `<tr><td class="pname">${esc(r.person.name)}<div class="vmini">${esc(r.person.title || '')}</div></td><td class="num">${fmtH(r.totLogged)}</td><td class="num">${fmtH(r.totCap)}</td><td class="num var-over">${fmtH(r.behindHrs)}</td><td class="num ${r.lastPct < 0.8 ? 'var-over' : 'var-ok'}">${Math.round(r.lastPct * 100)}%</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty" style="border:0">Everyone current.</div></td></tr>'}</tbody></table></div>
         <div class="ins-card"><h3>📊 Entry insights</h3><div style="padding:14px 16px;font-size:12.5px;line-height:1.7;color:var(--sav-navy)">
           ${chronic.length ? `<div>• <b>${chronic.length} chronic under-logger${chronic.length > 1 ? 's' : ''}</b> (&lt;50% of months at target): ${chronic.slice(0, 6).map(r => esc(r.person.name)).join(', ')}${chronic.length > 6 ? '…' : ''} — their projects read as under-served in Compare even if the work happened.</div>` : ''}
@@ -837,6 +862,27 @@
       </div>
       <div class="hm-wrap"><table class="hm"><thead><tr><th class="who">Person</th>${ms.map(m => `<th>${esc(S.ymLabel(m))}${m === nowYm ? '<div class="vmini" style="text-transform:none">pro-rata</div>' : ''}</th>`).join('')}<th class="pk">Months on target</th></tr></thead><tbody>${body}</tbody></table></div>
       <div class="legend"><span><span class="sw" style="background:#cfe6e4"></span>≥100%</span><span><span class="sw" style="background:#eef4f4"></span>80–99% on target</span><span><span class="sw" style="background:#fce7c2"></span>1–79% behind</span><span><span class="sw" style="background:#e4453a"></span>0% nothing logged</span><span>· = not allocated that month</span></div>`;
+    wireLateness();
+  }
+
+  function wireLateness() {
+    const b = $('#pull-lateness'); if (!b) return;
+    b.onclick = async () => {
+      const ms = months().filter(m => m <= S.currentYM());
+      if (!ms.length) return;
+      const start = ms[0] + '-01';
+      const [ey, em] = ms[ms.length - 1].split('-').map(Number);
+      const end = ey + '-' + String(em).padStart(2, '0') + '-' + new Date(Date.UTC(ey, em, 0)).getUTCDate();
+      b.disabled = true; const note = $('#late-note'); if (note) note.textContent = 'Pulling entry-level lateness (aggregated server-side)…';
+      try {
+        const res = await fetch('/api/clockify?lateness=1&start=' + start + '&end=' + end);
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
+        const rows = S.parseCsvRows(await res.text()).map(o => ({ user: o.User, ym: o.Month, entries: +o.Entries || 0, hours: +o.Hours || 0, avgLag: +o.AvgLagDays || 0, maxLag: +o.MaxLagDays || 0, pctWithin3: +o.PctWithin3d || 0, pctWithin7: +o.PctWithin7d || 0 }));
+        S.setLateness(rows);
+        renderCompliance();
+        toast('Lateness stats loaded — ' + rows.length + ' person-months.');
+      } catch (e) { b.disabled = false; if (note) { note.textContent = 'Lateness pull failed: ' + e.message; note.style.color = '#8f2418'; } }
+    };
   }
 
   /* ---------- staff.json sync (Box) — makes the matrix + notes a shared,
