@@ -4,6 +4,11 @@
    Paths:
      /api/clockify?start=2026-01-01&end=2026-06-30   → actuals CSV
      /api/clockify?list=projects                     → project list CSV
+     /api/clockify?lateness=1&start&end              → entry-lateness stats CSV
+       (creation time is decoded from each entry's MongoDB ObjectID — first
+        4 bytes are a unix timestamp — vs the day the work happened; the
+        detailed report is paged server-side and only per-user aggregates
+        travel to the browser, so it stays fast)
 
    WHY THIS EXISTS
      The Staffing & Bandwidth page needs ACTUAL hours by
@@ -68,6 +73,49 @@ export default async function handler(req, res) {
   const end = String(req.query.end || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
     res.status(400).json({ error: 'pass start=YYYY-MM-DD&end=YYYY-MM-DD' }); return;
+  }
+
+  // ---- lateness mode: per-user entry-timeliness aggregates ----
+  if (req.query.lateness) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) { res.status(400).json({ error: 'pass start=YYYY-MM-DD&end=YYYY-MM-DD' }); return; }
+    try {
+      const agg = {};   // user|ym -> stats
+      let page = 1;
+      while (page <= 25) {   // hard cap: 25k entries per pull
+        const rep = await fetch(`https://reports.api.clockify.me/v1/workspaces/${ws}/reports/detailed`, {
+          method: 'POST',
+          headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dateRangeStart: start + 'T00:00:00.000', dateRangeEnd: end + 'T23:59:59.999',
+            detailedFilter: { page, pageSize: 1000 }, exportType: 'JSON',
+          }),
+        });
+        if (!rep.ok) { res.status(502).json({ error: 'clockify ' + rep.status, detail: (await rep.text()).slice(0, 300) }); return; }
+        const data = await rep.json();
+        const entries = data.timeentries || [];
+        entries.forEach(t => {
+          const id = t._id || t.id || '';
+          const startIso = t.timeInterval && t.timeInterval.start; if (!startIso || id.length < 8) return;
+          const created = parseInt(id.slice(0, 8), 16) * 1000;             // ObjectID timestamp
+          const workDay = new Date(startIso);
+          const lagDays = Math.max(0, (created - workDay.getTime()) / 86400000);
+          const ym = startIso.slice(0, 7);
+          const hrs = (t.timeInterval.duration || 0) / 3600;
+          const k2 = (t.userName || '') + '|' + ym;
+          const a = agg[k2] || (agg[k2] = { user: t.userName || '', ym, entries: 0, hours: 0, lagSum: 0, lagMax: 0, within3: 0, within7: 0 });
+          a.entries++; a.hours += hrs; a.lagSum += lagDays; a.lagMax = Math.max(a.lagMax, lagDays);
+          if (lagDays <= 3) a.within3++; if (lagDays <= 7) a.within7++;
+        });
+        if (entries.length < 1000) break;
+        page++;
+      }
+      const csv = 'User,Month,Entries,Hours,AvgLagDays,MaxLagDays,PctWithin3d,PctWithin7d\n'
+        + Object.values(agg).map(a => [a.user, a.ym, a.entries, Math.round(a.hours * 10) / 10, Math.round(a.lagSum / a.entries * 10) / 10, Math.round(a.lagMax), Math.round(a.within3 / a.entries * 100), Math.round(a.within7 / a.entries * 100)].map(csvCell).join(',')).join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).send(csv);
+    } catch (e) { res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) }); }
+    return;
   }
 
   try {
