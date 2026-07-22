@@ -663,6 +663,19 @@
   function setProjectMapping(clockifyName, matrixProject) {
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
     if (matrixProject) db.mappings.projects[nkey(clockifyName)] = matrixProject; else delete db.mappings.projects[nkey(clockifyName)];
+    // migrate actuals already committed under the Clockify-side name so plan and
+    // actual land on ONE row immediately (no re-import needed). '__ignore__'
+    // drops those hours.
+    if (matrixProject) {
+      Object.keys(db.actuals).forEach(k => {
+        const parts = k.split('|');
+        if (nkey(parts[1]) !== nkey(clockifyName) || parts[1] === matrixProject) return;
+        if (matrixProject === '__ignore__') { delete db.actuals[k]; return; }
+        const nk2 = parts[0] + '|' + matrixProject + '|' + parts[2];
+        db.actuals[nk2] = Math.round(((db.actuals[nk2] || 0) + db.actuals[k]) * 10) / 10;
+        delete db.actuals[k];
+      });
+    }
     writeDb(db);
   }
   /** Manual matrix-project → fee-tool-project link (map once, shared via staff.json). */
