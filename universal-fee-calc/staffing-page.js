@@ -759,6 +759,86 @@
     </div>`;
   }
 
+  /* ---------- TIME ENTRY COMPLIANCE — who logs, who's behind ----------
+     Works off committed Clockify actuals (person × project × month). A month
+     counts as "logged" against capacity (monthHours × cap%); people with
+     allocations in a month but no hours are behind. Current month is judged
+     pro-rata by working days elapsed. ---------- */
+  function renderCompliance() {
+    if (!S.hasActuals()) { $('#p-compliance').innerHTML = '<div class="empty">No Clockify actuals loaded — pull them on the Compare tab first. Compliance is computed from logged hours by month.</div>'; return; }
+    const nowYm = S.currentYM();
+    const ms = months().filter(m => m <= nowYm);
+    if (!ms.length) { $('#p-compliance').innerHTML = '<div class="empty">Window is entirely in the future — step back to see logged months.</div>'; return; }
+    // pro-rata factor for the current month (day-of-month / ~30)
+    const now = new Date();
+    const prorata = Math.min(1, now.getUTCDate() / 30);
+    const db = S.readDb();
+    // actual hours per person per month (all projects, incl. internal/PTO maps)
+    const perPM = {};
+    Object.entries(db.actuals).forEach(([k, h]) => { const [pid, , ym] = k.split('|'); (perPM[pid] = perPM[pid] || {})[ym] = (perPM[pid][ym] || 0) + h; });
+    // who SHOULD log: anyone with an active allocation in a month, or anyone with hours
+    const rows = [];
+    S.listPeople().forEach(person => {
+      if (person.isNewHire) return;
+      const logged = perPM[person.id] || {};
+      const cap = S.capacityHours(person);
+      const byMonth = {}; let expectedMonths = 0, okMonths = 0, totLogged = 0, totCap = 0;
+      ms.forEach(ym => {
+        const active = S.personAllocationsIn(person.id, ym).length > 0;
+        const h = logged[ym] || 0;
+        if (!active && !h) { byMonth[ym] = null; return; }
+        const capM = cap * (ym === nowYm ? prorata : 1);
+        const pct = capM ? h / capM : 0;
+        byMonth[ym] = { h, capM, pct };
+        expectedMonths++; totLogged += h; totCap += capM;
+        if (pct >= 0.8) okMonths++;
+      });
+      if (!expectedMonths) return;
+      // behind = latest expected month under 80%
+      const lastMs = ms.filter(m => byMonth[m]).slice(-1)[0];
+      const lastPct = lastMs ? byMonth[lastMs].pct : 0;
+      rows.push({ person, byMonth, expectedMonths, okMonths, totLogged, totCap, compliance: expectedMonths ? okMonths / expectedMonths : 0, lastMs, lastPct, behindHrs: Math.max(0, totCap - totLogged) });
+    });
+    rows.sort((a, b) => a.lastPct - b.lastPct || a.compliance - b.compliance);
+    const behindNow = rows.filter(r => r.lastMs === nowYm ? r.lastPct < 0.8 * 1 : r.lastPct < 0.8);
+    const zeroNow = rows.filter(r => r.byMonth[nowYm] && r.byMonth[nowYm].h === 0);
+    const teamPct = rows.length ? rows.reduce((s, r) => s + r.compliance, 0) / rows.length : 0;
+    const chronic = rows.filter(r => r.expectedMonths >= 3 && r.compliance < 0.5);
+    const stars = rows.filter(r => r.expectedMonths >= 3 && r.compliance >= 0.95).sort((a, b) => b.expectedMonths - a.expectedMonths);
+
+    const cellFor = (c, ym) => {
+      if (!c) return '<td><span class="cell u0">·</span></td>';
+      const p = Math.round(c.pct * 100);
+      const cls = p >= 100 ? 'u2' : p >= 80 ? 'u1' : p > 0 ? 'u3' : 'u5';
+      return `<td title="${fmtH(c.h)} / ${fmtH(c.capM)} h"><span class="cell ${cls}" style="${p === 0 ? 'color:#fff' : ''}">${p}%</span></td>`;
+    };
+    let body = '';
+    rows.forEach(r => {
+      body += `<tr><td class="who"><div class="who-name" style="cursor:default">${esc(r.person.name)}</div><div class="who-meta">${esc(r.person.title || '')}</div></td>`;
+      ms.forEach(ym => body += cellFor(r.byMonth[ym], ym));
+      body += `<td class="pk ${r.compliance < 0.5 ? 'over' : ''}">${Math.round(r.compliance * 100)}%</td></tr>`;
+    });
+    $('#p-compliance').innerHTML = `
+      <div class="kpi-strip">
+        <div class="kpi-card ${teamPct < 0.7 ? 'warn' : 'accent'}"><div class="k-num">${Math.round(teamPct * 100)}%</div><div class="k-lbl">Team compliance · months ≥80% logged</div></div>
+        <div class="kpi-card ${behindNow.length ? 'warn' : ''}"><div class="k-num">${behindNow.length}</div><div class="k-lbl">Behind right now (latest month &lt;80%)</div></div>
+        <div class="kpi-card ${zeroNow.length ? 'warn' : ''}"><div class="k-num">${zeroNow.length}</div><div class="k-lbl">Zero hours logged · ${esc(S.ymLabel(nowYm))}</div></div>
+        <div class="kpi-card"><div class="k-num">${rows.length}</div><div class="k-lbl">People expected to log</div></div>
+      </div>
+      <div class="ins-grid" style="margin-bottom:16px">
+        <div class="ins-card"><h3>⏰ Most behind <span>· hours missing vs capacity across the window</span></h3><table class="dt"><thead><tr><th>Person</th><th class="num">Logged</th><th class="num">Capacity</th><th class="num">Missing</th><th class="num">Latest month</th></tr></thead><tbody>${rows.filter(r => r.behindHrs > 8).slice(0, 12).map(r => `<tr><td class="pname">${esc(r.person.name)}<div class="vmini">${esc(r.person.title || '')}</div></td><td class="num">${fmtH(r.totLogged)}</td><td class="num">${fmtH(r.totCap)}</td><td class="num var-over">${fmtH(r.behindHrs)}</td><td class="num ${r.lastPct < 0.8 ? 'var-over' : 'var-ok'}">${Math.round(r.lastPct * 100)}%</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty" style="border:0">Everyone current.</div></td></tr>'}</tbody></table></div>
+        <div class="ins-card"><h3>📊 Entry insights</h3><div style="padding:14px 16px;font-size:12.5px;line-height:1.7;color:var(--sav-navy)">
+          ${chronic.length ? `<div>• <b>${chronic.length} chronic under-logger${chronic.length > 1 ? 's' : ''}</b> (&lt;50% of months at target): ${chronic.slice(0, 6).map(r => esc(r.person.name)).join(', ')}${chronic.length > 6 ? '…' : ''} — their projects read as under-served in Compare even if the work happened.</div>` : ''}
+          ${zeroNow.length ? `<div>• <b>${zeroNow.length} allocated but at zero for ${esc(S.ymLabel(nowYm))}</b>: ${zeroNow.slice(0, 6).map(r => esc(r.person.name)).join(', ')}${zeroNow.length > 6 ? '…' : ''} — chase these first; the month is ${Math.round(prorata * 100)}% gone.</div>` : ''}
+          ${stars.length ? `<div>• <b>Reliable loggers</b>: ${stars.slice(0, 6).map(r => esc(r.person.name)).join(', ')} — ≥95% of months on target.</div>` : ''}
+          <div>• Variance data is only as good as entry: team compliance of <b>${Math.round(teamPct * 100)}%</b> means roughly <b>${fmtH(rows.reduce((s, r) => s + r.behindHrs, 0))} h</b> of delivered work may be invisible in Compare.</div>
+          <div class="vmini" style="margin-top:6px;color:var(--sav-steel)">"On target" = ≥80% of capacity logged for the month (current month pro-rata). Capacity = ${S.monthHours()} h × cap%. PTO/internal projects count if mapped rather than ignored.</div>
+        </div></div>
+      </div>
+      <div class="hm-wrap"><table class="hm"><thead><tr><th class="who">Person</th>${ms.map(m => `<th>${esc(S.ymLabel(m))}${m === nowYm ? '<div class="vmini" style="text-transform:none">pro-rata</div>' : ''}</th>`).join('')}<th class="pk">Months on target</th></tr></thead><tbody>${body}</tbody></table></div>
+      <div class="legend"><span><span class="sw" style="background:#cfe6e4"></span>≥100%</span><span><span class="sw" style="background:#eef4f4"></span>80–99% on target</span><span><span class="sw" style="background:#fce7c2"></span>1–79% behind</span><span><span class="sw" style="background:#e4453a"></span>0% nothing logged</span><span>· = not allocated that month</span></div>`;
+  }
+
   /* ---------- staff.json sync (Box) — makes the matrix + notes a shared,
      living document instead of per-browser state ---------- */
   function setStoreNote(mode, extra) {
@@ -862,6 +942,7 @@
       else if (state.tab === 'actuals') renderActuals();
       else if (state.tab === 'mapping') renderMapping();
       else if (state.tab === 'insights') renderInsights();
+      else if (state.tab === 'compliance') renderCompliance();
     } catch (e) {
       console.error('render failed', e);
       if (panel) panel.innerHTML = `<div class="empty" style="color:#8f2418"><b>This view hit an error:</b> ${esc(e.message)}<br><span class="vmini">${esc((e.stack || '').split('\n')[1] || '')}</span></div>`;
