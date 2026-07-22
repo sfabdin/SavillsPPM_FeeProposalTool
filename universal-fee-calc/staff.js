@@ -273,7 +273,7 @@
       project: b.project, client: b.client, headcount: b.people.size,
       peakFte: Math.max(0, ...months.map(m => b.byMonth[m] || 0)),
       byMonth: b.byMonth, allocs: b.allocs,
-      feeProject: matchFeeProject(b.project),
+      feeProject: matchFeeProject(b.project, b.client),
     })).sort((a, b) => a.project.localeCompare(b.project));
   }
 
@@ -288,7 +288,11 @@
   }
   function feeIndex() {
     if (_feeIndex) return _feeIndex;
-    _feeIndex = feeRecords().map(p => ({ id: p.id, name: (p.project && p.project.name) || '', key: projKey((p.project && p.project.name) || '') }));
+    _feeIndex = feeRecords().map(p => {
+      const name = (p.project && p.project.name) || '';
+      const client = (p.project && p.project.client) || '';
+      return { id: p.id, name, client, label: client ? client + ' — ' + name : name, key: projKey(name) };
+    });
     return _feeIndex;
   }
   /** Token-based name similarity — the smart part of project mapping. Splits
@@ -313,23 +317,29 @@
     return hit / small.length;          // 1 = every significant word of the shorter name found
   }
 
-  function matchFeeProject(name) {
+  function matchFeeProject(name, client) {
     const k = projKey(name); if (!k) return null;
     // 0) saved manual link wins
     const feeMap = (readDb().mappings || {}).fee || {};
     const mapped = feeMap[nkey(name)];
-    if (mapped) { const hit = feeIndex().find(p => p.id === mapped); if (hit) return { id: hit.id, name: hit.name, via: 'mapped' }; }
+    if (mapped) { const hit = feeIndex().find(p => p.id === mapped); if (hit) return { id: hit.id, name: hit.name, client: hit.client, via: 'mapped' }; }
     const idx = feeIndex();
+    // prefer same-client candidates when a client is given and names collide
+    const byClient = (list) => {
+      if (list.length < 2 || !client) return list[0];
+      const cHit = list.find(p => p.client && tokenScore(client, p.client) >= 0.7);
+      return cHit || list[0];
+    };
     // 1) exact normalized name
-    let hit = idx.find(p => p.key === k);
-    if (hit) return { id: hit.id, name: hit.name, via: 'name' };
+    let hits = idx.filter(p => p.key === k);
+    if (hits.length) { const h = byClient(hits); return { id: h.id, name: h.name, client: h.client, via: 'name' }; }
     // 2) containment (old behavior, kept for tight names)
-    hit = idx.find(p => p.key && (p.key.includes(k) || k.includes(p.key)) && Math.abs(p.key.length - k.length) < 8);
-    if (hit) return { id: hit.id, name: hit.name, via: 'name' };
+    hits = idx.filter(p => p.key && (p.key.includes(k) || k.includes(p.key)) && Math.abs(p.key.length - k.length) < 8);
+    if (hits.length) { const h = byClient(hits); return { id: h.id, name: h.name, client: h.client, via: 'name' }; }
     // 3) token scoring — best fee project sharing ≥70% of significant words
     let best = null, bestScore = 0;
-    idx.forEach(p => { const s = tokenScore(name, p.name); if (s > bestScore) { bestScore = s; best = p; } });
-    if (best && bestScore >= 0.7) return { id: best.id, name: best.name, via: 'tokens', score: Math.round(bestScore * 100) };
+    idx.forEach(p => { let s = tokenScore(name, p.name); if (client && p.client) s = s * 0.8 + tokenScore(client, p.client) * 0.2; if (s > bestScore) { bestScore = s; best = p; } });
+    if (best && bestScore >= 0.7) return { id: best.id, name: best.name, client: best.client, via: 'tokens', score: Math.round(bestScore * 100) };
     return null;
   }
 
@@ -385,8 +395,9 @@
     return null;
   }
 
-  /** Fee-tool projects for pickers: [{id, name}] */
-  function listFeeProjects() { return feeIndex().map(p => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name)); }
+  /** Fee-tool projects for pickers: [{id, name, client, label}] — label is
+      "Client — Project" because project names collide across clients. */
+  function listFeeProjects() { return feeIndex().map(p => ({ id: p.id, name: p.name, client: p.client, label: p.label })).sort((a, b) => a.label.localeCompare(b.label)); }
 
   // ---------- ENGINE: expected vs actual ----------
   function capacityHours(person) { return monthHours() * ((person && person.capacityPct != null ? person.capacityPct : 100) / 100); }
@@ -454,8 +465,8 @@
   /** CONTRACT plan — the fee-tool staffing for a window, with a per-TITLE
       breakdown (contract knows titles + allocations, not names). Rate-free.
       { byMonth:{ym:hrs}, total, roles:[{title, fteMonths, hours}], feeProject } */
-  function contractPlan(projectName, months) {
-    const link = matchFeeProject(projectName);
+  function contractPlan(projectName, months, client) {
+    const link = matchFeeProject(projectName, client);
     if (!link) return null;
     const S2 = window.UFC_Store;
     const p = feeRecords().find(x => x.id === link.id);
