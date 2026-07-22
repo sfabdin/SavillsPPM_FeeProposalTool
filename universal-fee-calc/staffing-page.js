@@ -613,6 +613,10 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       state.clockifyNames = S.parseCsvRows(await res.text()).map(o => ({ name: o.Project || Object.values(o)[0] || '', client: o.Client || '' })).filter(x => x.name);
     } catch (e) { state.clockifyNames = []; state.clockifyNamesError = e.message; }
+    try {
+      const res2 = await fetch('/api/clockify?list=users');
+      state.clockifyUsers = res2.ok ? S.parseCsvRows(await res2.text()).map(o => ({ name: o.User || '', email: o.Email || '', status: o.Status || '' })).filter(x => x.name) : [];
+    } catch (e) { state.clockifyUsers = []; }
   }
   function renderMapping() {
     if (state.clockifyNames === null) {
@@ -656,6 +660,25 @@
         <td>${ckCell}<br><input list="map-ck-dl" data-map-ck="${esc(mp)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${cks.length ? 'type to add another…' : 'type Clockify project…'}"></td>
       </tr>`;
     });
+    // ---- PEOPLE mapping: roster ↔ Clockify users ----
+    const ckUsers = state.clockifyUsers || [];
+    const userMaps = maps.users || {};
+    let pplRows = ''; let pplProblems = 0;
+    S.listPeople().filter(p => !p.isNewHire).forEach(p => {
+      // which clockify users resolve to this person (saved mapping or name match)
+      const hits = ckUsers.filter(u => { const m = userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()]; return m ? m === p.id : S.namesMatch(p.name, u.name); });
+      const isProblem = !hits.length;
+      if (isProblem) pplProblems++;
+      if (q && !p.name.toLowerCase().includes(q)) return;
+      if (state.mapOnlyProblems && !isProblem) return;
+      const cell = hits.length
+        ? hits.map(u => `<span class="badge ${userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()] ? 'active' : 'active'}" title="${esc(u.email)}">${esc(u.name)}</span>`).join(' ')
+        : (ckUsers.length ? '<span class="no-link" style="margin:0">no Clockify user matches — their hours are being DROPPED at import</span>' : '<span class="vmini">user list unavailable</span>');
+      pplRows += `<tr><td class="pname">${esc(p.name)}<div class="vmini">${esc(p.title || '')}</div></td><td>${cell}<br><input list="map-ckuser-dl" data-map-ckuser="${esc(p.id)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${hits.length ? 'type to add another…' : 'type Clockify user…'}"></td></tr>`;
+    });
+    const pplSection = `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">People — roster ↔ Clockify <span class="note-txt" style="font-weight:400">(${pplProblems} unmatched · unmatched people's hours are skipped at import — map, then re-pull actuals to backfill)</span></h3>
+      <table class="dt"><thead><tr><th style="width:28%">Roster person (JS sheet)</th><th>③ Clockify user(s)</th></tr></thead><tbody>${pplRows || '<tr><td colspan="2"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
+      <datalist id="map-ckuser-dl">${ckUsers.map(u => `<option value="${esc(u.name)}"${u.email ? ` label="${esc(u.email)}"` : ''}></option>`).join('')}</datalist>`;
     const banner = state.clockifyNamesError ? `<div class="note-txt" style="color:#8f2418;margin-bottom:10px">Couldn't pull the Clockify list (${esc(state.clockifyNamesError)}) — fee links still work; Clockify column limited to saved mappings.</div>` : '';
     $('#p-mapping').innerHTML = `${banner}
       <div class="toolbar">
@@ -667,7 +690,8 @@
       </div>
       <table class="dt"><thead><tr><th style="width:28%">Matrix project (JS sheet)</th><th style="width:32%">② Fee tool</th><th>③ Clockify project(s) landing here</th></tr></thead><tbody>${rows || '<tr><td colspan="3"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
       <datalist id="map-fee-dl"><option value="— unlink —"></option>${feeList.map(p => `<option value="${esc(p.label)}"></option>`).join('')}</datalist>
-      <datalist id="map-ck-dl">${ckList.map(c => `<option value="${esc(c.name)}"${c.client ? ` label="${esc(c.client)}"` : ''}></option>`).join('')}</datalist>`;
+      <datalist id="map-ck-dl">${ckList.map(c => `<option value="${esc(c.name)}"${c.client ? ` label="${esc(c.client)}"` : ''}></option>`).join('')}</datalist>
+      ${pplSection}`;
     $('#map-search').oninput = (e) => { state.mapSearch = e.target.value; renderMapping(); const el = $('#map-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $('#map-problems').onchange = (e) => { state.mapOnlyProblems = e.target.checked; renderMapping(); };
     $('#map-refresh').onclick = () => { state.clockifyNames = null; state.clockifyNamesError = null; renderMapping(); };
@@ -677,6 +701,14 @@
       const id = feeByName[v.toLowerCase()];
       if (!id) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project from the list'; return; }
       S.setFeeMapping(inp.dataset.mapFee, id); toast('Fee link saved.'); renderMapping();
+    });
+    $$('#p-mapping [data-map-ckuser]').forEach(inp => inp.onchange = () => {
+      const v = inp.value.trim(); if (!v) return;
+      const u = (state.clockifyUsers || []).find(x => x.name.toLowerCase() === v.toLowerCase());
+      if (!u) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a Clockify user from the list'; return; }
+      S.setUserMapping(u.name, inp.dataset.mapCkuser);
+      toast('Person mapped — now re-pull actuals on the Compare tab to backfill their hours.');
+      renderMapping();
     });
     $$('#p-mapping [data-map-ck]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;
