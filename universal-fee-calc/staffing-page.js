@@ -686,6 +686,79 @@
     });
   }
 
+  /* ---------- INSIGHTS — where the heat is ---------- */
+  function renderInsights() {
+    const ms = months();
+    const nowYm = S.currentYM();
+    const msPast = ms.filter(m => m <= nowYm);           // actuals only exist up to now
+    const hasAct = S.hasActuals();
+    const vm = S.varianceMatrix(ms, {});
+    const monthHrs = S.monthHours();
+
+    // ---- per-project burn: actual vs matrix plan AND vs contract (past months only) ----
+    const proj = {};
+    vm.forEach(r => {
+      const p = proj[r.project] || (proj[r.project] = { project: r.project, client: r.client, plan: 0, act: 0, people: new Set() });
+      msPast.forEach(m => { const c = r.byMonth[m]; p.plan += c.e; p.act += c.a; });
+      if (r.actual || r.expected) p.people.add(r.person.id);
+    });
+    const projRows = Object.values(proj).map(p => {
+      const cp = S.contractPlan(p.project, msPast, p.client);
+      return { ...p, contract: cp ? cp.total : null, varPlan: p.act - p.plan, pctPlan: p.plan ? p.act / p.plan : null, varContract: cp ? p.act - cp.total : null };
+    }).filter(p => p.plan > 5 || p.act > 5);
+    const hot = projRows.filter(p => (p.pctPlan != null && p.pctPlan > 1.1) || (p.plan === 0 && p.act > 20)).sort((a, b) => b.varPlan - a.varPlan).slice(0, 12);
+    const cold = projRows.filter(p => p.plan > 20 && (p.act / p.plan) < 0.85).sort((a, b) => a.varPlan - b.varPlan).slice(0, 12);
+
+    // ---- people: overextension = planned load + actual burn vs capacity ----
+    const bw = S.bandwidthGrid(ms, { includePursuit: state.incPursuit });
+    const ppl = bw.filter(r => r.activeMonths > 0).map(r => {
+      const person = r.person;
+      let act = 0; msPast.forEach(() => {});
+      const mine = vm.filter(v => v.person.id === person.id);
+      let actH = 0, planH = 0;
+      mine.forEach(v => msPast.forEach(m => { actH += v.byMonth[m].a; planH += v.byMonth[m].e; }));
+      const capH = msPast.length * S.capacityHours(person);
+      return { person, peak: r.peak, avg: r.avg, actH, planH, capH, burnPct: capH ? actH / capH : 0, overMonths: ms.filter(m => (r.byMonth[m] || 0) > 100).length };
+    });
+    const overext = ppl.filter(p => p.peak > 100 || p.burnPct > 1.05).sort((a, b) => (b.burnPct + b.peak / 100) - (a.burnPct + a.peak / 100)).slice(0, 12);
+    const headroom = ppl.filter(p => p.peak > 0 && p.peak <= 85 && p.burnPct < 0.85).sort((a, b) => a.avg - b.avg).slice(0, 10);
+
+    // ---- role heat: where over-plan hours concentrate, by title ----
+    const roleHeat = {};
+    vm.forEach(r => {
+      let e = 0, a = 0; msPast.forEach(m => { e += r.byMonth[m].e; a += r.byMonth[m].a; });
+      const over = a - e; if (over <= 0) return;
+      const t = (r.person.title || '').trim() || 'Unknown title';
+      roleHeat[t] = (roleHeat[t] || 0) + over;
+    });
+    const roles = Object.entries(roleHeat).map(([title, hrs]) => ({ title, hrs })).sort((a, b) => b.hrs - a.hrs).slice(0, 8);
+    const maxRole = roles.length ? roles[0].hrs : 1;
+    const hireSignal = roles.filter(r => r.hrs >= monthHrs).map(r => `${esc(r.title)}: ~${(r.hrs / (monthHrs * msPast.length || 1)).toFixed(1)} FTE short`).join(' · ');
+
+    // ---- unstaffed contract work: fee projects with contract hours but thin matrix staffing ----
+    const gaps = [];
+    S.distinctProjects().forEach(pn => {
+      const client = (S.listAllocations().find(a => a.project === pn) || {}).client || '';
+      const cp = S.contractPlan(pn, ms, client); if (!cp) return;
+      const planned = vm.filter(r => r.project === pn).reduce((s, r) => { let e = 0; ms.forEach(m => e += r.byMonth[m].e); return s + e; }, 0);
+      if (cp.total > 100 && planned < cp.total * 0.6) gaps.push({ project: pn, contract: cp.total, planned, gap: cp.total - planned });
+    });
+    gaps.sort((a, b) => b.gap - a.gap);
+
+    const fH = (n) => fmtH(Math.round(n * 10) / 10);
+    const noAct = hasAct ? '' : `<div class="note-txt" style="margin-bottom:14px;color:#8a6d00">No Clockify actuals loaded — burn-based insights are empty. Pull actuals on the Compare tab first.</div>`;
+    const projTable = (list, dir) => list.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">③ Actual</th><th class="num">① Plan</th><th class="num">② Contract</th><th class="num">${dir}</th></tr></thead><tbody>${list.map(p => `<tr><td class="pname">${esc(p.project)}<div class="vmini">${esc(p.client || '')}</div></td><td class="num"><b>${fH(p.act)}</b></td><td class="num">${fH(p.plan)}</td><td class="num">${p.contract != null ? fH(p.contract) : '—'}</td><td class="num ${dir === 'Over' ? 'var-over' : 'var-under'}">${p.varPlan >= 0 ? '+' : ''}${fH(p.varPlan)}${p.pctPlan != null ? `<div class="vmini">${Math.round(p.pctPlan * 100)}% of plan</div>` : '<div class="vmini">no plan</div>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nothing here — clean.</div>';
+
+    $('#p-insights').innerHTML = `${noAct}<div class="ins-grid">
+      <div class="ins-card"><h3>🔥 Burning over plan <span>· actuals beat both plans · ${esc(S.ymLabel(msPast[0] || ms[0]))}–${esc(S.ymLabel(msPast[msPast.length - 1] || ms[ms.length - 1]))}</span></h3>${projTable(hot, 'Over')}</div>
+      <div class="ins-card"><h3>🧊 Under-served <span>· planned hours not being delivered — scope risk or stale plan</span></h3>${projTable(cold, 'Under')}</div>
+      <div class="ins-card"><h3>⚠️ Most overextended people <span>· planned load + actual burn vs capacity</span></h3>${overext.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Peak load</th><th class="num">Months &gt;100%</th><th class="num">Burn vs capacity</th></tr></thead><tbody>${overext.map(p => `<tr><td class="pname">${esc(p.person.name)}<div class="vmini">${esc(p.person.title || '')}</div></td><td class="num ${p.peak > 100 ? 'var-over' : ''}">${Math.round(p.peak)}%</td><td class="num">${p.overMonths}</td><td class="num ${p.burnPct > 1.05 ? 'var-over' : ''}">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}<div class="vmini">${fH(p.actH)} / ${fH(p.capH)} h</div></td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nobody over the line.</div>'}</div>
+      <div class="ins-card"><h3>🎯 Role heat — what to hire <span>· over-plan hours by title${hireSignal ? ' · <b>' + hireSignal + '</b>' : ''}</span></h3>${roles.length ? `<table class="dt"><tbody>${roles.map(r => `<tr><td style="width:38%" class="pname">${esc(r.title)}</td><td><div class="heat-bar"><i style="width:${Math.round(r.hrs / maxRole * 100)}%;background:${r.hrs / maxRole > 0.6 ? '#e4453a' : '#e8b563'}"></i></div></td><td class="num" style="width:90px"><b>+${fH(r.hrs)}</b> h</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No over-plan hours to attribute yet.</div>'}</div>
+      <div class="ins-card"><h3>🕳️ Contract coverage gaps <span>· contract hours with under 60% staffed in the matrix — staff these or watch revenue slip</span></h3>${gaps.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">② Contract</th><th class="num">① Planned</th><th class="num">Gap</th></tr></thead><tbody>${gaps.slice(0, 10).map(g => `<tr><td class="pname">${esc(g.project)}</td><td class="num">${fH(g.contract)}</td><td class="num">${fH(g.planned)}</td><td class="num var-over">${fH(g.gap)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Every contract is ≥60% staffed.</div>'}</div>
+      <div class="ins-card"><h3>🟢 Headroom <span>· ≤85% load and light burn — first call before hiring</span></h3>${headroom.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Avg load</th><th class="num">Burn</th></tr></thead><tbody>${headroom.map(p => `<tr><td class="pname">${esc(p.person.name)}<div class="vmini">${esc(p.person.title || '')}</div></td><td class="num">${Math.round(p.avg)}%</td><td class="num">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No one with meaningful headroom.</div>'}</div>
+    </div>`;
+  }
+
   /* ---------- staff.json sync (Box) — makes the matrix + notes a shared,
      living document instead of per-browser state ---------- */
   function setStoreNote(mode, extra) {
@@ -788,6 +861,7 @@
       else if (state.tab === 'projects') renderProjects();
       else if (state.tab === 'actuals') renderActuals();
       else if (state.tab === 'mapping') renderMapping();
+      else if (state.tab === 'insights') renderInsights();
     } catch (e) {
       console.error('render failed', e);
       if (panel) panel.innerHTML = `<div class="empty" style="color:#8f2418"><b>This view hit an error:</b> ${esc(e.message)}<br><span class="vmini">${esc((e.stack || '').split('\n')[1] || '')}</span></div>`;
