@@ -666,13 +666,13 @@
     let pplRows = ''; let pplProblems = 0;
     S.listPeople().filter(p => !p.isNewHire).forEach(p => {
       // which clockify users resolve to this person (saved mapping or name match)
-      const hits = ckUsers.filter(u => { const m = userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()]; return m ? m === p.id : S.namesMatch(p.name, u.name); });
+      const hits = ckUsers.filter(u => { const m = userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()]; if (m) return m === p.id; return S.namesMatch(p.name, u.name) && !S.userExcluded(u.name, p.id); });
       const isProblem = !hits.length;
       if (isProblem) pplProblems++;
       if (q && !p.name.toLowerCase().includes(q)) return;
       if (state.mapOnlyProblems && !isProblem) return;
       const cell = hits.length
-        ? hits.map(u => `<span class="badge ${userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()] ? 'active' : 'active'}" title="${esc(u.email)}">${esc(u.name)}</span>`).join(' ')
+        ? hits.map(u => { const saved = userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()] === p.id; return `<span class="badge active" title="${esc(u.email)}${saved ? ' · pinned mapping' : ' · name match'}">${esc(u.name)} <a href="#" data-unmap-user="${esc(u.name)}" data-unmap-pid="${esc(p.id)}" data-unmap-saved="${saved ? 1 : 0}" style="color:inherit;text-decoration:none;font-weight:800" title="Not this person — remove">✕</a></span>`; }).join(' ')
         : (ckUsers.length ? '<span class="no-link" style="margin:0">no Clockify user matches — their hours are being DROPPED at import</span>' : '<span class="vmini">user list unavailable</span>');
       pplRows += `<tr><td class="pname">${esc(p.name)}<div class="vmini">${esc(p.title || '')}</div></td><td>${cell}<br><input list="map-ckuser-dl" data-map-ckuser="${esc(p.id)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${hits.length ? 'type to add another…' : 'type Clockify user…'}"></td></tr>`;
     });
@@ -701,6 +701,14 @@
       const id = feeByName[v.toLowerCase()];
       if (!id) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project from the list'; return; }
       S.setFeeMapping(inp.dataset.mapFee, id); toast('Fee link saved.'); renderMapping();
+    });
+    $$('#p-mapping [data-unmap-user]').forEach(a => a.onclick = (e) => {
+      e.preventDefault();
+      const ck = a.dataset.unmapUser, pid = a.dataset.unmapPid;
+      if (a.dataset.unmapSaved === '1') S.setUserMapping(ck, null);   // drop the pinned mapping
+      S.setUserExclusion(ck, pid, true);                              // and block the fuzzy match
+      toast('Removed — ' + ck + ' no longer maps to this person. Re-pull actuals to recompute.');
+      renderMapping();
     });
     $$('#p-mapping [data-map-ckuser]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;

@@ -43,12 +43,19 @@
   function canonicalName(n) { const c = cleanName(n); return NAME_ALIASES[c.toLowerCase()] || c; }
   function nkey(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
   /** Tolerant name match (surname fallback), mirrors the fee store. */
+  /** Tolerant name match. Surname fallback is guarded: full names must also
+      agree on the first initial ("Eno Chen" ≠ "Mandy Chen"), and a bare
+      surname token only matches if it's reasonably distinctive (>4 chars),
+      so "Chen" alone doesn't glue every Chen together. */
   function namesMatch(a, b) {
     const x = nkey(canonicalName(a)), y = nkey(canonicalName(b));
     if (!x || !y) return false;
     if (x === y) return true;
-    const xl = x.split(' ').pop(), yl = y.split(' ').pop();
-    return xl === y || yl === x || (xl === yl && xl.length > 3);
+    const xp = x.split(' '), yp = y.split(' ');
+    const xl = xp[xp.length - 1], yl = yp[yp.length - 1];
+    if (xp.length > 1 && yp.length > 1) return xl === yl && xp[0][0] === yp[0][0];  // same surname + same first initial
+    // one side is a single token: match against the other's surname only if distinctive
+    return (xl === y || yl === x) && (xp.length === 1 ? x : y).length > 4;
   }
   /** Normalize a project name for cross-matching (drop spacing / punctuation). */
   function projKey(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
@@ -597,8 +604,8 @@
       const pMap = maps.projects[nkey(proj)];
       if (uMap === '__ignore__' || pMap === '__ignore__') return;
       monthsSeen.add(ym);
-      // match person: saved mapping → name match
-      let person = (uMap && db.people[uMap]) ? db.people[uMap] : Object.values(db.people).find(p => namesMatch(p.name, uname));
+      // match person: saved mapping → name match (exclusions block the fuzzy path)
+      let person = (uMap && db.people[uMap]) ? db.people[uMap] : Object.values(db.people).find(p => namesMatch(p.name, uname) && !((maps.userX || {})[nkey(uname)] || []).includes(p.id));
       const personId = person ? person.id : ('unmatched:' + nkey(uname));
       if (!person) unmatchedUsers[uname] = (unmatchedUsers[uname] || 0) + hrs;
       if (person && cTitle && r[cTitle] && !titles[personId]) titles[personId] = String(r[cTitle]).trim();
@@ -663,6 +670,20 @@
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
     if (personId) db.mappings.users[nkey(clockifyName)] = personId; else delete db.mappings.users[nkey(clockifyName)];
     writeDb(db);
+  }
+  /** Explicit "this Clockify user is NOT this person" — blocks the fuzzy match. */
+  function setUserExclusion(clockifyName, personId, on) {
+    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    db.mappings.userX = db.mappings.userX || {};
+    const k = nkey(clockifyName);
+    const list = db.mappings.userX[k] || [];
+    db.mappings.userX[k] = on ? [...new Set([...list, personId])] : list.filter(x => x !== personId);
+    if (!db.mappings.userX[k].length) delete db.mappings.userX[k];
+    writeDb(db);
+  }
+  function userExcluded(clockifyName, personId) {
+    const x = (readDb().mappings || {}).userX || {};
+    return (x[nkey(clockifyName)] || []).includes(personId);
   }
   function setProjectMapping(clockifyName, matrixProject) {
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
@@ -889,7 +910,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, tokenScore,
-    setLateness, getLateness,
+    setLateness, getLateness, setUserExclusion, userExcluded,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers
     namesMatch, cleanName, isNewHireName,
