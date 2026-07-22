@@ -348,11 +348,22 @@
     } catch (e) {}
     return _sfIndex;
   }
+  /** Numeric/code tokens (383, 270p, fbg) distinguish sibling projects of the
+      same client — "JPMC - 383M" vs "JPMC - 270P". If BOTH names carry such
+      tokens and NONE overlap (even by prefix), they are different projects. */
+  function codeTokens(s) { return nameTokens(s).filter(t => /\d/.test(t)); }
+  function codesConflict(a, b) {
+    const ca = codeTokens(a), cb = codeTokens(b);
+    if (!ca.length || !cb.length) return false;
+    return !ca.some(t => cb.some(u => t === u || t.startsWith(u) || u.startsWith(t)));
+  }
+
   /** Resolve a Clockify project name → matrix project name. Order:
-      1. exact normalized name match to the matrix;
-      2. a fee-tool Salesforce ID embedded in the Clockify name → that fee
-         project → the matrix project with the matching name (else the fee name);
-      3. fuzzy name containment. Returns { name, via } or null. */
+      1. saved mapping (handled by caller); 2. exact normalized name;
+      3. Salesforce ID; 4. containment — only when UNAMBIGUOUS (exactly one
+      candidate) and no code conflict; 5. token score ≥ 0.7 with a clear
+      margin over the runner-up and no code conflict. Ambiguity → null, so
+      the row surfaces as unmatched instead of landing on a sibling project. */
   function resolveClockifyProject(raw) {
     const k = projKey(raw); if (!k) return null;
     const all = distinctProjects();
@@ -366,12 +377,11 @@
         || all.find(pn => (projKey(pn).includes(fk) || fk.includes(projKey(pn))) && Math.abs(projKey(pn).length - fk.length) < 8);
       return { name: viaMatrix || sf.name, via: 'salesforce' };
     }
-    hit = all.find(pn => (projKey(pn).includes(k) || k.includes(projKey(pn))) && Math.abs(projKey(pn).length - k.length) < 8);
-    if (hit) return { name: hit, via: 'fuzzy' };
-    // token scoring against matrix project names
-    let best = null, bestScore = 0;
-    all.forEach(pn => { const s = tokenScore(raw, pn); if (s > bestScore) { bestScore = s; best = pn; } });
-    if (best && bestScore >= 0.7) return { name: best, via: 'tokens' };
+    const contain = all.filter(pn => (projKey(pn).includes(k) || k.includes(projKey(pn))) && Math.abs(projKey(pn).length - k.length) < 8 && !codesConflict(raw, pn));
+    if (contain.length === 1) return { name: contain[0], via: 'fuzzy' };
+    // token scoring — best + margin, codes must not conflict
+    const scored = all.filter(pn => !codesConflict(raw, pn)).map(pn => ({ pn, s: tokenScore(raw, pn) })).sort((x, y) => y.s - x.s);
+    if (scored.length && scored[0].s >= 0.7 && (scored.length < 2 || scored[0].s - scored[1].s >= 0.15)) return { name: scored[0].pn, via: 'tokens' };
     return null;
   }
 
@@ -562,6 +572,7 @@
 
     const agg = {}; // key personId|project|ym -> hours
     const unmatchedUsers = {}, unmatchedProjects = {}, monthsSeen = new Set();
+    const matchDetail = {};   // clockify name -> {to, via, hours}
     const db = readDb();
     let totalHours = 0, rowCount = 0, sfHits = 0;
     rows.forEach(r => {
@@ -586,12 +597,16 @@
       else { const res = resolveClockifyProject(proj); projName = res ? res.name : proj; via = res && res.via; }
       if (via === 'salesforce') sfHits++;
       if (!via) unmatchedProjects[proj] = (unmatchedProjects[proj] || 0) + hrs;
+      // audit trail: where every Clockify project's hours landed
+      const md = matchDetail[proj] || (matchDetail[proj] = { to: projName, via: via || 'unmatched', hours: 0 });
+      md.hours += hrs;
       const key = actualKey(personId, projName, ym);
       agg[key] = (agg[key] || 0) + hrs;
       totalHours += hrs; rowCount++;
     });
     return {
       ok: true, agg, totalHours: Math.round(totalHours * 10) / 10, rowCount, sfHits, titles,
+      matchDetail: Object.entries(matchDetail).map(([from, d]) => ({ from, to: d.to, via: d.via, hours: Math.round(d.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours),
       months: [...monthsSeen].sort(),
       matchedUsers: Object.keys(db.people).length,
       unmatchedUsers: Object.entries(unmatchedUsers).map(([k, v]) => ({ name: k, hours: Math.round(v * 10) / 10 })).sort((a, b) => b.hours - a.hours),
@@ -844,7 +859,7 @@
     personLoad, personAllocationsIn, bandwidthGrid, projectRollup, matchFeeProject, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
     // clockify
-    analyzeClockify, commitClockify, clearActuals,
+    analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, tokenScore,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers

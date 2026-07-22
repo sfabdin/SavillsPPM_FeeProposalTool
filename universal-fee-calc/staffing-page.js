@@ -72,6 +72,7 @@
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
     canonProposals: null,
+    mapSearch: '', mapOnlyProblems: false, clockifyNames: null,
   };
 
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
@@ -467,6 +468,7 @@
           <div class="rstat"><b>${rep.months && rep.months.length ? esc(S.ymLabel(rep.months[0]) + ' – ' + S.ymLabel(rep.months[rep.months.length - 1])) : '—'}</b><span>Period</span></div>
         </div>
         <div class="unmatched">${umUsers}${umProj}</div>
+        ${matchAudit(rep)}
         <div class="imp-actions">
           <button class="btn btn-primary" id="commit-merge">Commit — replace these months</button>
           <button class="btn btn-ghost" id="commit-add">Add to existing</button>
@@ -475,6 +477,23 @@
         </div>
       </div>
     </div>`;
+  }
+
+  /* Full audit: every Clockify project → where its hours landed, with a remap
+     select on every row (not just unmatched) — catches WRONG matches, e.g.
+     sibling JPMC projects collapsing into one. */
+  function matchAudit(rep) {
+    if (!rep.matchDetail || !rep.matchDetail.length) return '';
+    const opts = S.distinctProjects().map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    const viaBadge = (v) => v === 'name' ? '<span class="badge active">exact</span>' : v === 'mapped' ? '<span class="badge active">mapped</span>' : v === 'salesforce' ? '<span class="badge active">SF ID</span>' : v === 'unmatched' ? '<span class="badge" style="color:#8f2418;background:#fbe9e7">unmatched</span>' : `<span class="badge pursuit">${esc(v)}</span>`;
+    const rows = rep.matchDetail.map(d => `<tr>
+      <td>${esc(d.from)}</td><td>${viaBadge(d.via)}</td>
+      <td>${d.via === 'unmatched' ? '<span class="vmini">—</span>' : esc(d.to)}</td>
+      <td class="num">${fmtH(d.hours)}</td>
+      <td><select data-map-proj="${esc(d.from)}" style="font-size:11px;max-width:190px"><option value="">remap to…</option><option value="__ignore__">Ignore</option>${opts}</select></td>
+    </tr>`).join('');
+    return `<details style="margin-bottom:16px"><summary style="cursor:pointer;font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">Where every Clockify project landed (${rep.matchDetail.length}) — check this if a project's actuals look wrong</summary>
+      <table class="dt" style="margin-top:10px"><thead><tr><th>Clockify project</th><th>Match</th><th>→ Matrix project</th><th class="num">Hours</th><th>Fix</th></tr></thead><tbody>${rows}</tbody></table></details>`;
   }
 
   function wireImport() {
@@ -577,6 +596,73 @@
   }
 
   /* ---------- shell ---------- */
+  /* ---------- MAPPING — one row per matrix project, its resolved fee-tool
+     and Clockify links side by side, selector to fix either. Saved mappings
+     live in staff.json, so a fix here applies to every import, forever. ---------- */
+  async function pullClockifyNames() {
+    try {
+      const res = await fetch('/api/clockify?list=projects');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      state.clockifyNames = S.parseCsvRows(await res.text()).map(o => ({ name: o.Project || Object.values(o)[0] || '', client: o.Client || '' })).filter(x => x.name);
+    } catch (e) { state.clockifyNames = []; state.clockifyNamesError = e.message; }
+  }
+  function renderMapping() {
+    if (state.clockifyNames === null) {
+      $('#p-mapping').innerHTML = '<div class="empty">Pulling the Clockify project list…</div>';
+      pullClockifyNames().then(renderMapping);
+      return;
+    }
+    const maps = S.getMappings();
+    const feeList = S.listFeeProjects();
+    const feeOpts = feeList.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+    const ckList = state.clockifyNames;
+    const ckOpts = ckList.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+    // reverse index: which clockify names resolve to each matrix project
+    const ckResolved = {};
+    ckList.forEach(c => {
+      const m = maps.projects[c.name.toLowerCase().replace(/\s+/g, ' ').trim()];
+      const res = m ? { name: m, via: 'mapped' } : S.resolveClockifyProject ? S.resolveClockifyProject(c.name) : null;
+      if (res && res.name) (ckResolved[res.name] = ckResolved[res.name] || []).push({ ck: c.name, via: res.via });
+    });
+    let rows = '';
+    let problems = 0;
+    const q = state.mapSearch.toLowerCase();
+    S.distinctProjects().forEach(mp => {
+      const fee = S.matchFeeProject(mp);
+      const cks = ckResolved[mp] || [];
+      const isProblem = !fee || !cks.length;
+      if (isProblem) problems++;
+      if (q && !mp.toLowerCase().includes(q)) return;
+      if (state.mapOnlyProblems && !isProblem) return;
+      const feeCell = fee
+        ? `<span class="badge ${fee.via === 'tokens' ? 'pursuit' : 'active'}" title="matched by ${esc(fee.via || 'name')}">${esc(fee.name)}</span>`
+        : '<span class="no-link" style="margin:0">not linked</span>';
+      const ckCell = cks.length
+        ? cks.map(c => `<span class="badge ${c.via === 'name' || c.via === 'mapped' ? 'active' : 'pursuit'}" title="${esc(c.via)}">${esc(c.ck)}</span>`).join(' ')
+        : (ckList.length ? '<span class="no-link" style="margin:0">no Clockify project resolves here</span>' : '<span class="vmini">list unavailable</span>');
+      rows += `<tr>
+        <td class="pname">${esc(mp)}</td>
+        <td>${feeCell}<br><select data-map-fee="${esc(mp)}" class="fee-link-sel" style="margin:4px 0 0"><option value="">${fee ? 'change…' : 'link to fee…'}</option><option value="__clear__">— unlink —</option>${feeOpts}</select></td>
+        <td>${ckCell}<br><select data-map-ck="${esc(mp)}" class="fee-link-sel" style="margin:4px 0 0"><option value="">${cks.length ? 'add another…' : 'pick Clockify project…'}</option>${ckOpts}</select></td>
+      </tr>`;
+    });
+    const banner = state.clockifyNamesError ? `<div class="note-txt" style="color:#8f2418;margin-bottom:10px">Couldn't pull the Clockify list (${esc(state.clockifyNamesError)}) — fee links still work; Clockify column limited to saved mappings.</div>` : '';
+    $('#p-mapping').innerHTML = `${banner}
+      <div class="toolbar">
+        <input type="search" id="map-search" placeholder="Filter projects…" value="${esc(state.mapSearch)}">
+        <label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" id="map-problems" ${state.mapOnlyProblems ? 'checked' : ''}> Only problems (${problems})</label>
+        <span class="grow"></span>
+        <button class="btn btn-ghost" id="map-refresh" title="Re-pull the Clockify project list">⟳ Refresh Clockify list</button>
+        <span class="note-txt">Every pick is saved to staff.json and applies to all future imports.</span>
+      </div>
+      <table class="dt"><thead><tr><th style="width:28%">Matrix project (JS sheet)</th><th style="width:32%">② Fee tool</th><th>③ Clockify project(s) landing here</th></tr></thead><tbody>${rows || '<tr><td colspan="3"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>`;
+    $('#map-search').oninput = (e) => { state.mapSearch = e.target.value; renderMapping(); const el = $('#map-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $('#map-problems').onchange = (e) => { state.mapOnlyProblems = e.target.checked; renderMapping(); };
+    $('#map-refresh').onclick = () => { state.clockifyNames = null; state.clockifyNamesError = null; renderMapping(); };
+    $$('#p-mapping [data-map-fee]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setFeeMapping(sel.dataset.mapFee, sel.value === '__clear__' ? null : sel.value); toast('Fee link saved.'); renderMapping(); });
+    $$('#p-mapping [data-map-ck]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setProjectMapping(sel.value, sel.dataset.mapCk); toast('Clockify mapping saved — applies to every import. Re-import actuals to move existing hours.'); renderMapping(); });
+  }
+
   /* ---------- staff.json sync (Box) — makes the matrix + notes a shared,
      living document instead of per-browser state ---------- */
   function setStoreNote(mode, extra) {
@@ -678,6 +764,7 @@
       else if (state.tab === 'allocations') renderAllocations();
       else if (state.tab === 'projects') renderProjects();
       else if (state.tab === 'actuals') renderActuals();
+      else if (state.tab === 'mapping') renderMapping();
     } catch (e) {
       console.error('render failed', e);
       if (panel) panel.innerHTML = `<div class="empty" style="color:#8f2418"><b>This view hit an error:</b> ${esc(e.message)}<br><span class="vmini">${esc((e.stack || '').split('\n')[1] || '')}</span></div>`;
