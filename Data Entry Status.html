@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Data Entry Status</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<style>
+  .head .title-block h1 a { color: inherit; text-decoration: none; }
+
+  /* KPI strip */
+  .kpi-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 30px; }
+  .kpi-card { background: #fff; border: 1px solid rgba(37,39,58,0.10); padding: 16px 18px; }
+  .kpi-card .k-num { font-family: var(--font-display); font-weight: 800; font-size: 30px; line-height: 1; color: var(--sav-navy); }
+  .kpi-card .k-lbl { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #79828C; margin-top: 8px; }
+  .kpi-card.accent .k-num { color: var(--sav-teal); }
+  .kpi-card.warn .k-num { color: #C0392B; }
+
+  .toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
+  .toolbar .grow { flex: 1; }
+  .toolbar input[type=search] { font-family: var(--font-body); font-size: 13px; padding: 8px 12px; border: 1px solid rgba(37,39,58,0.22); min-width: 240px; }
+  .toolbar label.chk { font-size: 12.5px; color: var(--sav-navy); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+  /* Leader group */
+  .lgroup { background: #fff; border: 1px solid rgba(37,39,58,0.12); margin-bottom: 14px; }
+  .lgroup > summary { list-style: none; cursor: pointer; padding: 15px 20px; display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 16px; }
+  .lgroup > summary::-webkit-details-marker { display: none; }
+  .lgroup > summary:hover { background: #faf9f7; }
+  .lg-caret { font-size: 13px; color: #A7ADB5; transition: transform .15s; }
+  .lgroup[open] .lg-caret { transform: rotate(90deg); }
+  .lg-name { font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--sav-navy); }
+  .lg-sub { font-size: 11.5px; color: #79828C; margin-top: 3px; }
+  .lg-name.unassigned { color: #C0392B; }
+  .lg-metrics { display: flex; align-items: center; gap: 22px; }
+  .lg-metrics .m { text-align: right; }
+  .lg-metrics .m b { font-family: var(--font-display); font-size: 17px; display: block; color: var(--sav-navy); }
+  .lg-metrics .m span { font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: #79828C; }
+
+  /* completeness bar */
+  .cbar { width: 150px; height: 9px; background: #EDECE8; border-radius: 5px; overflow: hidden; }
+  .cbar > i { display: block; height: 100%; background: var(--sav-teal); }
+  .cbar.low > i { background: #C0392B; }
+  .cbar.mid > i { background: #E0A800; }
+
+  table.dt { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.dt th, table.dt td { padding: 8px 10px; border-top: 1px solid rgba(37,39,58,0.09); text-align: left; vertical-align: middle; }
+  table.dt thead th { font-family: var(--font-display); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: #79828C; border-top: none; border-bottom: 1px solid rgba(37,39,58,0.14); background: #faf9f7; position: sticky; top: 0; }
+  table.dt tbody tr:hover { background: #fbfbfa; }
+  .pj-name { font-family: var(--font-display); font-weight: 600; color: var(--sav-navy); text-decoration: none; }
+  .pj-name:hover { text-decoration: underline; }
+  .pj-name .imp-tag { font-family: var(--font-body); font-weight: 700; font-size: 8.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sav-teal); border: 1px solid rgba(14,124,123,0.4); padding: 1px 5px; margin-left: 8px; border-radius: 3px; vertical-align: middle; }
+  .fchip { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 4px; font-size: 12px; font-weight: 700; }
+  .fchip.ok { color: #1f7a44; }
+  .fchip.no { color: #C0392B; background: #FBE9EA; }
+  .miss-n { font-family: var(--font-display); font-weight: 800; font-size: 13px; }
+  .miss-n.zero { color: #1f7a44; }
+  .miss-n.some { color: #C0392B; }
+  td.center { text-align: center; }
+  .empty { padding: 40px; text-align: center; color: #79828C; font-size: 13px; }
+  .legend { font-size: 11.5px; color: #79828C; margin: 4px 0 20px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .legend b { color: var(--sav-navy); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div class="title-block">
+      <h1><a href="Fee Generator.html">Data Entry Status</a></h1>
+      <p class="tagline">Completeness tracker — projects by revenue leader, with the fields still missing.</p>
+    </div>
+  </header>
+
+  <div class="identity-bar">
+    <span class="id-label">Viewing as</span>
+    <select id="id-user"></select>
+    <span class="id-role" id="id-role"></span>
+    <span class="id-note" id="id-note"></span>
+  </div>
+
+  <div class="kpi-strip" id="kpis"></div>
+
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Filter by project or client…">
+    <label class="chk"><input type="checkbox" id="only-incomplete"> Only projects missing data</label>
+    <label class="chk"><input type="checkbox" id="only-imported"> Only imported</label>
+    <span class="grow"></span>
+    <button class="btn" id="expand-all">Expand all</button>
+    <button class="btn ghost" id="collapse-all">Collapse all</button>
+  </div>
+
+  <div class="legend">
+    <span>Tracked fields: <b>Leader</b>, <b>Client</b>, <b>Industry</b>, <b>Type</b>, <b>Rating</b>, <b>Staffing</b>, <b>Fee $</b>, <b>Date</b></span>
+    <span><b>Staffing</b> = priced roles allocated, or pass-through lines entered (imported-$-only projects count as missing until built).</span>
+  </div>
+
+  <div id="groups"></div>
+
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script>
+(function () {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const STORE = window.UFC_Store;
+  const CATALOG = window.RATES_CATALOG;
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fmtMoney = (n) => n ? '$' + Math.round(n).toLocaleString() : '—';
+
+  let search = '';
+  let onlyIncomplete = false;
+  let onlyImported = false;
+
+  /* ---------- Fee (mirrors Projects Index) ---------- */
+  function projectFee(p) {
+    if (p.source && p.source.importedByMonth && !(p.source && p.source.reconciled)) {
+      const series = STORE.monthlySeries(p, CATALOG) || [];
+      const net = series.reduce((a, s) => a + (s.amount || 0), 0);
+      return net;
+    }
+    const f = STORE.projectFinancials(p, r => STORE.getTierRateFromCatalog(r, CATALOG, p));
+    return f ? f.net : 0;
+  }
+
+  function isImported(p) {
+    return !!(p.source && (p.source.importedByMonth || p.source.origin));
+  }
+
+  /* ---------- Per-project field completeness ---------- */
+  function assess(p) {
+    const pj = p.project || {};
+    const roles = p.roles || [];
+    const pt = p.passthrough || {};
+    const hasAlloc = roles.some(r => {
+      const m = r.fteMonthly && Object.values(r.fteMonthly).some(v => v > 0);
+      const ph = r.fte && Object.values(r.fte).some(v => v > 0);
+      return m || ph;
+    });
+    const hasPt = pt.enabled && Array.isArray(pt.lines) && pt.lines.some(l => (parseFloat(l.cost) || 0) > 0);
+    const fee = projectFee(p);
+
+    const fields = {
+      Leader:   !!(pj.leadId || pj.lead),
+      Client:   !!(pj.client && String(pj.client).trim()),
+      Industry: !!pj.industry,
+      Type:     !!pj.projectType,
+      Rating:   !!(STORE.ratingFor ? STORE.ratingFor(p) : pj.rating),
+      Staffing: hasAlloc || hasPt,
+      'Fee $':  fee > 0,
+      Date:     !!(pj.firstProposalDate || pj.proposalDate)
+    };
+    const missing = Object.keys(fields).filter(k => !fields[k]);
+    return { fields, missing, fee };
+  }
+
+  const FIELD_ORDER = ['Leader','Client','Industry','Type','Rating','Staffing','Fee $','Date'];
+
+  /* ---------- Identity bar (reused pattern, admin-lite) ---------- */
+  function buildIdentityBar() {
+    const sel = $('#id-user');
+    const label = document.querySelector('.identity-bar .id-label');
+    const cur = STORE.getCurrentUser();
+    if (!STORE.canImpersonate()) {
+      if (sel) sel.style.display = 'none';
+      if (label) label.textContent = 'Signed in as';
+      let nameEl = document.getElementById('id-static-name');
+      if (!nameEl && sel) {
+        nameEl = document.createElement('span');
+        nameEl.id = 'id-static-name';
+        nameEl.style.cssText = 'font-family:var(--font-display);font-weight:700;font-size:13px;color:#fff;margin:0 4px;';
+        sel.parentNode.insertBefore(nameEl, sel.nextSibling);
+      }
+      if (nameEl) nameEl.textContent = cur.name || '(unrecognized)';
+    } else {
+      if (label) label.textContent = 'Viewing as';
+      if (sel) sel.style.display = '';
+      const roster = STORE.impersonationRoster();
+      const imp = STORE.getImpersonation();
+      const opts = ['<option value="__me__">Me — admin · all projects</option>']
+        .concat(roster.map(r => `<option value="${esc(r.username)}">${esc(r.name)} · ${r.role}</option>`));
+      sel.innerHTML = opts.join('');
+      sel.value = imp ? esc(imp) : '__me__';
+      if (sel.selectedIndex < 0) sel.value = '__me__';
+      sel.onchange = () => {
+        const v = sel.value;
+        if (v === '__me__') STORE.clearImpersonation(); else STORE.setImpersonation(v);
+        render();
+      };
+    }
+    const roleEl = $('#id-role'), noteEl = $('#id-note');
+    if (cur.role === 'admin') { roleEl.textContent = 'Admin · all teams'; roleEl.className = 'id-role admin'; }
+    else { roleEl.textContent = 'Member · own projects'; roleEl.className = 'id-role member'; }
+    noteEl.textContent = cur.impersonating ? 'Previewing ' + (cur.name || 'this person') : '';
+  }
+
+  /* ---------- Render ---------- */
+  function render() {
+    buildIdentityBar();
+    const all = STORE.visibleProjects(STORE.listProjects());
+
+    // filter
+    let rows = all.map(p => ({ p, a: assess(p), imported: isImported(p) }));
+    if (search) {
+      const q = search.toLowerCase();
+      rows = rows.filter(r => (((r.p.project||{}).name||'') + ' ' + ((r.p.project||{}).client||'')).toLowerCase().includes(q));
+    }
+    if (onlyIncomplete) rows = rows.filter(r => r.a.missing.length > 0);
+    if (onlyImported) rows = rows.filter(r => r.imported);
+
+    // KPIs (over the filtered-by-search set, not the incomplete toggle)
+    let kpiRows = all.map(p => ({ p, a: assess(p), imported: isImported(p) }));
+    const total = kpiRows.length;
+    const importedN = kpiRows.filter(r => r.imported).length;
+    const complete = kpiRows.filter(r => r.a.missing.length === 0).length;
+    const needData = total - complete;
+    const totalMissing = kpiRows.reduce((s, r) => s + r.a.missing.length, 0);
+    $('#kpis').innerHTML = [
+      { n: total, l: 'Projects', c: '' },
+      { n: importedN, l: 'Imported', c: 'accent' },
+      { n: complete, l: 'Fully complete', c: 'accent' },
+      { n: needData, l: 'Need data', c: needData ? 'warn' : '' },
+      { n: totalMissing, l: 'Missing fields', c: totalMissing ? 'warn' : '' }
+    ].map(k => `<div class="kpi-card ${k.c}"><div class="k-num">${k.n}</div><div class="k-lbl">${k.l}</div></div>`).join('');
+
+    // group by leader
+    const groups = {};
+    rows.forEach(r => {
+      const pj = r.p.project || {};
+      const raw = pj.leadId || pj.lead || '';
+      const name = raw ? (STORE.leaderDisplay ? STORE.leaderDisplay(raw) : raw) : '__unassigned__';
+      const key = raw || '__unassigned__';
+      (groups[key] = groups[key] || { key, name: raw ? name : 'Unassigned', rows: [] }).rows.push(r);
+    });
+
+    const order = Object.values(groups).sort((a, b) => {
+      if (a.key === '__unassigned__') return -1;
+      if (b.key === '__unassigned__') return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const cont = $('#groups');
+    if (!order.length) { cont.innerHTML = '<div class="empty">No projects match.</div>'; return; }
+
+    cont.innerHTML = order.map(g => {
+      const n = g.rows.length;
+      const fieldsPerProj = FIELD_ORDER.length;
+      const filled = g.rows.reduce((s, r) => s + (fieldsPerProj - r.a.missing.length), 0);
+      const pct = Math.round((filled / (n * fieldsPerProj)) * 100);
+      const importedN = g.rows.filter(r => r.imported).length;
+      const missTotal = g.rows.reduce((s, r) => s + r.a.missing.length, 0);
+      const complete = g.rows.filter(r => r.a.missing.length === 0).length;
+      const barCls = pct >= 85 ? '' : pct >= 55 ? 'mid' : 'low';
+      const isUnassigned = g.key === '__unassigned__';
+      const openAttr = (isUnassigned || onlyIncomplete || search) ? ' open' : '';
+
+      const body = g.rows.slice().sort((a, b) => b.a.missing.length - a.a.missing.length).map(r => {
+        const pj = r.p.project || {};
+        const chips = FIELD_ORDER.map(f => {
+          const ok = r.a.fields[f];
+          return `<td class="center"><span class="fchip ${ok?'ok':'no'}" title="${esc(f)}: ${ok?'present':'missing'}">${ok?'✓':'✗'}</span></td>`;
+        }).join('');
+        const mc = r.a.missing.length;
+        return `<tr>
+          <td><a class="pj-name" href="Universal Fee Calculator.html?id=${esc(r.p.id)}">${esc(pj.name || 'Untitled')}</a>${r.imported?'<span class="imp-tag">Imported</span>':''}</td>
+          <td>${esc(pj.client || '—')}</td>
+          <td>${esc((STORE.STATUS_LABELS && STORE.STATUS_LABELS[pj.status]) || pj.status || '—')}</td>
+          ${chips}
+          <td class="center"><span class="miss-n ${mc?'some':'zero'}">${mc || '✓'}</span></td>
+        </tr>`;
+      }).join('');
+
+      return `<details class="lgroup"${openAttr}>
+        <summary>
+          <span class="lg-caret">▶</span>
+          <span>
+            <span class="lg-name ${isUnassigned?'unassigned':''}">${esc(g.name)}</span>
+            <div class="lg-sub">${n} project${n===1?'':'s'} · ${complete} complete · ${importedN} imported${missTotal?` · ${missTotal} missing field${missTotal===1?'':'s'}`:''}</div>
+          </span>
+        </summary>
+        <div style="padding:0 20px 14px;">
+          <div style="display:flex;align-items:center;gap:12px;margin:2px 0 12px;">
+            <div class="cbar ${barCls}"><i style="width:${pct}%"></i></div>
+            <span style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy);">${pct}% complete</span>
+          </div>
+          <div style="overflow:auto;">
+          <table class="dt">
+            <thead><tr>
+              <th>Project</th><th>Client</th><th>Status</th>
+              ${FIELD_ORDER.map(f => `<th class="center">${esc(f)}</th>`).join('')}
+              <th class="center">Missing</th>
+            </tr></thead>
+            <tbody>${body}</tbody>
+          </table>
+          </div>
+        </div>
+      </details>`;
+    }).join('');
+  }
+
+  /* ---------- Wire ---------- */
+  function wire() {
+    let t;
+    $('#search').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { search = e.target.value.trim(); render(); }, 160); });
+    $('#only-incomplete').addEventListener('change', e => { onlyIncomplete = e.target.checked; render(); });
+    $('#only-imported').addEventListener('change', e => { onlyImported = e.target.checked; render(); });
+    $('#expand-all').addEventListener('click', () => document.querySelectorAll('details.lgroup').forEach(d => d.open = true));
+    $('#collapse-all').addEventListener('click', () => document.querySelectorAll('details.lgroup').forEach(d => d.open = false));
+  }
+
+  function boot() {
+    if (STORE.migrateLeadIds) { try { STORE.migrateLeadIds(); } catch (e) {} }
+    wire();
+    render();
+  }
+  if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
+})();
+</script>
+<script src="universal-fee-calc/nav.js"></script>
+</body>
+</html>
