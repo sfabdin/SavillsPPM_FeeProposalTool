@@ -51,7 +51,7 @@
     ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
     studioFileId: '2302220793247',        // studio.json in Box (Revenue Studio baselines + scenarios)
     actualsFileId: '',                    // clockify-actuals.csv in Box — hours by user×project×month. '' = not configured (page falls back to manual drop / API proxy)
-    staffFileId: '',                      // staff.json in Box — the LIVING staffing matrix (allocations + notes + actuals). '' = local-only until configured
+    staffFileId: '2364190093321',         // staff.json in Box — the LIVING staffing matrix (allocations + notes + actuals + mappings), shared by all admins
     folderId: '387228486391',             // used only to (re)create the file if missing
     pushDebounceMs: 1500,
 
@@ -75,6 +75,7 @@
     pullRates,       // fetch the confidential rate grid (post-login only)
     pullActuals,     // fetch the Clockify actuals CSV (clockify-actuals.csv in Box)
     pullStaff,       // fetch staff.json (staffing matrix + notes + actuals)
+    pullStaffIfChanged, // etag-checked pull — null when nothing new
     uploadStaff,     // push staff.json (debounced by the staffing page)
   };
   window.UFC_Box = Box;
@@ -390,23 +391,65 @@
   }
 
   // ---- Staffing matrix file (staff.json) — the living strategy doc.
-  // Same newest-wins whole-file pattern as studio.json. ----
+  // Same newest-wins whole-file pattern as studio.json.
+  // SELF-CONFIGURING: if staffFileId is blank the file is found BY NAME in the
+  // shared Box folder (created on first run), so every admin lands on the SAME
+  // staff.json with zero setup — mappings + allocations sync across the team. ----
   let _staffEtag = null;
+  let _staffId = null;
+  async function resolveStaffFileId() {
+    const cfg = BOX_CONFIG.staffFileId;
+    if (cfg && !/PASTE/.test(cfg)) return cfg;
+    if (_staffId) return _staffId;
+    try { const c = localStorage.getItem('ufc_staff_file_id'); if (c) return (_staffId = c); } catch (e) {}
+    // 1) look it up by name in the shared folder
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    if (res.ok) {
+      const j = await res.json();
+      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === 'staff.json');
+      if (hit) { _staffId = hit.id; try { localStorage.setItem('ufc_staff_file_id', hit.id); } catch (e) {} return hit.id; }
+    }
+    // 2) not there yet — first admin in creates it for everyone
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'staff.json', parent: { id: BOX_CONFIG.folderId } }));
+    form.append('file', new Blob(['{}'], { type: 'application/json' }), 'staff.json');
+    const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+    if (up.status === 409) {                                     // raced another admin — use theirs
+      try { const j = await up.json(); const cid = j.context_info && j.context_info.conflicts && j.context_info.conflicts.id; if (cid) { _staffId = cid; try { localStorage.setItem('ufc_staff_file_id', cid); } catch (e) {} return cid; } } catch (e) {}
+      throw new Error('staff.json create conflict — reload to retry');
+    }
+    if (!up.ok) throw new Error('could not create staff.json: HTTP ' + up.status);
+    const j = await up.json(); const nid = j.entries && j.entries[0] && j.entries[0].id;
+    if (!nid) throw new Error('staff.json create returned no id');
+    _staffId = nid; try { localStorage.setItem('ufc_staff_file_id', nid); } catch (e) {}
+    return nid;
+  }
   async function pullStaff() {
-    const id = BOX_CONFIG.staffFileId;
-    if (!id || /PASTE/.test(id)) return null;                    // not configured → local only
+    const id = await resolveStaffFileId();
+    if (!id) return null;
     const meta = await boxFetch('/files/' + id + '?fields=etag');
     if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; }
     const res = await boxFetch('/files/' + id + '/content');
-    if (res.status === 404) return null;
+    if (res.status === 404) { _staffId = null; try { localStorage.removeItem('ufc_staff_file_id'); } catch (e) {} return null; }  // stale cached id — re-resolve next load
     if (!res.ok) throw new Error('staff pull failed: ' + res.status);
     const txt = await res.text();
     if (!txt || !txt.trim()) return null;                        // empty placeholder file
     try { return JSON.parse(txt); } catch (e) { return null; }   // not yet valid JSON → seed from local
   }
+  /** Cheap change check: compares the remote etag to the one we last saw;
+      returns the fresh db only when a TEAMMATE saved since, else null. */
+  async function pullStaffIfChanged() {
+    const id = await resolveStaffFileId(); if (!id) return null;
+    const meta = await boxFetch('/files/' + id + '?fields=etag');
+    if (!meta.ok) return null;
+    const m = await meta.json();
+    if (_staffEtag && m.etag === _staffEtag) return null;        // unchanged since our last pull/push
+    return pullStaff();
+  }
   async function uploadStaff(db) {
-    const id = BOX_CONFIG.staffFileId;
-    if (!id || /PASTE/.test(id)) return;                         // local-only until configured
+    const id = await resolveStaffFileId();
+    if (!id) return;
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const form = new FormData();
     form.append('attributes', JSON.stringify({ name: 'staff.json' }));

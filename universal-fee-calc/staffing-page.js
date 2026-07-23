@@ -66,7 +66,7 @@
     winStart: null, winLen: 12, incPursuit: true,
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
-    varProject: '', varPerson: '', varGroup: 'project',
+    varProject: '', varPerson: '', varGroup: 'project', varUnit: 'hours',
     bwSearch: '', bwOver: false, bwProject: '',
     expandedPeople: new Set(), expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
@@ -325,7 +325,23 @@
 
     if (state.clockifyReport) html += reportBlock(state.clockifyReport);
 
+    const cat = window.RATES_CATALOG;
+    const canDollars = !!(cat && cat.hydrated);
+    const dollars = state.varUnit === 'dollars' && canDollars;
+    const _fmtHours = fmtH;
+    const fmtD = (n) => (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
     {
+      const fmtH = dollars ? fmtD : _fmtHours;   // shadow: every figure below follows the unit toggle
+      const noRate = new Set(); const _rateCache = {};
+      const rateOf = (person) => {
+        if (!person) return 0;
+        if (_rateCache[person.id] != null) return _rateCache[person.id];
+        const r = S.personCostRate(person) || 0;
+        if (!r) noRate.add(person.name + (person.title ? ' — ' + person.title : ' — no title yet'));
+        return (_rateCache[person.id] = r);
+      };
+      const cpM = (cp, m) => dollars ? ((cp.feeByMonth || {})[m] || 0) : (cp.byMonth[m] || 0);
+      const cpTot = (cp) => dollars ? (cp.feeTotal || 0) : cp.total;
       const msAsc = months();
       const ms = msAsc;
       // Display order: chronological, Jan → Dec (matches the chart above)
@@ -333,6 +349,8 @@
       const showMonths = true;
       const projFilter = state.varProject;
       let rows = S.varianceMatrix(ms, { project: projFilter || undefined, person: state.varPerson || undefined });
+      // Dollars mode: ①③ become hours × the person's internal COST rate (by title)
+      if (dollars) rows = rows.map(r => { const k = rateOf(r.person); const bm = {}; ms.forEach(m => { const c = r.byMonth[m]; bm[m] = { e: c.e * k, a: c.a * k }; }); return { ...r, expected: r.expected * k, actual: r.actual * k, variance: r.variance * k, byMonth: bm }; });
       const byPerson = state.varGroup === 'person';
       // group by project or by person
       const byProj = {};
@@ -344,13 +362,18 @@
       const pplOpts = ['<option value="">All people</option>'].concat(S.listPeople().map(p => `<option value="${esc(p.id)}" ${state.varPerson === p.id ? 'selected' : ''}>${esc(p.name)}</option>`)).join('');
       // Contract only applies when grouped by project (the contract has no names)
       let totContract = 0; const contractByProj = {};
-      (byPerson ? [...new Set(rows.map(r => r.project))] : projNames).forEach(pn => { const cl = (rows.find(r => r.project === pn) || {}).client || ''; const cp = S.contractPlan(pn, ms, cl); if (cp) { contractByProj[pn] = cp; totContract += cp.total; } });
+      (byPerson ? [...new Set(rows.map(r => r.project))] : projNames).forEach(pn => { const cl = (rows.find(r => r.project === pn) || {}).client || ''; const cp = S.contractPlan(pn, ms, cl); if (cp) { contractByProj[pn] = cp; totContract += cpTot(cp); } });
       // monthly sums for the trend chart
       const planM = {}, actM = {}, conM = {};
       ms.forEach(m => { planM[m] = 0; actM[m] = 0; conM[m] = 0; });
       rows.forEach(r => ms.forEach(m => { const c = r.byMonth[m]; planM[m] += c.e; actM[m] += c.a; }));
-      Object.values(contractByProj).forEach(cp => ms.forEach(m => { conM[m] += cp.byMonth[m] || 0; }));
-      html += `<div class="kpi-strip">
+      Object.values(contractByProj).forEach(cp => ms.forEach(m => { conM[m] += cpM(cp, m); }));
+      html += dollars ? `<div class="kpi-strip">
+        <div class="kpi-card accent"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">① Planned cost (matrix × cost rate)</div></div>
+        <div class="kpi-card"><div class="k-num">${fmtH(totContract)}</div><div class="k-lbl">② Contracted fee (fee tool · net)</div></div>
+        <div class="kpi-card"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">③ Actual cost (hours × cost rate)</div></div>
+        <div class="kpi-card ${totContract - totAct < 0 ? 'warn' : ''}"><div class="k-num">${fmtH(totContract - totAct)}</div><div class="k-lbl">Margin · ② fee − ③ actual cost${totContract ? ' · ' + Math.round((totContract - totAct) / totContract * 100) + '%' : ''}</div></div>
+      </div>${noRate.size ? `<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for: ${esc([...noRate].join(' · '))} — their hours count as $0. Fix the title on the roster (Clockify carries it in on the next pull).</div>` : ''}` : `<div class="kpi-strip">
         <div class="kpi-card accent"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">① Matrix plan (JS sheet) · hrs</div></div>
         <div class="kpi-card"><div class="k-num">${fmtH(totContract)}</div><div class="k-lbl">② Per contract (fee tool) · hrs</div></div>
         <div class="kpi-card"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">③ Actual (Clockify) · hrs</div></div>
@@ -360,8 +383,9 @@
         <select id="var-group" title="Group rows by project or by person"><option value="project" ${!byPerson ? 'selected' : ''}>Group: by project</option><option value="person" ${byPerson ? 'selected' : ''}>Group: by person</option></select>
         <select id="var-project">${projOpts}</select>
         <select id="var-person">${pplOpts}</select>
-        <span class="grow"></span><span class="note-txt">▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.</span></div>`;
-      html += compareChart(ms, planM, conM, actM, projFilter);
+        ${canDollars ? `<select id="var-unit" title="Show hours or dollars"><option value="hours">Units: hours</option><option value="dollars" ${dollars ? 'selected' : ''}>Units: $ cost vs fee</option></select>` : ''}
+        <span class="grow"></span><span class="note-txt">${dollars ? '① ③ = hours × internal COST rate for each person’s title (rates.json · titles from Clockify) · ② = contracted NET fee from the fee tool. Profitable = ③ below ②.' : `▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.`}</span></div>`;
+      html += compareChart(ms, planM, conM, actM, projFilter, dollars);
 
       if (!projNames.length) html += `<div class="empty">No matched allocations or actuals in this window.</div>`;
       projNames.forEach(pn => {
@@ -381,12 +405,12 @@
         const totCells = msDesc.map(m => { let e = 0, a = 0; list.forEach(r => { e += r.byMonth[m].e; a += r.byMonth[m].a; }); const pct = e ? Math.round(a / e * 100) + '%' : (a ? '—' : ''); return `<td class="num ${e || a ? varCls(e, a) : ''}" style="white-space:nowrap">${(e || a) ? `${varArrow(e, a)} <b>${fmtH(a)}</b><span class="vmini"> /${fmtH(e)}</span><div class="vmini">${pct}</div>` : '·'}</td>`; }).join('');
         const totRow = `<tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total</td>${totCells}<td class="num" style="font-weight:800">${fmtH(pe)}</td><td class="num" style="font-weight:800">${fmtH(pa)}</td><td class="num ${pcls}" style="font-weight:800">${varArrow(pe, pa)} ${pa >= pe ? '+' : ''}${fmtH(pa - pe)}</td><td class="num vmini" style="font-weight:700">${pe ? Math.round(pa / pe * 100) + '%' : '—'}</td></tr>`;
         const cp = byPerson ? null : contractByProj[pn];
-        const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cp.total)}</b>` : `<span style="color:#b0b5bc">no contract staffing</span>`;
+        const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cpTot(cp))}</b>` : `<span style="color:#b0b5bc">no contract staffing</span>`;
         let contractTbl = '';
         if (cp && cp.roles.length) {
           contractTbl = `<div style="padding:8px 16px 12px;border-top:1px dashed rgba(37,39,58,0.12);background:#faf9f7">
             <div style="font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel);margin-bottom:5px">② Per contract · ${esc(cp.feeProject.name)} <span style="text-transform:none;letter-spacing:0">(titles — match people to these when staffing)</span></div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px">${cp.roles.map(r => `<span class="mv-chip" style="background:#e7eef0"><b>${fmtH(r.hours)}h</b> ${esc(r.title)} · ${r.fteMonths} FTE-mo</span>`).join('')}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">${cp.roles.map(r => `<span class="mv-chip" style="background:#e7eef0"><b>${_fmtHours(r.hours)}h</b> ${esc(r.title)} · ${r.fteMonths} FTE-mo</span>`).join('')}</div>
           </div>`;
         }
         html += `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px">
@@ -394,8 +418,8 @@
             <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span></div>
             <div class="note-txt">① matrix <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · ${contractCell} · ③ actual <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)} vs plan</span></div>
           </div>
-          <div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">${byPerson ? 'Project' : 'Person'}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">act /plan · %</div></th>`).join('')}<th class="num">① Plan hrs</th><th class="num">③ Actual hrs</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}${totRow}
-          ${cp ? `<tr style="background:#f4f6f7"><td class="vmini sticky-col" style="font-weight:700">② Contract (titles)</td>${msDesc.map(m => `<td class="num vmini">${cp.byMonth[m] ? fmtH(cp.byMonth[m]) : '·'}</td>`).join('')}<td class="num vmini" style="font-weight:700">${fmtH(cp.total)}</td><td class="num vmini">${fmtH(pa)}</td><td class="num vmini ${varCls(cp.total, pa)}">${pa >= cp.total ? '+' : ''}${fmtH(pa - cp.total)}</td><td class="num vmini">${cp.total ? Math.round(pa / cp.total * 100) + '%' : '—'}</td></tr>` : ''}
+          <div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">${byPerson ? 'Project' : 'Person'}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">act /plan · %</div></th>`).join('')}<th class="num">${dollars ? '① Plan cost' : '① Plan hrs'}</th><th class="num">${dollars ? '③ Actual cost' : '③ Actual hrs'}</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}${totRow}
+          ${cp ? `<tr style="background:#f4f6f7"><td class="vmini sticky-col" style="font-weight:700">${dollars ? '② Contract fee $' : '② Contract (titles)'}</td>${msDesc.map(m => `<td class="num vmini">${cpM(cp, m) ? fmtH(cpM(cp, m)) : '·'}</td>`).join('')}<td class="num vmini" style="font-weight:700">${fmtH(cpTot(cp))}</td><td class="num vmini">${fmtH(pa)}</td><td class="num vmini ${varCls(cpTot(cp), pa)}">${pa >= cpTot(cp) ? '+' : ''}${fmtH(pa - cpTot(cp))}</td><td class="num vmini">${cpTot(cp) ? Math.round(pa / cpTot(cp) * 100) + '%' : '—'}</td></tr>` : ''}
           </tbody></table></div>
           ${contractTbl}
         </div>`;
@@ -406,30 +430,32 @@
     const vp2 = $('#var-project'); if (vp2) vp2.onchange = (e) => { state.varProject = e.target.value; renderActuals(); };
     const vpp = $('#var-person'); if (vpp) vpp.onchange = (e) => { state.varPerson = e.target.value; renderActuals(); };
     const vg = $('#var-group'); if (vg) vg.onchange = (e) => { state.varGroup = e.target.value; renderActuals(); };
+    const vu = $('#var-unit'); if (vu) vu.onchange = (e) => { state.varUnit = e.target.value; renderActuals(); };
   }
 
   /* Grouped-bar trend chart: ① plan / ② contract / ③ actual per month. */
-  function compareChart(ms, planM, conM, actM, projFilter) {
+  function compareChart(ms, planM, conM, actM, projFilter, dollars) {
     const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 14, padB = 30, padR = 8;
     const max = Math.max(1, ...ms.map(m => Math.max(planM[m] || 0, conM[m] || 0, actM[m] || 0)));
     const y = (v) => padT + (H - padT - padB) * (1 - v / max);
     const gw = (W - padL - padR) / ms.length;
+    const tf = (v) => (dollars ? '$' : '') + Math.round(v).toLocaleString();
     let s = '';
-    for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += `<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="rgba(37,39,58,.08)"></line><text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#79828C">${Math.round(v).toLocaleString()}</text>`; }
+    for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += `<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="rgba(37,39,58,.08)"></line><text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#79828C">${tf(v)}</text>`; }
     const bw = Math.max(8, Math.min(26, (gw - 26) / 3));
-    const names = ['① Matrix plan', '② Contract', '③ Actual'];
+    const names = dollars ? ['① Plan cost', '② Contract fee', '③ Actual cost'] : ['① Matrix plan', '② Contract', '③ Actual'];
     ms.forEach((m, i) => {
       const x0 = padL + i * gw + (gw - 3 * bw - 8) / 2;
       [[planM[m] || 0, '#0E7C7B', ''], [conM[m] || 0, '#9aa3ad', ''], [actM[m] || 0, '#FFDF00', 'stroke="#25273A" stroke-width="1"']].forEach(([v, c, st], j) => {
         const xx = x0 + j * (bw + 4), yy = y(v);
-        s += `<rect x="${xx}" y="${yy}" width="${bw}" height="${Math.max(0, H - padB - yy)}" fill="${c}" ${st}><title>${names[j]} · ${S.ymLabel(m)}: ${Math.round(v).toLocaleString()} h</title></rect>`;
+        s += `<rect x="${xx}" y="${yy}" width="${bw}" height="${Math.max(0, H - padB - yy)}" fill="${c}" ${st}><title>${names[j]} · ${S.ymLabel(m)}: ${tf(v)}${dollars ? '' : ' h'}</title></rect>`;
       });
       s += `<text x="${padL + i * gw + gw / 2}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#25273A" font-weight="600">${esc(S.ymLabel(m))}</text>`;
     });
     return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);padding:14px 16px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
-        <div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">Hours by month — ${projFilter ? esc(projFilter) : 'all projects'}</div>
-        <div class="note-txt"><span style="color:#0E7C7B">■</span> ① Matrix plan&nbsp;&nbsp;<span style="color:#9aa3ad">■</span> ② Contract&nbsp;&nbsp;<span style="color:#e8c400">■</span> ③ Actual · hover a bar for the number</div>
+        <div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">${dollars ? 'Dollars' : 'Hours'} by month — ${projFilter ? esc(projFilter) : 'all projects'}</div>
+        <div class="note-txt"><span style="color:#0E7C7B">■</span> ${names[0]}&nbsp;&nbsp;<span style="color:#9aa3ad">■</span> ${names[1]}&nbsp;&nbsp;<span style="color:#e8c400">■</span> ${names[2]} · hover a bar for the number</div>
       </div>
       <svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block">${s}</svg></div>`;
   }
@@ -785,6 +811,35 @@
     });
     gaps.sort((a, b) => b.gap - a.gap);
 
+    // ---- unassigned contract roles: contract titles with no allocated person whose title matches ----
+    const unassigned = [];
+    S.distinctProjects().forEach(pn => {
+      const client = (S.listAllocations().find(a => a.project === pn) || {}).client || '';
+      const cp = S.contractPlan(pn, ms, client); if (!cp || !cp.roles.length) return;
+      const staffedTitles = [...new Set(S.listAllocations().filter(a => a.project === pn).map(a => ((S.getPerson(a.personId) || {}).title || '').trim()))].filter(Boolean);
+      const famOf = (t) => { const f = S.titleFamily && S.titleFamily(t); return f ? f.titleId : null; };
+      const fams = new Set(staffedTitles.map(famOf).filter(Boolean));
+      cp.roles.forEach(r => {
+        if (r.hours < 20) return;                                  // ignore slivers
+        const fam = famOf(r.title);
+        const covered = (fam && fams.has(fam)) || staffedTitles.some(t => S.tokenScore(t, r.title) >= 0.5);
+        if (!covered) unassigned.push({ project: pn, role: r.title, hours: r.hours, fte: r.fteMonths });
+      });
+    });
+    unassigned.sort((a, b) => b.hours - a.hours);
+
+    // ---- bandwidth coming available in the next 3 months ----
+    const nextMs = []; { let [fy, fm] = nowYm.split('-').map(Number); for (let i = 0; i < 4; i++) { nextMs.push(fy + '-' + String(fm).padStart(2, '0')); fm++; if (fm > 12) { fm = 1; fy++; } } }
+    const freeing = S.bandwidthGrid(nextMs, { includePursuit: state.incPursuit }).map(r => {
+      const cur = r.byMonth[nextMs[0]] || 0;
+      let best = null;
+      nextMs.slice(1).forEach(m => { const v = r.byMonth[m] || 0; if (cur - v >= 25 && (!best || v < best.v)) best = { m, v }; });
+      return best ? { person: r.person, cur, to: best.v, m: best.m, freedH: Math.round((cur - best.v) / 100 * S.capacityHours(r.person)) } : null;
+    }).filter(Boolean).sort((a, b) => b.freedH - a.freedH).slice(0, 12);
+
+    // ---- substantial macro / non-client time (> 40 h in the window) ----
+    const macro = (hasAct && S.macroHours) ? S.macroHours(msPast).filter(r => r.hours > 40).slice(0, 12) : [];
+
     const fH = (n) => fmtH(Math.round(n * 10) / 10);
     const noAct = hasAct ? '' : `<div class="note-txt" style="margin-bottom:14px;color:#8a6d00">No Clockify actuals loaded — burn-based insights are empty. Pull actuals on the Compare tab first.</div>`;
     const projTable = (list, dir) => list.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">③ Actual</th><th class="num">① Plan</th><th class="num">② Contract</th><th class="num">${dir}</th></tr></thead><tbody>${list.map(p => `<tr><td class="pname">${esc(p.project)}<div class="vmini">${esc(p.client || '')}</div></td><td class="num"><b>${fH(p.act)}</b></td><td class="num">${fH(p.plan)}</td><td class="num">${p.contract != null ? fH(p.contract) : '—'}</td><td class="num ${dir === 'Over' ? 'var-over' : 'var-under'}">${p.varPlan >= 0 ? '+' : ''}${fH(p.varPlan)}${p.pctPlan != null ? `<div class="vmini">${Math.round(p.pctPlan * 100)}% of plan</div>` : '<div class="vmini">no plan</div>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nothing here — clean.</div>';
@@ -796,6 +851,9 @@
       <div class="ins-card"><h3>🎯 Role heat — what to hire <span>· over-plan hours by title${hireSignal ? ' · <b>' + hireSignal + '</b>' : ''}</span></h3>${roles.length ? `<table class="dt"><tbody>${roles.map(r => `<tr><td style="width:38%" class="pname">${esc(r.title)}</td><td><div class="heat-bar"><i style="width:${Math.round(r.hrs / maxRole * 100)}%;background:${r.hrs / maxRole > 0.6 ? '#e4453a' : '#e8b563'}"></i></div></td><td class="num" style="width:90px"><b>+${fH(r.hrs)}</b> h</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No over-plan hours to attribute yet.</div>'}</div>
       <div class="ins-card"><h3>🕳️ Contract coverage gaps <span>· contract hours with under 60% staffed in the matrix — staff these or watch revenue slip</span></h3>${gaps.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">② Contract</th><th class="num">① Planned</th><th class="num">Gap</th></tr></thead><tbody>${gaps.slice(0, 10).map(g => `<tr><td class="pname">${esc(g.project)}</td><td class="num">${fH(g.contract)}</td><td class="num">${fH(g.planned)}</td><td class="num var-over">${fH(g.gap)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Every contract is ≥60% staffed.</div>'}</div>
       <div class="ins-card"><h3>🟢 Headroom <span>· ≤85% load and light burn — first call before hiring</span></h3>${headroom.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Avg load</th><th class="num">Burn</th></tr></thead><tbody>${headroom.map(p => `<tr><td class="pname">${esc(p.person.name)}<div class="vmini">${esc(p.person.title || '')}</div></td><td class="num">${Math.round(p.avg)}%</td><td class="num">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No one with meaningful headroom.</div>'}</div>
+      <div class="ins-card"><h3>🧩 Unassigned contract roles <span>· contract titles with no allocated person whose title matches — assign someone or confirm coverage</span></h3>${unassigned.length ? `<table class="dt"><thead><tr><th>Project</th><th>Role (contract)</th><th class="num">Hours</th><th class="num">FTE-mo</th></tr></thead><tbody>${unassigned.slice(0, 12).map(u => `<tr><td class="pname">${esc(u.project)}</td><td>${esc(u.role)}</td><td class="num"><b>${fH(u.hours)}</b></td><td class="num">${u.fte}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Every contract role has a plausible person allocated.</div>'}</div>
+      <div class="ins-card"><h3>📉 Coming available — next 3 months <span>· load drops ≥25 pts — plan their next assignment now</span></h3>${freeing.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th>When</th><th class="num">~Freed h/mo</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}<div class="vmini">${esc(f.person.title || '')}</div></td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td>${esc(S.ymLabel(f.m))}</td><td class="num">${f.freedH}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No meaningful load drops in the next 3 months.</div>'}</div>
+      <div class="ins-card"><h3>🏢 Substantial macro time <span>· &gt;40 h on PPM / Macro / non-billable / BD in the window</span></h3>${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Macro hrs</th><th>Where</th></tr></thead><tbody>${macro.map(r => { const top = Object.entries(r.byProj).sort((a, b) => b[1] - a[1])[0]; return `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="vmini">${esc(top[0])} (${fH(top[1])} h)</td></tr>`; }).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40 h of non-client time.' : 'Needs Clockify actuals — pull them on the Compare tab.'}</div>`}</div>
     </div>`;
   }
 
@@ -931,25 +989,33 @@
     const el = $('#store-note'); if (!el) return;
     if (mode === 'box') { el.innerHTML = '● Shared · saves to <b>staff.json</b> in Box'; el.style.color = '#1f7a44'; }
     else if (mode === 'error') { el.textContent = '⚠ Box save failed — working locally. ' + (extra || ''); el.style.color = '#C0392B'; }
-    else { el.textContent = 'Local to this browser — set staffFileId in box-adapter.js to share'; el.style.color = ''; }
+    else { el.textContent = 'Local to this browser — sign in to Box to share'; el.style.color = ''; }
   }
   async function wireStaffSync() {
     const Box = window.UFC_Box;
-    const configured = Box && Box.enabled && Box.config && Box.config.staffFileId && !/PASTE/.test(Box.config.staffFileId);
-    if (!configured) { setStoreNote('local'); return; }
+    if (!(Box && Box.enabled)) { setStoreNote('local'); return; }
     try {
-      const remote = await Box.pullStaff();
+      const remote = await Box.pullStaff();                 // resolves staff.json in the shared folder
       if (remote) S.hydrateFromRemote(remote);              // Box is the source of truth
       else await Box.uploadStaff(S.readDb());               // first run: seed staff.json from local
-      let t = null;
+      let t = null, pushing = false;
       S.attachRemote((db) => {
-        clearTimeout(t);
+        clearTimeout(t); pushing = true;
         t = setTimeout(async () => {
           try { Box.emitSync && Box.emitSync('syncing', 'staff.json'); await Box.uploadStaff(db); Box.emitSync && Box.emitSync('synced', ''); setStoreNote('box'); }
           catch (e) { Box.emitSync && Box.emitSync('error', 'staff.json: ' + e.message); setStoreNote('error', e.message); }
+          finally { pushing = false; }
         }, 1200);
       });
       setStoreNote('box');
+      // Live refresh: when the tab regains focus (and every 3 min) check the file's
+      // etag; if a teammate saved, hydrate + re-render — mappings flow to everyone.
+      const refresh = async () => {
+        if (pushing || document.hidden || !Box.pullStaffIfChanged) return;
+        try { const r = await Box.pullStaffIfChanged(); if (r) { S.hydrateFromRemote(r); renderAll(); toast('Refreshed — a teammate saved changes to staff.json.'); } } catch (e) {}
+      };
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+      setInterval(refresh, 180000);
     } catch (e) { setStoreNote('error', e.message); }
   }
 

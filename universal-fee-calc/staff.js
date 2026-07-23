@@ -506,7 +506,15 @@
     });
     if (!any) return null;
     const roles = Object.values(roleAgg).map(r => ({ title: r.title, fteMonths: Math.round(r.fteMonths * 100) / 100, hours: Math.round(r.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours);
-    return { byMonth, total: Math.round(total * 10) / 10, roles, feeProject: link };
+    // billed fee $ by month (net of discounts/locks) — powers the dollars view
+    let feeByMonth = null, feeTotal = 0;
+    if (cat && cat.hydrated) {
+      try {
+        const series = S2.monthlySeries(p, cat) || [];
+        if (series.length) { feeByMonth = {}; series.forEach(m => { const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (inWin.has(ym)) { feeByMonth[ym] = (feeByMonth[ym] || 0) + m.amount; feeTotal += m.amount; } }); }
+      } catch (e) {}
+    }
+    return { byMonth, total: Math.round(total * 10) / 10, roles, feeProject: link, feeByMonth, feeTotal: Math.round(feeTotal) };
   }
 
   function actualsMeta() { const m = readDb().meta || {}; return { importedAt: m.clockifyImportedAt, rows: Object.keys(readDb().actuals).length, months: m.clockifyMonths || [] }; }
@@ -662,6 +670,49 @@
   /* ---------- entry-lateness stats (from /api/clockify?lateness=1) ---------- */
   function setLateness(rows) { const db = readDb(); db.lateness = rows; db.meta.latenessAt = new Date().toISOString(); writeDb(db); }
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
+
+  /* ---------- dollars: internal cost rates by title ----------
+     A person's job title (captured from Clockify) maps to a rate family + tier
+     via the catalog's staff-title map; the tier's costFloor is the internal
+     cost rate. Rates exist only post-login (rates.json), never stored here. */
+  function titleFamily(title) {
+    const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    if (!cat || !title) return null;
+    const t = String(title).trim().toLowerCase(); if (!t) return null;
+    const map = cat.staffTitleMap || [];
+    let hit = map.find(m => m.staffTitle.toLowerCase() === t);
+    if (!hit) hit = map.find(m => t.includes(m.staffTitle.toLowerCase()));
+    if (!hit) hit = map.find(m => m.staffTitle.toLowerCase().includes(t));
+    if (hit) return { titleId: hit.titleId, tierId: hit.tierId };
+    const byName = (cat.titles || []).find(x => (x.name || '').toLowerCase() === t);
+    return byName ? { titleId: byName.id, tierId: 'mid' } : null;
+  }
+  function costRateForTitle(title) {
+    const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    if (!cat || !cat.hydrated) return null;
+    const fam = titleFamily(title); if (!fam) return null;
+    const fx = (cat.titles || []).find(x => x.id === fam.titleId); if (!fx) return null;
+    const tier = (fx.tiers || []).find(t => t.id === fam.tierId) || (fx.tiers || [])[1];
+    return (tier && tier.costFloor) || null;
+  }
+  function personCostRate(person) { return person ? costRateForTitle(person.title) : null; }
+
+  /* ---------- macro / non-client time ----------
+     "PPM", "Macro" — General Non-Billable Work, Business Development: hours
+     worked that are not attributed to a client. */
+  const MACRO_RX = /\bmacro\b|non-?billable|business\s*development|^\s*ppm\b/i;
+  function isMacroProject(name) { return MACRO_RX.test(String(name || '')); }
+  function macroHours(monthsList) {
+    const db = readDb(); const inWin = new Set(monthsList); const per = {};
+    Object.entries(db.actuals || {}).forEach(([k, h]) => {
+      const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
+      const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
+      if (!inWin.has(ym) || !isMacroProject(proj)) return;
+      const rec = per[pid] || (per[pid] = { person: db.people[pid] || { id: pid, name: pid.replace(/^unmatched:/, '') }, hours: 0, byProj: {} });
+      rec.hours += h; rec.byProj[proj] = (rec.byProj[proj] || 0) + h;
+    });
+    return Object.values(per).sort((a, b) => b.hours - a.hours);
+  }
 
   /* ---------- saved Clockify → roster mappings (map once, keeps forever;
      lives in staff.json so the whole team shares it) ---------- */
@@ -910,6 +961,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, tokenScore,
+    titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject,
     setLateness, getLateness, setUserExclusion, userExcluded,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers

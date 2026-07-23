@@ -1574,6 +1574,15 @@
     'eglatt@savills.us',     // Emily Glatt
   ].map(s => s.toLowerCase()));
 
+  /* Per-user EXTRA visibility: a member ALSO sees any project carrying a group
+     whose name matches one of their patterns — on top of lead/team/grant access.
+     Benay: every project with a "Change Management" group (plus her own and
+     Tonya's projects via the normal team/lead path). */
+  const GROUP_ACCESS = {
+    'bjosselson@savills.us': [/change\s*(management|mgmt)/i],
+  };
+  function groupAccessRules(login) { return GROUP_ACCESS[String(login || '').trim().toLowerCase()] || null; }
+
   /* These logins may use the "Viewing as" impersonation switch to preview
      other people's restricted views. Everyone else never sees the control. */
   const SUPERUSERS = new Set([
@@ -1751,6 +1760,9 @@
     // Explicit per-project access grant — match the signed-in user's Box email.
     const grant = accessGrantList(p);
     if (grant.length && u.username && grant.includes(String(u.username).trim().toLowerCase())) return true;
+    // Group-based visibility (e.g. Benay sees every Change Management group).
+    const rules = groupAccessRules(u.username);
+    if (rules && (p.groups || []).some(g => rules.some(rx => rx.test((g && g.name) || '')))) return true;
     return false;
   }
   /** The access wall: admins get everything; members get only their own. */
