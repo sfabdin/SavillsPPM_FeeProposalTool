@@ -707,11 +707,13 @@
     Object.entries(db.actuals || {}).forEach(([k, h]) => {
       const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
       const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
-      if (!inWin.has(ym) || !isMacroProject(proj)) return;
-      const rec = per[pid] || (per[pid] = { person: db.people[pid] || { id: pid, name: pid.replace(/^unmatched:/, '') }, hours: 0, byProj: {} });
+      if (!inWin.has(ym)) return;
+      const rec = per[pid] || (per[pid] = { person: db.people[pid] || { id: pid, name: pid.replace(/^unmatched:/, '') }, hours: 0, total: 0, byProj: {} });
+      rec.total += h;
+      if (!isMacroProject(proj)) return;
       rec.hours += h; rec.byProj[proj] = (rec.byProj[proj] || 0) + h;
     });
-    return Object.values(per).sort((a, b) => b.hours - a.hours);
+    return Object.values(per).filter(r => r.hours > 0).map(r => ({ ...r, pct: r.total ? r.hours / r.total : 0 })).sort((a, b) => b.hours - a.hours);
   }
 
   /* ---------- saved Clockify → roster mappings (map once, keeps forever;
