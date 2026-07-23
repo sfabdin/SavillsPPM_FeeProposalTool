@@ -1000,7 +1000,12 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const mode = confirm('Merge with existing projects? (Cancel = replace entirely.)') ? 'merge' : 'replace';
+        let mode = 'merge';
+        if (!confirm('Import will MERGE the file into the shared database (the newest version of each project wins — safe).\n\nOK = merge · Cancel = other options')) {
+          const word = prompt('REPLACE overwrites ALL existing projects for EVERYONE once it syncs to Box.\n\nType REPLACE to confirm, anything else falls back to a safe merge, or Cancel to abort.');
+          if (word === null) return;
+          if (word.trim() === 'REPLACE') mode = 'replace';
+        }
         const n = STORE.importDb(reader.result, mode);
         alert(`Imported ${n} project${n === 1 ? '' : 's'}.`);
         render();

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fee System · Revenue Leader Guide</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  doc-page:not(:defined){visibility:hidden}
+  body{margin:0;background:#eceae5;}
+  doc-page{--ink:#25273A;--steel:#5b6472;--teal:#0E7C7B;--hair:rgba(37,39,58,0.14);--cream:#F6F4EF;}
+  h1,h2,h3{font-family:var(--font-display);color:var(--ink);}
+  p,li,td,th{font-family:var(--font-body);color:var(--ink);}
+  h1{font-size:23px;margin:0 0 2px;letter-spacing:-0.01em;}
+  .subttl{font-family:var(--font-body);font-size:12px;color:var(--steel);margin:0 0 14px;}
+  h2{font-size:14px;margin:20px 0 7px;padding-bottom:5px;border-bottom:2px solid var(--ink);display:flex;align-items:baseline;gap:8px;}
+  h2 .n{font-size:11px;color:#fff;background:var(--ink);width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-display);flex:none;}
+  h3{font-size:12px;margin:12px 0 3px;color:var(--teal);}
+  p{font-size:11.5px;line-height:1.5;margin:0 0 7px;text-wrap:pretty;}
+  ol,ul{margin:0 0 8px;padding-left:18px;}
+  li{font-size:11.5px;line-height:1.5;margin-bottom:3px;text-wrap:pretty;}
+  li b, p b{color:var(--ink);}
+  .lede{background:var(--cream);border-left:3px solid var(--teal);padding:11px 14px;margin:0 0 6px;}
+  .lede p{margin:0;}
+  .deadline{background:#25273A;color:#fff;padding:12px 16px;margin:14px 0 4px;border-radius:4px;}
+  .deadline p{color:#fff;margin:0;font-size:12px;}
+  .deadline .big{font-family:var(--font-display);font-size:16px;font-weight:700;}
+  .deadline .fill{color:#F4C542;}
+  table{width:100%;border-collapse:collapse;margin:6px 0 10px;}
+  h2{break-after:avoid;}
+  h3{break-after:avoid;}
+  table tr{break-inside:avoid;}
+  th{text-align:left;font-family:var(--font-display);font-size:9px;letter-spacing:0.06em;text-transform:uppercase;color:var(--steel);border-bottom:1px solid var(--hair);padding:5px 8px;}
+  td{font-size:11px;line-height:1.45;border-bottom:1px solid var(--hair);padding:6px 8px;vertical-align:top;}
+  td.k{font-family:var(--font-display);font-weight:600;white-space:nowrap;width:1%;}
+  .can td:first-child{color:#1f7a44;font-weight:700;width:1%;white-space:nowrap;}
+  .cannot td:first-child{color:#C0392B;font-weight:700;width:1%;white-space:nowrap;}
+  .step{display:flex;gap:9px;margin-bottom:7px;break-inside:avoid;}
+  .step .sn{font-family:var(--font-display);font-weight:700;font-size:11px;color:#fff;background:var(--teal);width:19px;height:19px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;}
+  .step .sb{font-size:11.5px;line-height:1.5;}
+  .step .sb b{color:var(--ink);}
+  .note{font-size:10.5px;color:var(--steel);font-style:italic;margin:-2px 0 8px;}
+  .calc{background:var(--cream);padding:10px 14px;border-radius:4px;margin:4px 0 8px;break-inside:avoid;}
+  .calc ol{padding-left:16px;margin:0;}
+  .calc li{font-size:11px;margin-bottom:2px;}
+  .foot{font-family:var(--font-display);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--steel);}
+  .hdr{display:flex;justify-content:space-between;align-items:center;}
+  .hdr img{height:22px;}
+  .two{column-count:2;column-gap:22px;}
+  .two > *{break-inside:avoid;}
+</style>
+</head>
+<body>
+<doc-page size="letter" margin="0.6in">
+
+  <div slot="header" class="hdr">
+    <span class="foot">Savills PPM · Fee System</span>
+    <span class="foot">Revenue Leader Guide</span>
+  </div>
+  <div slot="footer" class="hdr">
+    <span class="foot">HIGHLY CONFIDENTIAL — INTERNAL PPM USE ONLY</span>
+    <span class="foot">QUESTIONS → SARAH ABDIN (SABDIN@SAVILLS.US)</span>
+  </div>
+
+  <h1>Fee System — Revenue Leader Guide</h1>
+  <p class="subttl">How to enter your projects, what you can change, and how access works.</p>
+
+  <div class="deadline">
+    <p class="big">Deadline: all staffing entered by <span class="fill">August 15, 2026</span>.</p>
+    <p>Every project you own needs its proposed team, allocations, and monthly numbers in the system by this date. If it is an active project, please flag if a Salesforce ID # (P#) is not already entered.</p>
+  </div>
+
+  <div class="lede">
+    <p>Open the system from the <b>"PPM_FeeProposalTool"</b> link in the box folder (bookmark it). Sign in with Box when prompted — that's what proves who you are and shows you your projects. You'll land on the <b>Fee Generator Hompage or Project Index (depending which link you pick!)</b>; everything else is linked from there.</p>
+  </div>
+
+  <h2><span class="n">1</span> Sign-in &amp; Box permissions (the short version)</h2>
+  <p>You sign in with your <b>Box (Savills) account</b> — that's the only login. Your Box identity is what shows you your projects and it may take a moment to load; fee data is never visible without signing in.</p>
+
+  <h2><span class="n">2</span> Giving someone else access</h2>
+  <p>Two quick steps — <b>both</b> are needed:</p>
+  <ol>
+    <li>In the calculator, add their Savills.us email under <b>“Grant access to”</b> on the project (comma-separated for several people).</li>
+    <li>Send me (<b>Sarah Abdin)</b> a quick message so I can add them to the Box folder. They can't get in until they have access to the main the folder.</li>
+  </ol>
+  <p class="note">That's it — once they're on the folder and listed on the project, they'll see it when they sign in.</p>
+
+  <h2><span class="n">3</span> Building a new fee matrix in the Fee Calculator</h2>
+  <p>Open <b>Universal Fee Calculator</b> → start a new project (or open one from the Projects Index). Work top to bottom. Look for the <b>ⓘ</b> markers next to tricky fields — they explain the nuance with an example.</p>
+
+  <div class="step"><span class="sn">1</span><span class="sb"><b>Project info.</b> Name, client, your name as revenue leader, industry, and project type. Add anyone who should have access (see §4). Use <b>Assumptions &amp; exclusions</b> and <b>Notes</b> to record what the fee is priced under — these will be useful in the Benchmarking tool when comparing projects.</span></div>
+  <div class="step"><span class="sn">2</span><span class="sb"><b>Timeline.</b> Set the start and end months. This is the calendar window everything else fills in.</span></div>
+  <div class="step"><span class="sn">3</span><span class="sb"><b>Phases.</b> Break the project into phases (e.g. Startup, Execution, Closeout) and give each a length in months. The last phase absorbs any remainder. (Half months are not possible in this view, but you can always half the allocation to get the same amount)</span></div>
+  <div class="step"><span class="sn">4</span><span class="sb"><b>Groups.</b> This can be useful in a few different ways. Group your team by PPM Revenue Stream (e.g. PPM, Relocation, Change Mangement, Workplace), Group them by Scope, by Phase, etc. Each group becomes its own column and subtotal in the monthly schedule. Groups can run <b>at the same time, and can be shifted accross time periods. U</b>se this for overlapping workstreams where you'd want to bifurcate fees.</span></div>
+  <div class="step"><span class="sn">5</span><span class="sb"><b>Team.</b> Pick titles from the rates catalog (the rate and cost floor come from the grid automatically). Add multiples where needed, type the real <b>project role</b> name on the right. Name the resource (if available) and assign each resource to a group.</span></div>
+  <div class="step"><span class="sn">6</span><span class="sb"><b>Allocations.</b> In the matrix, enter each person's effort per phase — as <b>% FTE</b> or <b>Hours</b> (toggle top-right; they convert automatically). Click a phase to open it into months if a person's effort changes month to month.</span></div>
+  <div class="step"><span class="sn">7</span><span class="sb"><b>Assumptions.</b> Set fee basis (Fixed vs NTE), escalation, industry adjustment, client discount, and rate lock as needed. Each has an <b>ⓘ</b> with an example.</span></div>
+  <div class="step"><span class="sn">8</span><span class="sb"><b>Check &amp; save.</b> Review the headline totals and monthly schedule. The project <b>auto-saves</b>, but click <b>Save</b> to be sure. Set the <b>status</b> (Draft → Submitted → Won/Active) as it progresses.</span></div>
+
+  <h3>The nuances worth knowing</h3>
+  <table>
+    <tr><th>Feature</th><th>What to know</th></tr>
+    <tr><td class="k">Fixed vs NTE</td><td><b>Fixed</b> = the total is the contract, frozen when booked. <b>NTE</b> = the ceiling is the contract; once booked the total locks as a cap and monthly numbers are able to flex with actuals.</td></tr>
+    <tr><td class="k">Rate lock</td><td>Holds the start year's rates (no escalation) and shows the amount you gave back as a credit line.</td></tr>
+    <tr><td class="k">Industry adjustment</td><td>Lowers the billed rate, not the cost. Push it too far and a role flags red (below cost floor). This is NOT shown as a credit to the client.</td></tr>
+    <tr><td class="k">Broker fee share</td><td><b>Off invoice</b> = broker takes a % out of the fee (client pays same, we keep less). <b>On top</b> = markup added on top (client pays more, we keep the full fee).</td></tr>
+    <tr><td class="k">Pass-through</td><td>For vendor cost run through us. <b>Billed</b> = client pays cost + markup through us. <b>Managed</b> = vendor bills client direct, we charge a % fee only. (only the markup is our revenue)</td></tr>
+    <tr><td class="k">Scope shift</td><td>When using "groups" you can use the <b>◀ ▶</b> shift on a group header to slide that whole team's staffing forward/back in months. This is helpful if scope shifts to a later month.</td></tr>
+    <tr><td class="k">Fit to target</td><td>Solves the client discount so the fee lands exactly on your target number, to the penny. This adjusts the client discount, NOT staffing allocations.</td></tr>
+  </table>
+
+  <h3>How the fee is calculated (simplified)</h3>
+  <div class="calc"><ol>
+    <li><b>Person's fee</b> = rate × hours (hours = % FTE × hours-per-month, across their months).</li>
+    <li><b>Gross fee</b> = sum of everyone, grouped by team/scope.</li>
+    <li><b>Less rate-lock credit</b> (if on) and <b>less client discount</b> → <b>Net fee</b>.</li>
+    <li><b>Broker &amp; pass-through</b> are handled separately and shown on their own lines, so revenue is never overstated.</li>
+    <li><b>Monthly schedule</b> spreads the net fee across months by each group — this is what feeds Revenue Projections.</li>
+  </ol></div>
+
+  <h2><span class="n">4</span> Revenue Projections — what you can and can't change</h2>
+  <p>Revenue Projections is a <b>read-out</b> of your saved projects, by month. It's how leadership sees the forecast. You can adjust a few things here directly; the real numbers always come from the calculator.</p>
+  <table class="can">
+    <tr><th>You can</th><th></th></tr>
+    <tr><td>✓ Change a rating</td><td>Update the confidence rating (1–7) on a project inline.</td></tr>
+    <tr><td>✓ Override a month</td><td>Adjust a monthly billing number in Edit mode when actuals differ from plan (esp. NTE projects).</td></tr>
+    <tr><td>✓ Toggle views</td><td>Show/hide rated 5–7, broker fee split, pass-through split; roll up by client; export to Excel.</td></tr>
+  </table>
+  <table class="cannot">
+    <tr><th>You cannot</th><th></th></tr>
+    <tr><td>✗ Change the fee</td><td>The total fee, team, and rates only change in the <b>Fee Calculator</b>. Go back there to fix a real number.</td></tr>
+    <tr><td>✗ See others' projects</td><td>You only see projects assigned to you or shared with you.</td></tr>
+    <tr><td>✗ Edit another leader's work</td><td>Overrides apply to your projects only.</td></tr>
+  </table>
+  <p class="note">Rule of thumb: if it's a real change to the fee, do it in the calculator. If it's a reporting view or a rating/actuals tweak, do it here.</p>
+
+</doc-page>
+<script src="universal-fee-calc/doc-page.js"></script>
+</body>
+</html>

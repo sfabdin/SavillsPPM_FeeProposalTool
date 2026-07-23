@@ -274,7 +274,10 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
       // pursuit = live-refreshed on save). map = client INVOICE per month (incl. pass-through);
       // brokerMap = broker cut; passMap = pass-through vendor cost (flows out, not revenue).
       const fin = p.financials;
-      if (fin && Array.isArray(fin.byMonth) && fin.byMonth.length) {
+      // A booked snapshot that's gone STALE (inputs changed in the calculator since
+      // booking) no longer represents what the calculator shows — fall through to
+      // the live compute so edits show up here immediately.
+      if (fin && !fin.stale && Array.isArray(fin.byMonth) && fin.byMonth.length) {
         fin.byMonth.forEach(s => {
           const [y, m] = s.ym.split('-').map(Number);   // stored '2026-01' → grid key '2026-1'
           const k = y + '-' + m;
