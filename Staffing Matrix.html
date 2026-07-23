@@ -71,7 +71,11 @@
   td.pk { font-family:var(--font-display); font-weight:800; font-variant-numeric:tabular-nums; padding:0 12px; background:#fff; border-left:1px solid rgba(37,39,58,0.12); }
   td.pk.over { color:#C0392B; }
 
-  /* person detail drawer */
+  /* person detail drawer — rows render INSIDE the heatmap grid so months line up */
+  .drawer-tr td { background:#faf9f7 !important; border-top:1px dashed rgba(37,39,58,0.1); font-size:11.5px; padding:4px 10px; }
+  .drawer-tr td.dproj { padding-left:30px; text-align:left; font-weight:400; color:var(--sav-navy); }
+  .drawer-tr td.dcell { text-align:center; color:var(--sav-navy); }
+  .drawer-tr.drawer-tot td { font-weight:700; border-top:1px solid rgba(37,39,58,0.22); border-bottom:2px solid rgba(37,39,58,0.18); }
   .drawer-row td { padding:0 !important; background:#faf9f7 !important; }
   .drawer { padding:12px 18px 16px 22px; text-align:left; }
   .drawer h4 { font-family:var(--font-display); font-size:12px; margin:0 0 8px; color:var(--sav-navy); text-align:left; }
