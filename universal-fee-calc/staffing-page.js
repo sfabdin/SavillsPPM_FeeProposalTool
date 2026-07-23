@@ -205,17 +205,21 @@
 
   function personDrawer(person, ms) {
     const allocs = S.listAllocations().filter(a => a.personId === person.id && (state.incPursuit || (a.status !== 'Pursuit' && a.type !== 'Opportunity')));
-    // keep those active anywhere in-window
     const inWin = allocs.filter(a => ms.some(m => (a.start ? a.start <= m : false) && (a.end ? m <= a.end : true)));
-    if (!inWin.length) return `<tr class="drawer-row"><td colspan="${ms.length + 2}"><div class="drawer"><em class="note-txt">No allocations in this window.</em></div></td></tr>`;
+    if (!inWin.length) return `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td></tr>`;
+    const on = (a, m) => (a.start ? a.start <= m : false) && (a.end ? m <= a.end : true);
     let rows = '';
     inWin.forEach(a => {
-      const cells = ms.map(m => { const on = (a.start ? a.start <= m : false) && (a.end ? m <= a.end : true); return `<td>${on ? a.pct + '%' : '·'}</td>`; }).join('');
       const stat = (a.status === 'Pursuit' || a.type === 'Opportunity') ? ' <span class="status-p">pursuit</span>' : '';
-      rows += `<tr><td>${esc(a.project)}${stat}${a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : ''}</td>${cells}</tr>`;
+      const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
+      rows += `<tr class="drawer-tr"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${on(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td></tr>`;
     });
-    return `<tr class="drawer-row"><td colspan="${ms.length + 2}"><div class="drawer"><h4>${esc(person.name)} · allocation detail</h4>
-      <table class="mini"><thead><tr><th>Project</th>${ms.map(m => `<th>${esc(S.ymLabel(m))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
+    // total row — per-month load, same math as the heatmap cell above (Σ alloc% ÷ capacity)
+    const cap = person.capacityPct || 100;
+    const tot = ms.map(m => inWin.reduce((s, a) => s + (on(a, m) ? (+a.pct || 0) : 0), 0));
+    const load = (t) => Math.round(t / cap * 100);
+    rows += `<tr class="drawer-tr drawer-tot"><td class="who dproj">Total load${cap !== 100 ? ` <span class="vmini">Σ alloc ÷ ${cap}% capacity</span>` : ''}</td>${tot.map(t => `<td class="dcell">${t ? load(t) + '%' : '·'}</td>`).join('')}<td class="dcell">${Math.max(0, ...tot.map(load))}%</td></tr>`;
+    return rows;
   }
 
   /* ---------- ALLOCATIONS ---------- */
