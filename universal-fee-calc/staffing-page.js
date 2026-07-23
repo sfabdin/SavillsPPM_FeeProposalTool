@@ -15,6 +15,14 @@
   const S = window.UFC_Staff;
   const STORE = window.UFC_Store;
 
+  /* Auth header for our own /api/* endpoints — they validate the Box session. */
+  async function apiHeaders() {
+    try {
+      const tok = window.UFC_Box && window.UFC_Box.getAccessToken ? await window.UFC_Box.getAccessToken() : null;
+      return tok ? { Authorization: 'Bearer ' + tok } : {};
+    } catch (e) { return {}; }
+  }
+
   /* ============================================================
      ACCESS WALL — this tool is allowlist-only (fail-CLOSED).
      Bandwidth, pursuit staffing and utilization are leadership-
@@ -561,7 +569,7 @@
       const end = ey + '-' + String(em).padStart(2, '0') + '-' + new Date(Date.UTC(ey, em, 0)).getUTCDate();
       setNote('Pulling summary report…'); pa.disabled = true;
       try {
-        const res = await fetch('/api/clockify?start=' + start + '&end=' + end);
+        const res = await fetch('/api/clockify?start=' + start + '&end=' + end, { headers: await apiHeaders() });
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
         state.clockifyRaw = await res.text();
         state.clockifyReport = S.analyzeClockify(state.clockifyRaw, ms[0]);
@@ -639,12 +647,12 @@
      live in staff.json, so a fix here applies to every import, forever. ---------- */
   async function pullClockifyNames() {
     try {
-      const res = await fetch('/api/clockify?list=projects');
+      const res = await fetch('/api/clockify?list=projects', { headers: await apiHeaders() });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       state.clockifyNames = S.parseCsvRows(await res.text()).map(o => ({ name: o.Project || Object.values(o)[0] || '', client: o.Client || '' })).filter(x => x.name);
     } catch (e) { state.clockifyNames = []; state.clockifyNamesError = e.message; }
     try {
-      const res2 = await fetch('/api/clockify?list=users');
+      const res2 = await fetch('/api/clockify?list=users', { headers: await apiHeaders() });
       state.clockifyUsers = res2.ok ? S.parseCsvRows(await res2.text()).map(o => ({ name: o.User || '', email: o.Email || '', status: o.Status || '' })).filter(x => x.name) : [];
     } catch (e) { state.clockifyUsers = []; }
   }
@@ -983,7 +991,7 @@
       const end = ey + '-' + String(em).padStart(2, '0') + '-' + new Date(Date.UTC(ey, em, 0)).getUTCDate();
       b.disabled = true; const note = $('#late-note'); if (note) note.textContent = 'Pulling entry-level lateness (aggregated server-side)…';
       try {
-        const res = await fetch('/api/clockify?lateness=1&start=' + start + '&end=' + end);
+        const res = await fetch('/api/clockify?lateness=1&start=' + start + '&end=' + end, { headers: await apiHeaders() });
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
         const rows = S.parseCsvRows(await res.text()).map(o => ({ user: o.User, ym: o.Month, entries: +o.Entries || 0, hours: +o.Hours || 0, avgLag: +o.AvgLagDays || 0, maxLag: +o.MaxLagDays || 0, pctWithin3: +o.PctWithin3d || 0, pctWithin7: +o.PctWithin7d || 0 }));
         S.setLateness(rows);
@@ -1033,7 +1041,7 @@
   async function startCanonSync() {
     const btn = $('#canon-sync'); if (btn) { btn.disabled = true; btn.textContent = 'Pulling project list…'; }
     try {
-      const res = await fetch('/api/clockify?list=projects');
+      const res = await fetch('/api/clockify?list=projects', { headers: await apiHeaders() });
       if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
       const rows = S.parseCsvRows(await res.text()).map(o => ({ name: o.Project || o.project || Object.values(o)[0] || '', client: o.Client || o.client || '' }));
       if (!rows.length) throw new Error('empty project list');

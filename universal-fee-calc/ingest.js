@@ -185,11 +185,13 @@
     const budget = 4_000_000;   // ~4MB of base64 image data (fits Vercel's limit)
     const sizeOf = (arr) => arr.reduce((s, d) => s + (d ? d.length : 0), 0);
     while (imgs.length > 1 && sizeOf(imgs) > budget) imgs = imgs.slice(0, imgs.length - 1);
-    // 1) Serverless endpoint (production)
+    // 1) Serverless endpoint (production) — authed with the Box session token.
     try {
+      let tok = null;
+      try { tok = window.UFC_Box && window.UFC_Box.getAccessToken ? await window.UFC_Box.getAccessToken() : null; } catch (e) {}
       const res = await fetch('/api/extract', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) },
         body: JSON.stringify({ text: text || '', images: imgs }),
       });
       if (res.ok) return await res.json();
