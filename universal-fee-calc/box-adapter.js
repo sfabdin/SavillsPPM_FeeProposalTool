@@ -71,7 +71,6 @@
     login,           // start the OAuth redirect
     logout,
     isAuthed: () => !!getToken(),
-    getAccessToken: () => ensureToken(),   // for authed calls to our own /api/* endpoints
     pushNow,         // force an immediate flush
     pullRates,       // fetch the confidential rate grid (post-login only)
     pullActuals,     // fetch the Clockify actuals CSV (clockify-actuals.csv in Box)
@@ -216,10 +215,7 @@
     url.searchParams.set('state', randomStr(12));
     window.location.assign(url.toString());
   }
-  async function logout() {
-    // Flush any unsynced changes BEFORE tearing down the session, so signing
-    // out can never strand a save in this browser.
-    try { if (_pending) { clearTimeout(_pushTimer); await pushNow(); } } catch (e) {}
+  function logout() {
     clearToken();
     try { Store.setRealIdentity(null); } catch (e) {}
     try { Store.clearImpersonation(); } catch (e) {}
@@ -269,17 +265,13 @@
 
   // Download projects.json + capture its etag for concurrency.
   let _etag = null;
-  let _remoteCount = 0;   // project count last seen in Box — drives the shrink guard
   async function pullRemote() {
     const meta = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '?fields=etag');
     if (meta.ok) { const m = await meta.json(); _etag = m.etag; }
     const res = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '/content');
     if (res.status === 404) return Store.defaultDb();
     if (!res.ok) throw new Error('pull failed: ' + res.status);
-    let db;
-    try { db = JSON.parse(await res.text()); } catch (e) { db = Store.defaultDb(); }
-    _remoteCount = Object.keys((db && db.projects) || {}).length;
-    return db;
+    try { return JSON.parse(await res.text()); } catch (e) { return Store.defaultDb(); }
   }
 
   // Download the confidential rate grid (rates.json) from Box.
@@ -293,19 +285,7 @@
   }
 
   // Upload a new version of projects.json, guarded by If-Match (etag).
-  // SHRINK GUARD: refuse to overwrite Box with a copy that has lost most of the
-  // projects Box knows about (a corrupted cache, a bad import, a cleared browser).
-  // Deletes are tombstones, so a legitimate delete never shrinks the key count —
-  // a big shrink always means something is wrong. Box.forcePush() overrides.
-  let _forcePush = false;
-  Box.forcePush = async function () { _forcePush = true; try { await syncNow(); } finally { _forcePush = false; } };
-  async function uploadRemote(db, depth) {
-    depth = depth || 0;
-    if (depth > 3) throw new Error('sync conflict — too many concurrent saves, will retry');
-    const localCount = Object.keys((db && db.projects) || {}).length;
-    if (!_forcePush && _remoteCount >= 10 && localCount < _remoteCount * 0.5) {
-      throw new Error('Sync blocked to protect data: this browser has ' + localCount + ' projects but Box has ' + _remoteCount + '. Reload the page to re-sync first.');
-    }
+  async function uploadRemote(db) {
     const token = await ensureToken();
     if (!token) throw new Error('not authenticated');
     const form = new FormData();
@@ -322,7 +302,7 @@
       const remote = await pullRemote();
       const merged = mergeDb(remote, db);
       Store.hydrateFromRemote(merged);
-      return uploadRemote(merged, depth + 1);
+      return uploadRemote(merged);
     }
     if (!res.ok) throw new Error('upload failed: ' + res.status);
     const out = await res.json();
@@ -528,38 +508,6 @@
   }
   Box.pullStudio = pullStudio;
 
-  /* ---- Rolling weekly backup ----------------------------------------------
-     Box already versions projects.json on every upload (first-line recovery:
-     Box → projects.json → Version History). This adds a SECOND line: a dated
-     copy (projects-backup-YYYY-MM-DD.json) in the same folder, refreshed at
-     most weekly, keeping the last 8 — so even a version-history mishap or a
-     deleted file has cold copies going back ~2 months. Any signed-in user's
-     boot can create it; a 409 means someone else already made today's. */
-  const BACKUP_PREFIX = 'projects-backup-';
-  const BACKUP_KEEP = 8;
-  async function weeklyBackup() {
-    try {
-      const last = Number(localStorage.getItem('ufc_last_backup_check') || 0);
-      if (Date.now() - last < 20 * 3600 * 1000) return;               // check at most ~daily per browser
-      localStorage.setItem('ufc_last_backup_check', String(Date.now()));
-      const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
-      if (!res.ok) return;
-      const j = await res.json();
-      const backups = (j.entries || []).filter(e => e.type === 'file' && e.name.indexOf(BACKUP_PREFIX) === 0)
-        .sort((a, b) => a.name.localeCompare(b.name));
-      const newest = backups.length ? backups[backups.length - 1].name.slice(BACKUP_PREFIX.length, BACKUP_PREFIX.length + 10) : '';
-      if (newest && (Date.now() - new Date(newest).getTime()) < 7 * 86400000) return;   // fresh enough
-      const today = new Date().toISOString().slice(0, 10);
-      const cp = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '/copy', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parent: { id: BOX_CONFIG.folderId }, name: BACKUP_PREFIX + today + '.json' }),
-      });
-      if (!cp.ok && cp.status !== 409) return;                        // 409 = a teammate beat us to it
-      const excess = backups.length + 1 - BACKUP_KEEP;
-      for (let i = 0; i < excess; i++) { try { await boxFetch('/files/' + backups[i].id, { method: 'DELETE' }); } catch (e) {} }
-    } catch (e) { /* backups must never break boot */ }
-  }
-
   // ---- Boot: auth → pull → identity → attach push ----
   async function boot() {
     if (!BOX_CONFIG.enabled) { emitSync('local', ''); return { ok: true, backend: 'local' }; }
@@ -597,9 +545,6 @@
     }
     // Attach the push hook so future writes mirror to Box
     Store.attachRemote(schedulePush);
-    // Rolling weekly backup of projects.json (on top of Box's own version
-    // history) — fire and forget; failures never affect boot.
-    weeklyBackup();
     // Revenue Studio file (separate). Pull → hydrate → attach its push hook.
     try {
       const studio = await pullStudio();

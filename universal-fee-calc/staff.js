@@ -669,6 +669,49 @@
 
   /* ---------- entry-lateness stats (from /api/clockify?lateness=1) ---------- */
   function setLateness(rows) { const db = readDb(); db.lateness = rows; db.meta.latenessAt = new Date().toISOString(); writeDb(db); }
+  /** PROFITABILITY — per matched project: billed $ (rating-1/booked fee schedule)
+      vs burned $ (Clockify hours × cost rate by title), by month.
+      Only projects with a fee-tool link AND rating 1 (Booked) count as billed. */
+  function profitability(monthsList) {
+    const db = readDb(); const inWin = new Set(monthsList);
+    const S2 = window.UFC_Store; const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    if (!S2 || !cat || !cat.hydrated) return { ok: false, why: 'rates' };
+    if (!hasActuals()) return { ok: false, why: 'actuals' };
+    // burned $ per matrix project per month
+    const burn = {}; const noRate = new Set();
+    Object.entries(db.actuals).forEach(([k, h]) => {
+      const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
+      const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
+      if (!inWin.has(ym) || isMacroProject(proj)) return;
+      const person = db.people[pid];
+      const rate = person ? costRateForTitle(person.title) : null;
+      if (!rate) { noRate.add(person ? (person.name + (person.title ? ' — ' + person.title : ' — no title')) : pid.replace(/^unmatched:/, '')); return; }
+      const rec = burn[proj] || (burn[proj] = { byMonth: {}, hours: 0, cost: 0, ppl: {} });
+      rec.byMonth[ym] = rec.byMonth[ym] || { cost: 0, hours: 0 };
+      rec.byMonth[ym].cost += h * rate; rec.byMonth[ym].hours += h;
+      rec.hours += h; rec.cost += h * rate;
+      const pp = rec.ppl[pid] || (rec.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0 });
+      pp.hours += h; pp.cost += h * rate;
+    });
+    // billed $ per project per month — booked (rating 1) fee schedule only
+    const rows = [];
+    Object.entries(burn).forEach(([proj, b]) => {
+      const client = ''; const link = matchFeeProject(proj, client);
+      const fp = link ? feeRecords().find(x => x.id === link.id) : null;
+      const booked = !!(fp && (+fp.rating === 1 || (fp.financials && fp.financials.booked)));
+      let billedByMonth = null, billed = 0;
+      if (fp && booked) {
+        try {
+          const series = S2.monthlySeries(fp, cat) || [];
+          billedByMonth = {};
+          series.forEach(m => { const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (inWin.has(ym)) { billedByMonth[ym] = (billedByMonth[ym] || 0) + m.amount; billed += m.amount; } });
+        } catch (e) { billedByMonth = null; }
+      }
+      rows.push({ project: proj, fee: fp ? { id: fp.id, name: fp.name, client: fp.client, rating: fp.rating } : null, booked, billed: Math.round(billed), billedByMonth, cost: Math.round(b.cost), hours: Math.round(b.hours * 10) / 10, byMonth: b.byMonth, margin: Math.round(billed - b.cost), marginPct: billed ? (billed - b.cost) / billed : null, ppl: Object.values(b.ppl).sort((x, y) => y.cost - x.cost) });
+    });
+    return { ok: true, rows: rows.sort((a, b) => (a.marginPct == null ? 2 : -a.marginPct) - (b.marginPct == null ? 2 : -b.marginPct)), noRate: [...noRate] };
+  }
+
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
 
   /* ---------- dollars: internal cost rates by title ----------
@@ -963,7 +1006,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, tokenScore,
-    titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject,
+    titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers

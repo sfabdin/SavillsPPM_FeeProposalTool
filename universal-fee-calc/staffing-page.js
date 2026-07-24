@@ -852,8 +852,39 @@
       return freedH > 0 ? { person: r.person, cur, to: best.v, m: best.m, freedH } : null;
     }).filter(Boolean).sort((a, b) => b.freedH - a.freedH).slice(0, 12);
 
+    // ---- pursuit exposure: how much of forward load is unsigned work ----
+    const fwdMs = ms.filter(m => m >= nowYm);
+    const bwAll2 = S.bandwidthGrid(fwdMs, { includePursuit: true });
+    const firmBy = {}; S.bandwidthGrid(fwdMs, { includePursuit: false }).forEach(r => firmBy[r.person.id] = r);
+    const pursuitPpl = bwAll2.map(r => {
+      const f = firmBy[r.person.id];
+      const all = r.avg || 0, firm = (f && f.avg) || 0, pur = all - firm;
+      return pur >= 10 ? { person: r.person, all, firm, pur } : null;
+    }).filter(Boolean).sort((a, b) => b.pur - a.pur).slice(0, 12);
+    const purProj = {};
+    S.listAllocations().filter(a => a.status === 'Pursuit' || a.type === 'Opportunity').forEach(a => {
+      const act = fwdMs.filter(m => (a.start ? a.start <= m : false) && (a.end ? m <= a.end : true)).length;
+      if (!act) return;
+      const rec = purProj[a.project] || (purProj[a.project] = { project: a.project, ppl: new Set(), fteMo: 0 });
+      rec.ppl.add(a.personId); rec.fteMo += (+a.pct || 0) / 100 * act;
+    });
+    const pursuitProjects = Object.values(purProj).sort((a, b) => b.fteMo - a.fteMo).slice(0, 8);
+
+    // ---- month-over-month burn trend: last 3 COMPLETE months, flag ±30%+ swings ----
+    const trends = [];
+    if (hasAct && msPast.length >= 3) {
+      const recent = msPast.slice(0, -1).slice(-3);
+      Object.values(proj).forEach(p => {
+        const series = recent.map(m => vm.filter(r => r.project === p.project).reduce((s, r) => s + r.byMonth[m].a, 0));
+        const tot = series.reduce((s, v) => s + v, 0); if (tot < 30) return;
+        const first = series[0], last = series[series.length - 1];
+        const delta = last - first, pct = first ? delta / first : (last ? 1 : 0);
+        if (Math.abs(pct) >= 0.3 && Math.abs(delta) >= 15) trends.push({ project: p.project, series, months: recent, delta, pct });
+      });
+      trends.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+    }
+
     // ---- substantial macro / non-client time (> 40 h in the window) ----
-    // ≥90% macro = dedicated BOH staff — listed separately, not flagged
     const macroAll = (hasAct && S.macroHours) ? S.macroHours(msPast) : [];
     const boh = macroAll.filter(r => r.pct >= 0.9 && r.hours > 40);
     const macro = macroAll.filter(r => r.pct < 0.9 && r.hours > 40).slice(0, 12);
@@ -869,10 +900,79 @@
       <div class="ins-card"><h3>🎯 Role heat — what to hire <span>· over-plan hours by title${hireSignal ? ' · <b>' + hireSignal + '</b>' : ''}</span></h3>${roles.length ? `<table class="dt"><tbody>${roles.map(r => `<tr><td style="width:38%" class="pname">${esc(r.title)}</td><td><div class="heat-bar"><i style="width:${Math.round(r.hrs / maxRole * 100)}%;background:${r.hrs / maxRole > 0.6 ? '#e4453a' : '#e8b563'}"></i></div></td><td class="num" style="width:90px"><b>+${fH(r.hrs)}</b> h</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No over-plan hours to attribute yet.</div>'}</div>
       <div class="ins-card"><h3>🕳️ Contract coverage gaps <span>· contract hours with under 60% staffed in the matrix — staff these or watch revenue slip</span></h3>${gaps.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">② Contract</th><th class="num">① Planned</th><th class="num">Gap</th></tr></thead><tbody>${gaps.slice(0, 10).map(g => `<tr><td class="pname">${esc(g.project)}</td><td class="num">${fH(g.contract)}</td><td class="num">${fH(g.planned)}</td><td class="num var-over">${fH(g.gap)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Every contract is ≥60% staffed.</div>'}</div>
       <div class="ins-card"><h3>🟢 Headroom <span>· ≤85% load and light burn — first call before hiring</span></h3>${headroom.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Avg load</th><th class="num">Burn</th></tr></thead><tbody>${headroom.map(p => `<tr><td class="pname">${esc(p.person.name)}<div class="vmini">${esc(p.person.title || '')}</div></td><td class="num">${Math.round(p.avg)}%</td><td class="num">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No one with meaningful headroom.</div>'}</div>
+      <div class="ins-card"><h3>🎯 Pursuit exposure <span>· forward load riding on unsigned work — if these don't land, this capacity frees; if they all land, check the peaks</span></h3>${pursuitPpl.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Firm load</th><th class="num">+ Pursuit</th><th class="num">If all land</th></tr></thead><tbody>${pursuitPpl.map(p => `<tr><td class="pname">${esc(p.person.name)}<div class="vmini">${esc(p.person.title || '')}</div></td><td class="num">${Math.round(p.firm)}%</td><td class="num" style="color:#8a6d00;font-weight:700">+${Math.round(p.pur)}</td><td class="num ${p.all > 100 ? 'var-over' : ''}">${Math.round(p.all)}%</td></tr>`).join('')}</tbody></table>${pursuitProjects.length ? `<div style="padding:8px 2px 0"><div class="vmini" style="margin-bottom:5px;text-transform:uppercase;letter-spacing:0.05em">Biggest pursuits by staffing at stake</div><div style="display:flex;flex-wrap:wrap;gap:6px">${pursuitProjects.map(p => `<span class="mv-chip pursuit"><b>${p.fteMo.toFixed(1)}</b> FTE-mo · ${esc(p.project)} · ${p.ppl.size} ppl</span>`).join('')}</div></div>` : ''}` : '<div class="empty" style="border:0">No pursuit allocations in the forward window.</div>'}</div>
+      <div class="ins-card"><h3>📈 Burn trend — last 3 complete months <span>· projects whose monthly burn swung ±30%+ — ramping up or winding down</span></h3>${trends.length ? `<table class="dt"><thead><tr><th>Project</th>${(trends[0].months).map(m => `<th class="num">${esc(S.ymLabel(m))}</th>`).join('')}<th class="num">Trend</th></tr></thead><tbody>${trends.slice(0, 12).map(t => `<tr><td class="pname">${esc(t.project)}</td>${t.series.map(v => `<td class="num">${fH(v)}</td>`).join('')}<td class="num ${t.delta > 0 ? 'var-over' : 'var-under'}">${t.delta > 0 ? '▲' : '▼'} ${t.delta > 0 ? '+' : ''}${fH(t.delta)}<div class="vmini">${t.pct > 0 ? '+' : ''}${Math.round(t.pct * 100)}%</div></td></tr>`).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? (msPast.length >= 3 ? 'No big swings — burn is steady.' : 'Widen the window to ≥3 past months to see trends.') : 'Needs Clockify actuals — pull them on the Compare tab.'}</div>`}</div>
       <div class="ins-card"><h3>🧩 Unassigned contract roles <span>· contract titles with no allocated person whose title matches — assign someone or confirm coverage</span></h3>${unassigned.length ? `<table class="dt"><thead><tr><th>Project</th><th>Role (contract)</th><th class="num">Hours</th><th class="num">FTE-mo</th></tr></thead><tbody>${unassigned.slice(0, 12).map(u => `<tr><td class="pname">${esc(u.project)}</td><td>${esc(u.role)}</td><td class="num"><b>${fH(u.hours)}</b></td><td class="num">${u.fte}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Every contract role has a plausible person allocated.</div>'}</div>
       <div class="ins-card"><h3>📉 Coming available — next 3 months <span>· load drops under 100% — hours below capacity they can take on</span></h3>${freeing.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th>When</th><th class="num">~Freed h/mo</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}<div class="vmini">${esc(f.person.title || '')}</div></td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td>${esc(S.ymLabel(f.m))}</td><td class="num">${f.freedH}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No meaningful load drops in the next 3 months.</div>'}</div>
       <div class="ins-card"><h3>🏢 Substantial macro time <span>· &gt;40 h on PPM / Macro / non-billable / BD in the window · dedicated BOH staff excluded</span></h3>${boh.length ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel);margin-bottom:5px">Dedicated BOH staff · ≥90% of their time is macro — expected, not flagged</div><div style="display:flex;flex-wrap:wrap;gap:6px">${boh.map(r => `<span class="mv-chip" style="background:#e7eef0">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Macro hrs</th><th class="num">% of their time</th><th>Where</th></tr></thead><tbody>${macro.map(r => { const top = Object.entries(r.byProj).sort((a, b) => b[1] - a[1])[0]; return `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="num">${Math.round(r.pct * 100)}%</td><td class="vmini">${esc(top[0])} (${fH(top[1])} h)</td></tr>`; }).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40 h of non-client time.' : 'Needs Clockify actuals — pull them on the Compare tab.'}</div>`}</div>
     </div>`;
+  }
+
+  /* ---------- PROFITABILITY — billed $ (booked fee schedule) vs burned $
+     (Clockify hours × cost rate by title). Rating-1 projects only count as
+     billed; everything else shows cost-only so the burn is still visible. */
+  function renderProfit() {
+    const nowYm = S.currentYM();
+    const ms = months().filter(m => m <= nowYm);
+    const fmtD = (n) => (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
+    const r = S.profitability(ms);
+    if (!r.ok) { $('#p-profit').innerHTML = `<div class="empty">${r.why === 'rates' ? 'Rates not loaded — sign in and wait for rates.json (dollars need the cost-rate catalog).' : 'No Clockify actuals loaded — pull them on the Compare tab first.'}</div>`; return; }
+    const booked = r.rows.filter(x => x.booked);
+    const unlinked = r.rows.filter(x => !x.booked);
+    const totBilled = booked.reduce((s, x) => s + x.billed, 0);
+    const totCostBooked = booked.reduce((s, x) => s + x.cost, 0);
+    const totMargin = totBilled - totCostBooked;
+    const losing = booked.filter(x => x.margin < 0);
+    // monthly billed vs burned series across booked projects
+    const bM = {}, cM = {}; ms.forEach(m => { bM[m] = 0; cM[m] = 0; });
+    booked.forEach(x => ms.forEach(m => { bM[m] += (x.billedByMonth && x.billedByMonth[m]) || 0; cM[m] += (x.byMonth[m] && x.byMonth[m].cost) || 0; }));
+    let html = `<div class="kpi-strip">
+      <div class="kpi-card accent"><div class="k-num">${fmtD(totBilled)}</div><div class="k-lbl">Billed · booked (rating 1) fee schedule · ${esc(S.ymLabel(ms[0]))}–${esc(S.ymLabel(ms[ms.length - 1]))}</div></div>
+      <div class="kpi-card"><div class="k-num">${fmtD(totCostBooked)}</div><div class="k-lbl">Burned · hours × cost rate · booked projects</div></div>
+      <div class="kpi-card ${totMargin < 0 ? 'warn' : ''}"><div class="k-num">${fmtD(totMargin)}</div><div class="k-lbl">Margin${totBilled ? ' · ' + Math.round(totMargin / totBilled * 100) + '%' : ''}</div></div>
+      <div class="kpi-card ${losing.length ? 'warn' : ''}"><div class="k-num">${losing.length}</div><div class="k-lbl">Booked projects under water</div></div>
+    </div>`;
+    if (r.noRate.length) html += `<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for: ${esc(r.noRate.join(' · '))} — their hours are EXCLUDED from cost. Fix titles on the roster.</div>`;
+    html += profitChart(ms, bM, cM, fmtD);
+    const row = (x, i) => {
+      const pct = x.marginPct != null ? Math.round(x.marginPct * 100) : null;
+      const mCls = x.margin < 0 ? 'var-over' : 'var-ok';
+      const trend = ms.slice(-3).map(m => (x.byMonth[m] && x.byMonth[m].cost) || 0);
+      const rising = trend.length >= 2 && trend[trend.length - 1] > trend[0] * 1.3 && trend[trend.length - 1] - trend[0] > 500;
+      return `<tr class="pf-row" data-i="${i}" style="cursor:pointer"><td class="pname">${esc(x.project)}${x.fee ? `<div class="vmini">${esc(x.fee.client || '')}</div>` : ''}${rising ? ' <span class="status-p" style="background:#fce7c2;color:#8a6d00">burn rising</span>' : ''}</td><td class="num">${x.booked ? fmtD(x.billed) : '<span style="color:#b0b5bc">' + (x.fee ? 'not booked (rating ' + (x.fee.rating || '?') + ')' : 'no fee link') + '</span>'}</td><td class="num">${fmtD(x.cost)}<div class="vmini">${Math.round(x.hours).toLocaleString()} h</div></td><td class="num ${x.booked ? mCls : ''}">${x.booked ? fmtD(x.margin) : '—'}</td><td class="num ${x.booked && pct != null && pct < 20 ? 'var-over' : ''}">${x.booked && pct != null ? pct + '%' : '—'}</td></tr>
+      <tr class="pf-detail" data-i="${i}" style="display:none"><td colspan="5" style="background:#faf9f7;padding:8px 16px 12px"><div style="display:flex;flex-wrap:wrap;gap:6px">${x.ppl.map(p => `<span class="mv-chip"><b>${fmtD(p.cost)}</b> ${esc(p.name)} · ${Math.round(p.hours)} h × $${p.rate}/h${p.title ? ' · ' + esc(p.title) : ''}</span>`).join('')}</div></td></tr>`;
+    };
+    const tbl = (list, empty) => list.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Billed (fee schedule)</th><th class="num">Burned (cost)</th><th class="num">Margin</th><th class="num">Margin %</th></tr></thead><tbody>${list.map((x) => row(x, r.rows.indexOf(x))).join('')}</tbody></table>` : `<div class="empty" style="border:0">${empty}</div>`;
+    html += `<div class="ins-grid" style="grid-template-columns:1fr">
+      <div class="ins-card"><h3>💰 Booked projects — billed vs burned <span>· sorted worst margin first · click a row for the people behind the cost</span></h3>${tbl(booked, 'No booked (rating 1) projects with logged hours in this window.')}</div>
+      <div class="ins-card"><h3>🕒 Burning without booked billing <span>· hours logged on projects with no rating-1 fee — pursuit investment or a missing mapping/rating</span></h3>${tbl(unlinked, 'Every project with hours has a booked fee. Clean.')}</div>
+    </div>`;
+    $('#p-profit').innerHTML = html;
+    $$('#p-profit .pf-row').forEach(tr => tr.onclick = () => { const d = $(`#p-profit .pf-detail[data-i="${tr.dataset.i}"]`); if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; });
+  }
+
+  function profitChart(ms, bM, cM, fmtD) {
+    const W = Math.max(560, ms.length * 90), H = 200, padL = 58, padT = 14, padB = 28, padR = 8;
+    const max = Math.max(1, ...ms.map(m => Math.max(bM[m], cM[m])));
+    const y = (v) => padT + (H - padT - padB) * (1 - v / max);
+    const gw = (W - padL - padR) / ms.length;
+    let s = '';
+    for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += `<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="rgba(37,39,58,.08)"></line><text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#79828C">$${Math.round(v / 1000)}k</text>`; }
+    const bw = Math.max(10, Math.min(30, (gw - 18) / 2));
+    ms.forEach((m, i) => {
+      const x0 = padL + i * gw + (gw - 2 * bw - 4) / 2;
+      [[bM[m], '#0E7C7B', 'Billed'], [cM[m], '#FFDF00', 'Burned']].forEach(([v, c, nm], j) => {
+        const xx = x0 + j * (bw + 4), yy = y(v);
+        s += `<rect x="${xx}" y="${yy}" width="${bw}" height="${Math.max(0, H - padB - yy)}" fill="${c}" ${j ? 'stroke="#25273A" stroke-width="1"' : ''}><title>${nm} · ${S.ymLabel(m)}: ${fmtD(v)}</title></rect>`;
+      });
+      s += `<text x="${padL + i * gw + gw / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#25273A" font-weight="600">${esc(S.ymLabel(m))}</text>`;
+    });
+    return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);padding:14px 16px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
+        <div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">Billed vs burned by month — booked projects</div>
+        <div class="note-txt"><span style="color:#0E7C7B">■</span> Billed (fee schedule)&nbsp;&nbsp;<span style="color:#e8c400">■</span> Burned (hours × cost rate) · gap = margin</div>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block">${s}</svg></div>`;
   }
 
   /* ---------- TIME ENTRY COMPLIANCE — who logs, who's behind ----------
@@ -946,6 +1046,16 @@
         <div class="ins-card"><h3>🐌 Latest loggers <span>· days between doing the work and entering it · team avg <b>${teamLag != null ? teamLag.toFixed(1) : '—'}d</b> · ${teamP7 != null ? Math.round(teamP7) : '—'}% within a week</span></h3><table class="dt"><thead><tr><th>Person</th><th class="num">Avg lag</th><th class="num">Worst</th><th class="num">≤3 days</th><th class="num">≤7 days</th></tr></thead><tbody>${worstLag.map(a => `<tr><td class="pname">${esc(a.name)}</td><td class="num ${a.avgLag > 7 ? 'var-over' : a.avgLag > 3 ? 'var-under' : 'var-ok'}">${a.avgLag.toFixed(1)}d</td><td class="num">${Math.round(a.maxLag)}d</td><td class="num">${Math.round(a.p3)}%</td><td class="num">${Math.round(a.p7)}%</td></tr>`).join('')}</tbody></table></div>` : `
         <div class="ins-card"><h3>🐌 Entry lateness</h3><div class="empty" style="border:0">Not pulled yet — click “⟳ Pull entry lateness” above. It answers “who logs late and by how many days”, decoded from entry creation timestamps.</div></div>`;
 
+    // ---- discipline score: completeness (compliance) × timeliness (≤7-day share) ----
+    const lagByPid = {}; Object.entries(latePP).forEach(([pid, a]) => lagByPid[pid] = a);
+    const disc = rows.filter(r => r.expectedMonths >= 2).map(r => {
+      const la = lagByPid[r.person.id];
+      const p7 = la && la.entries ? la.w7 / la.entries : null;
+      const score = p7 == null ? r.compliance : (r.compliance * 0.6 + p7 * 0.4);
+      return { person: r.person, compliance: r.compliance, p7, score };
+    }).sort((a, b) => a.score - b.score);
+    const worstDisc = disc.filter(d => d.score < 0.6).slice(0, 8);
+
     const cellFor = (c, ym) => {
       if (!c) return '<td><span class="cell u0">·</span></td>';
       const p = Math.round(c.pct * 100);
@@ -971,6 +1081,7 @@
         <div class="ins-card"><h3>📊 Entry insights</h3><div style="padding:14px 16px;font-size:12.5px;line-height:1.7;color:var(--sav-navy)">
           ${chronic.length ? `<div>• <b>${chronic.length} chronic under-logger${chronic.length > 1 ? 's' : ''}</b> (&lt;50% of months at target): ${chronic.slice(0, 6).map(r => esc(r.person.name)).join(', ')}${chronic.length > 6 ? '…' : ''} — their projects read as under-served in Compare even if the work happened.</div>` : ''}
           ${zeroNow.length ? `<div>• <b>${zeroNow.length} allocated but at zero for ${esc(S.ymLabel(nowYm))}</b>: ${zeroNow.slice(0, 6).map(r => esc(r.person.name)).join(', ')}${zeroNow.length > 6 ? '…' : ''} — chase these first; the month is ${Math.round(prorata * 100)}% gone.</div>` : ''}
+          ${worstDisc.length ? `<div>• <b>Weakest logging discipline</b> (completeness × timeliness): ${worstDisc.map(d => `${esc(d.person.name)} (${Math.round(d.score * 100)})`).join(', ')} — score = 60% months-on-target + 40% entries within a week${late.rows.length ? '' : ' (lateness not pulled — completeness only)'}.</div>` : ''}
           ${stars.length ? `<div>• <b>Reliable loggers</b>: ${stars.slice(0, 6).map(r => esc(r.person.name)).join(', ')} — ≥95% of months on target.</div>` : ''}
           <div>• Variance data is only as good as entry: team compliance of <b>${Math.round(teamPct * 100)}%</b> means roughly <b>${fmtH(rows.reduce((s, r) => s + r.behindHrs, 0))} h</b> of delivered work may be invisible in Compare.</div>
           <div class="vmini" style="margin-top:6px;color:var(--sav-steel)">"On target" = ≥80% of capacity logged for the month (current month pro-rata). Capacity = ${S.monthHours()} h × cap%. PTO/internal projects count if mapped rather than ignored.</div>
@@ -1112,6 +1223,7 @@
       else if (state.tab === 'actuals') renderActuals();
       else if (state.tab === 'mapping') renderMapping();
       else if (state.tab === 'insights') renderInsights();
+      else if (state.tab === 'profit') renderProfit();
       else if (state.tab === 'compliance') renderCompliance();
     } catch (e) {
       console.error('render failed', e);
