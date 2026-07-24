@@ -19,8 +19,15 @@
   async function apiHeaders() {
     try {
       const tok = window.UFC_Box && window.UFC_Box.getAccessToken ? await window.UFC_Box.getAccessToken() : null;
-      return tok ? { Authorization: 'Bearer ' + tok } : {};
-    } catch (e) { return {}; }
+      if (tok) return { Authorization: 'Bearer ' + tok };
+    } catch (e) {}
+    // Fallback: read the token bundle directly (old cached box-adapter without getAccessToken)
+    try {
+      const raw = localStorage.getItem('ufc_box_token_v1');
+      const t = raw ? JSON.parse(raw) : null;
+      if (t && t.access_token && (!t.exp || t.exp > Date.now())) return { Authorization: 'Bearer ' + t.access_token };
+    } catch (e) {}
+    return {};
   }
 
   /* ============================================================
