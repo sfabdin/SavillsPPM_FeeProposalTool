@@ -46,23 +46,53 @@ function normMonth(name) {
 }
 function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 
+/* AUTH: this endpoint returns employee names, hours and project assignments —
+   it must not be publicly callable. The browser sends its Box access token;
+   we validate it against Box and require a Savills login. */
+async function requireSavillsUser(req, res) {
+  const m = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+  if (!m) { res.status(401).json({ error: 'sign in required', detail: 'Missing session token — reload the app and sign in with Box.' }); return null; }
+  try {
+    const r = await fetch('https://api.box.com/2.0/users/me?fields=login', { headers: { Authorization: 'Bearer ' + m[1] } });
+    if (!r.ok) { res.status(401).json({ error: 'session expired', detail: 'Box rejected the token (' + r.status + ') — reload and sign in again.' }); return null; }
+    const me = await r.json();
+    const login = String(me.login || '').toLowerCase();
+    if (!/@savills\.(us|com)$/.test(login)) { res.status(403).json({ error: 'not authorized', detail: login + ' is not a Savills account.' }); return null; }
+    return login;
+  } catch (e) { res.status(401).json({ error: 'auth check failed', detail: String(e && e.message || e).slice(0, 200) }); return null; }
+}
+
 export default async function handler(req, res) {
+  const login = await requireSavillsUser(req, res);
+  if (!login) return;
   const key = process.env.CLOCKIFY_API_KEY;
   const ws = process.env.CLOCKIFY_WORKSPACE_ID;
   if (!key || !ws) { res.status(501).json({ error: 'not configured', detail: 'Set CLOCKIFY_API_KEY and CLOCKIFY_WORKSPACE_ID in Vercel env vars.' }); return; }
 
   // ---- user list mode: canonical people names for the people mapping ----
+  // &titles=1 also fetches each member's profile (jobTitle lives there, not on
+  // the user record) — batched 10 at a time to stay quick.
   if (req.query.list === 'users') {
     try {
-      const out = [];
+      const users = [];
       for (let page = 1; page <= 10; page++) {
         const r = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/users?page-size=500&page=${page}&status=ALL`, { headers: { 'X-Api-Key': key } });
         if (!r.ok) { res.status(502).json({ error: 'clockify ' + r.status, detail: (await r.text()).slice(0, 300) }); return; }
         const batch = await r.json();
-        batch.forEach(u => out.push([u.name || '', u.email || '', u.status || '']));
+        batch.forEach(u => users.push({ id: u.id, name: u.name || '', email: u.email || '', status: u.status || '', title: '' }));
         if (batch.length < 500) break;
       }
-      const csv = 'User,Email,Status\n' + out.map(r2 => r2.map(csvCell).join(',')).join('\n');
+      if (req.query.titles) {
+        for (let i = 0; i < users.length; i += 10) {
+          await Promise.all(users.slice(i, i + 10).map(async u => {
+            try {
+              const pr = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/member-profile/${u.id}`, { headers: { 'X-Api-Key': key } });
+              if (pr.ok) { const p = await pr.json(); u.title = p.jobTitle || ''; }
+            } catch (e) {}
+          }));
+        }
+      }
+      const csv = 'User,Email,Status,JobTitle\n' + users.map(u => [u.name, u.email, u.status, u.title].map(csvCell).join(',')).join('\n');
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.status(200).send(csv);
