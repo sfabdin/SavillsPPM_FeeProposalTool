@@ -70,28 +70,26 @@ export default async function handler(req, res) {
   if (!key || !ws) { res.status(501).json({ error: 'not configured', detail: 'Set CLOCKIFY_API_KEY and CLOCKIFY_WORKSPACE_ID in Vercel env vars.' }); return; }
 
   // ---- user list mode: canonical people names for the people mapping ----
-  // &titles=1 also fetches each member's profile (jobTitle lives there, not on
-  // the user record) — batched 10 at a time to stay quick.
+  // Job title rides along as a workspace CUSTOM FIELD on each user record
+  // (customFields[].customFieldName = "Title") — same source the Power BI
+  // report uses. No extra API calls needed.
   if (req.query.list === 'users') {
     try {
       const users = [];
       for (let page = 1; page <= 10; page++) {
-        const r = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/users?page-size=500&page=${page}&status=ALL`, { headers: { 'X-Api-Key': key } });
+        const r = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/users?page-size=500&page=${page}&status=ALL&memberships=ALL`, { headers: { 'X-Api-Key': key } });
         if (!r.ok) { res.status(502).json({ error: 'clockify ' + r.status, detail: (await r.text()).slice(0, 300) }); return; }
         const batch = await r.json();
-        batch.forEach(u => users.push({ id: u.id, name: u.name || '', email: u.email || '', status: u.status || '', title: '' }));
+        batch.forEach(u => {
+          let title = '';
+          const cfs = Array.isArray(u.customFields) ? u.customFields : [];
+          const hit = cfs.find(c => /title/i.test(c.customFieldName || '')) || cfs.find(c => c.value);
+          if (hit && hit.value != null) title = String(hit.value).trim();
+          users.push({ id: u.id, name: u.name || '', email: u.email || '', status: u.status || '', title });
+        });
         if (batch.length < 500) break;
       }
-      if (req.query.titles) {
-        for (let i = 0; i < users.length; i += 10) {
-          await Promise.all(users.slice(i, i + 10).map(async u => {
-            try {
-              const pr = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/member-profile/${u.id}`, { headers: { 'X-Api-Key': key } });
-              if (pr.ok) { const p = await pr.json(); u.title = p.jobTitle || ''; }
-            } catch (e) {}
-          }));
-        }
-      }
+      if (req.query.debug) { res.setHeader('Content-Type', 'application/json'); res.status(200).json(users.slice(0, 5)); return; }
       const csv = 'User,Email,Status,JobTitle\n' + users.map(u => [u.name, u.email, u.status, u.title].map(csvCell).join(',')).join('\n');
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
