@@ -680,21 +680,34 @@
     if (!S2 || !cat || !cat.hydrated) return { ok: false, why: 'rates' };
     // ---- burned $ per MATRIX project → resolved onto fee-project ids where linked ----
     const burnByFee = {}; const burnLoose = {}; const noRate = new Set();
+    const overhead = { byMonth: {}, hours: 0, cost: 0, ppl: {}, byProj: {} };   // macro / non-billable — real staff cost outside any fee
     Object.entries(db.actuals || {}).forEach(([k, h]) => {
       const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
       const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
-      if (!inWin.has(ym) || isMacroProject(proj)) return;
+      if (!inWin.has(ym)) return;
       const person = db.people[pid];
       const rate = person ? costRateForTitle(person.title) : null;
       if (!rate) { noRate.add(person ? (person.name + (person.title ? ' — ' + person.title : ' — no title')) : pid.replace(/^unmatched:/, '')); return; }
+      if (isMacroProject(proj)) {
+        overhead.byMonth[ym] = (overhead.byMonth[ym] || 0) + h * rate;
+        overhead.hours += h; overhead.cost += h * rate;
+        overhead.byProj[proj] = (overhead.byProj[proj] || 0) + h * rate;
+        const op = overhead.ppl[pid] || (overhead.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0, byMonth: {} });
+        op.hours += h; op.cost += h * rate;
+        const om = op.byMonth[ym] || (op.byMonth[ym] = { hours: 0, cost: 0 });
+        om.hours += h; om.cost += h * rate;
+        return;
+      }
       const link = matchFeeProject(proj, '');
       const bucket = link ? (burnByFee[link.id] = burnByFee[link.id] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set() })
                           : (burnLoose[proj] = burnLoose[proj] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set([proj]) });
       if (link) bucket.srcNames.add(proj);
       bucket.byMonth[ym] = (bucket.byMonth[ym] || 0) + h * rate;
       bucket.hours += h; bucket.cost += h * rate;
-      const pp = bucket.ppl[pid] || (bucket.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0 });
+      const pp = bucket.ppl[pid] || (bucket.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0, byMonth: {} });
       pp.hours += h; pp.cost += h * rate;
+      const pm = pp.byMonth[ym] || (pp.byMonth[ym] = { hours: 0, cost: 0 });
+      pm.hours += h; pm.cost += h * rate;
     });
     // ---- revenue rows: SAME set + math as Revenue Projections ----
     const parents = (S2.listProjects() || []).filter(p => !(S2.isChangeOrder && S2.isChangeOrder(p)));
@@ -720,7 +733,7 @@
       const b = burnByFee[p.id];
       if (!revTotal && !b) return;                       // nothing in-window on either axis
       rows.push({
-        key: 'fee:' + p.id, feeId: p.id, project: p.name, client: p.client || '', rating,
+        key: 'fee:' + p.id, feeId: p.id, project: (p.project && p.project.name) || p.name || '(unnamed)', client: (p.project && p.project.client) || p.client || '', rating,
         included: rating >= 1 && rating <= 4, booked: rating === 1,
         revByMonth, revTotal: Math.round(revTotal),
         costByMonth: b ? b.byMonth : {}, cost: Math.round(b ? b.cost : 0), hours: b ? Math.round(b.hours * 10) / 10 : 0,
@@ -733,7 +746,8 @@
       rows.push({ key: 'loose:' + proj, feeId: null, project: proj, client: '', rating: null, included: false, booked: false, revByMonth: {}, revTotal: 0, costByMonth: b.byMonth, cost: Math.round(b.cost), hours: Math.round(b.hours * 10) / 10, ppl: Object.values(b.ppl).sort((x, y) => y.cost - x.cost), srcNames: [proj], noLink: true });
     });
     rows.sort((a, b) => (a.rating || 9) - (b.rating || 9) || b.revTotal - a.revTotal || b.cost - a.cost);
-    return { ok: true, rows, noRate: [...noRate], hasActuals: hasActuals() };
+    overhead.ppl = Object.values(overhead.ppl).sort((x, y) => y.cost - x.cost);
+    return { ok: true, rows, overhead, noRate: [...noRate], hasActuals: hasActuals() };
   }
 
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }

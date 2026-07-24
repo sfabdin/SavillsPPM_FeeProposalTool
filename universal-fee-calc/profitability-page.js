@@ -25,8 +25,28 @@
   let toastT = null;
   function toast(msg) { const el = $('#toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 3200); }
 
-  const state = { winStart: null, winLen: 12, search: '', client: '', scope: 'included', showMap: false, expanded: new Set() };
+  const state = { winStart: null, winLen: 12, search: '', client: '', scope: 'included', showMap: false, expanded: new Set(), monthPick: {} };
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
+
+  /* Detail GRID under an expanded row: people down the side, months across —
+     hours + cost per cell. mFocus narrows to one clicked month. */
+  function detailGrid(x, ms, mFocus) {
+    if (!x.ppl.length) return '<span class="note-txt">No logged hours against this project in the window.</span>';
+    const cols = mFocus ? [mFocus] : ms;
+    const showPpl = mFocus ? x.ppl.filter(p => p.byMonth[mFocus]) : x.ppl;
+    if (!showPpl.length) return '<span class="note-txt">No hours logged in ' + esc(S.ymLabel(mFocus)) + ' — click another month or the project name for the full window.</span>';
+    let h = '<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px"><span style="font-family:var(--font-display);font-weight:700;font-size:11px;color:var(--sav-navy)">' + (mFocus ? esc(S.ymLabel(mFocus)) + ' · staffing' : 'Full window · staffing') + '</span>' + (mFocus ? '<a href="#" data-clear-month="' + esc(x.key) + '" style="font-size:11px">show all months</a>' : '') + '</div>';
+    h += '<table class="dt" style="width:auto;min-width:420px"><thead><tr><th>Person</th><th>Rate</th>' + cols.map(m => '<th class="num">' + esc(S.ymLabel(m)) + '<div class="vmini" style="text-transform:none;letter-spacing:0">h · $</div></th>').join('') + '<th class="num">Total h</th><th class="num">Total $</th></tr></thead><tbody>';
+    showPpl.forEach(p => {
+      h += '<tr><td class="pname">' + esc(p.name) + (p.title ? '<div class="vmini">' + esc(p.title) + '</div>' : '') + '</td><td class="num vmini">$' + p.rate + '/h</td>';
+      cols.forEach(m => { const c = p.byMonth[m]; h += '<td class="num">' + (c ? Math.round(c.hours * 10) / 10 + '<div class="vmini">' + fmtD(c.cost) + '</div>' : '<span style="color:#c9cdd3">·</span>') + '</td>'; });
+      const fh = mFocus ? (p.byMonth[mFocus] || { hours: 0 }).hours : p.hours;
+      const fc = mFocus ? (p.byMonth[mFocus] || { cost: 0 }).cost : p.cost;
+      h += '<td class="num" style="font-weight:700">' + Math.round(fh * 10) / 10 + '</td><td class="num" style="font-weight:700">' + fmtD(fc) + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    return h;
+  }
 
   function render() {
     const ms = months();
@@ -73,15 +93,24 @@
       body += '<tr class="pf-row" data-i="' + i + '" style="cursor:pointer;' + dim + '"><td class="pname sticky-col" style="background:#fff">' + esc(x.project) + '<div class="vmini">' + esc(x.client || '') + ' ' + ratingBadge(x) + (x.srcNames.length && x.srcNames[0] !== x.project ? ' <span class="vmini" title="matrix/Clockify source">⇐ ' + esc(x.srcNames.join(', ')) + '</span>' : '') + '</div>' + mapCtl + '</td>';
       ms.forEach(m => {
         const rv = x.revByMonth[m] || 0, cv = x.costByMonth[m] || 0;
-        body += '<td class="num" title="' + esc(S.ymLabel(m)) + ' · rev ' + fmtD(rv) + ' · cost ' + fmtD(cv) + '">' + (rv ? '<div>' + fmtK(rv) + '</div>' : '<div style="color:#c9cdd3">·</div>') + (cv ? '<div class="vmini" style="color:' + (cv > rv ? '#C0392B' : '#0E7C7B') + '">' + fmtK(cv) + '</div>' : '') + '</td>';
+        body += '<td class="num pf-mcell" data-i="' + i + '" data-m="' + m + '" title="' + esc(S.ymLabel(m)) + ' · rev ' + fmtD(rv) + ' · cost ' + fmtD(cv) + ' — click for that month\'s staffing">' + (rv ? '<div>' + fmtK(rv) + '</div>' : '<div style="color:#c9cdd3">·</div>') + (cv ? '<div class="vmini" style="color:' + (cv > rv ? '#C0392B' : '#0E7C7B') + '">' + fmtK(cv) + '</div>' : '') + '</td>';
       });
       body += '<td class="num" style="font-weight:700">' + (x.revTotal ? fmtD(x.revTotal) : '—') + '</td><td class="num">' + (x.cost ? fmtD(x.cost) : '—') + '<div class="vmini">' + (x.hours ? Math.round(x.hours).toLocaleString() + ' h' : '') + '</div></td><td class="num ' + (margin < 0 ? 'var-over' : x.revTotal ? 'var-ok' : '') + '">' + ((x.revTotal || x.cost) ? fmtD(margin) : '—') + '</td><td class="num ' + (x.revTotal && margin / x.revTotal < 0.2 ? 'var-over' : '') + '">' + (x.revTotal ? Math.round(margin / x.revTotal * 100) + '%' : '—') + '</td></tr>';
-      body += '<tr class="pf-detail" data-i="' + i + '" style="display:' + (state.expanded.has(x.key) ? '' : 'none') + '"><td colspan="' + (ms.length + 5) + '" style="background:#faf9f7;padding:8px 16px 12px">' + (x.ppl.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px">' + x.ppl.map(p => '<span class="mv-chip"><b>' + fmtD(p.cost) + '</b> ' + esc(p.name) + ' · ' + Math.round(p.hours) + ' h × $' + p.rate + '/h' + (p.title ? ' · ' + esc(p.title) : '') + '</span>').join('') + '</div>' : '<span class="note-txt">No logged hours against this project in the window.</span>') + '</td></tr>';
+      body += '<tr class="pf-detail" data-i="' + i + '" style="display:' + (state.expanded.has(x.key) ? '' : 'none') + '"><td colspan="' + (ms.length + 5) + '" style="background:#faf9f7;padding:10px 16px 14px">' + detailGrid(x, ms, state.monthPick[x.key] || null) + '</td></tr>';
     });
     let totCells = '';
     ms.forEach(m => { totCells += '<td class="num"><div style="font-weight:700">' + (fmtK(revM[m]) || '·') + '</div>' + (costM[m] ? '<div class="vmini" style="color:' + (costM[m] > revM[m] ? '#C0392B' : '#0E7C7B') + '">' + fmtK(costM[m]) + '</div>' : '') + '</td>'; });
     const totRow = '<tr style="background:#f4f6f7;border-top:2px solid rgba(37,39,58,0.25)"><td class="pname sticky-col" style="background:#f4f6f7;font-weight:700">Total · ' + inc.length + ' included</td>' + totCells + '<td class="num" style="font-weight:700">' + fmtD(totRev) + '</td><td class="num" style="font-weight:700">' + fmtD(totCost) + '</td><td class="num ' + (totRev - totCost < 0 ? 'var-over' : 'var-ok') + '" style="font-weight:700">' + fmtD(totRev - totCost) + '</td><td class="num">' + (totRev ? Math.round((totRev - totCost) / totRev * 100) + '%' : '—') + '</td></tr>';
-    html += '<div class="cmp-scroll"><table class="dt"><thead><tr><th class="sticky-col">Project</th>' + ms.map(m => '<th class="num">' + esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">current</div>' : '') + '<div class="vmini" style="text-transform:none;letter-spacing:0">rev / cost</div></th>').join('') + '<th class="num">Revenue</th><th class="num">Cost</th><th class="num">Margin</th><th class="num">%</th></tr></thead><tbody>' + (body || '<tr><td colspan="' + (ms.length + 5) + '"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>') + totRow + '</tbody></table></div>'
+    // ---- bottom lines: staff cost OUTSIDE the fee mapping ----
+    const oh = r.overhead || { byMonth: {}, cost: 0, hours: 0, ppl: [], byProj: {} };
+    const ohTop = Object.entries(oh.byProj || {}).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([p2, c2]) => esc(p2) + ' ' + fmtK(c2)).join(' · ');
+    let ohCells = ''; ms.forEach(m => { ohCells += '<td class="num vmini" style="color:#8a6d00">' + (oh.byMonth[m] ? fmtK(oh.byMonth[m]) : '·') + '</td>'; });
+    const ohRow = oh.cost ? '<tr class="pf-oh" style="background:#fdf9ee;cursor:pointer"><td class="pname sticky-col" style="background:#fdf9ee">Non-billable / macro time <span class="badge pursuit">outside fee mapping</span><div class="vmini">' + ohTop + (Object.keys(oh.byProj).length > 4 ? ' …' : '') + ' · click for people</div></td>' + ohCells + '<td class="num">—</td><td class="num" style="font-weight:700;color:#8a6d00">' + fmtD(oh.cost) + '<div class="vmini">' + Math.round(oh.hours).toLocaleString() + ' h</div></td><td class="num">—</td><td class="num">—</td></tr>'
+      + '<tr class="pf-oh-detail" style="display:' + (state.expanded.has('overhead') ? '' : 'none') + '"><td colspan="' + (ms.length + 5) + '" style="background:#fdf9ee;padding:10px 16px 14px">' + detailGrid({ ppl: oh.ppl, key: 'overhead' }, ms, state.monthPick['overhead'] || null) + '</td></tr>' : '';
+    const allCost = totCost + oh.cost;
+    let allCells = ''; ms.forEach(m => { const v = (costM[m] || 0) + (oh.byMonth[m] || 0); allCells += '<td class="num" style="font-weight:700">' + (v ? fmtK(v) : '·') + '</td>'; });
+    const allRow = '<tr style="background:#eceff1;border-top:2px solid rgba(37,39,58,0.35)"><td class="pname sticky-col" style="background:#eceff1;font-weight:700">All staff cost · fee-mapped + non-billable</td>' + allCells + '<td class="num">' + fmtD(totRev) + '</td><td class="num" style="font-weight:700">' + fmtD(allCost) + '</td><td class="num ' + (totRev - allCost < 0 ? 'var-over' : 'var-ok') + '" style="font-weight:700">' + fmtD(totRev - allCost) + '</td><td class="num">' + (totRev ? Math.round((totRev - allCost) / totRev * 100) + '%' : '—') + '</td></tr>';
+    html += '<div class="cmp-scroll"><table class="dt"><thead><tr><th class="sticky-col">Project</th>' + ms.map(m => '<th class="num">' + esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">current</div>' : '') + '<div class="vmini" style="text-transform:none;letter-spacing:0">rev / cost</div></th>').join('') + '<th class="num">Revenue</th><th class="num">Cost</th><th class="num">Margin</th><th class="num">%</th></tr></thead><tbody>' + (body || '<tr><td colspan="' + (ms.length + 5) + '"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>') + totRow + ohRow + allRow + '</tbody></table></div>'
       + '<datalist id="pf-fee-dl">' + feeList.map(p => '<option value="' + esc(p.label) + '"></option>').join('') + '</datalist>';
     $('#p-profit').innerHTML = html;
 
@@ -101,11 +130,19 @@
       };
     });
     const rowsRef = rows;
+    $$('#p-profit .pf-mcell').forEach(td => td.onclick = (e) => {
+      e.stopPropagation();
+      const x = rowsRef[+td.dataset.i]; if (!x) return;
+      state.monthPick[x.key] = td.dataset.m;
+      state.expanded.add(x.key);
+      render();
+    });
+    $$('#p-profit [data-clear-month]').forEach(a => a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); delete state.monthPick[a.dataset.clearMonth]; render(); });
+    $$('#p-profit .pf-oh').forEach(tr => tr.onclick = () => { if (state.expanded.has('overhead')) { state.expanded.delete('overhead'); delete state.monthPick['overhead']; } else state.expanded.add('overhead'); render(); });
     $$('#p-profit .pf-row').forEach(tr => tr.onclick = () => {
       const x = rowsRef[+tr.dataset.i]; if (!x) return;
-      if (state.expanded.has(x.key)) state.expanded.delete(x.key); else state.expanded.add(x.key);
-      const d = $('#p-profit .pf-detail[data-i="' + tr.dataset.i + '"]');
-      if (d) d.style.display = d.style.display === 'none' ? '' : 'none';
+      if (state.expanded.has(x.key)) { state.expanded.delete(x.key); delete state.monthPick[x.key]; } else state.expanded.add(x.key);
+      render();
     });
   }
 
