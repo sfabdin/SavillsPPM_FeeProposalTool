@@ -957,49 +957,71 @@
     </div>`;
   }
 
-  /* ---------- PROFITABILITY — billed $ (booked fee schedule) vs burned $
-     (Clockify hours × cost rate by title). Rating-1 projects only count as
-     billed; everything else shows cost-only so the burn is still visible. */
+  /* ---------- PROFITABILITY — the revenue projection with Clockify burn
+     (hours × cost rate) laid against it, month by month. Same row set,
+     rating sort and inclusion rules as Revenue Projections. ---------- */
   function renderProfit() {
+    const ms = months();                                  // full window, chronological
     const nowYm = S.currentYM();
-    const ms = months().filter(m => m <= nowYm);
     const fmtD = (n) => (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
+    const fmtK = (n) => { if (!n) return ''; const k = n / 1000; return Math.abs(k) >= 1000 ? '$' + (k / 1000).toFixed(1) + 'M' : '$' + (Math.abs(k) >= 100 ? Math.round(k) : k.toFixed(1)) + 'K'; };
     const r = S.profitability(ms);
-    if (!r.ok) { $('#p-profit').innerHTML = `<div class="empty">${r.why === 'rates' ? 'Rates not loaded — sign in and wait for rates.json (dollars need the cost-rate catalog).' : 'No Clockify actuals loaded — pull them on the Compare tab first.'}</div>`; return; }
-    const booked = r.rows.filter(x => x.booked);
-    const unlinked = r.rows.filter(x => !x.booked);
-    const totBilled = booked.reduce((s, x) => s + x.billed, 0);
-    const totCostBooked = booked.reduce((s, x) => s + x.cost, 0);
-    const totMargin = totBilled - totCostBooked;
-    const losing = booked.filter(x => x.margin < 0);
-    // monthly billed vs burned series across booked projects
-    const bM = {}, cM = {}; ms.forEach(m => { bM[m] = 0; cM[m] = 0; });
-    booked.forEach(x => ms.forEach(m => { bM[m] += (x.billedByMonth && x.billedByMonth[m]) || 0; cM[m] += (x.byMonth[m] && x.byMonth[m].cost) || 0; }));
-    let html = `<div class="kpi-strip">
-      <div class="kpi-card accent"><div class="k-num">${fmtD(totBilled)}</div><div class="k-lbl">Billed · booked (rating 1) fee schedule · ${esc(S.ymLabel(ms[0]))}–${esc(S.ymLabel(ms[ms.length - 1]))}</div></div>
-      <div class="kpi-card"><div class="k-num">${fmtD(totCostBooked)}</div><div class="k-lbl">Burned · hours × cost rate · booked projects</div></div>
-      <div class="kpi-card ${totMargin < 0 ? 'warn' : ''}"><div class="k-num">${fmtD(totMargin)}</div><div class="k-lbl">Margin${totBilled ? ' · ' + Math.round(totMargin / totBilled * 100) + '%' : ''}</div></div>
-      <div class="kpi-card ${losing.length ? 'warn' : ''}"><div class="k-num">${losing.length}</div><div class="k-lbl">Booked projects under water</div></div>
-    </div>`;
-    if (r.noRate.length) html += `<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for ${r.noRate.length} people: ${esc(r.noRate.slice(0, 12).join(' · '))}${r.noRate.length > 12 ? ' …' : ''} — their hours are EXCLUDED from cost. <button class="btn btn-ghost" id="pf-titles" style="padding:2px 10px;font-size:11px">⟳ Pull job titles from Clockify</button></div>`;
-    html += profitChart(ms, bM, cM, fmtD);
-    const row = (x, i) => {
-      const pct = x.marginPct != null ? Math.round(x.marginPct * 100) : null;
-      const mCls = x.margin < 0 ? 'var-over' : 'var-ok';
-      const trend = ms.slice(-3).map(m => (x.byMonth[m] && x.byMonth[m].cost) || 0);
-      const rising = trend.length >= 2 && trend[trend.length - 1] > trend[0] * 1.3 && trend[trend.length - 1] - trend[0] > 500;
-      return `<tr class="pf-row" data-i="${i}" style="cursor:pointer"><td class="pname">${esc(x.project)}${x.fee ? `<div class="vmini">${esc(x.fee.client || '')}</div>` : ''}${rising ? ' <span class="status-p" style="background:#fce7c2;color:#8a6d00">burn rising</span>' : ''}</td><td class="num">${x.booked ? fmtD(x.billed) : '<span style="color:#b0b5bc">' + (x.fee ? 'not booked (rating ' + (x.fee.rating || '?') + ')' : 'no fee link') + '</span>'}</td><td class="num">${fmtD(x.cost)}<div class="vmini">${Math.round(x.hours).toLocaleString()} h</div></td><td class="num ${x.booked ? mCls : ''}">${x.booked ? fmtD(x.margin) : '—'}</td><td class="num ${x.booked && pct != null && pct < 20 ? 'var-over' : ''}">${x.booked && pct != null ? pct + '%' : '—'}</td></tr>
-      <tr class="pf-detail" data-i="${i}" style="display:none"><td colspan="5" style="background:#faf9f7;padding:8px 16px 12px"><div style="display:flex;flex-wrap:wrap;gap:6px">${x.ppl.map(p => `<span class="mv-chip"><b>${fmtD(p.cost)}</b> ${esc(p.name)} · ${Math.round(p.hours)} h × $${p.rate}/h${p.title ? ' · ' + esc(p.title) : ''}</span>`).join('')}</div></td></tr>`;
-    };
-    const tbl = (list, empty) => list.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Billed (fee schedule)</th><th class="num">Burned (cost)</th><th class="num">Margin</th><th class="num">Margin %</th></tr></thead><tbody>${list.map((x) => row(x, r.rows.indexOf(x))).join('')}</tbody></table>` : `<div class="empty" style="border:0">${empty}</div>`;
-    html += `<div class="ins-grid" style="grid-template-columns:1fr">
-      <div class="ins-card"><h3>💰 Booked projects — billed vs burned <span>· sorted worst margin first · click a row for the people behind the cost</span></h3>${tbl(booked, 'No booked (rating 1) projects with logged hours in this window.')}</div>
-      <div class="ins-card"><h3>🕒 Burning without booked billing <span>· hours logged on projects with no rating-1 fee — pursuit investment or a missing mapping/rating</span></h3>${tbl(unlinked, 'Every project with hours has a booked fee. Clean.')}</div>
-    </div>`;
+    if (!r.ok) { $('#p-profit').innerHTML = '<div class="empty">Rates not loaded — sign in and wait for rates.json (dollars need the cost-rate catalog).</div>'; return; }
+    let rows = r.rows;
+    state.pfSearch = state.pfSearch || ''; state.pfClient = state.pfClient || ''; state.pfScope = state.pfScope || 'included';
+    const clients = [...new Set(r.rows.map(x => x.client).filter(Boolean))].sort();
+    const q = state.pfSearch.toLowerCase();
+    if (q) rows = rows.filter(x => (x.project + ' ' + x.client).toLowerCase().includes(q));
+    if (state.pfClient) rows = rows.filter(x => x.client === state.pfClient);
+    if (state.pfScope === 'booked') rows = rows.filter(x => x.booked || x.noLink);
+    else if (state.pfScope === 'included') rows = rows.filter(x => x.included || x.noLink || x.cost > 0);
+    const inc = rows.filter(x => x.included);
+    const revM = {}, costM = {}; ms.forEach(m => { revM[m] = 0; costM[m] = 0; });
+    let totRev = 0, totCost = 0;
+    inc.forEach(x => ms.forEach(m => { revM[m] += x.revByMonth[m] || 0; }));
+    rows.forEach(x => ms.forEach(m => { costM[m] += x.costByMonth[m] || 0; }));
+    inc.forEach(x => totRev += x.revTotal);
+    rows.forEach(x => totCost += x.cost);
+    const losing = inc.filter(x => x.cost > 0 && x.revTotal > 0 && x.cost > x.revTotal);
+    let html = '<div class="kpi-strip">'
+      + '<div class="kpi-card accent"><div class="k-num">' + fmtD(totRev) + '</div><div class="k-lbl">Revenue · ratings 1–4 · ' + esc(S.ymLabel(ms[0])) + '–' + esc(S.ymLabel(ms[ms.length - 1])) + '</div></div>'
+      + '<div class="kpi-card"><div class="k-num">' + fmtD(totCost) + '</div><div class="k-lbl">Cost · Clockify hours × cost rate</div></div>'
+      + '<div class="kpi-card ' + (totRev - totCost < 0 ? 'warn' : '') + '"><div class="k-num">' + fmtD(totRev - totCost) + '</div><div class="k-lbl">Margin' + (totRev ? ' · ' + Math.round((totRev - totCost) / totRev * 100) + '%' : '') + '</div></div>'
+      + '<div class="kpi-card ' + (losing.length ? 'warn' : '') + '"><div class="k-num">' + losing.length + '</div><div class="k-lbl">Projects with cost above revenue</div></div>'
+      + '</div>';
+    if (r.noRate.length) html += '<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for ' + r.noRate.length + ' people: ' + esc(r.noRate.slice(0, 10).join(' · ')) + (r.noRate.length > 10 ? ' …' : '') + ' — their hours are EXCLUDED. Pin their titles on the Mapping tab. <button class="btn btn-ghost" id="pf-titles" style="padding:2px 10px;font-size:11px">⟳ Pull job titles from Clockify</button></div>';
+    if (!r.hasActuals) html += '<div class="note-txt" style="margin:-4px 0 12px;color:#8a6d00">No Clockify actuals loaded — cost rows are empty. Pull actuals on the Compare tab.</div>';
+    html += '<div class="toolbar">'
+      + '<input type="search" id="pf-search" placeholder="Filter projects…" value="' + esc(state.pfSearch) + '">'
+      + '<select id="pf-client"><option value="">All clients</option>' + clients.map(c => '<option ' + (state.pfClient === c ? 'selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>'
+      + '<select id="pf-scope"><option value="included" ' + (state.pfScope === 'included' ? 'selected' : '') + '>Ratings 1–4 + anything with hours</option><option value="booked" ' + (state.pfScope === 'booked' ? 'selected' : '') + '>Booked (rating 1) only</option><option value="all" ' + (state.pfScope === 'all' ? 'selected' : '') + '>All ratings</option></select>'
+      + '<span class="grow"></span>'
+      + '<span class="note-txt">Rev = projection invoice (booked snapshot / fee schedule + COs) · Cost = hours × cost rate · greyed rows are excluded from totals · click a row for who\'s burning</span></div>';
+    html += profitChart(ms, revM, costM, fmtD);
+    const ratingBadge = (x) => x.noLink ? '<span class="badge pursuit" title="hours logged, no fee-tool link — link it on the Mapping tab">no fee link</span>' : '<span class="badge ' + (x.booked ? 'active' : x.included ? '' : 'pursuit') + '" title="projection rating">' + x.rating + (x.booked ? ' · booked' : '') + '</span>';
+    let body = '';
+    rows.forEach((x, i) => {
+      const margin = x.revTotal - x.cost;
+      const dim = !(x.included || x.noLink) ? 'opacity:0.55;' : '';
+      body += '<tr class="pf-row" data-i="' + i + '" style="cursor:pointer;' + dim + '"><td class="pname sticky-col" style="background:#fff">' + esc(x.project) + '<div class="vmini">' + esc(x.client || '') + ' ' + ratingBadge(x) + (x.srcNames.length && x.srcNames[0] !== x.project ? ' <span class="vmini" title="matrix/Clockify source">⇐ ' + esc(x.srcNames.join(', ')) + '</span>' : '') + '</div></td>';
+      ms.forEach(m => {
+        const rv = x.revByMonth[m] || 0, cv = x.costByMonth[m] || 0;
+        body += '<td class="num" title="' + esc(S.ymLabel(m)) + ' · rev ' + fmtD(rv) + ' · cost ' + fmtD(cv) + '">' + (rv ? '<div>' + fmtK(rv) + '</div>' : '<div style="color:#c9cdd3">·</div>') + (cv ? '<div class="vmini" style="color:' + (cv > rv ? '#C0392B' : '#0E7C7B') + '">' + fmtK(cv) + '</div>' : '') + '</td>';
+      });
+      body += '<td class="num" style="font-weight:700">' + (x.revTotal ? fmtD(x.revTotal) : '—') + '</td><td class="num">' + (x.cost ? fmtD(x.cost) : '—') + '<div class="vmini">' + (x.hours ? Math.round(x.hours).toLocaleString() + ' h' : '') + '</div></td><td class="num ' + (margin < 0 ? 'var-over' : x.revTotal ? 'var-ok' : '') + '">' + ((x.revTotal || x.cost) ? fmtD(margin) : '—') + '</td><td class="num ' + (x.revTotal && margin / x.revTotal < 0.2 ? 'var-over' : '') + '">' + (x.revTotal ? Math.round(margin / x.revTotal * 100) + '%' : '—') + '</td></tr>';
+      body += '<tr class="pf-detail" data-i="' + i + '" style="display:none"><td colspan="' + (ms.length + 5) + '" style="background:#faf9f7;padding:8px 16px 12px">' + (x.ppl.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px">' + x.ppl.map(p => '<span class="mv-chip"><b>' + fmtD(p.cost) + '</b> ' + esc(p.name) + ' · ' + Math.round(p.hours) + ' h × $' + p.rate + '/h' + (p.title ? ' · ' + esc(p.title) : '') + '</span>').join('') + '</div>' : '<span class="note-txt">No logged hours against this project in the window.</span>') + '</td></tr>';
+    });
+    let totRowCells = '';
+    ms.forEach(m => { totRowCells += '<td class="num"><div style="font-weight:700">' + (fmtK(revM[m]) || '·') + '</div>' + (costM[m] ? '<div class="vmini" style="color:' + (costM[m] > revM[m] ? '#C0392B' : '#0E7C7B') + '">' + fmtK(costM[m]) + '</div>' : '') + '</td>'; });
+    const totRow = '<tr style="background:#f4f6f7;border-top:2px solid rgba(37,39,58,0.25)"><td class="pname sticky-col" style="background:#f4f6f7;font-weight:700">Total · ' + inc.length + ' included</td>' + totRowCells + '<td class="num" style="font-weight:700">' + fmtD(totRev) + '</td><td class="num" style="font-weight:700">' + fmtD(totCost) + '</td><td class="num ' + (totRev - totCost < 0 ? 'var-over' : 'var-ok') + '" style="font-weight:700">' + fmtD(totRev - totCost) + '</td><td class="num">' + (totRev ? Math.round((totRev - totCost) / totRev * 100) + '%' : '—') + '</td></tr>';
+    html += '<div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">Project</th>' + ms.map(m => '<th class="num">' + esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">current</div>' : '') + '<div class="vmini" style="text-transform:none;letter-spacing:0">rev / cost</div></th>').join('') + '<th class="num">Revenue</th><th class="num">Cost</th><th class="num">Margin</th><th class="num">%</th></tr></thead><tbody>' + (body || '<tr><td colspan="' + (ms.length + 5) + '"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>') + totRow + '</tbody></table></div>';
     $('#p-profit').innerHTML = html;
+    $('#pf-search').oninput = (e) => { state.pfSearch = e.target.value; renderProfit(); const el = $('#pf-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $('#pf-client').onchange = (e) => { state.pfClient = e.target.value; renderProfit(); };
+    $('#pf-scope').onchange = (e) => { state.pfScope = e.target.value; renderProfit(); };
+    $$('#p-profit .pf-row').forEach(tr => tr.onclick = () => { const d = $('#p-profit .pf-detail[data-i="' + tr.dataset.i + '"]'); if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; });
     const pt = $('#pf-titles');
     if (pt) pt.onclick = async () => { pt.disabled = true; pt.textContent = 'Pulling titles…'; try { await pullClockifyNames(); renderProfit(); } catch (e) { pt.disabled = false; pt.textContent = 'Pull failed — retry'; } };
-    $$('#p-profit .pf-row').forEach(tr => tr.onclick = () => { const d = $(`#p-profit .pf-detail[data-i="${tr.dataset.i}"]`); if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; });
   }
 
   function profitChart(ms, bM, cM, fmtD) {
@@ -1008,22 +1030,21 @@
     const y = (v) => padT + (H - padT - padB) * (1 - v / max);
     const gw = (W - padL - padR) / ms.length;
     let s = '';
-    for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += `<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="rgba(37,39,58,.08)"></line><text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#79828C">$${Math.round(v / 1000)}k</text>`; }
+    for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yy + '" y2="' + yy + '" stroke="rgba(37,39,58,.08)"></line><text x="' + (padL - 6) + '" y="' + (yy + 3) + '" text-anchor="end" font-size="9" fill="#79828C">$' + Math.round(v / 1000) + 'k</text>'; }
     const bw = Math.max(10, Math.min(30, (gw - 18) / 2));
     ms.forEach((m, i) => {
       const x0 = padL + i * gw + (gw - 2 * bw - 4) / 2;
-      [[bM[m], '#0E7C7B', 'Billed'], [cM[m], '#FFDF00', 'Burned']].forEach(([v, c, nm], j) => {
+      [[bM[m], '#0E7C7B', 'Revenue', ''], [cM[m], '#FFDF00', 'Cost', 'stroke="#25273A" stroke-width="1"']].forEach(([v, c, nm, st], j) => {
         const xx = x0 + j * (bw + 4), yy = y(v);
-        s += `<rect x="${xx}" y="${yy}" width="${bw}" height="${Math.max(0, H - padB - yy)}" fill="${c}" ${j ? 'stroke="#25273A" stroke-width="1"' : ''}><title>${nm} · ${S.ymLabel(m)}: ${fmtD(v)}</title></rect>`;
+        s += '<rect x="' + xx + '" y="' + yy + '" width="' + bw + '" height="' + Math.max(0, H - padB - yy) + '" fill="' + c + '" ' + st + '><title>' + nm + ' · ' + S.ymLabel(m) + ': ' + fmtD(v) + '</title></rect>';
       });
-      s += `<text x="${padL + i * gw + gw / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#25273A" font-weight="600">${esc(S.ymLabel(m))}</text>`;
+      s += '<text x="' + (padL + i * gw + gw / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#25273A" font-weight="600">' + esc(S.ymLabel(m)) + '</text>';
     });
-    return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);padding:14px 16px;margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
-        <div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">Billed vs burned by month — booked projects</div>
-        <div class="note-txt"><span style="color:#0E7C7B">■</span> Billed (fee schedule)&nbsp;&nbsp;<span style="color:#e8c400">■</span> Burned (hours × cost rate) · gap = margin</div>
-      </div>
-      <svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block">${s}</svg></div>`;
+    return '<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);padding:14px 16px;margin-bottom:16px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">'
+      + '<div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">Revenue vs cost by month — filtered set</div>'
+      + '<div class="note-txt"><span style="color:#0E7C7B">■</span> Revenue (projection)&nbsp;&nbsp;<span style="color:#e8c400">■</span> Cost (hours × cost rate) · gap = margin</div>'
+      + '</div><svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;display:block">' + s + '</svg></div>';
   }
 
   /* ---------- TIME ENTRY COMPLIANCE — who logs, who's behind ----------

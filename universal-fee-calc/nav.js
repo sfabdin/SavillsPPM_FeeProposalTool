@@ -16,6 +16,7 @@
     { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Admin', admin: true },
     { href: 'Projects Index.html',           label: 'Projects Index',      group: 'Manage' },
     { href: 'Staffing Matrix.html',          label: 'Staffing & Bandwidth', group: 'Admin', admin: true },
+    { href: 'Profitability.html',            label: 'Profitability',       group: 'Admin', admin: true },
     { href: 'Revenue Projections.html',      label: 'Revenue Projections', group: 'Manage' },
     { href: 'Revenue Studio.html',           label: 'Revenue Studio',      group: 'Manage' },
     { href: 'Benchmarking Dashboard.html',   label: 'Benchmarking',        group: 'Manage' },

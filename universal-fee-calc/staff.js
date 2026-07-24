@@ -669,58 +669,71 @@
 
   /* ---------- entry-lateness stats (from /api/clockify?lateness=1) ---------- */
   function setLateness(rows) { const db = readDb(); db.lateness = rows; db.meta.latenessAt = new Date().toISOString(); writeDb(db); }
-  /** PROFITABILITY — per matched project: billed $ (rating-1/booked fee schedule)
-      vs burned $ (Clockify hours × cost rate by title), by month.
-      Only projects with a fee-tool link AND rating 1 (Booked) count as billed. */
+  /** PROFITABILITY MATRIX — the whole revenue projection (same math and
+      row set as Revenue Projections) with Clockify burn (hours × cost rate)
+      laid against it by month. Fee projects with no hours still show;
+      matrix/Clockify projects with hours but no fee link show as $0-revenue
+      rows. Ratings 5–7 grey out downstream, like Projections. */
   function profitability(monthsList) {
     const db = readDb(); const inWin = new Set(monthsList);
     const S2 = window.UFC_Store; const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
     if (!S2 || !cat || !cat.hydrated) return { ok: false, why: 'rates' };
-    if (!hasActuals()) return { ok: false, why: 'actuals' };
-    // burned $ per matrix project per month
-    const burn = {}; const noRate = new Set();
-    Object.entries(db.actuals).forEach(([k, h]) => {
+    // ---- burned $ per MATRIX project → resolved onto fee-project ids where linked ----
+    const burnByFee = {}; const burnLoose = {}; const noRate = new Set();
+    Object.entries(db.actuals || {}).forEach(([k, h]) => {
       const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
       const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
       if (!inWin.has(ym) || isMacroProject(proj)) return;
       const person = db.people[pid];
       const rate = person ? costRateForTitle(person.title) : null;
       if (!rate) { noRate.add(person ? (person.name + (person.title ? ' — ' + person.title : ' — no title')) : pid.replace(/^unmatched:/, '')); return; }
-      const rec = burn[proj] || (burn[proj] = { byMonth: {}, hours: 0, cost: 0, ppl: {} });
-      rec.byMonth[ym] = rec.byMonth[ym] || { cost: 0, hours: 0 };
-      rec.byMonth[ym].cost += h * rate; rec.byMonth[ym].hours += h;
-      rec.hours += h; rec.cost += h * rate;
-      const pp = rec.ppl[pid] || (rec.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0 });
+      const link = matchFeeProject(proj, '');
+      const bucket = link ? (burnByFee[link.id] = burnByFee[link.id] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set() })
+                          : (burnLoose[proj] = burnLoose[proj] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set([proj]) });
+      if (link) bucket.srcNames.add(proj);
+      bucket.byMonth[ym] = (bucket.byMonth[ym] || 0) + h * rate;
+      bucket.hours += h; bucket.cost += h * rate;
+      const pp = bucket.ppl[pid] || (bucket.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0 });
       pp.hours += h; pp.cost += h * rate;
     });
-    // billed $ per project per month — booked (rating 1) revenue, SAME math as
-    // Revenue Projections: booked financials snapshot → live monthlySeries fallback
+    // ---- revenue rows: SAME set + math as Revenue Projections ----
+    const parents = (S2.listProjects() || []).filter(p => !(S2.isChangeOrder && S2.isChangeOrder(p)));
+    const projects = S2.visibleProjects ? S2.visibleProjects(parents) : parents;
     const rows = [];
-    Object.entries(burn).forEach(([proj, b]) => {
-      const client = ''; const link = matchFeeProject(proj, client);
-      const fp = link ? feeRecords().find(x => x.id === link.id) : null;
-      const rating = fp ? (S2.ratingFor ? S2.ratingFor(fp) : fp.project && fp.project.rating) : null;
-      const booked = rating === 1;
-      let billedByMonth = null, billed = 0;
-      if (fp && booked) {
-        try {
-          billedByMonth = {};
-          const add = (ym, amt) => { if (inWin.has(ym)) { billedByMonth[ym] = (billedByMonth[ym] || 0) + amt; billed += amt; } };
-          const fin = fp.financials;
-          if (fin && !fin.stale && Array.isArray(fin.byMonth) && fin.byMonth.length) {
-            fin.byMonth.forEach(s => add(s.ym, (s.invoice != null) ? s.invoice : s.net));
-          } else {
-            (S2.monthlySeries(fp, cat) || []).forEach(m => add(m.year + '-' + String(m.month).padStart(2, '0'), m.amount));
-          }
-          // approved change orders ride on top, like Projections
-          (S2.approvedChangeOrders ? S2.approvedChangeOrders(fp.id) : []).forEach(co => {
-            try { S2.changeOrderDelta(co).byMonth.forEach(x => add(x.ym, x.net)); } catch (e) {}
-          });
-        } catch (e) { billedByMonth = null; }
-      }
-      rows.push({ project: proj, fee: fp ? { id: fp.id, name: fp.name, client: fp.client, rating } : null, booked, billed: Math.round(billed), billedByMonth, cost: Math.round(b.cost), hours: Math.round(b.hours * 10) / 10, byMonth: b.byMonth, margin: Math.round(billed - b.cost), marginPct: billed ? (billed - b.cost) / billed : null, ppl: Object.values(b.ppl).sort((x, y) => y.cost - x.cost) });
+    projects.forEach(p => {
+      const rating = S2.ratingFor ? S2.ratingFor(p) : 5;
+      const revByMonth = {}; let revTotal = 0;
+      const add = (ym, amt) => { if (inWin.has(ym)) { revByMonth[ym] = (revByMonth[ym] || 0) + amt; revTotal += amt; } };
+      try {
+        const fin = p.financials;
+        if (fin && !fin.stale && Array.isArray(fin.byMonth) && fin.byMonth.length) {
+          fin.byMonth.forEach(s => add(s.ym, (s.invoice != null) ? s.invoice : s.net));
+        } else {
+          const fs0 = (p.assumptions && p.assumptions.feeShare) || {};
+          const pct0 = fs0.enabled ? (parseFloat(fs0.pct) || 0) / 100 : 0;
+          (S2.monthlySeries(p, cat) || []).forEach(m => add(m.year + '-' + String(m.month).padStart(2, '0'), fs0.mode === 'ontop' ? m.amount * (1 + pct0) : m.amount));
+        }
+        (S2.approvedChangeOrders ? S2.approvedChangeOrders(p.id) : []).forEach(co => {
+          try { S2.changeOrderDelta(co).byMonth.forEach(x => add(x.ym, x.net)); } catch (e) {}
+        });
+      } catch (e) {}
+      const b = burnByFee[p.id];
+      if (!revTotal && !b) return;                       // nothing in-window on either axis
+      rows.push({
+        key: 'fee:' + p.id, feeId: p.id, project: p.name, client: p.client || '', rating,
+        included: rating >= 1 && rating <= 4, booked: rating === 1,
+        revByMonth, revTotal: Math.round(revTotal),
+        costByMonth: b ? b.byMonth : {}, cost: Math.round(b ? b.cost : 0), hours: b ? Math.round(b.hours * 10) / 10 : 0,
+        ppl: b ? Object.values(b.ppl).sort((x, y) => y.cost - x.cost) : [],
+        srcNames: b ? [...b.srcNames] : [],
+      });
     });
-    return { ok: true, rows: rows.sort((a, b) => (a.marginPct == null ? 2 : -a.marginPct) - (b.marginPct == null ? 2 : -b.marginPct)), noRate: [...noRate] };
+    // ---- hours burning with NO fee link → $0-revenue rows ----
+    Object.entries(burnLoose).forEach(([proj, b]) => {
+      rows.push({ key: 'loose:' + proj, feeId: null, project: proj, client: '', rating: null, included: false, booked: false, revByMonth: {}, revTotal: 0, costByMonth: b.byMonth, cost: Math.round(b.cost), hours: Math.round(b.hours * 10) / 10, ppl: Object.values(b.ppl).sort((x, y) => y.cost - x.cost), srcNames: [proj], noLink: true });
+    });
+    rows.sort((a, b) => (a.rating || 9) - (b.rating || 9) || b.revTotal - a.revTotal || b.cost - a.cost);
+    return { ok: true, rows, noRate: [...noRate], hasActuals: hasActuals() };
   }
 
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
