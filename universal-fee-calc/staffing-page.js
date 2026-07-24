@@ -23,9 +23,12 @@
     } catch (e) {}
     // Fallback: read the token bundle directly (old cached box-adapter without getAccessToken)
     try {
-      const raw = localStorage.getItem('ufc_box_token_v1');
-      const t = raw ? JSON.parse(raw) : null;
-      if (t && t.access_token && (!t.exp || t.exp > Date.now())) return { Authorization: 'Bearer ' + t.access_token };
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!/box.*tok|tok.*box/i.test(k)) continue;
+        const t = JSON.parse(localStorage.getItem(k));
+        if (t && t.access_token && (!t.exp || t.exp > Date.now())) return { Authorization: 'Bearer ' + t.access_token };
+      }
     } catch (e) {}
     return {};
   }
