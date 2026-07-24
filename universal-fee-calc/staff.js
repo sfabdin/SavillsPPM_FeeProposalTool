@@ -693,21 +693,32 @@
       const pp = rec.ppl[pid] || (rec.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0 });
       pp.hours += h; pp.cost += h * rate;
     });
-    // billed $ per project per month — booked (rating 1) fee schedule only
+    // billed $ per project per month — booked (rating 1) revenue, SAME math as
+    // Revenue Projections: booked financials snapshot → live monthlySeries fallback
     const rows = [];
     Object.entries(burn).forEach(([proj, b]) => {
       const client = ''; const link = matchFeeProject(proj, client);
       const fp = link ? feeRecords().find(x => x.id === link.id) : null;
-      const booked = !!(fp && (+fp.rating === 1 || (fp.financials && fp.financials.booked)));
+      const rating = fp ? (S2.ratingFor ? S2.ratingFor(fp) : fp.project && fp.project.rating) : null;
+      const booked = rating === 1;
       let billedByMonth = null, billed = 0;
       if (fp && booked) {
         try {
-          const series = S2.monthlySeries(fp, cat) || [];
           billedByMonth = {};
-          series.forEach(m => { const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (inWin.has(ym)) { billedByMonth[ym] = (billedByMonth[ym] || 0) + m.amount; billed += m.amount; } });
+          const add = (ym, amt) => { if (inWin.has(ym)) { billedByMonth[ym] = (billedByMonth[ym] || 0) + amt; billed += amt; } };
+          const fin = fp.financials;
+          if (fin && !fin.stale && Array.isArray(fin.byMonth) && fin.byMonth.length) {
+            fin.byMonth.forEach(s => add(s.ym, (s.invoice != null) ? s.invoice : s.net));
+          } else {
+            (S2.monthlySeries(fp, cat) || []).forEach(m => add(m.year + '-' + String(m.month).padStart(2, '0'), m.amount));
+          }
+          // approved change orders ride on top, like Projections
+          (S2.approvedChangeOrders ? S2.approvedChangeOrders(fp.id) : []).forEach(co => {
+            try { S2.changeOrderDelta(co).byMonth.forEach(x => add(x.ym, x.net)); } catch (e) {}
+          });
         } catch (e) { billedByMonth = null; }
       }
-      rows.push({ project: proj, fee: fp ? { id: fp.id, name: fp.name, client: fp.client, rating: fp.rating } : null, booked, billed: Math.round(billed), billedByMonth, cost: Math.round(b.cost), hours: Math.round(b.hours * 10) / 10, byMonth: b.byMonth, margin: Math.round(billed - b.cost), marginPct: billed ? (billed - b.cost) / billed : null, ppl: Object.values(b.ppl).sort((x, y) => y.cost - x.cost) });
+      rows.push({ project: proj, fee: fp ? { id: fp.id, name: fp.name, client: fp.client, rating } : null, booked, billed: Math.round(billed), billedByMonth, cost: Math.round(b.cost), hours: Math.round(b.hours * 10) / 10, byMonth: b.byMonth, margin: Math.round(billed - b.cost), marginPct: billed ? (billed - b.cost) / billed : null, ppl: Object.values(b.ppl).sort((x, y) => y.cost - x.cost) });
     });
     return { ok: true, rows: rows.sort((a, b) => (a.marginPct == null ? 2 : -a.marginPct) - (b.marginPct == null ? 2 : -b.marginPct)), noRate: [...noRate] };
   }
