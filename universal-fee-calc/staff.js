@@ -714,6 +714,24 @@
 
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
 
+  /** Apply Clockify job titles to the roster (Clockify is the source of truth
+      for titles). users: [{name, title}] from /api/clockify?list=users&titles=1.
+      Uses saved people-mappings first, then tolerant name match. */
+  function applyClockifyTitles(users) {
+    const db = readDb(); const maps = (db.mappings && db.mappings.users) || {};
+    let set = 0;
+    (users || []).forEach(u => {
+      const t = (u.title || '').trim(); if (!t) return;
+      let person = null;
+      const mapped = maps[nkey(u.name)];
+      if (mapped && db.people[mapped]) person = db.people[mapped];
+      if (!person) person = Object.values(db.people).find(p => namesMatch(p.name, u.name));
+      if (person && person.title !== t) { person.title = t; set++; }
+    });
+    if (set) writeDb(db);
+    return set;
+  }
+
   /* ---------- dollars: internal cost rates by title ----------
      A person's job title (captured from Clockify) maps to a rate family + tier
      via the catalog's staff-title map; the tier's costFloor is the internal
@@ -722,6 +740,10 @@
     const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
     if (!cat || !title) return null;
     const t = String(title).trim().toLowerCase(); if (!t) return null;
+    // saved manual mapping (Mapping tab) wins — shared via staff.json
+    const db = readDb();
+    const saved = db.mappings && db.mappings.titles && db.mappings.titles[t];
+    if (saved) return { titleId: saved.titleId, tierId: saved.tierId };
     const map = cat.staffTitleMap || [];
     let hit = map.find(m => m.staffTitle.toLowerCase() === t);
     if (!hit) hit = map.find(m => t.includes(m.staffTitle.toLowerCase()));
@@ -762,6 +784,17 @@
   /* ---------- saved Clockify → roster mappings (map once, keeps forever;
      lives in staff.json so the whole team shares it) ---------- */
   function getMappings() { const db = readDb(); return db.mappings || { users: {}, projects: {} }; }
+  /** Pin a roster/Clockify job title to a rate-grid family + tier. Shared via
+      staff.json. Pass null titleId to unpin. */
+  function setTitleMapping(title, titleId, tierId) {
+    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    db.mappings.titles = db.mappings.titles || {};
+    const k = String(title || '').trim().toLowerCase(); if (!k) return;
+    if (titleId) db.mappings.titles[k] = { titleId, tierId: tierId || 'mid' };
+    else delete db.mappings.titles[k];
+    writeDb(db);
+  }
+
   function setUserMapping(clockifyName, personId) {
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
     if (personId) db.mappings.users[nkey(clockifyName)] = personId; else delete db.mappings.users[nkey(clockifyName)];
@@ -1005,9 +1038,9 @@
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
-    getMappings, setUserMapping, setProjectMapping, setFeeMapping, tokenScore,
+    getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, tokenScore,
     titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject, profitability,
-    setLateness, getLateness, setUserExclusion, userExcluded,
+    setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers
     namesMatch, cleanName, isNewHireName,
