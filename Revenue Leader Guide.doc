@@ -1,0 +1,96 @@
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>Fee System — Revenue Leader Guide</title>
+<style>
+@page{size:8.5in 11in;margin:0.7in;}
+body{font-family:Calibri,Arial,sans-serif;color:#25273A;font-size:11pt;line-height:1.4;}
+h1{font-size:19pt;margin:0 0 2pt;}
+.sub{color:#5b6472;font-size:10.5pt;margin:0 0 12pt;}
+h2{font-size:13pt;border-bottom:2px solid #25273A;padding-bottom:3pt;margin:16pt 0 6pt;}
+h3{font-size:11.5pt;color:#0E7C7B;margin:10pt 0 3pt;}
+p,li,td,th{font-size:11pt;line-height:1.4;}
+.deadline{background:#25273A;color:#fff;padding:10pt 12pt;margin:10pt 0;}
+.deadline p{color:#fff;margin:0;}
+.deadline .big{font-size:14pt;font-weight:bold;}
+.lede{background:#F6F4EF;border-left:3px solid #0E7C7B;padding:8pt 12pt;margin:0 0 6pt;}
+table{width:100%;border-collapse:collapse;margin:5pt 0 8pt;}
+th{text-align:left;font-size:8.5pt;text-transform:uppercase;letter-spacing:0.5pt;color:#5b6472;border-bottom:1px solid #ccc;padding:4pt 6pt;}
+td{font-size:10.5pt;border-bottom:1px solid #e2e0da;padding:4pt 6pt;vertical-align:top;}
+td.k{font-weight:bold;white-space:nowrap;}
+.can td:first-child{color:#1f7a44;font-weight:bold;}
+.cannot td:first-child{color:#C0392B;font-weight:bold;}
+.calc{background:#F6F4EF;padding:8pt 12pt;margin:4pt 0 8pt;}
+.note{color:#5b6472;font-style:italic;font-size:10pt;}
+ol,ul{margin:0 0 8pt;padding-left:20pt;}
+li{margin-bottom:2pt;}
+</style></head><body>
+
+<h1>Fee System — Revenue Leader Guide</h1>
+<p class="sub">How to enter your projects, what you can change, and how access works.</p>
+
+<div class="deadline"><p class="big">Deadline: all staffing entered by August 15, 2026.</p>
+<p>Every project you own needs its proposed team, allocations, and monthly numbers in the system by this date. If it is an active project, please flag if a Salesforce ID # (P#) is not already entered.</p></div>
+
+<div class="lede"><p>Open the system from the <b>"PPM_FeeProposalTool"</b> link in the box folder (bookmark it). Sign in with Box when prompted — that's what proves who you are and shows you your projects. You'll land on the <b>Fee Generator Hompage or Project Index (depending which link you pick!)</b>; everything else is linked from there.</p></div>
+
+<h2>1 · Building a new fee matrix in the Fee Calculator</h2>
+<p>Open <b>Universal Fee Calculator</b> → start a new project (or open one from the Projects Index). Work top to bottom. Look for the <b>&#9432;</b> markers next to tricky fields — they explain the nuance with an example.</p>
+<ol>
+<li><b>Project info.</b> Name, client, your name as revenue leader, industry, and project type. Add anyone who should have access (see §4). Use <b>Assumptions &amp; exclusions</b> and <b>Notes</b> to record what the fee is priced under — these will be useful in the Benchmarking tool when comparing projects.</li>
+<li><b>Timeline.</b> Set the start and end months — the calendar window everything else fills in.</li>
+<li><b>Phases.</b> Break the project into phases (e.g. Startup, Execution, Closeout) with a length in months each. The last phase absorbs any remainder. (Half months are not possible in this view, but you can always half the allocation to get the same amount)</li>
+<li><b>Groups.</b> This can be useful in a few different ways. Group your team by PPM Revenue Stream (e.g. PPM, Relocation, Change Mangement, Workplace), Group them by Scope, by Phase, etc. Each group becomes its own column and subtotal in the monthly schedule. Groups can run at the same time, and can be shifted accross time periods. Use this for overlapping workstreams where you'd want to bifurcate fees.</li>
+<li><b>Team.</b> Pick titles from the rates catalog (rate and cost floor come from the grid automatically). Add multiples where needed, type the real project role name on the right. Name the resource (if available) and assign each resource to a group.</li>
+<li><b>Allocations.</b> In the matrix, enter each person's effort per phase — as % FTE or Hours (toggle top-right; they convert automatically). Click a phase to open it into months if effort changes month to month.</li>
+<li><b>Assumptions.</b> Set fee basis (Fixed vs NTE), escalation, industry adjustment, client discount, and rate lock. Each has an &#9432; with an example.</li>
+<li><b>Check &amp; save.</b> Review headline totals and the monthly schedule. The project auto-saves, but click <b>Save</b> to be sure. Set the <b>status</b> (Draft → Submitted → Won/Active) as it progresses.</li>
+</ol>
+
+<h3>The nuances worth knowing</h3>
+<table>
+<tr><th>Feature</th><th>What to know</th></tr>
+<tr><td class="k">Fixed vs NTE</td><td><b>Fixed</b> = the total is the contract, frozen when booked. <b>NTE</b> = the ceiling is the contract; once booked the total locks as a cap and monthly numbers are able to flex with actuals.</td></tr>
+<tr><td class="k">Rate lock</td><td>Holds the start year's rates (no escalation) and shows the amount you gave back as a credit line.</td></tr>
+<tr><td class="k">Industry adjustment</td><td>Lowers the billed rate, not the cost. Push it too far and a role flags red (below cost floor). This is NOT shown as a credit to the client.</td></tr>
+<tr><td class="k">Broker fee share</td><td><b>Off invoice</b> = broker takes a % out of the fee (client pays same, we keep less). <b>On top</b> = markup added on top (client pays more, we keep the full fee).</td></tr>
+<tr><td class="k">Pass-through</td><td><b>Billed</b> = client pays cost + markup through us. <b>Managed</b> = vendor bills client direct, we charge a % fee only. (only the markup is our revenue)</td></tr>
+<tr><td class="k">Scope shift</td><td>When using "groups" you can use the shift arrows on a group header to slide that whole team's staffing forward/back in months. This is helpful if scope shifts to a later month.</td></tr>
+<tr><td class="k">Fit to target</td><td>Solves the client discount so the fee lands exactly on your target number, to the penny. This adjusts the client discount, NOT staffing allocations.</td></tr>
+</table>
+
+<h3>How the fee is calculated (simplified)</h3>
+<div class="calc"><ol>
+<li><b>Person's fee</b> = rate × hours (hours = % FTE × hours-per-month, across their months).</li>
+<li><b>Gross fee</b> = sum of everyone, grouped by team/scope.</li>
+<li><b>Less rate-lock credit</b> (if on) and <b>less client discount</b> → <b>Net fee</b>.</li>
+<li><b>Broker &amp; pass-through</b> handled separately, on their own lines, so revenue is never overstated.</li>
+<li><b>Monthly schedule</b> spreads the net fee across months by group — this feeds Revenue Projections.</li>
+</ol></div>
+
+<h2>2 · Revenue Projections — what you can and can't change</h2>
+<p>Revenue Projections is a <b>read-out</b> of your saved projects, by month — how leadership sees the forecast. You can adjust a few things here; the real numbers always come from the calculator.</p>
+<table class="can">
+<tr><th>You can</th><th></th></tr>
+<tr><td>Change a rating</td><td>Update the confidence rating (1–7) on a project inline.</td></tr>
+<tr><td>Override a month</td><td>Adjust a monthly billing number in Edit mode when actuals differ from plan (esp. NTE projects).</td></tr>
+<tr><td>Toggle views</td><td>Show/hide rated 5–7, broker split, pass-through split; roll up by client; export to Excel.</td></tr>
+</table>
+<table class="cannot">
+<tr><th>You cannot</th><th></th></tr>
+<tr><td>Change the fee</td><td>The total fee, team, and rates only change in the <b>Fee Calculator</b>. Go back there to fix a real number.</td></tr>
+<tr><td>See others' projects</td><td>You only see projects assigned to you or shared with you.</td></tr>
+<tr><td>Edit another leader's work</td><td>Overrides apply to your projects only.</td></tr>
+</table>
+<p class="note">Rule of thumb: if it's a real change to the fee, do it in the calculator. If it's a reporting view or a rating/actuals tweak, do it here.</p>
+
+<h2>3 · Sign-in &amp; Box permissions (the short version)</h2>
+<p>You sign in with your <b>Box (Savills) account</b> — that's the only login. Your Box identity is what shows you your projects and it may take a moment to load; fee data is never visible without signing in.</p>
+
+<h2>4 · Giving someone else access</h2>
+<p>Two quick steps — <b>both</b> are needed:</p>
+<ol>
+<li>In the calculator, add their Savills.us email under <b>&ldquo;Grant access to&rdquo;</b> on the project (comma-separated for several people).</li>
+<li>Send me (<b>Sarah Abdin)</b> a quick message so I can add them to the Box folder. They can't get in until they have access to the main the folder.</li>
+</ol>
+<p class="note">Once they're on the folder and listed on the project, they'll see it when they sign in.</p>
+
+</body></html>

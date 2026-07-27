@@ -106,6 +106,9 @@
     <tr><td class="k">Pass-through</td><td>For vendor cost run through us. <b>Billed</b> = client pays cost + markup through us. <b>Managed</b> = vendor bills client direct, we charge a % fee only. (only the markup is our revenue)</td></tr>
     <tr><td class="k">Scope shift</td><td>When using "groups" you can use the <b>◀ ▶</b> shift on a group header to slide that whole team's staffing forward/back in months. This is helpful if scope shifts to a later month.</td></tr>
     <tr><td class="k">Fit to target</td><td>Solves the client discount so the fee lands exactly on your target number, to the penny. This adjusts the client discount, NOT staffing allocations.</td></tr>
+    <tr><td class="k">Change orders</td><td>Once a project is booked, <b>don't edit the contract</b> — click <b>Change order</b>. It forks the current contract, freezes it as the baseline, and shows you a role-level diff and the monthly delta. Approved COs roll into the revised contract value automatically.</td></tr>
+    <tr><td class="k">Version history</td><td>Every save writes a restorable snapshot. If something goes wrong, roll back — nothing is lost, and deletions are recoverable too.</td></tr>
+    <tr><td class="k">Project intake</td><td>When you set a project to <b>Won</b> or <b>Active</b>, the calculator builds the standard intake table pre-filled from the record and copies it for the intake email. Yellow fields are the ones you still have to complete.</td></tr>
   </table>
 
   <h3>How the fee is calculated (simplified)</h3>
@@ -132,6 +135,17 @@
     <tr><td>✗ Edit another leader's work</td><td>Overrides apply to your projects only.</td></tr>
   </table>
   <p class="note">Rule of thumb: if it's a real change to the fee, do it in the calculator. If it's a reporting view or a rating/actuals tweak, do it here.</p>
+
+  <h2><span class="n">5</span> The rest of the suite — what to open when</h2>
+  <table>
+    <tr><th>Tool</th><th>Use it for</th></tr>
+    <tr><td class="k">Projects Index</td><td>Your home base. Every project you can see, searchable and filterable, with pipeline / booked / active / win-rate KPIs. <b>+ New project</b> starts a fee; clicking a row opens it.</td></tr>
+    <tr><td class="k">Data Entry Status</td><td>Find your name to see your completeness score and the <b>exact fields still missing</b> on each project — staffing, Salesforce ID, rating, service line, dates. Check it before every forecast cycle.</td></tr>
+    <tr><td class="k">Benchmarking</td><td>Before you price: what have we charged for work like this? Comparables by client, industry, project type and size; min / median / max rate by title; two or three projects side by side.</td></tr>
+    <tr><td class="k">Proposal Analytics</td><td>Hit rate by deal size, why we lose (from the loss reason you set), and how much discount we're giving away by client and leader. Set the <b>loss reason</b> when you mark a proposal lost — otherwise this is blind.</td></tr>
+    <tr><td class="k">Revenue Studio</td><td>Your book against the frozen Budget / RF baseline, by month or year, with at / below / above flags. Read-only — nothing here changes your projects.</td></tr>
+  </table>
+  <p class="note">A project with no staffing has no monthly curve — it silently under-reports the forecast. That's what Data Entry Status is there to catch.</p>
 
 </doc-page>
 <script src="universal-fee-calc/doc-page.js"></script>

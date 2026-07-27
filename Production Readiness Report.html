@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PPM Fee System · Production Readiness Report</title>
+<style>
+  :root{--navy:#25273A;--yellow:#FFDF00;--red:#CE181E;--teal:#0E7C7B;--steel:#79828C;--cream:#EEE8E3;--hair:rgba(37,39,58,0.12);--hair-strong:rgba(37,39,58,0.22)}
+  *{box-sizing:border-box}
+  html{background:#d8d6d2}
+  body{margin:0;font-family:"Helvetica Neue",Arial,sans-serif;color:var(--navy);line-height:1.55;-webkit-font-smoothing:antialiased}
+  a{color:var(--teal)}a:hover{color:var(--navy)}
+  .page{width:8.5in;min-height:11in;margin:24px auto;background:#fff;padding:0.8in 0.85in 0.7in;box-shadow:0 6px 30px rgba(0,0,0,0.16)}
+  .masthead{border-bottom:3px solid var(--navy);padding-bottom:16px;margin-bottom:24px}
+  .kicker{font-size:10.5px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:var(--steel);margin-bottom:10px}
+  h1{font-size:28px;line-height:1.1;letter-spacing:-0.01em;margin:0 0 8px;font-weight:800}
+  .sub{font-size:13px;color:var(--steel);max-width:5.8in}
+  .metaline{margin-top:12px;display:flex;gap:24px;flex-wrap:wrap;font-size:11px;color:var(--steel)}
+  .metaline b{color:var(--navy)}
+  h2{font-size:12px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;margin:28px 0 12px;padding-bottom:7px;border-bottom:1.5px solid var(--hair-strong);display:flex;align-items:center;gap:10px}
+  h2 .n{font-size:11px;color:var(--yellow);background:var(--navy);width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;flex:none;font-weight:800}
+  p{margin:0 0 10px;font-size:12.5px}
+  ul,ol{margin:0 0 12px;padding-left:20px}
+  li{font-size:12.5px;margin-bottom:6px}
+  code{font-family:"SF Mono",Consolas,monospace;font-size:11px;background:var(--cream);padding:1px 5px;border-radius:3px}
+  .verdict{display:flex;gap:14px;align-items:flex-start;background:var(--navy);color:#fff;padding:16px 20px;margin:0 0 6px}
+  .verdict .badge{background:var(--yellow);color:var(--navy);font-weight:800;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;padding:4px 10px;flex:none;margin-top:2px}
+  .verdict p{color:rgba(255,255,255,0.92);margin:0;font-size:12.5px}
+  .fix{display:grid;grid-template-columns:110px 1fr;gap:12px;padding:10px 0;border-bottom:1px solid var(--hair)}
+  .fix .tag{font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;padding:3px 0}
+  .tag.critical{color:var(--red)}.tag.high{color:#b07000}.tag.medium{color:var(--teal)}
+  .fix h4{margin:0 0 3px;font-size:12.5px;font-weight:800}
+  .fix p{margin:0;font-size:12px;color:#4b4e63}
+  .check{display:grid;grid-template-columns:22px 1fr;gap:8px;margin-bottom:7px;font-size:12.5px}
+  .check .box{width:13px;height:13px;border:1.5px solid var(--navy);margin-top:2px}
+  .ok{color:var(--teal);font-weight:700}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px}
+  th{text-align:left;font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:var(--steel);padding:6px 10px 6px 0;border-bottom:1.5px solid var(--hair-strong)}
+  td{padding:7px 10px 7px 0;border-bottom:1px solid var(--hair);vertical-align:top}
+  @media print{html{background:#fff}.page{margin:0;box-shadow:none;width:auto;min-height:0}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="masthead">
+    <div class="kicker">Savills PPM · Fee System · Internal</div>
+    <h1>Production Readiness Report</h1>
+    <div class="sub">Full-codebase audit ahead of the companywide rollout — stability, data safety, backup &amp; recovery, and access control. Every fix below is already applied to this working copy.</div>
+    <div class="metaline"><span>Audited <b>July 23, 2026</b></span><span>Regression tests <b class="ok">24 / 24 passing</b></span><span>Fixes applied <b>7</b></span><span>Action items for you <b>5</b></span></div>
+  </div>
+
+  <div class="verdict"><span class="badge">Ready, with 5 actions</span><p>The architecture is sound for a shared rollout: Box is the single source of truth with optimistic-concurrency sync, deletes are tombstoned, booked fees are frozen, access fails closed, and the rate grid never ships in code. The audit found <strong>two critical exposures</strong> (both fixed here) and several data-loss edge cases (hardened). The remaining actions are deployment-side — mostly a redeploy.</p></div>
+
+  <h2><span class="n">1</span>Fixes applied in this pass</h2>
+  <div class="fix"><span class="tag critical">Critical</span><div><h4>Confidential uploads were publicly deployable</h4><p><code>uploads/</code> (client fee sheets, JPMC rate grids, revenue workbooks) was not excluded from Vercel deploys. Now blocked in <code>.vercelignore</code>, alongside <code>_repo/</code> and staging copies. <strong>Redeploy to take effect</strong>, and delete prior Vercel deployments so old URLs stop serving.</p></div></div>
+  <div class="fix"><span class="tag critical">Critical</span><div><h4>Open API endpoints now require a Savills sign-in</h4><p><code>/api/clockify</code> (employee names, hours, project assignments) and <code>/api/extract</code> (spends Anthropic credit) were callable by anyone on the internet. Both now validate the caller's Box session against Box and require an <code>@savills.us/.com</code> login. All in-app callers send the token automatically.</p></div></div>
+  <div class="fix"><span class="tag high">High</span><div><h4>Shrink guard on every Box push</h4><p>If a browser's local copy has lost most of the projects Box knows about (corrupted cache, cleared browser, bad import), the push is now <em>blocked</em> with a visible error instead of overwriting the shared file. Deletes are unaffected (tombstones). Deliberate mass replacement: <code>UFC_Box.forcePush()</code> from the console.</p></div></div>
+  <div class="fix"><span class="tag high">High</span><div><h4>Rolling weekly backups in Box</h4><p>On top of Box's built-in version history, the app now keeps dated cold copies — <code>projects-backup-YYYY-MM-DD.json</code> in the same folder, refreshed weekly, last 8 kept (~2 months back). Created automatically by whoever signs in first; zero setup.</p></div></div>
+  <div class="fix"><span class="tag high">High</span><div><h4>Import can no longer clobber the shared database</h4><p>Merge is now newest-wins per project (an old backup can't overwrite newer work); "replace" requires typing <code>REPLACE</code> and refuses an empty file; the audit trail survives a replace.</p></div></div>
+  <div class="fix"><span class="tag medium">Medium</span><div><h4>Storage-full saves still reach Box</h4><p>If the browser's local storage hits its quota, the save now still syncs to Box and raises a loud red pill, instead of throwing and losing the write.</p></div></div>
+  <div class="fix"><span class="tag medium">Medium</span><div><h4>Sync edge cases</h4><p>Conflict-retry loop is capped (no runaway recursion under heavy simultaneous saving); signing out now flushes any unsynced changes before clearing the session.</p></div></div>
+
+  <h2><span class="n">2</span>What the audit confirmed is already solid</h2>
+  <ul>
+    <li><strong>Concurrency:</strong> every upload is etag-guarded; conflicts pull, merge newest-wins per project, and retry. Deletions propagate as tombstones (120-day retention, restorable).</li>
+    <li><strong>Contract integrity:</strong> booked fees are frozen snapshots; later input drift flags <em>stale</em> instead of silently changing a signed number. Versions, change orders and rate-grid reconciliation all preserve history.</li>
+    <li><strong>Access:</strong> fail-closed — an unknown login sees nothing; admin allowlist is explicit; impersonation is superuser-only; rate grid loads from Box post-login and is never cached or shipped in code.</li>
+    <li><strong>Auth:</strong> OAuth 2.0 + PKCE, client secret server-side only; cross-tab refresh-token rotation is lock-coordinated with a recovery retry.</li>
+    <li><strong>Visibility:</strong> the sync pill makes every failed/pending sync impossible to miss; unload warns if a save hasn't flushed.</li>
+    <li><strong>Testing:</strong> <code>tests.html</code> asserts 24 engine + data-layer invariants against an in-memory shim — all passing after these changes.</li>
+  </ul>
+
+  <h2><span class="n">3</span>Your action items before rollout</h2>
+  <div class="check"><span class="box"></span><div><strong>Redeploy to Vercel from this working copy.</strong> The live deployment is behind it (Staffing Matrix, Rate Grid Reconciliation, Small Works, sharing, and all of today's hardening are newer than the last deployed snapshot) — and the uploads/ exclusion only protects the <em>next</em> deploy. Delete old deployments in the Vercel dashboard.</div></div>
+  <div class="check"><span class="box"></span><div><strong>Verify Vercel environment variables:</strong> <code>BOX_CLIENT_ID</code>, <code>BOX_CLIENT_SECRET</code>, <code>ANTHROPIC_API_KEY</code>, <code>CLOCKIFY_API_KEY</code>, <code>CLOCKIFY_WORKSPACE_ID</code>.</div></div>
+  <div class="check"><span class="box"></span><div><strong>Review Box folder permissions.</strong> The in-app wall filters <em>views</em>; the real gate is who can open the Box folder — anyone with folder access can read <code>projects.json</code> and <code>rates.json</code> directly. Keep the folder restricted to the people on the admin/leader lists.</div></div>
+  <div class="check"><span class="box"></span><div><strong>Confirm Box version-history retention</strong> on your plan (this is recovery line #1; the weekly backups are line #2, manual JSON export is line #3).</div></div>
+  <div class="check"><span class="box"></span><div><strong>Adopt the deploy ritual:</strong> open <code>tests.html</code> → 24/24 green → deploy. A red row means the math or data layer broke; do not ship it.</div></div>
+
+  <h2><span class="n">4</span>Recovery playbook — if data ever looks wrong</h2>
+  <table>
+    <tr><th style="width:1.6in">Symptom</th><th>Recovery</th></tr>
+    <tr><td>Red sync pill / "Sync blocked"</td><td>Do not keep editing. Reload the page (re-pulls Box and merges) — the merge is newest-wins, so nothing already saved is lost.</td></tr>
+    <tr><td>A project was deleted by mistake</td><td>Deletes are tombstones for 120 days — a maintainer can restore via <code>UFC_Store.restoreDeleted(id)</code> in the console.</td></tr>
+    <tr><td>projects.json corrupted / bad bulk change</td><td>Box → <code>projects.json</code> → <b>Version History</b> → promote the last good version, then have everyone reload.</td></tr>
+    <tr><td>File deleted or history unusable</td><td>Restore the newest <code>projects-backup-YYYY-MM-DD.json</code> from the Box folder (rename to <code>projects.json</code> or import it via Projects Index → Import, merge mode).</td></tr>
+  </table>
+
+  <h2><span class="n">5</span>Known limits (accepted, documented)</h2>
+  <ul>
+    <li><strong>Same-project simultaneous edits:</strong> merging is per whole project record — if two people edit the <em>same</em> proposal at the same moment, the newest save wins the record. Different projects never conflict. Fine at this team size; worth a record-level lock if editing becomes heavily parallel.</li>
+    <li><strong>Local cache ceiling:</strong> browsers cap localStorage (~5&nbsp;MB). Version snapshots grow records; if <code>projects.json</code> ever approaches ~4&nbsp;MB, prune old versions. (Saves still reach Box even if the cache is full — fixed above.)</li>
+    <li><strong>Close-tab flush is best-effort:</strong> a save made and the tab killed within ~1.5&nbsp;s races the debounce; the app flushes on hide and warns on unload, but a hard kill can leave the save local-only until that browser next opens the app (it then merges up — not lost, just delayed).</li>
+    <li><strong>API auth cost:</strong> each <code>/api/clockify</code> / <code>/api/extract</code> call now spends one Box identity check (~100&nbsp;ms) — negligible at internal volume.</li>
+  </ul>
+</div>
+</body>
+</html>
