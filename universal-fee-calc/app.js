@@ -70,7 +70,7 @@
     assumptions: {
       hrsPerMo: 173.33,
       escalation: 3.0,
-      industryAdj: 20,   // rate-wide “industry standard” trim off the high Macro rack rates
+      industryAdj: 20,   // rate-wide “industry standard” trim off the high PPM rack rates
       discount: 0,       // client / fixed-fee discount, applied at total level
       rateLock: false,
       feeBasis: 'fixed',   // 'fixed' = fixed fee (frozen on booking) · 'nte' = not-to-exceed (live forecast)

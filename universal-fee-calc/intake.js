@@ -1,5 +1,5 @@
 /* ============================================================
-   SAVILLS PPM · FEE SYSTEM · PROJECT INTAKE
+   SAVILLS PPM · FEE & REVENUE SYSTEM · PROJECT INTAKE
    ------------------------------------------------------------
    Builds the Project Intake as a FORMATTED TABLE (matching the
    standard intake form) and copies it to the clipboard as rich
@@ -147,7 +147,7 @@
 
   /** Preview modal: shows the rendered table + a Copy button + recipient/subject. */
   function showIntakeModal(state, opts, html, copied) {
-    const subject = `Macro Project Intake - ${(state.project || {}).name || 'New Project'}`;
+    const subject = `PPM Project Intake - ${(state.project || {}).name || 'New Project'}`;
     document.getElementById('ufc-intake-modal')?.remove();
     const wrap = document.createElement('div');
     wrap.id = 'ufc-intake-modal';

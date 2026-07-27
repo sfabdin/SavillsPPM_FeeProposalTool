@@ -1,5 +1,5 @@
 /* ============================================================
-   SAVILLS PPM · FEE SYSTEM · BOX BACKEND ADAPTER
+   SAVILLS PPM · FEE & REVENUE SYSTEM · BOX BACKEND ADAPTER
    ------------------------------------------------------------
    Turns the (otherwise localStorage) app into a shared, multi-user
    system backed by a single projects.json in a Box folder — without

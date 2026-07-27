@@ -105,7 +105,7 @@
     const oh = r.overhead || { byMonth: {}, cost: 0, hours: 0, ppl: [], byProj: {} };
     const ohTop = Object.entries(oh.byProj || {}).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([p2, c2]) => esc(p2) + ' ' + fmtK(c2)).join(' · ');
     let ohCells = ''; ms.forEach(m => { ohCells += '<td class="num vmini" style="color:#8a6d00">' + (oh.byMonth[m] ? fmtK(oh.byMonth[m]) : '·') + '</td>'; });
-    const ohRow = oh.cost ? '<tr class="pf-oh" style="background:#fdf9ee;cursor:pointer"><td class="pname sticky-col" style="background:#fdf9ee">Non-billable / macro time <span class="badge pursuit">outside fee mapping</span><div class="vmini">' + ohTop + (Object.keys(oh.byProj).length > 4 ? ' …' : '') + ' · click for people</div></td>' + ohCells + '<td class="num">—</td><td class="num" style="font-weight:700;color:#8a6d00">' + fmtD(oh.cost) + '<div class="vmini">' + Math.round(oh.hours).toLocaleString() + ' h</div></td><td class="num">—</td><td class="num">—</td></tr>'
+    const ohRow = oh.cost ? '<tr class="pf-oh" style="background:#fdf9ee;cursor:pointer"><td class="pname sticky-col" style="background:#fdf9ee">Non-billable / internal time <span class="badge pursuit">outside fee mapping</span><div class="vmini">' + ohTop + (Object.keys(oh.byProj).length > 4 ? ' …' : '') + ' · click for people</div></td>' + ohCells + '<td class="num">—</td><td class="num" style="font-weight:700;color:#8a6d00">' + fmtD(oh.cost) + '<div class="vmini">' + Math.round(oh.hours).toLocaleString() + ' h</div></td><td class="num">—</td><td class="num">—</td></tr>'
       + '<tr class="pf-oh-detail" style="display:' + (state.expanded.has('overhead') ? '' : 'none') + '"><td colspan="' + (ms.length + 5) + '" style="background:#fdf9ee;padding:10px 16px 14px">' + detailGrid({ ppl: oh.ppl, key: 'overhead' }, ms, state.monthPick['overhead'] || null) + '</td></tr>' : '';
     const allCost = totCost + oh.cost;
     let allCells = ''; ms.forEach(m => { const v = (costM[m] || 0) + (oh.byMonth[m] || 0); allCells += '<td class="num" style="font-weight:700">' + (v ? fmtK(v) : '·') + '</td>'; });
@@ -190,7 +190,7 @@
     document.querySelector('.wrap').innerHTML = '<header class="head"><img class="logo" src="design-system/assets/savills_logo.png" alt="Savills"><div class="title-block"><h1>Profitability</h1><p class="tagline">Restricted tool.</p></div></header>'
       + '<div class="empty" style="padding:70px 40px"><div style="font-family:var(--font-display);font-weight:800;font-size:20px;color:var(--sav-navy);margin-bottom:10px">This tool is limited to staffing leadership.</div>'
       + '<div style="max-width:460px;margin:0 auto;line-height:1.6">If you need profitability information, contact Sarah Abdin.</div>'
-      + '<div style="margin-top:22px"><a href="Fee Generator.html" class="btn" style="text-decoration:none">Fee System home</a></div></div>';
+      + '<div style="margin-top:22px"><a href="Fee Generator.html" class="btn" style="text-decoration:none">System home</a></div></div>';
   }
 
   function setStoreNote() {

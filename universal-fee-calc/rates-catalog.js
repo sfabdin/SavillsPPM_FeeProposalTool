@@ -3,7 +3,7 @@
    Rates Catalog — ENGINE (no confidential numbers in this file)
 
    ── WHY THIS FILE HAS NO RATES ───────────────────────────────
-   The confidential Macro 2024 rate grid (rack rates, cost-rate
+   The confidential PPM 2024 rate grid (rack rates, cost-rate
    FLOORS, target discounts, Comcast reference rates) is NOT in the
    shipped code — anything in the deployed bundle is world-readable
    at its URL with no login. The grid lives in Box as `rates.json`
@@ -77,7 +77,7 @@
     }));
   }
 
-  /* ── Page 2: Macro Title → Rate Level mapping (NO rates — safe in code) ──
+  /* ── Page 2: Staff Title → Rate Level mapping (NO rates — safe in code) ──
      Bridges arbitrary HR / "Savills" staff titles to a rate family + tier.
      sublevel 1 → high tier, 2 → mid, 3 → low.                      */
   const SUB_TO_TIER = { 1: 'high', 2: 'mid', 3: 'low' };

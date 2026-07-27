@@ -3,7 +3,7 @@
    Parse a historical fee matrix / proposal into a normalised
    project record:
      • extract a roster (name · staff title · project role · team · allocation · rate)
-     • normalise each staff title to a Macro-grid rate family
+     • normalise each staff title to a PPM rate-grid family
      • validate each rate against the grid band  [Col E cost floor ↔ Col B rack]
      • "back into" the title implied by the rate alone, flag mismatches
      • save as a project record (opens in the calculator / Projects Index)
