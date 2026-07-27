@@ -187,7 +187,14 @@
 
   function writeDb(db) {
     db.schemaVersion = SCHEMA;
-    localStorage.setItem(KEY, JSON.stringify(db));
+    // Quota-safe local write: if localStorage is full, the local cache write
+    // fails but the Box push below STILL runs, so the save is never lost —
+    // and the failure is surfaced loudly instead of silently.
+    try { localStorage.setItem(KEY, JSON.stringify(db)); }
+    catch (e) {
+      console.error('Local cache write failed (storage full?) — data will still sync to Box', e);
+      try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error', message: 'Browser storage is full — your save is syncing to Box but cannot be cached locally. Clear old site data or contact the maintainer.', at: Date.now() } })); } catch (e2) {}
+    }
     // Sync layer: if a remote backend (Box) is attached, mirror local → remote.
     // No-op when nothing is attached, so the offline/localStorage app is unchanged.
     if (typeof _remotePush === 'function') { try { _remotePush(db); } catch (e) { console.warn('remote push failed', e); } }
@@ -661,16 +668,26 @@
 
   function importDb(jsonStr, mode = 'merge') {
     const incoming = JSON.parse(jsonStr);
-    if (!incoming.projects) throw new Error('Invalid file — no projects key.');
+    if (!incoming || typeof incoming !== 'object' || !incoming.projects || typeof incoming.projects !== 'object') throw new Error('Invalid file — no projects key.');
+    const db = readDb();
+    const inCount = Object.keys(incoming.projects).length;
     if (mode === 'replace') {
+      const localCount = Object.keys(db.projects).length;
+      // Never let an empty/near-empty file nuke a populated shared db.
+      if (localCount > 0 && inCount === 0) throw new Error('Refusing to replace ' + localCount + ' project(s) with an empty file. Use merge, or delete projects individually.');
+      // Preserve the audit trail across a replace.
+      incoming.activity = [...(db.activity || []), ...(incoming.activity || [])].slice(-500);
       writeDb(incoming);
-      return Object.keys(incoming.projects).length;
-    } else {
-      const db = readDb();
-      Object.assign(db.projects, incoming.projects);
-      writeDb(db);
-      return Object.keys(incoming.projects).length;
+      return inCount;
     }
+    // MERGE (default): newest-updatedAt wins per project, so importing an old
+    // backup can never clobber newer work (matches the Box merge strategy).
+    Object.entries(incoming.projects).forEach(([id, ip]) => {
+      const cur = db.projects[id];
+      if (!cur || ((ip && ip.updatedAt) || '') >= (cur.updatedAt || '')) db.projects[id] = ip;
+    });
+    writeDb(db);
+    return inCount;
   }
 
   function downloadJson(filename, jsonStr) {
