@@ -109,9 +109,9 @@
   <header class="head">
     <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
     <div>
-      <div class="lbl"><a href="Fee Generator.html">Fee Generator</a> &nbsp;·&nbsp; Enterprise migration</div>
+      <div class="lbl"><a href="Fee Generator.html">Home</a> &nbsp;·&nbsp; Enterprise migration</div>
       <h1>Running it for <span class="em">the whole team.</span></h1>
-      <div class="sub">How to take the Fee Generator from a browser prototype to a shared, online system — keeping the app and all its logic exactly as-is. Lightest path: your existing <strong>Box</strong> tenant for data + <strong>Vercel</strong> for hosting. Microsoft / Fabric route documented too.</div>
+      <div class="sub">How to take the Fee &amp; Revenue System from a browser prototype to a shared, online system — keeping the app and all its logic exactly as-is. Lightest path: your existing <strong>Box</strong> tenant for data + <strong>Vercel</strong> for hosting. Microsoft / Fabric route documented too.</div>
     </div>
     <div class="meta">
       <strong>For</strong> &nbsp; PPM Leadership / IT<br>
@@ -220,7 +220,7 @@
 
       <!-- Rates Catalog -->
       <div class="list-card">
-        <div class="list-top"><span class="ln">RatesCatalog</span><span class="lk">Reference</span><span class="ldesc">The Macro 2024 grid — edit here, not in code</span></div>
+        <div class="list-top"><span class="ln">RatesCatalog</span><span class="lk">Reference</span><span class="ldesc">The PPM 2024 rate grid — edit here, not in code</span></div>
         <table class="cols">
           <thead><tr><th style="width:200px;">Column</th><th style="width:130px;">Type</th><th>Notes</th></tr></thead>
           <tbody>
@@ -348,7 +348,7 @@
         <h4>Pick your backend &amp; set it up</h4>
         <div class="effort"><span class="tag you">You / IT</span> half a day</div>
         <div class="body">
-          <p><strong>Box (recommended):</strong> create a shared folder (e.g. <em>PPM / Fee Generator</em>) and a Box app/API token so the web app can read &amp; write a <code>projects.json</code> there. Set folder permissions for who can edit.</p>
+          <p><strong>Box (recommended):</strong> create a shared folder (e.g. <em>PPM / Fee &amp; Revenue System</em>) and a Box app/API token so the web app can read &amp; write a <code>projects.json</code> there. Set folder permissions for who can edit.</p>
           <ul>
             <li><strong>Airtable:</strong> create a base with the four tables from Part 1.</li>
             <li><strong>SharePoint:</strong> create the four Lists with the columns &amp; Lookups from Part 1; turn on versioning.</li>
@@ -378,7 +378,7 @@
       <div class="step"><div class="sn"></div><div>
         <h4>Load the Rates Catalog &amp; migrate existing projects</h4>
         <div class="effort"><span class="tag you">You</span> <span class="tag dev">+ Dev</span> 1 day</div>
-        <div class="body"><p>Seed the rate grid (the Macro 2024 catalog), then use the app's <strong>Export DB → JSON</strong> to move everything built so far into the shared backend. For Box that's literally uploading the exported file as <code>projects.json</code>; for Airtable/SharePoint, a one-time import fans each record into the tables. From here the browser copy is retired.</p></div>
+        <div class="body"><p>Seed the rate grid (the PPM 2024 catalog), then use the app's <strong>Export DB → JSON</strong> to move everything built so far into the shared backend. For Box that's literally uploading the exported file as <code>projects.json</code>; for Airtable/SharePoint, a one-time import fans each record into the tables. From here the browser copy is retired.</p></div>
       </div></div>
 
       <div class="step"><div class="sn"></div><div>
@@ -431,7 +431,7 @@
   </section>
 
   <div class="foot">
-    <strong>Next concrete step.</strong> &nbsp; When you've picked a backend (leaning Box), I can write the <strong>new <code>store.js</code></strong> against it plus a short field-mapping note — that's the one file that turns this plan into a working shared app. &nbsp;·&nbsp; <a href="Fee Generator.html" style="color:var(--sav-navy);">← Back to the Fee Generator</a>
+    <strong>Next concrete step.</strong> &nbsp; When you've picked a backend (leaning Box), I can write the <strong>new <code>store.js</code></strong> against it plus a short field-mapping note — that's the one file that turns this plan into a working shared app. &nbsp;·&nbsp; <a href="Fee Generator.html" style="color:var(--sav-navy);">← Back to the system home</a>
   </div>
 
 </div>

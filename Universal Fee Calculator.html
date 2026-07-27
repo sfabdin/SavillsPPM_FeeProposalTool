@@ -15,7 +15,7 @@
     <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
     <div class="title-block">
       <div class="lbl">
-        <a href="Fee Generator.html" style="color: var(--sav-steel); text-decoration: none; letter-spacing: 0.20em;">Fee Generator</a>
+        <a href="Fee Generator.html" style="color: var(--sav-steel); text-decoration: none; letter-spacing: 0.20em;">Home</a>
         &nbsp; · &nbsp; <a href="Projects Index.html" style="color: var(--sav-steel); text-decoration: none; letter-spacing: 0.20em;">Projects Index</a>
         &nbsp; · &nbsp; Fee Calculator
       </div>
@@ -344,13 +344,13 @@ Example: client gives a $250k NTE → set the ceiling, staff to ~$250k, book it;
             <div class="hint">Compounded annually from catalog base year.</div>
           </div>
           <div class="field">
-            <label for="a-ind">Industry standard adjustment %<span class="ppm-info" data-info="Trims the Macro **rack rate** down to the **adjusted rate** shown on each role. A higher % lowers the adjusted (billed) rate.
+            <label for="a-ind">Industry standard adjustment %<span class="ppm-info" data-info="Trims the PPM **rack rate** down to the **adjusted rate** shown on each role. A higher % lowers the adjusted (billed) rate.
 
 **Cost floors are never touched** — so raising this shrinks margin and can push a role below its floor (it'll flag red). This adjusts what you charge, not what the person costs.
 
 Example: 10% takes a $300 rack rate to a $270 adjusted rate; the floor stays wherever the grid sets it."></span></label>
             <input type="number" id="a-ind" step="0.5">
-            <div class="hint">Sets how far the Macro rack rate is trimmed down to the <strong>adjusted rate</strong> shown on each role — a higher % lowers the adjusted rate. Cost floors are unaffected.</div>
+            <div class="hint">Sets how far the PPM rack rate is trimmed down to the <strong>adjusted rate</strong> shown on each role — a higher % lowers the adjusted rate. Cost floors are unaffected.</div>
           </div>
           <div class="field">
             <label for="a-disc">Client discount %</label>
@@ -534,7 +534,7 @@ Example: $625k fee, 10% — off invoice → client $625k, Savills keeps $562.5k.
   </div>
 
   <div class="footnote">
-    <strong>How this works.</strong> &nbsp; The rates catalog (<code>universal-fee-calc/rates-catalog.js</code>) is the production <strong>Macro 2024 Hourly Rate Grid</strong> — the single source of truth for titles and rates. Each title family's <strong>Col B rack rate</strong> is the <strong>Mid</strong> billable tier; <strong>High</strong> and <strong>Low</strong> are ±10% off Mid. Rates are anchored at catalog base year <strong>2024</strong> and escalation compounds forward to each project year. Rate Lock holds rates at the project start year; the would-be escalation is credited at the bottom of the schedule. <br><br>
+    <strong>How this works.</strong> &nbsp; The rates catalog (<code>universal-fee-calc/rates-catalog.js</code>) is the production <strong>PPM Hourly Rate Grid (2024)</strong> — the single source of truth for titles and rates. Each title family's <strong>Col B rack rate</strong> is the <strong>Mid</strong> billable tier; <strong>High</strong> and <strong>Low</strong> are ±10% off Mid. Rates are anchored at catalog base year <strong>2024</strong> and escalation compounds forward to each project year. Rate Lock holds rates at the project start year; the would-be escalation is credited at the bottom of the schedule. <br><br>
     <strong>Cost-rate floor.</strong> &nbsp; <strong>Col E (PowerBI)</strong> — falling back to <strong>Col G (Clockify)</strong> where blank — is the cost rate for each tier. The calculator compares every role's effective billed rate (escalated to start year, net of the client discount) against that floor; any role priced below it is flagged as <em>potentially unprofitable</em> but is <strong>allowed through</strong> — the schedule still exports. These cost rates also drive the later planned-vs-actual margin comparison against Clockify. <br><br>
     <strong>Staff title vs. project role.</strong> &nbsp; Each line carries a <em>staff title</em> (the rate-grid level that sets the rate &amp; floor) and a free-text <em>project role</em>. The grid's page-2 Title→Rate mapping (57 HR titles) is stored as catalog data for normalising arbitrary titles back to a billable level. <br><br>
     <strong>Grid vs. contracted rates.</strong> &nbsp; Each role defaults to <em>Grid</em> (tier rate − industry adjustment, escalated). Flip a role to <em>Contracted</em> to type a pre-negotiated client rate: it <strong>bypasses the industry adjustment</strong>, still escalates year-over-year, and the client discount still applies. The staff title/tier stays attached so the cost-floor advisory continues to work. Ingested proposals land as contracted at their observed rate. <br><br>

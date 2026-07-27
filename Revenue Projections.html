@@ -165,7 +165,7 @@
   <header class="head">
     <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
     <div>
-      <div class="lbl"><a href="Fee Generator.html">Fee Generator</a> &nbsp;·&nbsp; <a href="Projects Index.html">Projects Index</a> &nbsp;·&nbsp; Revenue Projections</div>
+      <div class="lbl"><a href="Fee Generator.html">Home</a> &nbsp;·&nbsp; <a href="Projects Index.html">Projects Index</a> &nbsp;·&nbsp; Revenue Projections</div>
       <h1>Revenue projections.</h1>
     </div>
     <div class="actions">
@@ -877,7 +877,7 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
     const NAVY = 'FF25273A', YEL = 'FFFFDF00', RED = 'FFCE181E', GRN = 'FF1F8A5B';
     // Title
     ws.mergeCells('A1:H1');
-    ws.getCell('A1').value = `Macro / Savills PPM — Monthly Flash · ${MONTH_NAMES[month-1]} ${year} (Work Performed)`;
+    ws.getCell('A1').value = `Savills PPM — Monthly Flash · ${MONTH_NAMES[month-1]} ${year} (Work Performed)`;
     ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
     ws.getCell('A2').value = `Exported ${new Date().toLocaleString()}`;
     ws.getCell('A2').font = { italic: true, size: 10, color: { argb: 'FF79828C' } };

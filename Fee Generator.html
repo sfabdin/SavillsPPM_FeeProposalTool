@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Savills PPM · Fee Proposal Generator</title>
+<title>Savills PPM · Fee &amp; Revenue System</title>
 <link rel="stylesheet" href="design-system/colors_and_type.css">
 <style>
 :root{--hair:rgba(37,39,58,0.10);--hair-strong:rgba(37,39,58,0.18)}
@@ -131,7 +131,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
 <div>
 <div class="lbl">Savills · Program &amp; Project Management</div>
-<h1>PPM <span style="color:#CE181E">Fee Proposal</span> <span class="em">Generator.</span></h1>
+<h1>PPM <span class="em">Fee &amp; Revenue System.</span></h1>
 <div class="sub">One system for pricing work, holding every fee we've ever quoted, forecasting the revenue that comes out of it, and measuring what we actually earned against it.</div>
 </div>
 <div class="meta">
@@ -147,7 +147,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 <div class="overview">
 <div class="lede">
 <h3>What this is.</h3>
-<p>One record per project, entered once, used everywhere. Price the work in the <strong>Fee Calculator</strong> — roles off the Macro rate grid, allocations by phase and month, escalation, discounts, broker splits and pass-through all in one place. It saves to the <strong>Projects Index</strong>, which every other tool reads: <strong>Revenue Projections</strong> for the month-by-month forecast, <strong>Revenue Studio</strong> for budget-vs-pipeline and the exec report, <strong>Benchmarking</strong> and <strong>Proposal Analytics</strong> for what we've charged and why we win, and <strong>Profitability</strong> for real margin once time is booked. Everything lives in Box, syncs live, and reconciles to the same rate engine end to end.</p>
+<p>One record per project, entered once, used everywhere. Price the work in the <strong>Fee Calculator</strong> — roles off the PPM rate grid, allocations by phase and month, escalation, discounts, broker splits and pass-through all in one place. It saves to the <strong>Projects Index</strong>, which every other tool reads: <strong>Revenue Projections</strong> for the month-by-month forecast, <strong>Revenue Studio</strong> for budget-vs-pipeline and the exec report, <strong>Benchmarking</strong> and <strong>Proposal Analytics</strong> for what we've charged and why we win, and <strong>Profitability</strong> for real margin once time is booked. Everything lives in Box, syncs live, and reconciles to the same rate engine end to end.</p>
 </div>
 <div class="pillar">
 <div class="pn">Pillar 01</div>
@@ -221,7 +221,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 <p class="mod-lede">Build a proposal end to end: pick titles off the rate grid, group the team by workstream, load allocations by phase or month, and watch fee, schedule and margin update as you type. Export to Excel or print to PDF for the client-facing proposal.</p>
 <div class="mod-sub">What it does</div>
 <ul>
-<li>Role catalog off the <strong>Macro rate grid</strong> — High/Mid/Low tiers, grid or contracted rates, cost-floor flags</li>
+<li>Role catalog off the <strong>PPM rate grid</strong> — High/Mid/Low tiers, grid or contracted rates, cost-floor flags</li>
 <li>Allocations as <strong>% FTE or hours</strong>, by phase or opened out month by month; groups shift forward/back in time</li>
 <li><strong>Fixed vs. NTE</strong>, escalation, rate lock, industry adjustment, client discount, <strong>broker fee share</strong> and <strong>pass-through</strong> lines</li>
 <li><strong>Fit to target</strong> solves the discount to a known number; <strong>change orders</strong> fork the contract and diff against it</li>
@@ -244,7 +244,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 <ul>
 <li>Portfolio <strong>KPIs</strong> — pipeline, booked, active, win rate, contract value</li>
 <li>Net fee per project from the <strong>same rate engine</strong> as the calculator, change orders folded into the revised contract</li>
-<li><strong>+ New project</strong>, duplicate, change order, restore deleted, and full activity log of who changed what</li>
+<li><strong>+ New project</strong>, duplicate, change order, restore deleted, and a full <a href="Change Log.html">change log</a> of who changed what</li>
 <li>Export / import the whole database as JSON for backup</li>
 </ul>
 <div class="mod-feeds"><strong>Feeds:</strong> the source of truth for projections, benchmarking and analytics.</div>
@@ -350,9 +350,29 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 <div class="mod-cta"><span>Open the tracker</span><span class="arr">→</span></div>
 </a>
 
-<a class="mod" href="Staffing Matrix.html">
+<a class="mod" href="Change Log.html">
 <div class="mod-top">
 <div class="mod-num">08</div>
+<div class="mod-titles"><div class="mod-kicker">Accountability</div><div class="mod-name">Change Log</div></div>
+<span class="mod-status">Live</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">Who changed what, and when. Every create, edit, status change and deletion — down to the individual field, with the fee impact of each save.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li>A dated feed of every change, showing <strong>the fields that moved</strong> — old value → new value</li>
+<li><strong>Net fee delta</strong> on any save that changed the number</li>
+<li>Filter by <strong>person, action, project or date range</strong>; export to CSV for audit</li>
+<li>Scoped to what you can see — admins get the whole system log</li>
+</ul>
+<div class="mod-feeds"><strong>Rides with the data:</strong> the log syncs through Box, so it's the same history for everyone.</div>
+</div>
+<div class="mod-cta"><span>Open the change log</span><span class="arr">→</span></div>
+</a>
+
+<a class="mod" href="Staffing Matrix.html">
+<div class="mod-top">
+<div class="mod-num">09</div>
 <div class="mod-titles"><div class="mod-kicker">Bandwidth</div><div class="mod-name">Staffing &amp; Bandwidth</div></div>
 <span class="mod-status adm">Admin</span>
 </div>
@@ -545,7 +565,20 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 </details>
 
 <details class="man">
-<summary><span class="man-ix">08</span><span class="man-title">Profitability &amp; Staffing (admin)</span><span class="man-toggle"></span></summary>
+<summary><span class="man-ix">08</span><span class="man-title">Change Log</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Open it to see a dated feed of every change — newest first, grouped by day.</li>
+<li>Each entry names <strong>who</strong>, <strong>when</strong>, <strong>which project</strong>, and <strong>exactly which fields moved</strong> (old value → new value). Saves that changed the number also show the <strong>net fee delta</strong>.</li>
+<li>Filter by <strong>person, action, project or date range</strong> — or search by project, client or name.</li>
+<li><strong>⎓ CSV</strong> exports the filtered log, one row per changed field, for audit or month-end review.</li>
+</ol>
+<div class="man-tip"><strong>Scope.</strong> You see activity on the projects you can see; admins see the whole system. The log holds the most recent 1,500 entries and syncs through Box, so everyone reads the same history. For a full point-in-time rollback of one project, use <strong>version history</strong> in the calculator instead.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">09</span><span class="man-title">Profitability &amp; Staffing (admin)</span><span class="man-toggle"></span></summary>
 <div class="man-body">
 <ol>
 <li><strong>Staffing &amp; Bandwidth</strong> shows allocation by named resource × project × month, with over- and under-loaded people flagged.</li>
@@ -558,7 +591,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 </details>
 
 <details class="man">
-<summary><span class="man-ix">09</span><span class="man-title">Ingestion Studio &amp; imports (admin)</span><span class="man-toggle"></span></summary>
+<summary><span class="man-ix">10</span><span class="man-title">Ingestion Studio &amp; imports (admin)</span><span class="man-toggle"></span></summary>
 <div class="man-body">
 <ol>
 <li>In the <strong>Ingestion Studio</strong>, drop a proposal (.xlsx / .csv / .pdf) or paste a fee matrix. Files parse in the browser; PDFs can be extracted with Claude.</li>
@@ -572,7 +605,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 </details>
 
 <details class="man">
-<summary><span class="man-ix">10</span><span class="man-title">Rate Grid Reconciliation (admin)</span><span class="man-toggle"></span></summary>
+<summary><span class="man-ix">11</span><span class="man-title">Rate Grid Reconciliation (admin)</span><span class="man-toggle"></span></summary>
 <div class="man-body">
 <ol>
 <li>Load the candidate <code>rates.json</code>. It is used for a <strong>dry-run only</strong> — the live grid in Box is untouched.</li>
@@ -624,7 +657,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 </div>
 </div>
 <div class="colophon">
-<strong>Under the hood.</strong> &nbsp; Every tool shares one rate engine — the Macro Hourly Rate Grid with its High/Mid/Low tiers and cost-rate floors — so a fee reads identically in the calculator, the index, the forecast and the exec report. Project records, rates, staff actuals and studio baselines are JSON files in one Box folder, synced live and versioned on every save. Sign-in is Box SSO; access is by revenue leader with an admin allowlist for leadership and ops. Questions or access requests → <strong>Sarah Abdin</strong>.
+<strong>Under the hood.</strong> &nbsp; Every tool shares one rate engine — the PPM Hourly Rate Grid with its High/Mid/Low tiers and cost-rate floors — so a fee reads identically in the calculator, the index, the forecast and the exec report. Project records, rates, staff actuals and studio baselines are JSON files in one Box folder, synced live and versioned on every save. Sign-in is Box SSO; access is by revenue leader with an admin allowlist for leadership and ops. Questions or access requests → <strong>Sarah Abdin</strong>.
 </div>
 </section>
 
