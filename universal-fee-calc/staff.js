@@ -70,7 +70,7 @@
   function isPastYM(ym) { return ym < currentYM(); }
 
   // ---------- store ----------
-  function defaultDb() { return { schemaVersion: SCHEMA, people: {}, allocations: [], actuals: {}, mappings: { users: {}, projects: {} }, meta: { monthHours: DEFAULT_MONTH_HOURS } }; }
+  function defaultDb() { return { schemaVersion: SCHEMA, people: {}, allocations: [], actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { monthHours: DEFAULT_MONTH_HOURS } }; }
 
   /* Parsed-db cache — the engine calls readDb() thousands of times per render
      (per person × project × month); without this every call re-JSON.parses the
@@ -141,6 +141,7 @@
     if (!db || !db.people || !db.allocations) return false;
     if (!db.actuals) db.actuals = {};
     if (!db.mappings) db.mappings = { users: {}, projects: {} };
+    if (!db.deleted) db.deleted = {};
     if (!db.meta) db.meta = { monthHours: DEFAULT_MONTH_HOURS };
     db.schemaVersion = SCHEMA;
     localStorage.setItem(KEY, JSON.stringify(db));
@@ -198,7 +199,87 @@
     else { const i = db.allocations.findIndex(x => x.id === a.id); if (i >= 0) db.allocations[i] = a; else db.allocations.push(a); }
     writeDb(db); return a;
   }
-  function deleteAllocation(id) { const db = readDb(); db.allocations = db.allocations.filter(x => x.id !== id); writeDb(db); }
+  /** Soft-delete: keep a tombstone so the deletion survives a merge with a
+      teammate's copy instead of the row resurrecting from their file. */
+  function deleteAllocation(id) {
+    const db = readDb();
+    db.allocations = db.allocations.filter(x => x.id !== id);
+    db.deleted = db.deleted || {};
+    db.deleted[id] = new Date().toISOString();
+    writeDb(db);
+  }
+
+  /* ===== Multi-user merge =================================================
+     staff.json is a whole-file document in Box, so two people editing at once
+     used to mean last-write-wins: the second push replaced the first person's
+     rows wholesale. This merges at the RECORD level instead — newest edit per
+     allocation wins, tombstones are honoured, and roster/actuals/mapping keys
+     are unioned. Called by the Box adapter when an upload hits a 412 (someone
+     saved first) and on any refresh pull. */
+  const TOMB_TTL_DAYS = 90;
+  function mergeStaffDb(remote, local) {
+    if (!remote || !remote.allocations) return local;
+    if (!local || !local.allocations) return remote;
+    const out = defaultDb();
+
+    // Tombstones: union, keeping the latest delete time per id.
+    const tombs = Object.assign({}, remote.deleted || {});
+    Object.entries(local.deleted || {}).forEach(([id, ts]) => {
+      if (!tombs[id] || ts > tombs[id]) tombs[id] = ts;
+    });
+
+    // Allocations: newest updatedAt wins per id; a record edited AFTER the
+    // tombstone was written counts as a deliberate re-add and survives.
+    const byId = {};
+    (remote.allocations || []).forEach(a => { if (a && a.id) byId[a.id] = a; });
+    (local.allocations || []).forEach(a => {
+      if (!a || !a.id) return;
+      const r = byId[a.id];
+      if (!r || (a.updatedAt || '') >= (r.updatedAt || '')) byId[a.id] = a;
+    });
+    out.allocations = Object.values(byId).filter(a => {
+      const t = tombs[a.id];
+      return !t || (a.updatedAt || '') > t;
+    });
+
+    // Drop tombstones older than the TTL, and any the winning record overrode.
+    const cutoff = new Date(Date.now() - TOMB_TTL_DAYS * 86400000).toISOString();
+    out.deleted = {};
+    Object.entries(tombs).forEach(([id, ts]) => {
+      if (ts >= cutoff && !out.allocations.some(a => a.id === id)) out.deleted[id] = ts;
+    });
+
+    // Roster: union by id. Per-person updatedAt decides when both sides have it;
+    // otherwise the local edit wins (this user just acted).
+    out.people = Object.assign({}, remote.people || {});
+    Object.entries(local.people || {}).forEach(([id, lp]) => {
+      const rp = out.people[id];
+      if (!rp) { out.people[id] = lp; return; }
+      if ((lp.updatedAt || '') >= (rp.updatedAt || '')) out.people[id] = lp;
+    });
+
+    // Actuals + mappings: key-wise union, local wins on a clash.
+    out.actuals = Object.assign({}, remote.actuals || {}, local.actuals || {});
+    out.mappings = {
+      users: Object.assign({}, (remote.mappings || {}).users || {}, (local.mappings || {}).users || {}),
+      projects: Object.assign({}, (remote.mappings || {}).projects || {}, (local.mappings || {}).projects || {}),
+    };
+
+    // Meta: whichever side was written last.
+    const rMeta = remote.meta || {}, lMeta = local.meta || {};
+    out.meta = ((lMeta.updatedAt || '') >= (rMeta.updatedAt || '')) ? Object.assign({}, rMeta, lMeta) : Object.assign({}, lMeta, rMeta);
+    out.schemaVersion = SCHEMA;
+    return out;
+  }
+
+  /** Merge a remote snapshot into the local db and persist WITHOUT pushing
+      (the caller is mid-push and will upload the result itself). */
+  function mergeFromRemote(remote) {
+    const merged = mergeStaffDb(remote, readDb());
+    localStorage.setItem(KEY, JSON.stringify(merged));
+    _dbCache = merged;
+    return merged;
+  }
 
   /** Create a person id for a typed name (reuse if a matching person exists). */
   function personIdForName(name) {
@@ -1065,6 +1146,7 @@
     ymLabel, ymAdd, monthsBetween, currentYM, isPastYM, ymCmp,
     // store
     readDb, reseedMatrix, resetAll, exportJson, attachRemote, hydrateFromRemote,
+    mergeStaffDb, mergeFromRemote,
     parseMatrixFile, importMatrix,
     // roster
     listPeople, getPerson, savePerson, monthHours, setMonthHours, capacityHours,

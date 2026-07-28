@@ -1197,7 +1197,9 @@
     if (!(Box && Box.enabled)) { setStoreNote('local'); return; }
     try {
       const remote = await Box.pullStaff();                 // resolves staff.json in the shared folder
-      if (remote) S.hydrateFromRemote(remote);              // Box is the source of truth
+      // MERGE rather than replace: anything saved locally but not yet pushed
+      // (offline, failed push, another tab) survives the reconnect.
+      if (remote) { if (S.mergeFromRemote) S.mergeFromRemote(remote); else S.hydrateFromRemote(remote); }
       else await Box.uploadStaff(S.readDb());               // first run: seed staff.json from local
       let t = null, pushing = false;
       S.attachRemote((db) => {
@@ -1213,7 +1215,19 @@
       // etag; if a teammate saved, hydrate + re-render — mappings flow to everyone.
       const refresh = async () => {
         if (pushing || document.hidden || !Box.pullStaffIfChanged) return;
-        try { const r = await Box.pullStaffIfChanged(); if (r) { S.hydrateFromRemote(r); renderAll(); toast('Refreshed — a teammate saved changes to staff.json.'); } } catch (e) {}
+        // Never pull the rug while a row is being edited.
+        if (state.editingAlloc !== null) return;
+        const openModal = document.querySelector('#alloc-modal.open');
+        if (openModal) return;
+        try {
+          const r = await Box.pullStaffIfChanged();
+          if (r) {
+            // Merge, so a teammate's refresh can't wipe edits this tab hasn't pushed.
+            if (S.mergeFromRemote) S.mergeFromRemote(r); else S.hydrateFromRemote(r);
+            renderAll();
+            toast('Refreshed — a teammate saved changes to staff.json.');
+          }
+        } catch (e) {}
       };
       document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
       setInterval(refresh, 180000);

@@ -467,7 +467,7 @@
     if (_staffEtag && m.etag === _staffEtag) return null;        // unchanged since our last pull/push
     return pullStaff();
   }
-  async function uploadStaff(db) {
+  async function uploadStaff(db, depth) {
     const id = await resolveStaffFileId();
     if (!id) return;
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
@@ -479,9 +479,16 @@
       headers: { Authorization: 'Bearer ' + token, ...(_staffEtag ? { 'If-Match': _staffEtag } : {}) },
       body: form,
     });
-    if (res.status === 412) {                                    // someone else saved — refresh etag, retry once
-      const meta = await boxFetch('/files/' + id + '?fields=etag');
-      if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; return uploadStaff(db); }
+    if (res.status === 412) {
+      /* Someone else saved first. Re-uploading our copy would erase their rows,
+         so PULL → MERGE at record level → push the merged result. */
+      if ((depth || 0) >= 2) throw new Error('staff push failed: repeated conflicts');
+      const remote = await pullStaff();          // also refreshes _staffEtag
+      const Staff = window.UFC_Staff;
+      let merged = db;
+      if (remote && Staff && Staff.mergeFromRemote) merged = Staff.mergeFromRemote(remote);
+      else if (remote && Staff && Staff.hydrateFromRemote) { Staff.hydrateFromRemote(remote); merged = remote; }
+      return uploadStaff(merged, (depth || 0) + 1);
     }
     if (!res.ok) throw new Error('staff push failed: ' + res.status);
     try { const j = await res.json(); if (j.entries && j.entries[0]) _staffEtag = j.entries[0].etag; } catch (e) {}
