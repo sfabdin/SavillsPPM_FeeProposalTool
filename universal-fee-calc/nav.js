@@ -16,11 +16,13 @@
     { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Admin', admin: true },
     { href: 'Projects Index.html',           label: 'Projects Index',      group: 'Manage' },
     { href: 'Staffing Matrix.html',          label: 'Staffing & Bandwidth', group: 'Admin', admin: true },
+    { href: 'Profitability.html',            label: 'Profitability',       group: 'Admin', admin: true },
     { href: 'Revenue Projections.html',      label: 'Revenue Projections', group: 'Manage' },
     { href: 'Revenue Studio.html',           label: 'Revenue Studio',      group: 'Manage' },
     { href: 'Benchmarking Dashboard.html',   label: 'Benchmarking',        group: 'Manage' },
     { href: 'Proposal Analytics.html',        label: 'Proposal Analytics',  group: 'Manage' },
     { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Manage' },
+    { href: 'Change Log.html',               label: 'Change Log',          group: 'Manage' },
     { href: 'Import Revenues.html',          label: 'Import Revenues',     group: 'Admin', admin: true },
     { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Admin', admin: true },
     { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Admin', admin: true },
@@ -66,7 +68,7 @@
     const panel = document.createElement('nav'); panel.id = 'ppm-nav-panel';
 
     const groups = [...new Set(LINKS.map(l => l.group))];
-    let inner = `<div class="pn-head"><div><div class="pn-t">PPM · Fee System</div><div class="pn-s">Navigate</div></div><button class="pn-x" aria-label="Close">×</button></div><div id="ppm-nav-list">`;
+    let inner = `<div class="pn-head"><div><div class="pn-t">PPM · Fee &amp; Revenue System</div><div class="pn-s">Navigate</div></div><button class="pn-x" aria-label="Close">×</button></div><div id="ppm-nav-list">`;
     groups.forEach(g => {
       inner += `<div class="pn-grp">${g}</div>`;
       LINKS.filter(l => l.group === g).forEach(l => {

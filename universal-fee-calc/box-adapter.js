@@ -1,5 +1,5 @@
 /* ============================================================
-   SAVILLS PPM · FEE SYSTEM · BOX BACKEND ADAPTER
+   SAVILLS PPM · FEE & REVENUE SYSTEM · BOX BACKEND ADAPTER
    ------------------------------------------------------------
    Turns the (otherwise localStorage) app into a shared, multi-user
    system backed by a single projects.json in a Box folder — without
@@ -51,7 +51,7 @@
     ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
     studioFileId: '2302220793247',        // studio.json in Box (Revenue Studio baselines + scenarios)
     actualsFileId: '',                    // clockify-actuals.csv in Box — hours by user×project×month. '' = not configured (page falls back to manual drop / API proxy)
-    staffFileId: '',                      // staff.json in Box — the LIVING staffing matrix (allocations + notes + actuals). '' = local-only until configured
+    staffFileId: '2364190093321',         // staff.json in Box — the LIVING staffing matrix (allocations + notes + actuals + mappings), shared by all admins
     folderId: '387228486391',             // used only to (re)create the file if missing
     pushDebounceMs: 1500,
 
@@ -71,10 +71,12 @@
     login,           // start the OAuth redirect
     logout,
     isAuthed: () => !!getToken(),
+    getAccessToken: () => ensureToken(),   // for authed calls to our own /api/* endpoints
     pushNow,         // force an immediate flush
     pullRates,       // fetch the confidential rate grid (post-login only)
     pullActuals,     // fetch the Clockify actuals CSV (clockify-actuals.csv in Box)
     pullStaff,       // fetch staff.json (staffing matrix + notes + actuals)
+    pullStaffIfChanged, // etag-checked pull — null when nothing new
     uploadStaff,     // push staff.json (debounced by the staffing page)
   };
   window.UFC_Box = Box;
@@ -214,7 +216,10 @@
     url.searchParams.set('state', randomStr(12));
     window.location.assign(url.toString());
   }
-  function logout() {
+  async function logout() {
+    // Flush any unsynced changes BEFORE tearing down the session, so signing
+    // out can never strand a save in this browser.
+    try { if (_pending) { clearTimeout(_pushTimer); await pushNow(); } } catch (e) {}
     clearToken();
     try { Store.setRealIdentity(null); } catch (e) {}
     try { Store.clearImpersonation(); } catch (e) {}
@@ -264,13 +269,17 @@
 
   // Download projects.json + capture its etag for concurrency.
   let _etag = null;
+  let _remoteCount = 0;   // project count last seen in Box — drives the shrink guard
   async function pullRemote() {
     const meta = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '?fields=etag');
     if (meta.ok) { const m = await meta.json(); _etag = m.etag; }
     const res = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '/content');
     if (res.status === 404) return Store.defaultDb();
     if (!res.ok) throw new Error('pull failed: ' + res.status);
-    try { return JSON.parse(await res.text()); } catch (e) { return Store.defaultDb(); }
+    let db;
+    try { db = JSON.parse(await res.text()); } catch (e) { db = Store.defaultDb(); }
+    _remoteCount = Object.keys((db && db.projects) || {}).length;
+    return db;
   }
 
   // Download the confidential rate grid (rates.json) from Box.
@@ -284,7 +293,19 @@
   }
 
   // Upload a new version of projects.json, guarded by If-Match (etag).
-  async function uploadRemote(db) {
+  // SHRINK GUARD: refuse to overwrite Box with a copy that has lost most of the
+  // projects Box knows about (a corrupted cache, a bad import, a cleared browser).
+  // Deletes are tombstones, so a legitimate delete never shrinks the key count —
+  // a big shrink always means something is wrong. Box.forcePush() overrides.
+  let _forcePush = false;
+  Box.forcePush = async function () { _forcePush = true; try { await syncNow(); } finally { _forcePush = false; } };
+  async function uploadRemote(db, depth) {
+    depth = depth || 0;
+    if (depth > 3) throw new Error('sync conflict — too many concurrent saves, will retry');
+    const localCount = Object.keys((db && db.projects) || {}).length;
+    if (!_forcePush && _remoteCount >= 10 && localCount < _remoteCount * 0.5) {
+      throw new Error('Sync blocked to protect data: this browser has ' + localCount + ' projects but Box has ' + _remoteCount + '. Reload the page to re-sync first.');
+    }
     const token = await ensureToken();
     if (!token) throw new Error('not authenticated');
     const form = new FormData();
@@ -301,7 +322,7 @@
       const remote = await pullRemote();
       const merged = mergeDb(remote, db);
       Store.hydrateFromRemote(merged);
-      return uploadRemote(merged);
+      return uploadRemote(merged, depth + 1);
     }
     if (!res.ok) throw new Error('upload failed: ' + res.status);
     const out = await res.json();
@@ -390,23 +411,65 @@
   }
 
   // ---- Staffing matrix file (staff.json) — the living strategy doc.
-  // Same newest-wins whole-file pattern as studio.json. ----
+  // Same newest-wins whole-file pattern as studio.json.
+  // SELF-CONFIGURING: if staffFileId is blank the file is found BY NAME in the
+  // shared Box folder (created on first run), so every admin lands on the SAME
+  // staff.json with zero setup — mappings + allocations sync across the team. ----
   let _staffEtag = null;
+  let _staffId = null;
+  async function resolveStaffFileId() {
+    const cfg = BOX_CONFIG.staffFileId;
+    if (cfg && !/PASTE/.test(cfg)) return cfg;
+    if (_staffId) return _staffId;
+    try { const c = localStorage.getItem('ufc_staff_file_id'); if (c) return (_staffId = c); } catch (e) {}
+    // 1) look it up by name in the shared folder
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    if (res.ok) {
+      const j = await res.json();
+      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === 'staff.json');
+      if (hit) { _staffId = hit.id; try { localStorage.setItem('ufc_staff_file_id', hit.id); } catch (e) {} return hit.id; }
+    }
+    // 2) not there yet — first admin in creates it for everyone
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'staff.json', parent: { id: BOX_CONFIG.folderId } }));
+    form.append('file', new Blob(['{}'], { type: 'application/json' }), 'staff.json');
+    const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+    if (up.status === 409) {                                     // raced another admin — use theirs
+      try { const j = await up.json(); const cid = j.context_info && j.context_info.conflicts && j.context_info.conflicts.id; if (cid) { _staffId = cid; try { localStorage.setItem('ufc_staff_file_id', cid); } catch (e) {} return cid; } } catch (e) {}
+      throw new Error('staff.json create conflict — reload to retry');
+    }
+    if (!up.ok) throw new Error('could not create staff.json: HTTP ' + up.status);
+    const j = await up.json(); const nid = j.entries && j.entries[0] && j.entries[0].id;
+    if (!nid) throw new Error('staff.json create returned no id');
+    _staffId = nid; try { localStorage.setItem('ufc_staff_file_id', nid); } catch (e) {}
+    return nid;
+  }
   async function pullStaff() {
-    const id = BOX_CONFIG.staffFileId;
-    if (!id || /PASTE/.test(id)) return null;                    // not configured → local only
+    const id = await resolveStaffFileId();
+    if (!id) return null;
     const meta = await boxFetch('/files/' + id + '?fields=etag');
     if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; }
     const res = await boxFetch('/files/' + id + '/content');
-    if (res.status === 404) return null;
+    if (res.status === 404) { _staffId = null; try { localStorage.removeItem('ufc_staff_file_id'); } catch (e) {} return null; }  // stale cached id — re-resolve next load
     if (!res.ok) throw new Error('staff pull failed: ' + res.status);
     const txt = await res.text();
     if (!txt || !txt.trim()) return null;                        // empty placeholder file
     try { return JSON.parse(txt); } catch (e) { return null; }   // not yet valid JSON → seed from local
   }
-  async function uploadStaff(db) {
-    const id = BOX_CONFIG.staffFileId;
-    if (!id || /PASTE/.test(id)) return;                         // local-only until configured
+  /** Cheap change check: compares the remote etag to the one we last saw;
+      returns the fresh db only when a TEAMMATE saved since, else null. */
+  async function pullStaffIfChanged() {
+    const id = await resolveStaffFileId(); if (!id) return null;
+    const meta = await boxFetch('/files/' + id + '?fields=etag');
+    if (!meta.ok) return null;
+    const m = await meta.json();
+    if (_staffEtag && m.etag === _staffEtag) return null;        // unchanged since our last pull/push
+    return pullStaff();
+  }
+  async function uploadStaff(db, depth) {
+    const id = await resolveStaffFileId();
+    if (!id) return;
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const form = new FormData();
     form.append('attributes', JSON.stringify({ name: 'staff.json' }));
@@ -416,9 +479,16 @@
       headers: { Authorization: 'Bearer ' + token, ...(_staffEtag ? { 'If-Match': _staffEtag } : {}) },
       body: form,
     });
-    if (res.status === 412) {                                    // someone else saved — refresh etag, retry once
-      const meta = await boxFetch('/files/' + id + '?fields=etag');
-      if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; return uploadStaff(db); }
+    if (res.status === 412) {
+      /* Someone else saved first. Re-uploading our copy would erase their rows,
+         so PULL → MERGE at record level → push the merged result. */
+      if ((depth || 0) >= 2) throw new Error('staff push failed: repeated conflicts');
+      const remote = await pullStaff();          // also refreshes _staffEtag
+      const Staff = window.UFC_Staff;
+      let merged = db;
+      if (remote && Staff && Staff.mergeFromRemote) merged = Staff.mergeFromRemote(remote);
+      else if (remote && Staff && Staff.hydrateFromRemote) { Staff.hydrateFromRemote(remote); merged = remote; }
+      return uploadStaff(merged, (depth || 0) + 1);
     }
     if (!res.ok) throw new Error('staff push failed: ' + res.status);
     try { const j = await res.json(); if (j.entries && j.entries[0]) _staffEtag = j.entries[0].etag; } catch (e) {}
@@ -465,6 +535,38 @@
   }
   Box.pullStudio = pullStudio;
 
+  /* ---- Rolling weekly backup ----------------------------------------------
+     Box already versions projects.json on every upload (first-line recovery:
+     Box → projects.json → Version History). This adds a SECOND line: a dated
+     copy (projects-backup-YYYY-MM-DD.json) in the same folder, refreshed at
+     most weekly, keeping the last 8 — so even a version-history mishap or a
+     deleted file has cold copies going back ~2 months. Any signed-in user's
+     boot can create it; a 409 means someone else already made today's. */
+  const BACKUP_PREFIX = 'projects-backup-';
+  const BACKUP_KEEP = 8;
+  async function weeklyBackup() {
+    try {
+      const last = Number(localStorage.getItem('ufc_last_backup_check') || 0);
+      if (Date.now() - last < 20 * 3600 * 1000) return;               // check at most ~daily per browser
+      localStorage.setItem('ufc_last_backup_check', String(Date.now()));
+      const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+      if (!res.ok) return;
+      const j = await res.json();
+      const backups = (j.entries || []).filter(e => e.type === 'file' && e.name.indexOf(BACKUP_PREFIX) === 0)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const newest = backups.length ? backups[backups.length - 1].name.slice(BACKUP_PREFIX.length, BACKUP_PREFIX.length + 10) : '';
+      if (newest && (Date.now() - new Date(newest).getTime()) < 7 * 86400000) return;   // fresh enough
+      const today = new Date().toISOString().slice(0, 10);
+      const cp = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '/copy', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent: { id: BOX_CONFIG.folderId }, name: BACKUP_PREFIX + today + '.json' }),
+      });
+      if (!cp.ok && cp.status !== 409) return;                        // 409 = a teammate beat us to it
+      const excess = backups.length + 1 - BACKUP_KEEP;
+      for (let i = 0; i < excess; i++) { try { await boxFetch('/files/' + backups[i].id, { method: 'DELETE' }); } catch (e) {} }
+    } catch (e) { /* backups must never break boot */ }
+  }
+
   // ---- Boot: auth → pull → identity → attach push ----
   async function boot() {
     if (!BOX_CONFIG.enabled) { emitSync('local', ''); return { ok: true, backend: 'local' }; }
@@ -502,6 +604,9 @@
     }
     // Attach the push hook so future writes mirror to Box
     Store.attachRemote(schedulePush);
+    // Rolling weekly backup of projects.json (on top of Box's own version
+    // history) — fire and forget; failures never affect boot.
+    weeklyBackup();
     // Revenue Studio file (separate). Pull → hydrate → attach its push hook.
     try {
       const studio = await pullStudio();

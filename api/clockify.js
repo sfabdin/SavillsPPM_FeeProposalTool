@@ -1,7 +1,15 @@
 /* ============================================================
    VERCEL SERVERLESS FUNCTION · Clockify → aggregated actuals CSV
    ------------------------------------------------------------
-   Path:  /api/clockify?start=2026-01-01&end=2026-06-30
+   Paths:
+     /api/clockify?start=2026-01-01&end=2026-06-30   → actuals CSV
+     /api/clockify?list=projects                     → project list CSV
+     /api/clockify?list=users                        → user list CSV
+     /api/clockify?lateness=1&start&end              → entry-lateness stats CSV
+       (creation time is decoded from each entry's MongoDB ObjectID — first
+        4 bytes are a unix timestamp — vs the day the work happened; the
+        detailed report is paged server-side and only per-user aggregates
+        travel to the browser, so it stays fast)
 
    WHY THIS EXISTS
      The Staffing & Bandwidth page needs ACTUAL hours by
@@ -38,15 +46,124 @@ function normMonth(name) {
 }
 function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 
+/* AUTH: this endpoint returns employee names, hours and project assignments —
+   it must not be publicly callable. The browser sends its Box access token;
+   we validate it against Box and require a Savills login. */
+async function requireSavillsUser(req, res) {
+  const m = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+  if (!m) { res.status(401).json({ error: 'sign in required', detail: 'Missing session token — reload the app and sign in with Box.' }); return null; }
+  try {
+    const r = await fetch('https://api.box.com/2.0/users/me?fields=login', { headers: { Authorization: 'Bearer ' + m[1] } });
+    if (!r.ok) { res.status(401).json({ error: 'session expired', detail: 'Box rejected the token (' + r.status + ') — reload and sign in again.' }); return null; }
+    const me = await r.json();
+    const login = String(me.login || '').toLowerCase();
+    if (!/@savills\.(us|com)$/.test(login)) { res.status(403).json({ error: 'not authorized', detail: login + ' is not a Savills account.' }); return null; }
+    return login;
+  } catch (e) { res.status(401).json({ error: 'auth check failed', detail: String(e && e.message || e).slice(0, 200) }); return null; }
+}
+
 export default async function handler(req, res) {
+  const login = await requireSavillsUser(req, res);
+  if (!login) return;
   const key = process.env.CLOCKIFY_API_KEY;
   const ws = process.env.CLOCKIFY_WORKSPACE_ID;
   if (!key || !ws) { res.status(501).json({ error: 'not configured', detail: 'Set CLOCKIFY_API_KEY and CLOCKIFY_WORKSPACE_ID in Vercel env vars.' }); return; }
+
+  // ---- user list mode: canonical people names for the people mapping ----
+  // Job title rides along as a workspace CUSTOM FIELD on each user record
+  // (customFields[].customFieldName = "Title") — same source the Power BI
+  // report uses. No extra API calls needed.
+  if (req.query.list === 'users') {
+    try {
+      const users = [];
+      for (let page = 1; page <= 10; page++) {
+        const r = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/users?page-size=500&page=${page}&status=ALL&memberships=ALL`, { headers: { 'X-Api-Key': key } });
+        if (!r.ok) { res.status(502).json({ error: 'clockify ' + r.status, detail: (await r.text()).slice(0, 300) }); return; }
+        const batch = await r.json();
+        batch.forEach(u => {
+          let title = '';
+          const cfs = Array.isArray(u.customFields) ? u.customFields : [];
+          const hit = cfs.find(c => /title/i.test(c.customFieldName || '')) || cfs.find(c => c.value);
+          if (hit && hit.value != null) title = String(hit.value).trim();
+          users.push({ id: u.id, name: u.name || '', email: u.email || '', status: u.status || '', title });
+        });
+        if (batch.length < 500) break;
+      }
+      if (req.query.debug) { res.setHeader('Content-Type', 'application/json'); res.status(200).json(users.slice(0, 5)); return; }
+      const csv = 'User,Email,Status,JobTitle\n' + users.map(u => [u.name, u.email, u.status, u.title].map(csvCell).join(',')).join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).send(csv);
+    } catch (e) { res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) }); }
+    return;
+  }
+
+  // ---- project list mode: canonical names for the one-time matrix rename ----
+  if (req.query.list === 'projects') {
+    try {
+      const out = [];
+      for (let page = 1; page <= 10; page++) {
+        const r = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/projects?page-size=500&page=${page}&archived=false`, { headers: { 'X-Api-Key': key } });
+        if (!r.ok) { res.status(502).json({ error: 'clockify ' + r.status, detail: (await r.text()).slice(0, 300) }); return; }
+        const batch = await r.json();
+        batch.forEach(p => out.push([p.name || '', p.clientName || '']));
+        if (batch.length < 500) break;
+      }
+      const csv = 'Project,Client\n' + out.map(r2 => r2.map(csvCell).join(',')).join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).send(csv);
+    } catch (e) { res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) }); }
+    return;
+  }
 
   const start = String(req.query.start || '').slice(0, 10);
   const end = String(req.query.end || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
     res.status(400).json({ error: 'pass start=YYYY-MM-DD&end=YYYY-MM-DD' }); return;
+  }
+
+  // ---- lateness mode: per-user entry-timeliness aggregates ----
+  if (req.query.lateness) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) { res.status(400).json({ error: 'pass start=YYYY-MM-DD&end=YYYY-MM-DD' }); return; }
+    try {
+      const agg = {};   // user|ym -> stats
+      let page = 1;
+      while (page <= 25) {   // hard cap: 25k entries per pull
+        const rep = await fetch(`https://reports.api.clockify.me/v1/workspaces/${ws}/reports/detailed`, {
+          method: 'POST',
+          headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dateRangeStart: start + 'T00:00:00.000', dateRangeEnd: end + 'T23:59:59.999',
+            detailedFilter: { page, pageSize: 1000 }, exportType: 'JSON',
+          }),
+        });
+        if (!rep.ok) { res.status(502).json({ error: 'clockify ' + rep.status, detail: (await rep.text()).slice(0, 300) }); return; }
+        const data = await rep.json();
+        const entries = data.timeentries || [];
+        entries.forEach(t => {
+          const id = t._id || t.id || '';
+          const startIso = t.timeInterval && t.timeInterval.start; if (!startIso || id.length < 8) return;
+          const created = parseInt(id.slice(0, 8), 16) * 1000;             // ObjectID timestamp
+          const workDay = new Date(startIso);
+          const lagDays = Math.max(0, (created - workDay.getTime()) / 86400000);
+          const ym = startIso.slice(0, 7);
+          const hrs = (t.timeInterval.duration || 0) / 3600;
+          const k2 = (t.userName || '') + '|' + ym;
+          const a = agg[k2] || (agg[k2] = { user: t.userName || '', ym, entries: 0, hours: 0, lagSum: 0, lagMax: 0, within3: 0, within7: 0 });
+          a.entries++; a.hours += hrs; a.lagSum += lagDays; a.lagMax = Math.max(a.lagMax, lagDays);
+          if (lagDays <= 3) a.within3++; if (lagDays <= 7) a.within7++;
+        });
+        if (entries.length < 1000) break;
+        page++;
+      }
+      const csv = 'User,Month,Entries,Hours,AvgLagDays,MaxLagDays,PctWithin3d,PctWithin7d\n'
+        + Object.values(agg).map(a => [a.user, a.ym, a.entries, Math.round(a.hours * 10) / 10, Math.round(a.lagSum / a.entries * 10) / 10, Math.round(a.lagMax), Math.round(a.within3 / a.entries * 100), Math.round(a.within7 / a.entries * 100)].map(csvCell).join(',')).join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).send(csv);
+    } catch (e) { res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) }); }
+    return;
   }
 
   try {
