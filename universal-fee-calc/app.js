@@ -87,6 +87,10 @@
   let state = DEFAULT_STATE();
   let dirty = false;
   let autosaveTimer = null;
+  /* The record version this editor loaded / last wrote. Used for optimistic
+     concurrency so we never silently overwrite a teammate's newer save. */
+  let baseUpdatedAt = null;
+  let conflicted = false;
 
   /* ---------- Helpers ---------- */
   const uid = () => 'r' + Math.random().toString(36).slice(2, 9);
@@ -2688,6 +2692,7 @@
           roles: rec.roles || [],
         };
         setSavedLabel('Loaded · ' + formatTime(rec.updatedAt));
+        baseUpdatedAt = rec.updatedAt || null;
       } else {
         setSavedLabel('Project not found');
       }
@@ -2707,6 +2712,7 @@
     // or at least one role) — so forgetting to click Save can't lose work.
     const worthSaving = state.id || (state.project && state.project.name && state.project.name.trim()) || (state.roles && state.roles.length);
     if (worthSaving) {
+      if (conflicted) { setSavedLabel('Not saved — conflict'); return; }   // wait for the user to resolve
       clearTimeout(autosaveTimer);
       autosaveTimer = setTimeout(() => saveToStore({ silent: true }), 800);
       setSavedLabel('Unsaved…');
@@ -2722,10 +2728,16 @@
   function saveToStore(opts = {}) {
     try {
       const record = JSON.parse(JSON.stringify(state));
-      const saved = STORE.saveProject(record);
+      const saved = STORE.saveProject(record, {
+        baseUpdatedAt: opts.force ? null : baseUpdatedAt,
+        force: !!opts.force,
+      });
       state.id = saved.id;
       state.createdAt = saved.createdAt;
       state.updatedAt = saved.updatedAt;
+      baseUpdatedAt = saved.updatedAt;
+      conflicted = false;
+      clearConflictBanner();
       setProjectIdInUrl(saved.id);
       setSavedLabel('Saved · ' + formatTime(saved.updatedAt));
       refreshVersionCount();
@@ -2737,9 +2749,53 @@
         setTimeout(() => { btn.textContent = o; }, 1100);
       }
     } catch (e) {
+      if (e && e.code === 'STALE_WRITE') { showConflictBanner(e.remote); return; }
       console.error('Save failed', e);
       alert('Save failed: ' + e.message);
     }
+  }
+
+  /* ----- Concurrent-edit conflict ----------------------------------------
+     Two people (or two tabs) on the same project: whoever saved last used to
+     win, silently reverting the other's work. Now the second write is refused
+     and we ask. Nothing is lost either way — the unsaved edits stay in this
+     tab until the user chooses. */
+  function clearConflictBanner() {
+    document.getElementById('ufc-conflict')?.remove();
+  }
+  function showConflictBanner(remote) {
+    conflicted = true;
+    dirty = true;
+    clearTimeout(autosaveTimer);
+    setSavedLabel('Not saved — conflict');
+    if (document.getElementById('ufc-conflict')) return;
+    const who = (remote && remote.by) ? escapeHtml(remote.by) : 'Someone else';
+    const when = (remote && remote.updatedAt) ? formatTime(remote.updatedAt) : 'just now';
+    const el = document.createElement('div');
+    el.id = 'ufc-conflict';
+    el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9998;background:#CE181E;color:#fff;padding:14px 22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;box-shadow:0 -6px 24px rgba(0,0,0,.25);font-family:var(--font-body),sans-serif;';
+    el.innerHTML = `
+      <div style="flex:1;min-width:280px;font-size:13px;line-height:1.5;">
+        <strong style="font-family:var(--font-display),sans-serif;font-weight:700;">${who} saved this project at ${escapeHtml(when)}, while you were editing.</strong><br>
+        Your changes are still here on screen but are <b>not saved</b>. Reload theirs to start from the current version, or keep yours to overwrite it.
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button id="ufc-conflict-reload" style="font-family:var(--font-display),sans-serif;font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:11px 16px;border:0;background:#fff;color:#CE181E;cursor:pointer;">Reload their version</button>
+        <button id="ufc-conflict-force" style="font-family:var(--font-display),sans-serif;font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:11px 16px;border:2px solid #fff;background:transparent;color:#fff;cursor:pointer;">Keep mine · overwrite</button>
+      </div>`;
+    document.body.appendChild(el);
+    document.getElementById('ufc-conflict-reload').onclick = () => {
+      clearConflictBanner();
+      conflicted = false;
+      window.location.reload();
+    };
+    document.getElementById('ufc-conflict-force').onclick = () => {
+      if (!confirm('Overwrite their version with yours? Their changes since you opened this project will be replaced. A version snapshot is kept either way.')) return;
+      // Snapshot what's currently stored so their work is recoverable.
+      try { if (state.id) STORE.saveVersion(state.id, { label: 'Before overwrite (conflict)', auto: true }); } catch (err) {}
+      clearConflictBanner();
+      saveToStore({ force: true, explicit: true });
+    };
   }
 
   function setSavedLabel(text) {
@@ -2855,7 +2911,9 @@
       groups: restored.groups || defaults.groups,
       roles: restored.roles || [],
     };
-    saveToStore({ silent: true });
+    // Restoring is a deliberate act on this record — bypass the staleness guard
+    // (saveVersion above just touched the stored copy).
+    saveToStore({ silent: true, force: true });
     renderAll();
     refreshVersionCount();
     closeVersions();

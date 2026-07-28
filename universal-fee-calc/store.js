@@ -487,13 +487,40 @@
     return (p && !p._deleted) ? p : null;
   }
 
-  function saveProject(record) {
+  function saveProject(record, opts) {
+    opts = opts || {};
     const db = readDb();
     const prev = record.id ? db.projects[record.id] : null;
     const isNew = !record.id;
+    /* Optimistic concurrency. The editor tells us which version it started from
+       (baseUpdatedAt). If the stored record has moved on since, someone else (or
+       another tab) saved in the meantime — writing now would silently revert
+       their work, which is exactly the "my entries don't stick" symptom. Refuse
+       and let the caller decide. opts.force overrides after the user chooses. */
+    if (prev && !prev._deleted && opts.baseUpdatedAt && !opts.force
+        && (prev.updatedAt || '') > opts.baseUpdatedAt) {
+      const err = new Error('This project was saved by someone else while you were editing.');
+      err.code = 'STALE_WRITE';
+      err.remote = {
+        updatedAt: prev.updatedAt,
+        by: (prev.lastSavedBy && (prev.lastSavedBy.name || prev.lastSavedBy.username)) || null,
+      };
+      throw err;
+    }
     if (!record.id) record.id = 'proj_' + Math.random().toString(36).slice(2, 11);
     if (!record.createdAt) record.createdAt = new Date().toISOString();
-    record.updatedAt = new Date().toISOString();
+    /* updatedAt must be STRICTLY increasing per record: it's both the Box merge
+       tiebreaker and the concurrency token, and two saves inside the same
+       millisecond would otherwise be indistinguishable. */
+    {
+      let ts = new Date().toISOString();
+      const prevTs = (prev && prev.updatedAt) || '';
+      if (prevTs && ts <= prevTs) ts = new Date(new Date(prevTs).getTime() + 1).toISOString();
+      record.updatedAt = ts;
+    }
+    { const cu = getCurrentUser() || {};
+      const ri = (typeof realIdentityLabel === 'function' ? realIdentityLabel() : null) || {};
+      record.lastSavedBy = { username: ri.username || cu.username || null, name: ri.name || cu.name || null }; }
     maybeSnapshotFinancials(record);   // freeze derived figures once booked
     maybeAutoVersion(record, prev);    // capture a version when status crosses a lifecycle milestone
     db.projects[record.id] = record;
