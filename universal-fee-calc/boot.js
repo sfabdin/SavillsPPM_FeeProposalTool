@@ -1,5 +1,5 @@
 /* ============================================================
-   SAVILLS PPM · FEE SYSTEM · BOOT
+   SAVILLS PPM · FEE & REVENUE SYSTEM · BOOT
    ------------------------------------------------------------
    One include that prepares the data layer before a page renders.
    • Box disabled  → resolves instantly, app runs on localStorage (today).
@@ -47,7 +47,7 @@
     document.body.innerHTML = `
       <div style="height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#25273a;">
         <div style="text-align:center;max-width:460px;padding:0 24px;">
-          <div style="font-weight:800;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6b7280;margin-bottom:14px;">Savills PPM · Fee System</div>
+          <div style="font-weight:800;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6b7280;margin-bottom:14px;">Savills PPM · Fee &amp; Revenue System</div>
           <div style="font-weight:900;font-size:26px;letter-spacing:-0.01em;margin-bottom:10px;">Rate card unavailable</div>
           <div style="font-size:14px;line-height:1.6;color:#6b7280;margin-bottom:20px;">The confidential rate grid couldn't be loaded from Box, so the calculator can't run. This usually means <strong>rates.json</strong> hasn't been added to the Box folder yet, or the file id isn't set in the app config.</div>
           <button onclick="window.location.reload()" style="font-family:system-ui,sans-serif;font-weight:700;font-size:13px;letter-spacing:0.06em;text-transform:uppercase;padding:13px 26px;background:#25273a;color:#fff;border:0;cursor:pointer;">Retry</button>
@@ -84,7 +84,7 @@
     document.body.innerHTML = `
       <div style="height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#25273a;">
         <div style="text-align:center;max-width:420px;padding:0 24px;">
-          <div style="font-weight:800;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6b7280;margin-bottom:14px;">Savills PPM · Fee System</div>
+          <div style="font-weight:800;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6b7280;margin-bottom:14px;">Savills PPM · Fee &amp; Revenue System</div>
           <div style="font-weight:900;font-size:28px;letter-spacing:-0.01em;margin-bottom:12px;">Sign in to continue</div>
           <div style="font-size:14px;line-height:1.6;color:#6b7280;margin-bottom:26px;">Your projects are stored in Box. Sign in with your Savills account to load them.</div>
           <button id="ufc-box-login" style="font-family:system-ui,sans-serif;font-weight:700;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;padding:14px 28px;background:#25273a;color:#fff;border:0;cursor:pointer;">Sign in with Box</button>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Rate Grid Reconciliation</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  body { margin:0; font-family:var(--font-body,Arial,sans-serif); color:var(--sav-navy,#25273A); background:#f3f3f0; }
+  .wrap { max-width:1160px; margin:0 auto; padding:36px 28px 90px; }
+  h1 { font-family:var(--font-display); font-weight:800; font-size:26px; margin:0 0 4px; }
+  .sub { color:#79828C; font-size:13px; margin-bottom:24px; max-width:720px; line-height:1.6; }
+  .card { background:#fff; border:1px solid rgba(37,39,58,0.12); padding:22px 24px; margin-bottom:20px; }
+  .card h2 { font-family:var(--font-display); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; margin:0 0 12px; }
+  .btn { font-family:var(--font-display); font-weight:700; font-size:13px; letter-spacing:0.04em; padding:11px 20px; border:0; cursor:pointer; background:var(--sav-navy); color:#fff; }
+  .btn.go { background:var(--sav-teal,#0E7C7B); }
+  .btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .btn.ghost { background:transparent; color:var(--sav-navy); border:1px solid rgba(37,39,58,0.25); }
+  input[type=file] { font-size:13px; }
+  .grid-tag { display:inline-block; background:#EEE8E3; padding:3px 9px; font-size:11px; font-family:var(--font-display); letter-spacing:0.04em; }
+  .stat { display:inline-block; margin-right:30px; }
+  .stat b { font-family:var(--font-display); font-size:24px; display:block; }
+  .stat span { font-size:11px; color:#79828C; text-transform:uppercase; letter-spacing:0.08em; }
+  table { width:100%; border-collapse:collapse; margin-top:12px; font-size:12px; }
+  th,td { text-align:left; padding:7px 9px; border-bottom:1px solid rgba(37,39,58,0.1); }
+  th { font-family:var(--font-display); font-size:9.5px; letter-spacing:0.07em; text-transform:uppercase; color:#79828C; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.proj-row { cursor:pointer; }
+  tr.proj-row:hover { background:#f7f5f2; }
+  tr.proj-row .caret { color:#79828C; font-size:9px; }
+  .delta-ok { color:#1f7a44; }
+  .delta-bad { color:#b3151b; font-weight:700; }
+  .pill { font-size:10px; padding:1px 7px; border-radius:9px; font-family:var(--font-display); letter-spacing:0.03em; }
+  .pill.ex { background:#fbe9ea; color:#b3151b; }
+  .pill.clean { background:#e8f3ec; color:#1f7a44; }
+  .pill.skip { background:#EEE8E3; color:#79828C; }
+  tr.detail td { background:#faf9f7; padding:0; }
+  tr.detail .inner { padding:8px 16px 14px; }
+  tr.detail table { margin:6px 0 0; }
+  tr.detail th { font-size:8.5px; }
+  .flag { color:#b3151b; }
+  .flag.uplift { color:#b26a00; }
+  .flag.floor { color:#b3151b; }
+  .msg { font-size:13px; padding:10px 14px; margin-top:12px; }
+  .msg.ok { background:#e8f3ec; color:#1f7a44; }
+  .msg.err { background:#fbe9ea; color:#b3151b; }
+  .note { font-size:12px; color:#79828C; line-height:1.6; }
+  code { background:#EEE8E3; padding:1px 5px; font-size:11px; }
+  .exc-list { margin-top:8px; font-size:12px; }
+  .exc-list div { padding:4px 0; border-bottom:1px solid rgba(37,39,58,0.08); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Rate Grid Reconciliation</h1>
+  <div class="sub">Adopt a new rate grid <strong>without moving anyone's projections</strong>. For every project this solves a per-month reconciling discount so each frozen monthly billing figure holds exactly against the new rack rates — the project total is the sum of those held months. Floor breaches, uplifts, and unsolvable months are <strong>flagged only</strong>. Dry-run first; nothing is written until you commit.</div>
+
+  <div class="card">
+    <h2>1 · Load the new rate grid</h2>
+    <input type="file" id="file" accept=".json">
+    <div class="note" style="margin-top:8px;">Pick the candidate <code>rates.json</code> (same shape as the live grid). It is used for a <strong>dry-run only</strong> — the live grid in Box is untouched until you separately deploy it.</div>
+    <div id="parse-msg"></div>
+  </div>
+
+  <div class="card" id="report-card" hidden>
+    <h2>2 · Dry-run report <span class="grid-tag" id="grid-tag"></span></h2>
+    <div id="stats"></div>
+    <div style="max-height:460px; overflow:auto;"><table id="report"><tbody></tbody></table></div>
+  </div>
+
+  <div class="card" id="exc-card" hidden>
+    <h2>3 · Exceptions (review manually — not auto-changed)</h2>
+    <div class="exc-list" id="exc-list"></div>
+  </div>
+
+  <div class="card" id="commit-card" hidden>
+    <h2>4 · Commit</h2>
+    <div class="note">Each project gets a <strong>pre-reconciliation version snapshot</strong> (reversible), stores its per-month reconciling vector, is tagged to the new grid, and is re-stamped — <strong>billing unchanged</strong>. Skipped: projects with no frozen contract and imported $ with no staffing.</div>
+    <div style="margin-top:14px; display:flex; gap:12px; align-items:center;">
+      <button class="btn go" id="commit">Commit <span id="commit-n"></span> projects</button>
+      <a class="btn ghost" href="Revenue Projections.html">Open Revenue Projections →</a>
+    </div>
+    <div id="commit-msg"></div>
+  </div>
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/rate-reconcile.js"></script>
+<script src="universal-fee-calc/guide.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+</body>
+</html>

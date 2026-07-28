@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Import Small Works</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  body { margin:0; font-family:var(--font-body,Arial,sans-serif); color:var(--sav-navy,#25273A); background:#f3f3f0; }
+  .wrap { max-width:1100px; margin:0 auto; padding:36px 28px 80px; }
+  h1 { font-family:var(--font-display); font-weight:800; font-size:26px; margin:0 0 4px; }
+  .sub { color:#79828C; font-size:13px; margin-bottom:24px; max-width:760px; line-height:1.6; }
+  .card { background:#fff; border:1px solid rgba(37,39,58,0.12); padding:22px 24px; margin-bottom:20px; }
+  .card h2 { font-family:var(--font-display); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; margin:0 0 12px; }
+  .btn { font-family:var(--font-display); font-weight:700; font-size:13px; letter-spacing:0.04em; padding:11px 20px; border:0; cursor:pointer; background:var(--sav-navy); color:#fff; }
+  .btn.go { background:var(--sav-teal,#0E7C7B); }
+  .btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .btn.ghost { background:transparent; color:var(--sav-navy); border:1px solid rgba(37,39,58,0.25); }
+  .stat { display:inline-block; margin-right:28px; }
+  .stat b { font-family:var(--font-display); font-size:22px; display:block; }
+  .stat span { font-size:11px; color:#79828C; text-transform:uppercase; letter-spacing:0.08em; }
+  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:12px; }
+  th,td { text-align:left; padding:6px 9px; border-bottom:1px solid rgba(37,39,58,0.1); }
+  th { font-family:var(--font-display); font-size:9.5px; letter-spacing:0.07em; text-transform:uppercase; color:#79828C; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .tag { font-size:10px; font-weight:700; padding:1px 7px; border-radius:10px; }
+  .tag.b { background:#eef1f4; color:#25273A; } .tag.m { background:#e4f4f2; color:#0a6463; }
+  .msg { font-size:13px; padding:10px 14px; margin-top:12px; }
+  .msg.ok { background:#e8f3ec; color:#1f7a44; } .msg.err { background:#fbe9ea; color:#b3151b; }
+  .note { font-size:12px; color:#79828C; line-height:1.6; }
+  code { background:#EEE8E3; padding:1px 5px; font-size:11px; }
+  #gate { display:none; background:#fff; border:1px solid rgba(37,39,58,0.12); padding:40px; text-align:center; font-size:15px; color:#79828C; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Import Small Works · JPMC</h1>
+  <div class="sub">One-time bulk load of the JPMC Small Works projects from the legacy <em>INTERNAL - Macro Fee Tracking</em> workbook. Each becomes its own pass-through-only project (<strong>SMALLWORKS - </strong>name, client JPMC). Contractor WO → billed line (client pays cost + 10%); Managed Vendor → managed line (direct bill, Savills invoices the 10% fee only). Cancelled and zero-value rows are excluded. Existing projects with the same name are skipped — safe to re-run.</div>
+
+  <div id="gate">Import Small Works is for admins only. Sign in with an admin Box account to continue.</div>
+
+  <div id="app" style="display:none;">
+    <div class="card">
+      <h2>1 · Review</h2>
+      <div id="stats"></div>
+      <div style="max-height:420px; overflow:auto;"><table id="preview"></table></div>
+    </div>
+    <div class="card">
+      <h2>2 · Import</h2>
+      <div class="note">Writes the projects into your store; they sync to Box while you're signed in. Financials are stamped on save. Re-running skips any name already present.</div>
+      <div style="margin-top:14px; display:flex; gap:12px; align-items:center;">
+        <button class="btn go" id="commit">Import <span id="commit-n"></span> projects</button>
+        <a class="btn ghost" href="Projects Index.html">Open Projects Index →</a>
+      </div>
+      <div id="commit-msg"></div>
+    </div>
+  </div>
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/smallworks-data.js"></script>
+<script>
+(function(){
+  'use strict';
+  const STORE = window.UFC_Store;
+  const $ = (s) => document.querySelector(s);
+  const fmt = (n) => '$' + Math.round(n).toLocaleString();
+  const RECS = window.SMALLWORKS_RECORDS || [];
+  const MON = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // Client-billed + Savills revenue per record (billed: cost×1.1 client / 0.1 rev; managed: 0.1 fee both)
+  function calc(rec){
+    let client=0, rev=0;
+    (rec.passthrough.lines||[]).forEach(l=>{
+      const c=+l.cost||0, mk=(+l.markupPct||0)/100;
+      rev += c*mk;
+      client += (l.mode==='managed') ? c*mk : c*(1+mk);
+    });
+    return { client, rev };
+  }
+
+  function ready(){
+    const admin = STORE.isAdmin && STORE.isAdmin();
+    if (!admin){ $('#gate').style.display='block'; return; }
+    $('#app').style.display='block';
+    const existing = new Set(STORE.listProjects().map(p => (p.project&&p.project.name)||''));
+    let totClient=0, totRev=0, newN=0, dupN=0;
+    let rows = '<tr><th>Project</th><th>Period</th><th>Lines</th><th class="num">Client billed</th><th class="num">Savills rev</th><th>State</th></tr>';
+    RECS.forEach(rec=>{
+      const {client, rev}=calc(rec); totClient+=client; totRev+=rev;
+      const dup = existing.has(rec.project.name); if(dup) dupN++; else newN++;
+      const t=rec.timeline;
+      const lines=(rec.passthrough.lines||[]).map(l=>`<span class="tag ${l.mode==='managed'?'m':'b'}">${l.mode==='managed'?'Managed':'Billed'} ${fmt(+l.cost||0)}</span>`).join(' ');
+      rows += `<tr><td>${rec.project.name.replace(/^SMALLWORKS - /,'')}</td><td>${MON[t.startMonth]} ${t.startYear}</td><td>${lines}</td><td class="num">${fmt(client)}</td><td class="num">${fmt(rev)}</td><td>${dup?'<span style="color:#b3151b">exists — skip</span>':'<span style="color:#0a6463">new</span>'}</td></tr>`;
+    });
+    $('#preview').innerHTML = rows;
+    $('#stats').innerHTML =
+      `<div class="stat"><b>${RECS.length}</b><span>Projects</span></div>`+
+      `<div class="stat"><b>${newN}</b><span>New</span></div>`+
+      `<div class="stat"><b>${dupN}</b><span>Already exist</span></div>`+
+      `<div class="stat"><b>${fmt(totClient)}</b><span>Client billed</span></div>`+
+      `<div class="stat"><b>${fmt(totRev)}</b><span>Savills revenue</span></div>`;
+    $('#commit-n').textContent = newN;
+    $('#commit').disabled = newN===0;
+
+    $('#commit').addEventListener('click', ()=>{
+      const have = new Set(STORE.listProjects().map(p => (p.project&&p.project.name)||''));
+      let added=0, skipped=0;
+      RECS.forEach(rec=>{
+        if (have.has(rec.project.name)){ skipped++; return; }
+        // fresh copy without id so the store assigns one + stamps financials
+        const clone = JSON.parse(JSON.stringify(rec));
+        delete clone.id;
+        STORE.saveProject(clone);
+        have.add(rec.project.name); added++;
+      });
+      $('#commit-msg').innerHTML = `<div class="msg ok">Imported ${added} project${added===1?'':'s'}${skipped?` · skipped ${skipped} already present`:''}. They'll sync to Box now — open the Projects Index to confirm.</div>`;
+      $('#commit').disabled = true;
+    });
+  }
+
+  if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(ready); else document.addEventListener('DOMContentLoaded', ready);
+})();
+</script>
+<script src="universal-fee-calc/nav.js"></script>
+</body>
+</html>

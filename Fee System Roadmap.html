@@ -458,8 +458,8 @@
   <header class="head">
     <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
     <div>
-      <div class="lbl"><a href="Fee Generator.html" style="color: var(--sav-steel); text-decoration: none;">← Fee Generator</a> &nbsp;·&nbsp; Savills PPM · Internal Strategy</div>
-      <h1>Fee System.<br>Phased roadmap.</h1>
+      <div class="lbl"><a href="Fee Generator.html" style="color: var(--sav-steel); text-decoration: none;">← Home</a> &nbsp;·&nbsp; Savills PPM · Internal Strategy</div>
+      <h1>Fee &amp; Revenue System.<br>Phased roadmap.</h1>
       <div class="sub">The single entry point for every fee Savills PPM develops — built once in the calculator, then flowing downstream to projections, billing, accruals, flash reports and P&amp;L. Capture the number where it's born, and stop re-keying it across fifteen spreadsheets.</div>
     </div>
     <div class="meta">
@@ -491,7 +491,7 @@
     <header class="sec-head">
       <span class="ix">Architecture</span>
       <h2>The system at a glance.</h2>
-      <span class="h-meta">Capture &amp; reporting layers live · Box-backed</span>
+      <span class="h-meta">v1.0 in production · Box-backed · Clockify connected</span>
     </header>
     <div class="arch">
       <div class="arch-grid">
@@ -530,15 +530,20 @@
           <div class="a-desc">Win/loss hit rates with lost-reason capture, discount analytics by client / leader / industry / size, proposal funnel metrics, client profiles, proposal health score.</div>
           <span class="a-status">Shipped</span>
         </div>
-        <div class="arch-box">
-          <div class="a-label">Resource Forecast</div>
-          <div class="a-desc">Headcount &amp; FTE commitments by month, by PE, by named resource. Identifies under/over-allocation 90 days out.</div>
-          <span class="a-status">Phase 4</span>
+        <div class="arch-box done">
+          <div class="a-label">Staffing &amp; Bandwidth</div>
+          <div class="a-desc">Allocation by named resource × project × month, over/under-loaded flagged, planned vs. actual hours from Clockify with title pinning and fee-link mapping, entry-lateness stats.</div>
+          <span class="a-status">Shipped</span>
         </div>
-        <div class="arch-box">
-          <div class="a-label">P&amp;L Tracker</div>
-          <div class="a-desc">Planned vs. actual hours per role per phase. Pulled from Clockify weekly. Variance + burn-down per active project.</div>
-          <span class="a-status">Phase 6</span>
+        <div class="arch-box done">
+          <div class="a-label">Profitability</div>
+          <div class="a-desc">The whole revenue projection with Clockify burn (hours × cost rate by title) laid against it by month — margin per project, per month, per leader. Mapping toggles saved for the team.</div>
+          <span class="a-status">Shipped</span>
+        </div>
+        <div class="arch-box done">
+          <div class="a-label">Data Entry Status</div>
+          <div class="a-desc">Completeness tracker — projects by revenue leader with the exact fields still missing (staffing, Salesforce ID, rating, service line, dates).</div>
+          <span class="a-status">Shipped</span>
         </div>
 
         <div class="arch-tier-label">Reporting &amp; finance outputs <span style="font-weight:400; color:var(--sav-steel); font-size:11px;">— the new horizon</span></div>
@@ -573,18 +578,28 @@
         </div>
         <div class="arch-box done">
           <div class="a-label">Rates Catalog</div>
-          <div class="a-desc">Macro 2024 grid — titles, High/Mid/Low tiers, hourly rates and Col E/G cost-rate floors. Versioned by year.</div>
+          <div class="a-desc">PPM 2024 rate grid — titles, High/Mid/Low tiers, hourly rates and Col E/G cost-rate floors. Versioned by year.</div>
+          <span class="a-status">Shipped</span>
+        </div>
+        <div class="arch-box done">
+          <div class="a-label">Project Intake handoff</div>
+          <div class="a-desc">On Won / Active, builds the standard intake table pre-filled from the record and copies it as rich HTML to paste into the intake email. Fields the submitter must complete are highlighted; re-flags if the fee or schedule changes.</div>
+          <span class="a-status">Shipped</span>
+        </div>
+        <div class="arch-box done">
+          <div class="a-label">Clockify Sync</div>
+          <div class="a-desc">Server-side proxy aggregates time by user × project × month (key never in the browser) and feeds Staffing and Profitability against cost-rate floors.</div>
+          <span class="a-status">Shipped</span>
+        </div>
+        <div class="arch-box done">
+          <div class="a-label">Rate Grid Reconciliation</div>
+          <div class="a-desc">Adopt a new grid without moving projections — solves a per-month reconciling discount per project so every frozen billing figure holds. Dry-run, exception report, reversible commit.</div>
           <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box">
-          <div class="a-label">Salesforce / Intake handoff</div>
-          <div class="a-desc">On win, drafts the intake email + schedule of values for Salesforce entry. The contract number is born here, not re-typed downstream.</div>
-          <span class="a-status">Phase 6</span>
-        </div>
-        <div class="arch-box">
-          <div class="a-label">Clockify Sync</div>
-          <div class="a-desc">Pulls weekly time-entries per resource, maps to project + role, populates the P&amp;L tracker against cost-rate floors.</div>
-          <span class="a-status">Phase 6</span>
+          <div class="a-label">Salesforce API sync</div>
+          <div class="a-desc">Two-way: the contract number written back onto the record automatically instead of pasted from the intake reply.</div>
+          <span class="a-status">Next</span>
         </div>
       </div>
     </div>
@@ -655,7 +670,7 @@
     <header class="sec-head">
       <span class="ix">Plan</span>
       <h2>Phased rollout.</h2>
-      <span class="h-meta">Capture + reporting shipped · integrations are the next horizon</span>
+      <span class="h-meta">v1.0 shipped · remaining work is finance outputs &amp; integrations</span>
     </header>
 
     <div class="timeline">
@@ -673,7 +688,7 @@
             <div>
               <h4>Delivered</h4>
               <ul>
-                <li>Production <strong>Macro 2024 rate grid</strong> — 11 title families, High/Mid/Low tiers, Col E/G cost-rate floors</li>
+                <li>Production <strong>PPM 2024 rate grid</strong> — 11 title families, High/Mid/Low tiers, Col E/G cost-rate floors</li>
                 <li>Grid vs. contracted rates per role · industry-standard adjustment · escalation + Rate Lock</li>
                 <li>Cost-rate floor advisory · reconcile-to-target back-solve · by-phase or flatlined monthly schedule</li>
                 <li>Excel export with live formulas (3 sheets), mirroring the on-screen billing mode</li>
@@ -797,22 +812,23 @@
       </div>
 
       <!-- Phase 4 -->
-      <div class="phase next">
+      <div class="phase done">
         <div class="phase-card">
           <div class="phase-head">
             <span class="ix">04</span>
-            <h3>Resource forecast.</h3>
-            <span class="when">Next</span>
-            <span class="status">Next</span>
+            <h3>Staffing &amp; bandwidth.</h3>
+            <span class="when">Done</span>
+            <span class="status">Shipped</span>
           </div>
           <div class="phase-body">
             <div>
-              <h4>Build</h4>
+              <h4>Shipped</h4>
               <ul>
-                <li>Roll every active project's FTE matrix into a <strong>headcount &amp; FTE view by month</strong></li>
-                <li>By PE, by service line, by named resource — who's committed where</li>
-                <li>Flags <strong>over- and under-allocation 90 days out</strong> before it becomes a staffing fire</li>
-                <li>Filterable; exportable for leadership review</li>
+                <li>Every project's FTE matrix rolled into a <strong>headcount &amp; load view by month</strong></li>
+                <li>By named resource, by project, by leader — who's committed where</li>
+                <li><strong>Over- and under-allocation flagged</strong> before it becomes a staffing fire</li>
+                <li>Planned hours against <strong>Clockify actuals</strong> per person, with title pinning and fee-link mapping saved for the team</li>
+                <li>Entry-lateness stats so time gets booked in the week the work happened</li>
               </ul>
             </div>
             <div>
@@ -824,7 +840,7 @@
             </div>
           </div>
           <div class="phase-dep">
-            <strong>Depends on:</strong> &nbsp; A handful of active projects in the DB with named resources and FTE-by-phase loaded.
+            <strong>Remaining:</strong> &nbsp; A forward-looking 90-day capacity view by service line, and an exportable leadership pack.
           </div>
         </div>
       </div>
@@ -864,37 +880,36 @@
       </div>
 
       <!-- Phase 6 -->
-      <div class="phase">
+      <div class="phase done">
         <div class="phase-card">
           <div class="phase-head">
             <span class="ix">06</span>
-            <h3>Active P&amp;L · planned vs. actual hours.</h3>
-            <span class="when">Later</span>
-            <span class="status">Planned</span>
+            <h3>Profitability · planned vs. actual hours.</h3>
+            <span class="when">Done</span>
+            <span class="status">Shipped</span>
           </div>
           <div class="phase-body">
             <div>
-              <h4>Build</h4>
+              <h4>Shipped</h4>
               <ul>
-                <li>Clockify integration — weekly pull of time entries via API · mapped to project + resource + role</li>
-                <li>Per-project P&amp;L view — planned hours from calculator vs actual hours from Clockify, by role and phase</li>
-                <li>Variance highlighting — red when actual &gt; 110% of planned, green at &lt; 90%</li>
-                <li>Burn-down / utilization charts per resource</li>
-                <li>Revenue (billed at proposal rates) vs cost (actual hours × resource cost rate)</li>
-                <li>Mid-project re-forecast workflow — duplicate the project, adjust phases, capture variance against original</li>
+                <li><strong>Clockify integration</strong> — a server-side proxy aggregates hours by user × project × month (the API key never reaches the browser)</li>
+                <li><strong>Profitability page</strong> — the whole revenue projection with burn (hours × cost rate by title) laid against it, margin per project per month</li>
+                <li>Planned hours from the calculator vs. actual hours by role and phase, with variance surfaced</li>
+                <li>Fee-link mapping and title pinning inline, saved to the shared staff file for everyone</li>
+                <li><strong>Project intake handoff</strong> — the standard intake table pre-filled from the record and copied as rich HTML on Won / Active</li>
               </ul>
             </div>
             <div>
               <h4>Outcomes</h4>
               <ul>
-                <li>Real-time margin visibility per active project</li>
+                <li>Margin visibility per active project, from the record that priced it</li>
                 <li>Early warning on over-runs — re-staff or re-negotiate before the variance compounds</li>
-                <li>Post-mortem data feeds back into Phase 3 benchmarks ("we sold this at $1.2M, delivered for $1.4M — adjust the next pitch")</li>
+                <li>Post-mortem data feeds back into benchmarks ("we sold this at $1.2M, delivered for $1.4M — adjust the next pitch")</li>
               </ul>
             </div>
           </div>
           <div class="phase-dep">
-            <strong>Depends on:</strong> &nbsp; Clockify admin / API key · resource-to-role mapping rules (one resource often has multiple titles) · agreed cost-rate model for margin calc.
+            <strong>Remaining:</strong> &nbsp; Utilization / burn-down charts per resource, and a two-way Salesforce sync so the contract number writes back automatically.
           </div>
         </div>
       </div>
@@ -995,7 +1010,7 @@
         <div class="risk">
           <h4>Clockify mapping is messier than it looks.</h4>
           <p>One resource often books to multiple roles across multiple projects; project codes drift; non-billable categories pollute totals.</p>
-          <div class="mit"><strong>Mitigation:</strong> &nbsp; Map-once-then-cache: build a resource→role mapping table, surface unmapped entries weekly for human review. Phase 4 starts narrow (3–5 active projects), expands once mapping is reliable.</div>
+          <div class="mit"><strong>Mitigation:</strong> &nbsp; Map-once-then-cache: Clockify project → fee record links and title pins are saved to the shared staff file, so a mapping fixed once holds for everyone. Unmapped entries surface as unattributed burn on the Profitability page for review.</div>
         </div>
         <div class="risk">
           <h4>Adoption — PEs may not use it.</h4>
@@ -1016,10 +1031,10 @@
     <div class="cta">
       <div>
         <h2>Where we are, and what's next.</h2>
-        <p>Phases 0–3, 5 and 7 are live — author fees (fixed or NTE, with change orders, versions and broker splits), ingest historicals, bulk-import the billing book, index and benchmark every project, project revenue firm-wide, and compare it against the 2026 Budget / RF1 in the Revenue Studio — all Box-backed and multi-user, with a regression suite (<code>tests.html</code>) guarding the engine. Next: the <strong>resource forecast</strong> (Phase 4), the formal <strong>accrual / flash output</strong>, and the <strong>Clockify-backed P&amp;L</strong> (Phase 6) that closes the loop from sold to delivered.</p>
+        <p>Phases 0–7 are live — author fees (fixed or NTE, with change orders, versions, broker splits and pass-through), ingest historicals, bulk-import the billing book, index and benchmark every project, analyse win/loss and discounting, project revenue firm-wide, compare it against the Budget / RF baselines in the Revenue Studio, track staffing load, and lay Clockify burn against the plan for margin by month — all Box-backed and multi-user, with a regression suite (<code>tests.html</code>) guarding the engine. Remaining: the formal <strong>accrual / flash output</strong>, a <strong>90-day capacity view</strong>, utilization charts, and a <strong>two-way Salesforce sync</strong> so contract numbers write back automatically.</p>
       </div>
       <div class="actions">
-        <a href="Fee Generator.html">Open the Fee Generator</a>
+        <a href="Fee Generator.html">Open the Fee &amp; Revenue System</a>
         <a href="#" class="ghost" onclick="window.print(); return false;">Print / Save PDF</a>
       </div>
     </div>

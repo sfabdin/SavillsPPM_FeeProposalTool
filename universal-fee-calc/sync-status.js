@@ -1,5 +1,5 @@
 /* ============================================================
-   SAVILLS PPM · FEE SYSTEM · SYNC STATUS INDICATOR
+   SAVILLS PPM · FEE & REVENUE SYSTEM · SYNC STATUS INDICATOR
    ------------------------------------------------------------
    A small, self-injecting pill (bottom-right) that makes the Box
    sync state impossible to miss — so a failed/expired token can

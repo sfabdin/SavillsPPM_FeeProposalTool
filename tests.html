@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Savills PPM · Fee System — Regression Tests</title>
+<title>Savills PPM · Fee &amp; Revenue System — Regression Tests</title>
 <style>
   :root { --navy:#25273a; --steel:#6b7280; --teal:#1f8a5b; --red:#ce181e; --hair:rgba(37,39,58,0.12); }
   * { box-sizing: border-box; }
@@ -27,7 +27,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Fee System — Regression Tests</h1>
+  <h1>Fee &amp; Revenue System — Regression Tests</h1>
   <div class="sub">Asserts the invariants the reporting engines depend on. Run this before every deploy — a red row means the math or data layer broke. Uses an in-memory storage shim, so it never touches your real Box-synced data.</div>
   <div id="summary"></div>
   <div id="out"></div>
@@ -299,6 +299,34 @@
     S.saveProject(p);
     const acts = S.listActivity(null, p.id).map(a => a.action);
     return acts.includes('book') || 'expected a book entry on won status';
+  });
+
+  test('Data · activity', 'a plain edit is logged with the field that changed', () => {
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    const p = S.saveProject(base());
+    p.project.client = 'A Totally New Client';
+    p.assumptions.discount = (p.assumptions.discount || 0) + 7.5;
+    S.saveProject(p);
+    const edits = S.listActivity(null, p.id).filter(a => a.action === 'edit');
+    if (!edits.length) return 'no edit entry logged';
+    const fields = (edits[0].meta.changes || []).map(c => c.field);
+    if (!fields.includes('Client')) return 'client change not captured (got: ' + fields.join(', ') + ')';
+    return fields.includes('Client discount %') || 'discount change not captured';
+  });
+
+  test('Data · activity', 'a no-op save logs nothing', () => {
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    const p = S.saveProject(base());
+    const before = S.listActivity(null, p.id).length;
+    S.saveProject(S.getProject(p.id));
+    return S.listActivity(null, p.id).length === before || 'an unchanged save created a log entry';
+  });
+
+  test('Data · activity', 'describeChanges reports the roster diff', () => {
+    const a = base(); const b = JSON.parse(JSON.stringify(a));
+    b.roles = (b.roles || []).slice(0, Math.max(0, (b.roles || []).length - 1));
+    const fields = S.describeChanges(a, b).map(c => c.field);
+    return fields.includes('Team') || 'removing a role did not register as a Team change';
   });
 
   /* ---- render ---- */

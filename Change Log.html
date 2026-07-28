@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Change Log</title>
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<style>
+.head .title-block h1 a{color:inherit;text-decoration:none}
+.kpi-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:26px}
+.kpi-card{background:#fff;border:1px solid rgba(37,39,58,.10);padding:16px 18px}
+.kpi-card .k-num{font-family:var(--font-display);font-weight:800;font-size:30px;line-height:1;color:var(--sav-navy)}
+.kpi-card .k-lbl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#79828C;margin-top:8px}
+.kpi-card.accent .k-num{color:var(--sav-teal)}
+.toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.toolbar input[type=search]{font-family:var(--font-body);font-size:13px;padding:8px 12px;border:1px solid rgba(37,39,58,.22);min-width:230px}
+.toolbar select{font-family:var(--font-body);font-size:12.5px;padding:7px 10px;border:1px solid rgba(37,39,58,.22);background:#fff;color:var(--sav-navy)}
+.toolbar .grow{flex:1}
+.scope-note{font-size:11.5px;color:#79828C;margin:0 0 22px}
+.scope-note b{color:var(--sav-navy)}
+.daygrp{margin-bottom:26px}
+.dayhead{display:flex;align-items:baseline;gap:12px;padding:0 0 8px;border-bottom:2px solid var(--sav-navy);margin-bottom:0}
+.dayhead h2{font-family:var(--font-display);font-weight:800;font-size:16px;margin:0;color:var(--sav-navy)}
+.dayhead .dcount{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#79828C}
+.ent{display:grid;grid-template-columns:64px 150px 1fr;gap:16px;padding:13px 4px;border-bottom:1px solid rgba(37,39,58,.08);background:#fff}
+.ent:hover{background:#fbfbfa}
+.e-time{font-family:var(--font-display);font-size:12px;color:#79828C;padding-top:2px}
+.e-who{font-size:12.5px;color:var(--sav-navy);padding-top:1px;line-height:1.35}
+.e-who b{font-family:var(--font-display);font-weight:700;display:block}
+.e-who span{font-size:10.5px;color:#79828C}
+.e-main{min-width:0}
+.e-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.badge{font-family:var(--font-display);font-weight:700;font-size:9px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;color:#fff;background:#79828C;white-space:nowrap}
+.badge.create{background:var(--sav-teal)}
+.badge.edit{background:#5B6474}
+.badge.status{background:#E0A800;color:var(--sav-navy)}
+.badge.book{background:#1f7a44}
+.badge.delete{background:#C0392B}
+.badge.restore{background:#1f7a44}
+.e-proj{font-family:var(--font-display);font-weight:700;font-size:14px;color:var(--sav-navy);text-decoration:none}
+.e-proj:hover{text-decoration:underline}
+.e-client{font-size:11.5px;color:#79828C}
+.e-line{font-size:12.5px;color:var(--sav-navy);margin-top:3px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{font-size:11.5px;background:#F3F2EF;border:1px solid rgba(37,39,58,.10);padding:3px 9px;color:var(--sav-navy);line-height:1.5}
+.chip b{font-family:var(--font-display);font-weight:700}
+.chip .arw{color:#A7ADB5;margin:0 3px}
+.chip.fee{background:#FFF9E0;border-color:rgba(224,168,0,.35)}
+.chip.fee.up b{color:#1f7a44}
+.chip.fee.down b{color:#C0392B}
+.chip.detail{background:transparent;border:0;padding:3px 0;color:#79828C}
+.empty{padding:48px 24px;text-align:center;background:#fff;border:1px solid rgba(37,39,58,.10)}
+.empty h3{font-family:var(--font-display);font-weight:800;font-size:17px;margin:0 0 8px;color:var(--sav-navy)}
+.empty p{font-size:13px;color:#79828C;margin:0 auto;max-width:56ch;line-height:1.6}
+.more{margin-top:6px}
+@media print{.toolbar,.identity-bar{display:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div class="title-block">
+      <h1><a href="Fee Generator.html">Change Log</a></h1>
+      <p class="tagline">Who changed what, and when — every create, edit, status change and deletion across the system.</p>
+    </div>
+  </header>
+
+  <div class="identity-bar">
+    <span class="id-label">Viewing as</span>
+    <select id="id-user"></select>
+    <span class="id-role" id="id-role"></span>
+    <span class="id-note" id="id-note"></span>
+  </div>
+
+  <div class="kpi-strip" id="kpis"></div>
+
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Filter by project, client or person…">
+    <select id="f-who"></select>
+    <select id="f-action">
+      <option value="">All actions</option>
+      <option value="create">Created</option>
+      <option value="edit">Edited</option>
+      <option value="status">Status changed</option>
+      <option value="book">Booked</option>
+      <option value="delete">Deleted</option>
+    </select>
+    <select id="f-range">
+      <option value="7">Last 7 days</option>
+      <option value="30" selected>Last 30 days</option>
+      <option value="90">Last 90 days</option>
+      <option value="">All time</option>
+    </select>
+    <span class="grow"></span>
+    <button class="btn" id="csv">⤓ CSV</button>
+    <button class="btn btn-primary" onclick="window.print()">Print / PDF</button>
+  </div>
+
+  <p class="scope-note" id="scope-note"></p>
+
+  <div id="feed"></div>
+
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script>
+(function () {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const STORE = window.UFC_Store;
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const money = (n) => '$' + Math.abs(Math.round(n)).toLocaleString();
+
+  const ACTION_LABEL = { create: 'Created', edit: 'Edited', status: 'Status', book: 'Booked', delete: 'Deleted', restore: 'Restored' };
+  let search = '', who = '', action = '', rangeDays = 30, limit = 200;
+
+  /* Entries are scoped to the projects you're allowed to see. Admins see
+     everything, including entries for projects that were since deleted. */
+  function scopedEntries() {
+    const all = STORE.listActivity ? STORE.listActivity(null) : [];
+    const admin = STORE.isAdmin(STORE.getCurrentUser());
+    if (admin) return all;
+    const visible = new Set(STORE.visibleProjects(STORE.listProjects()).map(p => p.id));
+    return all.filter(e => e.projectId && visible.has(e.projectId));
+  }
+
+  function projName(e) {
+    const m = e.meta || {};
+    if (m.name) return m.name;
+    const p = e.projectId ? STORE.getProject(e.projectId) : null;
+    return (p && p.project && p.project.name) || '(project removed)';
+  }
+  function projClient(e) {
+    const m = e.meta || {};
+    if (m.client) return m.client;
+    const p = e.projectId ? STORE.getProject(e.projectId) : null;
+    return (p && p.project && p.project.client) || '';
+  }
+  function statusLabel(s) {
+    return (STORE.STATUS_LABELS && STORE.STATUS_LABELS[s]) || s || '—';
+  }
+
+  function headline(e) {
+    const m = e.meta || {};
+    if (e.action === 'create') return 'Created this project' + (m.status ? ' as <b>' + esc(statusLabel(m.status)) + '</b>' : '');
+    if (e.action === 'delete') return 'Deleted this project';
+    if (e.action === 'restore') return 'Restored this project';
+    if (e.action === 'book') return 'Booked — status <b>' + esc(statusLabel(m.from)) + '</b> → <b>' + esc(statusLabel(m.to)) + '</b>';
+    if (e.action === 'status') return 'Status <b>' + esc(statusLabel(m.from)) + '</b> → <b>' + esc(statusLabel(m.to)) + '</b>';
+    const n = (m.changes || []).length;
+    return n ? ('Changed ' + n + ' field' + (n === 1 ? '' : 's')) : 'Saved changes';
+  }
+
+  function chips(e) {
+    const m = e.meta || {};
+    const out = [];
+    if (m.fee) {
+      const up = m.fee.delta > 0;
+      out.push('<span class="chip fee ' + (up ? 'up' : 'down') + '">Net fee <b>' + (up ? '+' : '−') + money(m.fee.delta) + '</b>'
+        + '<span class="arw">·</span>' + money(m.fee.from) + '<span class="arw">→</span>' + money(m.fee.to) + '</span>');
+    }
+    (m.changes || []).forEach(c => {
+      if (c.field === 'Team') {
+        out.push('<span class="chip"><b>Team</b> ' + esc(c.from) + '<span class="arw">→</span>' + esc(c.to) + '</span>');
+        if (c.detail) out.push('<span class="chip detail">' + esc(c.detail) + '</span>');
+      } else {
+        out.push('<span class="chip"><b>' + esc(c.field) + '</b> ' + esc(c.from) + '<span class="arw">→</span>' + esc(c.to) + '</span>');
+      }
+    });
+    return out.length ? '<div class="chips">' + out.join('') + '</div>' : '';
+  }
+
+  function filtered() {
+    let rows = scopedEntries();
+    if (rangeDays) {
+      const cut = Date.now() - rangeDays * 86400000;
+      rows = rows.filter(e => new Date(e.ts).getTime() >= cut);
+    }
+    if (action) rows = rows.filter(e => e.action === action);
+    if (who) rows = rows.filter(e => (e.actor || '') === who);
+    if (search) {
+      const q = search.toLowerCase();
+      rows = rows.filter(e => (projName(e) + ' ' + projClient(e) + ' ' + (e.actorName || '') + ' ' + (e.actor || '')).toLowerCase().includes(q));
+    }
+    return rows;
+  }
+
+  function buildWhoFilter(rows) {
+    const sel = $('#f-who');
+    const seen = {};
+    scopedEntries().forEach(e => { if (e.actor) seen[e.actor] = e.actorName || e.actor; });
+    const opts = ['<option value="">Everyone</option>']
+      .concat(Object.keys(seen).sort((a, b) => seen[a].localeCompare(seen[b]))
+        .map(k => '<option value="' + esc(k) + '">' + esc(seen[k]) + '</option>'));
+    sel.innerHTML = opts.join('');
+    sel.value = who;
+  }
+
+  function buildIdentityBar() {
+    const sel = $('#id-user');
+    const label = document.querySelector('.identity-bar .id-label');
+    const cur = STORE.getCurrentUser();
+    if (!STORE.canImpersonate()) {
+      if (sel) sel.style.display = 'none';
+      if (label) label.textContent = 'Signed in as';
+      let nameEl = document.getElementById('id-static-name');
+      if (!nameEl && sel) {
+        nameEl = document.createElement('span');
+        nameEl.id = 'id-static-name';
+        nameEl.style.cssText = 'font-family:var(--font-display);font-weight:700;font-size:13px;color:#fff;margin:0 4px;';
+        sel.parentNode.insertBefore(nameEl, sel.nextSibling);
+      }
+      if (nameEl) nameEl.textContent = cur.name || '(unrecognized)';
+    } else {
+      if (label) label.textContent = 'Viewing as';
+      if (sel) sel.style.display = '';
+      const roster = STORE.impersonationRoster();
+      const imp = STORE.getImpersonation();
+      sel.innerHTML = ['<option value="__me__">Me — admin · all activity</option>']
+        .concat(roster.map(r => '<option value="' + esc(r.username) + '">' + esc(r.name) + ' · ' + r.role + '</option>')).join('');
+      sel.value = imp ? esc(imp) : '__me__';
+      if (sel.selectedIndex < 0) sel.value = '__me__';
+      sel.onchange = () => {
+        const v = sel.value;
+        if (v === '__me__') STORE.clearImpersonation(); else STORE.setImpersonation(v);
+        render();
+      };
+    }
+    const roleEl = $('#id-role'), noteEl = $('#id-note');
+    if (cur.role === 'admin') { roleEl.textContent = 'Admin · all activity'; roleEl.className = 'id-role admin'; }
+    else { roleEl.textContent = 'Member · own projects'; roleEl.className = 'id-role member'; }
+    noteEl.textContent = cur.impersonating ? 'Previewing ' + (cur.name || 'this person') : '';
+  }
+
+  function render() {
+    buildIdentityBar();
+    const rows = filtered();
+    buildWhoFilter(rows);
+
+    // KPIs over the scoped set, independent of the filters
+    const all = scopedEntries();
+    const now = Date.now();
+    const since = (d) => all.filter(e => now - new Date(e.ts).getTime() < d * 86400000);
+    const week = since(7);
+    $('#kpis').innerHTML = [
+      { n: since(1).length, l: 'Changes today', c: '' },
+      { n: week.length, l: 'Last 7 days', c: 'accent' },
+      { n: new Set(week.map(e => e.actor)).size, l: 'People active this week', c: '' },
+      { n: new Set(week.filter(e => e.projectId).map(e => e.projectId)).size, l: 'Projects touched', c: 'accent' }
+    ].map(k => '<div class="kpi-card ' + k.c + '"><div class="k-num">' + k.n + '</div><div class="k-lbl">' + k.l + '</div></div>').join('');
+
+    const admin = STORE.isAdmin(STORE.getCurrentUser());
+    $('#scope-note').innerHTML = admin
+      ? 'Showing <b>all activity</b> across the system. The log holds the most recent 1,500 entries and syncs to Box with the project data.'
+      : 'Showing activity on <b>the projects you can see</b>. Admins see the full system log.';
+
+    const feed = $('#feed');
+    if (!rows.length) {
+      feed.innerHTML = '<div class="empty"><h3>Nothing logged in this window.</h3>'
+        + '<p>The log records every project create, edit, status change and deletion — with the fields that changed. '
+        + 'Widen the date range, or clear the filters. Entries begin from the first save after logging was switched on.</p></div>';
+      return;
+    }
+
+    // group by calendar day
+    const groups = [];
+    const byDay = {};
+    rows.forEach(e => {
+      const d = new Date(e.ts);
+      const key = d.toISOString().slice(0, 10);
+      if (!byDay[key]) { byDay[key] = { key, d, rows: [] }; groups.push(byDay[key]); }
+      byDay[key].rows.push(e);
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const yday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const shown = rows.slice(0, limit);
+    const shownSet = new Set(shown);
+
+    feed.innerHTML = groups.map(g => {
+      const items = g.rows.filter(e => shownSet.has(e));
+      if (!items.length) return '';
+      const label = g.key === today ? 'Today' : g.key === yday ? 'Yesterday'
+        : g.d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      return '<div class="daygrp"><div class="dayhead"><h2>' + esc(label) + '</h2>'
+        + '<span class="dcount">' + items.length + ' change' + (items.length === 1 ? '' : 's') + '</span></div>'
+        + items.map(e => {
+          const t = new Date(e.ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          const nm = projName(e), cl = projClient(e);
+          const link = e.projectId && STORE.getProject(e.projectId)
+            ? '<a class="e-proj" href="Universal Fee Calculator.html?id=' + esc(e.projectId) + '">' + esc(nm) + '</a>'
+            : '<span class="e-proj">' + esc(nm) + '</span>';
+          return '<div class="ent">'
+            + '<div class="e-time">' + esc(t) + '</div>'
+            + '<div class="e-who"><b>' + esc(e.actorName || e.actor || 'Unknown') + '</b>'
+              + (e.viewingAs ? '<span>while previewing ' + esc(e.viewingAs) + '</span>' : '') + '</div>'
+            + '<div class="e-main">'
+              + '<div class="e-top"><span class="badge ' + esc(e.action) + '">' + esc(ACTION_LABEL[e.action] || e.action) + '</span>'
+              + link + (cl ? '<span class="e-client">' + esc(cl) + '</span>' : '') + '</div>'
+              + '<div class="e-line">' + headline(e) + '</div>'
+              + chips(e)
+            + '</div></div>';
+        }).join('') + '</div>';
+    }).join('')
+      + (rows.length > limit ? '<div class="more"><button class="btn" id="more">Show more (' + (rows.length - limit) + ' older)</button></div>' : '');
+
+    const mb = document.getElementById('more');
+    if (mb) mb.addEventListener('click', () => { limit += 200; render(); });
+  }
+
+  function exportCsv() {
+    const rows = filtered();
+    const head = ['Timestamp', 'Person', 'Email', 'Action', 'Project', 'Client', 'Summary', 'Field', 'From', 'To', 'Net fee from', 'Net fee to'];
+    const lines = [head.join(',')];
+    const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    rows.forEach(e => {
+      const m = e.meta || {};
+      const base = [e.ts, e.actorName || '', e.actor || '', ACTION_LABEL[e.action] || e.action, projName(e), projClient(e),
+        headline(e).replace(/<[^>]+>/g, '')];
+      const fee = m.fee ? [m.fee.from, m.fee.to] : ['', ''];
+      const ch = m.changes || [];
+      if (!ch.length) lines.push(base.concat(['', '', ''], fee).map(q).join(','));
+      else ch.forEach(c => lines.push(base.concat([c.field, c.from, c.to], fee).map(q).join(',')));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ppm-change-log-' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function wire() {
+    let t;
+    $('#search').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { search = e.target.value.trim(); limit = 200; render(); }, 160); });
+    $('#f-who').addEventListener('change', e => { who = e.target.value; limit = 200; render(); });
+    $('#f-action').addEventListener('change', e => { action = e.target.value; limit = 200; render(); });
+    $('#f-range').addEventListener('change', e => { rangeDays = e.target.value ? parseInt(e.target.value, 10) : 0; limit = 200; render(); });
+    $('#csv').addEventListener('click', exportCsv);
+  }
+
+  function boot() { wire(); render(); }
+  if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
+})();
+</script>
+<script src="universal-fee-calc/nav.js"></script>
+</body>
+</html>

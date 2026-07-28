@@ -3,7 +3,7 @@
    Rates Catalog — ENGINE (no confidential numbers in this file)
 
    ── WHY THIS FILE HAS NO RATES ───────────────────────────────
-   The confidential Macro 2024 rate grid (rack rates, cost-rate
+   The confidential PPM 2024 rate grid (rack rates, cost-rate
    FLOORS, target discounts, Comcast reference rates) is NOT in the
    shipped code — anything in the deployed bundle is world-readable
    at its URL with no login. The grid lives in Box as `rates.json`
@@ -77,7 +77,7 @@
     }));
   }
 
-  /* ── Page 2: Macro Title → Rate Level mapping (NO rates — safe in code) ──
+  /* ── Page 2: Staff Title → Rate Level mapping (NO rates — safe in code) ──
      Bridges arbitrary HR / "Savills" staff titles to a rate family + tier.
      sublevel 1 → high tier, 2 → mid, 3 → low.                      */
   const SUB_TO_TIER = { 1: 'high', 2: 'mid', 3: 'low' };
@@ -164,6 +164,22 @@
       this.hydrated = true;
       try { document.dispatchEvent(new CustomEvent('ufc:rates', { detail: { count: this.titles.length } })); } catch (e) {}
       return this;
+    },
+
+    /* Build a DETACHED catalog from a payload WITHOUT mutating the live one.
+       Used by Rate Grid Reconciliation to price against a candidate grid
+       (dry-run) before any commit. Shares the static maps; own titles. */
+    detachedFrom(payload) {
+      const grid = payload && Array.isArray(payload.grid) ? payload.grid
+                 : Array.isArray(payload) ? payload : null;
+      if (!grid) throw new Error('rates payload missing grid');
+      return {
+        baseYear: (payload && payload.baseYear) || this.baseYear,
+        source: (payload && payload.source) || 'candidate grid',
+        hmlSpread: this.hmlSpread, hmlMode: this.hmlMode, annualHrs: this.annualHrs,
+        groups: this.groups, staffTitleMap: this.staffTitleMap, legacyAlias: this.legacyAlias,
+        titles: buildTitles(grid), hydrated: true, detached: true,
+      };
     },
   };
 

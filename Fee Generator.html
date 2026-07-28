@@ -1,580 +1,666 @@
 <!DOCTYPE html><html lang="en"><head>
-
-
-
-
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Savills PPM · Fee Generator</title>
+<title>Savills PPM · Fee &amp; Revenue System</title>
 <link rel="stylesheet" href="design-system/colors_and_type.css">
 <style>
-  :root {
-    --hair: rgba(37,39,58,0.10);
-    --hair-strong: rgba(37,39,58,0.18);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: #f3f3f0; font-family: var(--font-display); color: var(--sav-navy); }
-  a { color: inherit; }
-  .wrap { max-width: 1320px; margin: 0 auto; padding: 56px 64px 110px; }
-  @media (max-width: 900px) { .wrap { padding: 32px 22px 80px; } }
-
-  /* ===== Header ===== */
-  .head {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 32px;
-    align-items: end;
-    padding-bottom: 26px;
-    border-bottom: 4px solid var(--sav-navy);
-    margin-bottom: 44px;
-  }
-  .head .logo { width: 76px; height: 76px; }
-  .head .lbl {
-    font-weight: 700; font-size: 12px; letter-spacing: 0.22em;
-    text-transform: uppercase; color: var(--sav-steel); margin-bottom: 10px;
-  }
-  .head h1 {
-    font-weight: 900; font-size: 52px; line-height: 0.98;
-    letter-spacing: -0.02em; margin: 0 0 12px; color: var(--sav-navy);
-  }
-  .head h1 .em { color: var(--sav-red); }
-  .head .sub {
-    font-family: var(--font-body); font-size: 15.5px; color: var(--sav-steel);
-    max-width: 720px; line-height: 1.5;
-  }
-  .head .meta {
-    text-align: right; font-family: var(--font-body); font-size: 12px;
-    color: var(--sav-steel); line-height: 1.6; white-space: nowrap;
-  }
-  .head .meta strong { font-family: var(--font-display); color: var(--sav-navy); }
-  @media (max-width: 900px) {
-    .head { grid-template-columns: 1fr; gap: 16px; align-items: start; }
-    .head .meta { text-align: left; }
-    .head h1 { font-size: 38px; }
-  }
-
-  /* ===== Section scaffolding ===== */
-  section { margin-bottom: 64px; }
-  .sec-head {
-    display: flex; align-items: baseline; gap: 16px;
-    margin-bottom: 26px; padding-bottom: 12px;
-    border-bottom: 2px solid var(--sav-navy);
-  }
-  .sec-head .ix {
-    font-weight: 700; font-size: 11px; letter-spacing: 0.20em;
-    text-transform: uppercase; color: var(--sav-teal);
-  }
-  .sec-head h2 { font-weight: 900; font-size: 26px; margin: 0; color: var(--sav-navy); letter-spacing: -0.01em; }
-  .sec-head .h-meta { margin-left: auto; font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); }
-
-  /* ===== Overview band ===== */
-  .overview {
-    background: var(--sav-navy); color: #fff;
-    padding: 40px 48px; display: grid;
-    grid-template-columns: 1.3fr 1fr 1fr; gap: 44px;
-  }
-  .overview .lede { grid-column: 1 / -1; }
-  .overview .lede h3 { font-weight: 900; font-size: 23px; margin: 0 0 10px; color: #fff; letter-spacing: -0.01em; }
-  .overview .lede p { font-family: var(--font-body); font-size: 15px; line-height: 1.6; margin: 0; color: rgba(255,255,255,0.82); max-width: 90ch; }
-  .overview .lede p strong { color: var(--sav-yellow); font-family: var(--font-display); font-weight: 700; }
-  .pillar { border-top: 3px solid var(--sav-yellow); padding-top: 14px; }
-  .pillar .pn { font-weight: 900; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sav-yellow); margin-bottom: 8px; }
-  .pillar h4 { font-weight: 700; font-size: 15px; margin: 0 0 8px; color: #fff; }
-  .pillar p { font-family: var(--font-body); font-size: 13px; line-height: 1.55; margin: 0; color: rgba(255,255,255,0.72); }
-  @media (max-width: 900px) { .overview { grid-template-columns: 1fr; gap: 24px; padding: 28px 24px; } }
-
-  /* ===== Workflow pipeline ===== */
-  .flow {
-    background: #fff; border: 1px solid var(--hair);
-    padding: 32px 36px;
-    display: grid; grid-template-columns: repeat(4, 1fr) ; gap: 0;
-    position: relative;
-  }
-  .flow-node { padding: 4px 22px; position: relative; }
-  .flow-node:not(:last-child)::after {
-    content: "→"; position: absolute; right: -10px; top: 16px;
-    font-size: 22px; color: var(--sav-red); font-weight: 700;
-  }
-  .flow-node .fn-step { font-weight: 700; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sav-teal); margin-bottom: 8px; }
-  .flow-node .fn-name { font-weight: 900; font-size: 16px; color: var(--sav-navy); margin-bottom: 6px; }
-  .flow-node .fn-desc { font-family: var(--font-body); font-size: 12.5px; line-height: 1.5; color: var(--sav-steel); }
-  .flow-note { margin-top: 18px; font-family: var(--font-body); font-size: 12.5px; color: var(--sav-steel); line-height: 1.55; }
-  .flow-note strong { font-family: var(--font-display); color: var(--sav-navy); }
-  @media (max-width: 900px) {
-    .flow { grid-template-columns: 1fr; gap: 20px; }
-    .flow-node { padding: 0 0 18px; border-bottom: 1px solid var(--hair); }
-    .flow-node:not(:last-child)::after { content: "↓"; right: auto; left: 0; top: auto; bottom: -2px; }
-  }
-
-  /* ===== Module cards ===== */
-  .modules { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
-  @media (max-width: 900px) { .modules { grid-template-columns: 1fr; } }
-  .mod {
-    display: flex; flex-direction: column;
-    background: #fff; border: 1px solid var(--hair);
-    text-decoration: none; color: inherit;
-    transition: box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
-  }
-  .mod:hover { box-shadow: inset 5px 0 0 0 var(--sav-yellow), 0 8px 28px rgba(37,39,58,0.10); border-color: var(--sav-navy); transform: translateY(-2px); }
-  .mod-top { display: flex; align-items: flex-start; gap: 16px; padding: 24px 26px 0; }
-  .mod-num {
-    flex: none; width: 40px; height: 40px;
-    display: flex; align-items: center; justify-content: center;
-    background: var(--sav-navy); color: var(--sav-yellow);
-    font-weight: 900; font-size: 16px;
-  }
-  .mod-titles { flex: 1; }
-  .mod-kicker { font-weight: 700; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 4px; }
-  .mod-name { font-weight: 900; font-size: 21px; color: var(--sav-navy); letter-spacing: -0.01em; line-height: 1.1; }
-  .mod-status {
-    flex: none; align-self: flex-start;
-    font-weight: 700; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
-    padding: 4px 9px; background: var(--sav-yellow); color: var(--sav-navy);
-  }
-  .mod-body { padding: 16px 26px 22px; flex: 1; }
-  .mod-lede { font-family: var(--font-body); font-size: 13.5px; line-height: 1.55; color: var(--sav-navy); margin: 0 0 16px; }
-  .mod-sub { font-weight: 700; font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sav-teal); margin: 0 0 8px; }
-  .mod ul { list-style: none; margin: 0 0 16px; padding: 0; }
-  .mod ul li { font-family: var(--font-body); font-size: 12.5px; line-height: 1.5; color: var(--sav-steel); padding-left: 16px; position: relative; margin-bottom: 5px; }
-  .mod ul li::before { content: "—"; position: absolute; left: 0; color: var(--sav-red); }
-  .mod ul li strong { color: var(--sav-navy); font-family: var(--font-display); font-weight: 700; }
-  .mod-feeds { font-family: var(--font-body); font-size: 12px; line-height: 1.5; color: var(--sav-steel); border-top: 1px dashed var(--hair-strong); padding-top: 12px; }
-  .mod-feeds strong { font-family: var(--font-display); color: var(--sav-navy); font-weight: 700; }
-  .mod-cta {
-    margin-top: auto; display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 26px; background: var(--sav-cream);
-    font-weight: 700; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sav-navy);
-  }
-  .mod:hover .mod-cta { background: var(--sav-yellow); }
-  .mod-cta .arr { font-size: 18px; }
-
-  /* ===== Under development ===== */
-  .dev-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-  @media (max-width: 900px) { .dev-grid { grid-template-columns: 1fr; } }
-  .dev {
-    background: repeating-linear-gradient(135deg, #fff, #fff 9px, #faf9f6 9px, #faf9f6 18px);
-    border: 1px dashed var(--hair-strong); padding: 22px 24px;
-  }
-  .dev-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
-  .dev-name { font-weight: 900; font-size: 17px; color: var(--sav-navy); }
-  .dev-phase { font-weight: 700; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; padding: 3px 8px; background: var(--sav-steel-20); color: var(--sav-steel); }
-  .dev-phase.next { background: #fff6b8; color: var(--sav-navy); }
-  .dev-desc { font-family: var(--font-body); font-size: 12.5px; line-height: 1.55; color: var(--sav-steel); margin: 0; }
-  .dev-desc strong { color: var(--sav-navy); font-family: var(--font-display); font-weight: 700; }
-
-  /* ===== Manual ===== */
-  .manual-intro { font-family: var(--font-body); font-size: 14px; line-height: 1.6; color: var(--sav-steel); max-width: 80ch; margin: -8px 0 24px; }
-  details.man {
-    background: #fff; border: 1px solid var(--hair); margin-bottom: 10px;
-  }
-  details.man[open] { box-shadow: inset 4px 0 0 0 var(--sav-teal); }
-  details.man > summary {
-    list-style: none; cursor: pointer; padding: 18px 24px;
-    display: flex; align-items: center; gap: 14px;
-  }
-  details.man > summary::-webkit-details-marker { display: none; }
-  .man-ix { font-weight: 900; font-size: 13px; color: var(--sav-teal); width: 26px; }
-  .man-title { font-weight: 900; font-size: 17px; color: var(--sav-navy); flex: 1; }
-  .man-toggle { font-family: var(--font-body); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sav-steel); }
-  details.man[open] .man-toggle::after { content: "Close"; }
-  details.man:not([open]) .man-toggle::after { content: "How to use"; }
-  .man-body { padding: 0 24px 24px 64px; }
-  @media (max-width: 900px) { .man-body { padding: 0 20px 22px; } }
-  .man-body ol { margin: 0; padding: 0; counter-reset: step; list-style: none; }
-  .man-body ol li {
-    font-family: var(--font-body); font-size: 13.5px; line-height: 1.6; color: var(--sav-navy);
-    position: relative; padding: 0 0 14px 34px; counter-increment: step;
-  }
-  .man-body ol li::before {
-    content: counter(step, decimal-leading-zero);
-    position: absolute; left: 0; top: 1px;
-    font-family: var(--font-display); font-weight: 900; font-size: 11px; color: var(--sav-red);
-  }
-  .man-body ol li strong { font-family: var(--font-display); font-weight: 700; }
-  .man-tip { margin-top: 8px; font-family: var(--font-body); font-size: 12.5px; line-height: 1.55; color: var(--sav-steel); border-top: 1px dashed var(--hair); padding-top: 12px; }
-  .man-tip strong { font-family: var(--font-display); color: var(--sav-navy); }
-
-  /* ===== Footer / CTA ===== */
-  .footer-cta {
-    background: var(--sav-yellow); padding: 34px 44px;
-    display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap;
-  }
-  .footer-cta h3 { font-weight: 900; font-size: 22px; margin: 0 0 6px; color: var(--sav-navy); letter-spacing: -0.01em; }
-  .footer-cta p { font-family: var(--font-body); font-size: 13.5px; line-height: 1.5; margin: 0; color: var(--sav-navy); max-width: 60ch; }
-  .footer-cta .btns { display: flex; gap: 12px; flex-wrap: wrap; }
-  .fbtn {
-    display: inline-flex; align-items: center; gap: 8px;
-    font-family: var(--font-display); font-weight: 700; font-size: 12px;
-    letter-spacing: 0.12em; text-transform: uppercase; padding: 14px 22px;
-    text-decoration: none; cursor: pointer; border: 0;
-  }
-  .fbtn.dark { background: var(--sav-navy); color: var(--sav-yellow); }
-  .fbtn.dark:hover { background: #14152a; }
-  .fbtn.ghost { background: transparent; color: var(--sav-navy); border: 2px solid var(--sav-navy); }
-  .fbtn.ghost:hover { background: var(--sav-navy); color: #fff; }
-
-  .colophon { margin-top: 28px; font-family: var(--font-body); font-size: 12px; line-height: 1.6; color: var(--sav-steel); }
-  .colophon strong { font-family: var(--font-display); color: var(--sav-navy); }
-
-  /* Override design-system underline on whole-card / button links */
-  .sav-doc a.mod, .sav-doc a.mod:hover,
-  .sav-doc a.fbtn, .sav-doc a.fbtn:hover { text-decoration: none; }
-  .sav-doc a.mod:hover { color: inherit; }
+:root{--hair:rgba(37,39,58,0.10);--hair-strong:rgba(37,39,58,0.18)}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#f3f3f0;font-family:var(--font-display);color:var(--sav-navy)}
+a{color:var(--sav-teal)}a:hover{color:var(--sav-navy)}
+.wrap{max-width:1320px;margin:0 auto;padding:56px 64px 110px}
+@media (max-width:900px){.wrap{padding:32px 22px 80px}}
+.head{display:grid;grid-template-columns:auto 1fr auto;gap:32px;align-items:end;padding-bottom:26px;border-bottom:4px solid var(--sav-navy);margin-bottom:44px}
+.head .logo{width:76px;height:76px}
+.head .lbl{font-weight:700;font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--sav-steel);margin-bottom:10px}
+.head h1{font-weight:900;font-size:52px;line-height:.98;letter-spacing:-.02em;margin:0 0 12px;color:var(--sav-navy)}
+.head h1 .em{color:var(--sav-red)}
+.head .sub{font-family:var(--font-body);font-size:15.5px;color:var(--sav-steel);max-width:760px;line-height:1.5}
+.head .meta{text-align:right;font-family:var(--font-body);font-size:12px;color:var(--sav-steel);line-height:1.6;white-space:nowrap}
+.head .meta strong{font-family:var(--font-display);color:var(--sav-navy)}
+@media (max-width:900px){.head{grid-template-columns:1fr;gap:16px;align-items:start}.head .meta{text-align:left}.head h1{font-size:38px}}
+section{margin-bottom:64px}
+.sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:26px;padding-bottom:12px;border-bottom:2px solid var(--sav-navy)}
+.sec-head .ix{font-weight:700;font-size:11px;letter-spacing:.20em;text-transform:uppercase;color:var(--sav-teal)}
+.sec-head h2{font-weight:900;font-size:26px;margin:0;color:var(--sav-navy);letter-spacing:-.01em}
+.sec-head .h-meta{margin-left:auto;font-family:var(--font-body);font-size:12px;color:var(--sav-steel)}
+.overview{background:var(--sav-navy);color:#fff;padding:40px 48px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:44px}
+.overview .lede{grid-column:1/-1}
+.overview .lede h3{font-weight:900;font-size:23px;margin:0 0 10px;color:#fff;letter-spacing:-.01em}
+.overview .lede p{font-family:var(--font-body);font-size:15px;line-height:1.6;margin:0;color:rgba(255,255,255,.82);max-width:95ch}
+.overview .lede p strong{color:var(--sav-yellow);font-family:var(--font-display);font-weight:700}
+.pillar{border-top:3px solid var(--sav-yellow);padding-top:14px}
+.pillar .pn{font-weight:900;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--sav-yellow);margin-bottom:8px}
+.pillar h4{font-weight:700;font-size:15px;margin:0 0 8px;color:#fff}
+.pillar p{font-family:var(--font-body);font-size:13px;line-height:1.55;margin:0;color:rgba(255,255,255,.72)}
+@media (max-width:900px){.overview{grid-template-columns:1fr;gap:24px;padding:28px 24px}}
+.flow{background:#fff;border:1px solid var(--hair);padding:32px 36px;display:grid;grid-template-columns:repeat(5,1fr);gap:0;position:relative}
+.flow-node{padding:4px 20px;position:relative}
+.flow-node:not(:last-child)::after{content:"→";position:absolute;right:-9px;top:16px;font-size:20px;color:var(--sav-red);font-weight:700}
+.flow-node .fn-step{font-weight:700;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--sav-teal);margin-bottom:8px}
+.flow-node .fn-name{font-weight:900;font-size:15px;color:var(--sav-navy);margin-bottom:6px;line-height:1.15}
+.flow-node .fn-desc{font-family:var(--font-body);font-size:12.5px;line-height:1.5;color:var(--sav-steel)}
+.flow-note{margin-top:18px;font-family:var(--font-body);font-size:12.5px;color:var(--sav-steel);line-height:1.55}
+.flow-note strong{font-family:var(--font-display);color:var(--sav-navy)}
+@media (max-width:900px){.flow{grid-template-columns:1fr;gap:20px}.flow-node{padding:0 0 18px;border-bottom:1px solid var(--hair)}.flow-node:not(:last-child)::after{content:"↓";right:auto;left:0;top:auto;bottom:-2px}}
+.modules{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+@media (max-width:900px){.modules{grid-template-columns:1fr}}
+.mod{display:flex;flex-direction:column;background:#fff;border:1px solid var(--hair);text-decoration:none;color:inherit;transition:box-shadow 150ms ease,transform 150ms ease,border-color 150ms ease}
+.mod:hover{box-shadow:inset 5px 0 0 0 var(--sav-yellow),0 8px 28px rgba(37,39,58,.10);border-color:var(--sav-navy);transform:translateY(-2px)}
+.mod-top{display:flex;align-items:flex-start;gap:16px;padding:24px 26px 0}
+.mod-num{flex:none;width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:var(--sav-navy);color:var(--sav-yellow);font-weight:900;font-size:16px}
+.mod-titles{flex:1}
+.mod-kicker{font-weight:700;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--sav-steel);margin-bottom:4px}
+.mod-name{font-weight:900;font-size:21px;color:var(--sav-navy);letter-spacing:-.01em;line-height:1.1}
+.mod-status{flex:none;align-self:flex-start;font-weight:700;font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:4px 9px;background:var(--sav-yellow);color:var(--sav-navy)}
+.mod-status.adm{background:var(--sav-navy);color:var(--sav-yellow)}
+.mod-body{padding:16px 26px 22px;flex:1}
+.mod-lede{font-family:var(--font-body);font-size:13.5px;line-height:1.55;color:var(--sav-navy);margin:0 0 16px}
+.mod-sub{font-weight:700;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--sav-teal);margin:0 0 8px}
+.mod ul{list-style:none;margin:0 0 16px;padding:0}
+.mod ul li{font-family:var(--font-body);font-size:12.5px;line-height:1.5;color:var(--sav-steel);padding-left:16px;position:relative;margin-bottom:5px}
+.mod ul li::before{content:"—";position:absolute;left:0;color:var(--sav-red)}
+.mod ul li strong{color:var(--sav-navy);font-family:var(--font-display);font-weight:700}
+.mod-feeds{font-family:var(--font-body);font-size:12px;line-height:1.5;color:var(--sav-steel);border-top:1px dashed var(--hair-strong);padding-top:12px}
+.mod-feeds strong{font-family:var(--font-display);color:var(--sav-navy);font-weight:700}
+.mod-cta{margin-top:auto;display:flex;align-items:center;justify-content:space-between;padding:14px 26px;background:var(--sav-cream);font-weight:700;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--sav-navy)}
+.mod:hover .mod-cta{background:var(--sav-yellow)}
+.mod-cta .arr{font-size:18px}
+.adm-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+@media (max-width:900px){.adm-grid{grid-template-columns:1fr}}
+.adm{display:flex;flex-direction:column;gap:8px;background:#fff;border:1px solid var(--hair);border-top:3px solid var(--sav-navy);padding:22px 24px;text-decoration:none;color:inherit;transition:box-shadow 150ms ease,transform 150ms ease}
+.adm:hover{box-shadow:0 8px 24px rgba(37,39,58,.10);transform:translateY(-2px)}
+.adm-name{font-weight:900;font-size:17px;color:var(--sav-navy)}
+.adm-desc{font-family:var(--font-body);font-size:12.5px;line-height:1.55;color:var(--sav-steel);margin:0}
+.adm-desc strong{color:var(--sav-navy);font-family:var(--font-display);font-weight:700}
+.adm-go{margin-top:auto;font-weight:700;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--sav-teal)}
+.access{display:grid;grid-template-columns:1fr 1fr;gap:22px;background:#fff;border:1px solid var(--hair);padding:32px 36px}
+@media (max-width:900px){.access{grid-template-columns:1fr;padding:24px}}
+.access h4{font-weight:900;font-size:16px;margin:0 0 8px;color:var(--sav-navy)}
+.access p{font-family:var(--font-body);font-size:13px;line-height:1.6;margin:0 0 10px;color:var(--sav-steel)}
+.access p strong{font-family:var(--font-display);color:var(--sav-navy);font-weight:700}
+.access ul{list-style:none;margin:0;padding:0}
+.access ul li{font-family:var(--font-body);font-size:12.5px;line-height:1.55;color:var(--sav-steel);padding-left:16px;position:relative;margin-bottom:5px}
+.access ul li::before{content:"—";position:absolute;left:0;color:var(--sav-red)}
+.access ul li strong{font-family:var(--font-display);color:var(--sav-navy);font-weight:700}
+.manual-intro{font-family:var(--font-body);font-size:14px;line-height:1.6;color:var(--sav-steel);max-width:88ch;margin:-8px 0 24px}
+.manual-intro strong{font-family:var(--font-display);color:var(--sav-navy)}
+details.man{background:#fff;border:1px solid var(--hair);margin-bottom:10px}
+details.man[open]{box-shadow:inset 4px 0 0 0 var(--sav-teal)}
+details.man>summary{list-style:none;cursor:pointer;padding:18px 24px;display:flex;align-items:center;gap:14px}
+details.man>summary::-webkit-details-marker{display:none}
+.man-ix{font-weight:900;font-size:13px;color:var(--sav-teal);width:26px}
+.man-title{font-weight:900;font-size:17px;color:var(--sav-navy);flex:1}
+.man-toggle{font-family:var(--font-body);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--sav-steel)}
+details.man[open] .man-toggle::after{content:"Close"}
+details.man:not([open]) .man-toggle::after{content:"How to use"}
+.man-body{padding:0 24px 24px 64px}
+@media (max-width:900px){.man-body{padding:0 20px 22px}}
+.man-body ol{margin:0;padding:0;counter-reset:step;list-style:none}
+.man-body ol li{font-family:var(--font-body);font-size:13.5px;line-height:1.6;color:var(--sav-navy);position:relative;padding:0 0 14px 34px;counter-increment:step}
+.man-body ol li::before{content:counter(step,decimal-leading-zero);position:absolute;left:0;top:1px;font-family:var(--font-display);font-weight:900;font-size:11px;color:var(--sav-red)}
+.man-body ol li strong{font-family:var(--font-display);font-weight:700}
+.man-tip{margin-top:8px;font-family:var(--font-body);font-size:12.5px;line-height:1.55;color:var(--sav-steel);border-top:1px dashed var(--hair);padding-top:12px}
+.man-tip strong{font-family:var(--font-display);color:var(--sav-navy)}
+.docs{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+@media (max-width:900px){.docs{grid-template-columns:1fr}}
+.doc{display:flex;flex-direction:column;gap:8px;background:var(--sav-cream);border:1px solid var(--hair);padding:22px 24px;text-decoration:none;color:inherit;transition:background 150ms ease}
+.doc:hover{background:var(--sav-yellow)}
+.doc-kick{font-weight:700;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--sav-steel)}
+.doc-name{font-weight:900;font-size:17px;color:var(--sav-navy)}
+.doc-desc{font-family:var(--font-body);font-size:12.5px;line-height:1.55;color:var(--sav-steel);margin:0}
+.footer-cta{background:var(--sav-yellow);padding:34px 44px;display:flex;align-items:center;justify-content:space-between;gap:28px;flex-wrap:wrap}
+.footer-cta h3{font-weight:900;font-size:22px;margin:0 0 6px;color:var(--sav-navy);letter-spacing:-.01em}
+.footer-cta p{font-family:var(--font-body);font-size:13.5px;line-height:1.5;margin:0;color:var(--sav-navy);max-width:60ch}
+.footer-cta .btns{display:flex;gap:12px;flex-wrap:wrap}
+.fbtn{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-display);font-weight:700;font-size:12px;letter-spacing:.12em;text-transform:uppercase;padding:14px 22px;text-decoration:none;cursor:pointer;border:0}
+.fbtn.dark{background:var(--sav-navy);color:var(--sav-yellow)}
+.fbtn.dark:hover{background:#14152a}
+.fbtn.ghost{background:transparent;color:var(--sav-navy);border:2px solid var(--sav-navy)}
+.fbtn.ghost:hover{background:var(--sav-navy);color:#fff}
+.colophon{margin-top:28px;font-family:var(--font-body);font-size:12px;line-height:1.6;color:var(--sav-steel)}
+.colophon strong{font-family:var(--font-display);color:var(--sav-navy)}
+.sav-doc a.mod,.sav-doc a.mod:hover,.sav-doc a.adm,.sav-doc a.adm:hover,.sav-doc a.doc,.sav-doc a.doc:hover,.sav-doc a.fbtn,.sav-doc a.fbtn:hover{text-decoration:none}
+.sav-doc a.mod:hover,.sav-doc a.adm:hover,.sav-doc a.doc:hover{color:inherit}
 </style>
-<style></style><style></style></head>
-<body class="sav-doc" data-new-gr-c-s-check-loaded="14.1297.0" data-gr-ext-installed="" data-gr-aaa-loaded="14.1297.0" data-gr-aaa-notch-connection-id="1780097063931-0.8922716635679421" style="" data-new-gr-c-s-loaded="14.1297.0">
+</head>
+<body class="sav-doc">
 <div class="wrap">
 
-  <!-- ===== Header ===== -->
-  <header class="head">
-    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
-    <div>
-      <div class="lbl" style="">Savills · Program &amp; PROject Management</div>
-      <h1 spellcheck="false" style="">PPM <span style="color: rgb(206, 24, 30);">Fee Proposal&nbsp;</span><span class="em" style="">Generator.</span></h1>
-      <div class="sub" spellcheck="false" style="">One system for authoring fee matrices, recording every fee we've ever quoted, and benchmarking the next pitch against our own history — with planned-vs-actuals on the roadmap.</div>
-    </div>
-    <div class="meta" style="">
-      <strong>Release</strong> &nbsp; Phases 1–3 live · Projections (first cut)<br>
-      <strong>Owner</strong>&nbsp; &nbsp;Sarah Abdin<br>
-      <strong>Storage</strong> &nbsp; Local (browser)<br>
-      <strong>Updated</strong> &nbsp; May 2026
-    </div>
-  </header>
+<header class="head">
+<img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+<div>
+<div class="lbl">Savills · Program &amp; Project Management</div>
+<h1>PPM <span class="em">Fee &amp; Revenue System.</span></h1>
+<div class="sub">One system for pricing work, holding every fee we've ever quoted, forecasting the revenue that comes out of it, and measuring what we actually earned against it.</div>
+</div>
+<div class="meta">
+<strong>Release</strong> &nbsp; v1.0 · in production<br>
+<strong>Owner</strong> &nbsp; Sarah Abdin<br>
+<strong>Storage</strong> &nbsp; Box (shared, live sync)<br>
+<strong>Sign-in</strong> &nbsp; Box / Savills SSO<br>
+<strong>Updated</strong> &nbsp; July 2026
+</div>
+</header>
 
-  <!-- ===== Overview ===== -->
-  <section>
-    <div class="overview">
-      <div class="lede">
-        <h3>What this is.</h3>
-        <p>The Fee Generator turns one-off proposal spreadsheets into a single, queryable system. Build a new pitch in the <strong>Universal Fee Calculator</strong>, or drop a past proposal into the <strong>Ingestion Studio</strong> and let it parse the roles, rates, phases and fees. Everything lands in the <strong>Projects Index</strong> — the institutional memory — which the <strong>Benchmarking Dashboard</strong> reads to answer "what did we charge for work like this before?" The same rate engine (the Macro 2024 grid, with its cost-rate floors) runs underneath all of it, so every number reconciles end to end.</p>
-      </div>
-      <div class="pillar">
-        <div class="pn">Pillar 01</div>
-        <h4>Author &amp; benchmark</h4>
-        <p spellcheck="false" style="">Every fee matrix is built in the calculator and saved to the database. Every historical proposal gets reconstructed and added, so comparables are one filter away.</p>
-      </div>
-      <div class="pillar">
-        <div class="pn">Pillar 02</div>
-        <h4>Plan vs. actual</h4>
-        <p>When a project goes active, the "sold" hour plan becomes the baseline. Clockify actuals will reconcile against it by role and phase — coming in Phase 4.</p>
-      </div>
-    </div>
-  </section>
+<section>
+<div class="overview">
+<div class="lede">
+<h3>What this is.</h3>
+<p>One record per project, entered once, used everywhere. Price the work in the <strong>Fee Calculator</strong> — roles off the PPM rate grid, allocations by phase and month, escalation, discounts, broker splits and pass-through all in one place. It saves to the <strong>Projects Index</strong>, which every other tool reads: <strong>Revenue Projections</strong> for the month-by-month forecast, <strong>Revenue Studio</strong> for budget-vs-pipeline and the exec report, <strong>Benchmarking</strong> and <strong>Proposal Analytics</strong> for what we've charged and why we win, and <strong>Profitability</strong> for real margin once time is booked. Everything lives in Box, syncs live, and reconciles to the same rate engine end to end.</p>
+</div>
+<div class="pillar">
+<div class="pn">Pillar 01</div>
+<h4>Price it once</h4>
+<p>Every fee matrix is built on the same grid, with cost-rate floors, change orders and version history. No two spreadsheets to reconcile.</p>
+</div>
+<div class="pillar">
+<div class="pn">Pillar 02</div>
+<h4>Forecast it automatically</h4>
+<p>The monthly schedule behind each fee <em>is</em> the forecast. Ratings 1–7 set confidence; the roll-up, the weighted view and the exec report follow from the same numbers.</p>
+</div>
+<div class="pillar">
+<div class="pn">Pillar 03</div>
+<h4>Prove the margin</h4>
+<p>Clockify hours land against each project's plan at cost rates, so planned-vs-actual and margin by month read off the same record that priced the job.</p>
+</div>
+</div>
+</section>
 
-  <!-- ===== Workflow ===== -->
-  <section>
-    <header class="sec-head">
-      <span class="ix">How it connects</span>
-      <h2>The workflow.</h2>
-      <span class="h-meta">Each tool feeds the next</span>
-    </header>
-    <div class="flow">
-      <div class="flow-node">
-        <div class="fn-step">Capture</div>
-        <div class="fn-name">Author or ingest</div>
-        <div class="fn-desc">Build a new proposal in the Calculator, or parse an existing one in the Ingestion Studio.</div>
-      </div>
-      <div class="flow-node">
-        <div class="fn-step">Store</div>
-        <div class="fn-name">Project record</div>
-        <div class="fn-desc">A structured record — roles, rates, phases, fees, status — saved to the Index.</div>
-      </div>
-      <div class="flow-node">
-        <div class="fn-step">Compare</div>
-        <div class="fn-name">Benchmark</div>
-        <div class="fn-desc" style="">The Dashboard reads every record for comparable rates, spreads and comparison.</div>
-      </div>
-      <div class="flow-node">
-        <div class="fn-step">Track</div>
-        <div class="fn-name">Plan vs. actual</div>
-        <div class="fn-desc">Active projects reconcile sold hours against Clockify time — Phase 4.</div>
-      </div>
-    </div>
-    <div class="flow-note"><strong>The loop:</strong> benchmarks from past records inform the next proposal in the Calculator — which becomes the next record. The database gets smarter with every pitch.</div>
-  </section>
+<section>
+<header class="sec-head">
+<span class="ix">How it connects</span>
+<h2>The workflow.</h2>
+<span class="h-meta">Enter once — every downstream view follows</span>
+</header>
+<div class="flow">
+<div class="flow-node">
+<div class="fn-step">Price</div>
+<div class="fn-name">Fee Calculator</div>
+<div class="fn-desc">Build the team, phases, allocations and assumptions. Fee, schedule and margin update live.</div>
+</div>
+<div class="flow-node">
+<div class="fn-step">Record</div>
+<div class="fn-name">Projects Index</div>
+<div class="fn-desc">A structured record in Box — roles, rates, phases, months, status, versions, change orders.</div>
+</div>
+<div class="flow-node">
+<div class="fn-step">Forecast</div>
+<div class="fn-name">Revenue Projections</div>
+<div class="fn-desc">Monthly billings by project and service line, rated 1–7, weighted and filterable.</div>
+</div>
+<div class="flow-node">
+<div class="fn-step">Report</div>
+<div class="fn-name">Revenue Studio</div>
+<div class="fn-desc">Pipeline against a frozen Budget / RF baseline, scenarios, and the exec report.</div>
+</div>
+<div class="flow-node">
+<div class="fn-step">Reconcile</div>
+<div class="fn-name">Profitability</div>
+<div class="fn-desc">Clockify hours at cost rate laid against the plan — margin per project, per month.</div>
+</div>
+</div>
+<div class="flow-note"><strong>The loop:</strong> what we won, what we lost and what it earned all flow back into Benchmarking and Proposal Analytics — so the next proposal is priced on evidence, not memory.</div>
+</section>
 
-  <!-- ===== Live modules ===== -->
-  <section>
-    <header class="sec-head">
-      <span class="ix">Live tools</span>
-      <h2 style="">Five modules. So far...</h2>
-      <span class="h-meta">Click any card to open it</span>
-    </header>
-    <div class="modules">
+<section>
+<header class="sec-head">
+<span class="ix">Everyone</span>
+<h2>The core tools.</h2>
+<span class="h-meta">Click any card to open it</span>
+</header>
+<div class="modules">
 
-      <!-- Calculator -->
-      <a class="mod" href="Universal Fee Calculator.html">
-        <div class="mod-top">
-          <div class="mod-num">01</div>
-          <div class="mod-titles">
-            <div class="mod-kicker">The workbench</div>
-            <div class="mod-name">Universal Fee Calculator</div>
-          </div>
-          <span class="mod-status">Live</span>
-        </div>
-        <div class="mod-body">
-          <p class="mod-lede" spellcheck="false" style="font-weight: 400;">Build a single proposal end to end: pick roles from the rate grid, load staffing by phase, and watch the fee, schedule and margin update live. THEN Export to Excel, or download as PDF for incorporation into the client facing proposal.</p>
-          <div class="mod-sub">What it does</div>
-          <ul>
-            <li>Role catalog off the <strong>Macro 2024 grid</strong> — High/Mid/Low tiers, grid or contracted rates</li>
-            <li><strong>Cost-rate floor</strong> advisory flags anyone billed below cost</li>
-            <li><strong>Fit to target</strong> back-solves staffing + discount to the proposal's number</li>
-            <li style="">Monthly schedule — by phase or flatlined; Excel export</li>
-          </ul>
-          <div class="mod-feeds" style=""><strong>Feeds:</strong> saves a project record to the Index; reads the shared rate engine.</div>
-        </div>
-        <div class="mod-cta"><span>Open the calculator</span><span class="arr">→</span></div>
-      </a>
+<a class="mod" href="Universal Fee Calculator.html">
+<div class="mod-top">
+<div class="mod-num">01</div>
+<div class="mod-titles"><div class="mod-kicker">The workbench</div><div class="mod-name">Universal Fee Calculator</div></div>
+<span class="mod-status">Live</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">Build a proposal end to end: pick titles off the rate grid, group the team by workstream, load allocations by phase or month, and watch fee, schedule and margin update as you type. Export to Excel or print to PDF for the client-facing proposal.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li>Role catalog off the <strong>PPM rate grid</strong> — High/Mid/Low tiers, grid or contracted rates, cost-floor flags</li>
+<li>Allocations as <strong>% FTE or hours</strong>, by phase or opened out month by month; groups shift forward/back in time</li>
+<li><strong>Fixed vs. NTE</strong>, escalation, rate lock, industry adjustment, client discount, <strong>broker fee share</strong> and <strong>pass-through</strong> lines</li>
+<li><strong>Fit to target</strong> solves the discount to a known number; <strong>change orders</strong> fork the contract and diff against it</li>
+<li><strong>Version history</strong> on every save, with a restorable snapshot and role-level diff</li>
+</ul>
+<div class="mod-feeds"><strong>Feeds:</strong> the project record every other tool reads.</div>
+</div>
+<div class="mod-cta"><span>Open the calculator</span><span class="arr">→</span></div>
+</a>
 
-      <!-- Ingestion -->
-      <a class="mod" href="Ingestion Studio.html">
-        <div class="mod-top">
-          <div class="mod-num">02</div>
-          <div class="mod-titles">
-            <div class="mod-kicker">From proposal to record</div>
-            <div class="mod-name">Ingestion Studio</div>
-          </div>
-          <span class="mod-status">Live</span>
-        </div>
-        <div class="mod-body">
-          <p class="mod-lede">Drop in a past proposal — PDF, Excel or pasted text — and it parses the roster, rates, phases and fees into a clean record for review.</p>
-          <div class="mod-sub">What it does</div>
-          <ul>
-            <li>Extracts <strong>people, titles, rates, phases &amp; fees</strong> from messy source files</li>
-            <li>Validates each rate against the grid band and <strong>back-maps to a title/tier</strong></li>
-            <li>Flags below-floor and out-of-range rates before you save</li>
-            <li>Seeds a starter team from named contacts when there's no roster</li>
-          </ul>
-          <div class="mod-feeds"><strong>Feeds:</strong> creates a project record and opens it in the Calculator.</div>
-        </div>
-        <div class="mod-cta"><span>Open the studio</span><span class="arr">→</span></div>
-      </a>
+<a class="mod" href="Projects Index.html">
+<div class="mod-top">
+<div class="mod-num">02</div>
+<div class="mod-titles"><div class="mod-kicker">The database</div><div class="mod-name">Projects Index</div></div>
+<span class="mod-status">Live</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">Every fee PPM has proposed, in one searchable list — filter by status, client, industry, leader or service line, and open any project straight back into the calculator.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li>Portfolio <strong>KPIs</strong> — pipeline, booked, active, win rate, contract value</li>
+<li>Net fee per project from the <strong>same rate engine</strong> as the calculator, change orders folded into the revised contract</li>
+<li><strong>+ New project</strong>, duplicate, change order, restore deleted, and a full <strong>change log</strong> of who changed what</li>
+<li>Export / import the whole database as JSON for backup</li>
+</ul>
+<div class="mod-feeds"><strong>Feeds:</strong> the source of truth for projections, benchmarking and analytics.</div>
+</div>
+<div class="mod-cta"><span>Open the index</span><span class="arr">→</span></div>
+</a>
 
-      <!-- Index -->
-      <a class="mod" href="Projects Index.html">
-        <div class="mod-top">
-          <div class="mod-num">03</div>
-          <div class="mod-titles">
-            <div class="mod-kicker">The database</div>
-            <div class="mod-name">Projects Index</div>
-          </div>
-          <span class="mod-status">Live</span>
-        </div>
-        <div class="mod-body">
-          <p class="mod-lede">Every fee we've proposed, in one searchable list — filter by status, client, industry or lead, and open any project back into the calculator.</p>
-          <div class="mod-sub">What it does</div>
-          <ul>
-            <li>Searchable, filterable list of <strong>all project records</strong></li>
-            <li>Portfolio KPIs — pipeline, won, active, win rate, all-time</li>
-            <li>Net fee per project from the <strong>same rate engine</strong> as the calculator</li>
-            <li>Export / import the whole database as JSON</li>
-          </ul>
-          <div class="mod-feeds"><strong>Feeds:</strong> the source of truth the Benchmarking Dashboard reads.</div>
-        </div>
-        <div class="mod-cta"><span>Open the index</span><span class="arr">→</span></div>
-      </a>
+<a class="mod" href="Revenue Projections.html">
+<div class="mod-top">
+<div class="mod-num">03</div>
+<div class="mod-titles"><div class="mod-kicker">The forecast</div><div class="mod-name">Revenue Projections</div></div>
+<span class="mod-status">Live</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">Every project's billings month by month across years, rated 1–7, rolled into the firm-wide forecast — straight off the fee records, with no re-keying.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li>Monthly billings matrix by year, sorted by the <strong>1–7 rating</strong>; 5–7 greyed and excluded from totals</li>
+<li>Filter by <strong>client, revenue leader, service line, industry, year / quarter / month</strong>; roll up by client</li>
+<li>Projected total plus the <strong>probability-weighted</strong> forecast</li>
+<li><strong>Edit mode</strong> for ratings and monthly overrides where actuals differ from plan; optional broker and pass-through split lines; Excel export and print</li>
+</ul>
+<div class="mod-feeds"><strong>Feeds:</strong> the baseline for the Studio, the exec report and accruals.</div>
+</div>
+<div class="mod-cta"><span>Open projections</span><span class="arr">→</span></div>
+</a>
 
-      <!-- Benchmarking -->
-      <a class="mod" href="Benchmarking Dashboard.html">
-        <div class="mod-top">
-          <div class="mod-num">04</div>
-          <div class="mod-titles">
-            <div class="mod-kicker">Institutional memory</div>
-            <div class="mod-name">Benchmarking Dashboard</div>
-          </div>
-          <span class="mod-status">Live</span>
-        </div>
-        <div class="mod-body">
-          <p class="mod-lede">Mine the database for what we've charged before — by role, client, industry and project size — and line up comparable projects for a new pitch.</p>
-          <div class="mod-sub">What it does</div>
-          <ul>
-            <li><strong>Comparables finder</strong> — filter to matching historical rates</li>
-            <li><strong>Rates explorer</strong> — min / median / max by staff title, below-floor frequency</li>
-            <li><strong>Project comparison</strong> — two or three projects side by side</li>
-            <li>Quoted vs. effective (post-discount) rates throughout</li>
-          </ul>
-          <div class="mod-feeds"><strong>Feeds:</strong> informs pricing for the next proposal in the Calculator.</div>
-        </div>
-        <div class="mod-cta"><span>Open the dashboard</span><span class="arr">→</span></div>
-      </a>
+<a class="mod" href="Revenue Studio.html">
+<div class="mod-top">
+<div class="mod-num">04</div>
+<div class="mod-titles"><div class="mod-kicker">Plan &amp; report</div><div class="mod-name">Revenue Studio</div></div>
+<span class="mod-status">Live</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">Slice, compare and shape revenue against frozen baselines — Budget, RF1, RF2 — without ever touching project data. Real numbers only change in the calculator.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li><strong>Pipeline &amp; Budget</strong> — live revenue vs. a frozen baseline by client, leader, industry, service line or rating; year or month granularity</li>
+<li><strong>Exec Report</strong> — the leadership read-out, generated from the same numbers</li>
+<li>Named <strong>scenarios</strong> with a future-projects pool by client and overall, plus drawdown</li>
+<li><strong>Leader view</strong> and admin "View as" to see exactly what each revenue leader sees</li>
+</ul>
+<div class="mod-feeds"><strong>Reads only:</strong> baselines and scenarios live in their own file — projections are never rewritten here.</div>
+</div>
+<div class="mod-cta"><span>Open the studio</span><span class="arr">→</span></div>
+</a>
 
-      <!-- Revenue Projections -->
-      <a class="mod" href="Revenue Projections.html">
-        <div class="mod-top">
-          <div class="mod-num">05</div>
-          <div class="mod-titles">
-            <div class="mod-kicker">The forecast</div>
-            <div class="mod-name">Revenue Projections</div>
-          </div>
-          <span class="mod-status" style="">live</span>
-        </div>
-        <div class="mod-body">
-          <p class="mod-lede">Every project's billings laid out month-by-month across years, rated 1–7, rolled into the firm-wide revenue forecast — the first cut of the reporting engine.</p>
-          <div class="mod-sub">What it does</div>
-          <ul>
-            <li>Monthly billings matrix by year — straight off each fee record</li>
-            <li>Sorted by the <strong>1–7 projection rating</strong>; ratings 5–7 greyed &amp; excluded</li>
-            <li>Filter by <strong>client, revenue leader, service line, industry, year/quarter/month</strong></li>
-            <li>Projected total + <strong>probability-weighted</strong> forecast; click any project to open it</li>
-          </ul>
-          <div class="mod-feeds"><strong>Feeds:</strong> the basis for accruals, the flash report and P&amp;L — next on the roadmap.</div>
-        </div>
-        <div class="mod-cta"><span>Open projections</span><span class="arr">→</span></div>
-      </a>
+<a class="mod" href="Benchmarking Dashboard.html">
+<div class="mod-top">
+<div class="mod-num">05</div>
+<div class="mod-titles"><div class="mod-kicker">Institutional memory</div><div class="mod-name">Benchmarking Dashboard</div></div>
+<span class="mod-status">Live</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">Mine the database for what we've charged before — by role, client, industry and project size — and line up comparable projects before you price the next one.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li><strong>Comparables finder</strong> — filter past work to the matching roles and read the rate spread</li>
+<li><strong>Rates explorer</strong> — min / median / max quoted and effective rate by staff title, and how often we've priced below the cost floor</li>
+<li><strong>Project comparison</strong> — two or three projects side by side on roles, rates, fees and structure</li>
+</ul>
+<div class="mod-feeds"><strong>Feeds:</strong> evidence for the next proposal in the calculator.</div>
+</div>
+<div class="mod-cta"><span>Open the dashboard</span><span class="arr">→</span></div>
+</a>
 
-      <!-- Revenue Studio -->
-      <a class="mod" href="Revenue Studio.html">
-        <div class="mod-top">
-          <div class="mod-num">06</div>
-          <div class="mod-titles">
-            <div class="mod-kicker">Plan &amp; report · admin</div>
-            <div class="mod-name">Revenue Studio</div>
-          </div>
-          <span class="mod-status" style="">live</span>
-        </div>
-        <div class="mod-body">
-          <p class="mod-lede">Slice, compare and shape revenue against frozen baselines (Budget / RF1) — without ever touching project data. Build named scenarios with a projected-future-projects pool and at/below/above flags.</p>
-          <div class="mod-sub">What it does</div>
-          <ul>
-            <li>Compare live revenue to a <strong>frozen Budget / RFx baseline</strong>, sliced by client, leader, industry, service line, rating</li>
-            <li>Named <strong>scenarios</strong> with a future-projects <strong>pool</strong> (by client + overall) and drawdown</li>
-            <li><strong>Leader view</strong> + admin “View as” to see exactly what each revenue leader sees</li>
-          </ul>
-          <div class="mod-feeds"><strong>Reads only:</strong> projections never change here — adjust real numbers in the calculator.</div>
-        </div>
-        <div class="mod-cta"><span>Open the studio</span><span class="arr">→</span></div>
-      </a>
+<a class="mod" href="Proposal Analytics.html">
+<div class="mod-top">
+<div class="mod-num">06</div>
+<div class="mod-titles"><div class="mod-kicker">Win, loss &amp; discount</div><div class="mod-name">Proposal Analytics</div></div>
+<span class="mod-status">Live</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">The funnel, the hit rate and the discounting behind it — how much we give away, to whom, and why we lose when we lose.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li><strong>Win / loss by deal size</strong> — hit rate on decided proposals only</li>
+<li><strong>Why we lose</strong> — lost proposals by captured reason, count and fee at stake</li>
+<li><strong>Discount analytics</strong> sliced by client, leader, industry, project type or deal size</li>
+<li><strong>Proposal health</strong> — every live proposal scored, with a watchlist of what needs eyes, plus a per-client profile</li>
+</ul>
+<div class="mod-feeds"><strong>Reads:</strong> every proposal you can see; change orders excluded.</div>
+</div>
+<div class="mod-cta"><span>Open analytics</span><span class="arr">→</span></div>
+</a>
 
-    </div>
-  </section>
+<a class="mod" href="Data Entry Status.html">
+<div class="mod-top">
+<div class="mod-num">07</div>
+<div class="mod-titles"><div class="mod-kicker">Completeness</div><div class="mod-name">Data Entry Status</div></div>
+<span class="mod-status">Live</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">Who still owes what. Projects grouped by revenue leader with the exact fields left blank — the checklist that gets the forecast trustworthy.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li>Completeness score per <strong>revenue leader</strong> and per project</li>
+<li>Names the <strong>missing fields</strong> — staffing, Salesforce ID, rating, service line, dates</li>
+<li>Click through to the project to fill the gap</li>
+</ul>
+<div class="mod-feeds"><strong>Use it:</strong> before every forecast cycle and month-end review.</div>
+</div>
+<div class="mod-cta"><span>Open the tracker</span><span class="arr">→</span></div>
+</a>
 
-  <!-- ===== Under development ===== -->
-  <section>
-    <header class="sec-head">
-      <span class="ix">On the roadmap</span>
-      <h2>Still under development.</h2>
-      <span class="h-meta">Phases 4–6</span>
-    </header>
-    <div class="dev-grid">
-      <div class="dev">
-        <div class="dev-top"><span class="dev-name">Resource Forecast</span><span class="dev-phase next">Phase 4 · Next</span></div>
-        <p class="dev-desc"><strong>Headcount &amp; FTE by month</strong> across all active projects. Surfaces who's over- or under-allocated 90 days out, by PE and by named resource.</p>
-      </div>
-      <div class="dev">
-        <div class="dev-top"><span class="dev-name">Flash &amp; Budget Reports</span><span class="dev-phase">Phase 5</span></div>
-        <p class="dev-desc"><strong>The monthly flash report</strong> generated from the same records that drive projections — no re-keying. Plus accruals and the budget comparison.</p>
-      </div>
-      <div class="dev">
-        <div class="dev-top"><span class="dev-name">P&amp;L · Clockify Sync</span><span class="dev-phase">Phase 6</span></div>
-        <p class="dev-desc"><strong>Planned vs. actual hours</strong> pulled weekly from Clockify, mapped to project + role, against the cost-rate floors to expose real margin.</p>
-      </div>
-    </div>
-  </section>
+<a class="mod" href="Change Log.html">
+<div class="mod-top">
+<div class="mod-num">08</div>
+<div class="mod-titles"><div class="mod-kicker">Accountability</div><div class="mod-name">Change Log</div></div>
+<span class="mod-status">Live</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">Who changed what, and when. Every create, edit, status change and deletion — down to the individual field, with the fee impact of each save.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li>A dated feed of every change, showing <strong>the fields that moved</strong> — old value → new value</li>
+<li><strong>Net fee delta</strong> on any save that changed the number</li>
+<li>Filter by <strong>person, action, project or date range</strong>; export to CSV for audit</li>
+<li>Scoped to what you can see — admins get the whole system log</li>
+</ul>
+<div class="mod-feeds"><strong>Rides with the data:</strong> the log syncs through Box, so it's the same history for everyone.</div>
+</div>
+<div class="mod-cta"><span>Open the change log</span><span class="arr">→</span></div>
+</a>
 
-  <!-- ===== Manual ===== -->
-  <section>
-    <header class="sec-head">
-      <span class="ix">Manual</span>
-      <h2>How to use each tool.</h2>
-      <span class="h-meta">Click a tool to expand</span>
-    </header>
-    <p class="manual-intro" spellcheck="false" style="width: 1100px;">Step-by-step for the live modules.&nbsp;<div><span style="text-wrap-mode: initial;"><br></span></div><div><span style="text-wrap-mode: initial;">New here? The natural path is </span><strong style="text-wrap-mode: initial;">Ingestion Studio → review → Calculator → save</strong><span style="text-wrap-mode: initial;"> for historicals, or straight into the </span><strong style="text-wrap-mode: initial;">Calculator</strong><span style="text-wrap-mode: initial;"> for a fresh pitch — then watch it roll into </span><strong style="text-wrap-mode: initial;">Revenue Projections</strong><span style="text-wrap-mode: initial;">.</span></div></p>
-
-    <details class="man" open="">
-      <summary><span class="man-ix">01</span><span class="man-title">Universal Fee Calculator</span><span class="man-toggle"></span></summary>
-      <div class="man-body">
-        <ol>
-          <li>Start a <strong>+ New project</strong> from the Index, or open an existing one. The cover captures name, client, dates and status.</li>
-          <li>In the catalog, <strong>tick the roles</strong> you need. Each carries a staff title, a tier (<strong>High / Mid / Low</strong> off the Macro 2024 rack rate), and a free-text project-role label.</li>
-          <li>Per role, choose <strong>Grid</strong> (catalog rate minus the industry-standard adjustment, escalated) or <strong>Contracted</strong> (type a negotiated rate that bypasses the adjustment).</li>
-          <li>Set <strong>FTE % per phase</strong> in the allocation matrix — this is where staffing is loaded, phase by phase.</li>
-          <li>Tune <strong>global assumptions</strong>: hours/month, escalation, industry-standard adjustment (default 20%), client discount, and Rate Lock.</li>
-          <li>Watch the <strong>cost-rate floor advisory</strong> — any role billed below its Col E/G cost rate is flagged (allowed, just surfaced).</li>
-          <li>Use <strong>Reconcile to proposal → Fit to target</strong> to back-solve staffing per phase and a discount to a known total.</li>
-          <li>Review the <strong>monthly schedule</strong> — toggle <em>By phase</em> vs <em>Flatlined monthly</em>, then <strong style="">export to Excel or PDF to incorporate into client facing proposal</strong> (Setup, Phase Matrix, Monthly Schedule).</li>
-        </ol>
-        <div class="man-tip"><strong>Tip.</strong> Saving (or autosave on an existing project) writes the record straight to the Projects Index — no re-entry.</div>
-      </div>
-    </details>
-
-    <details class="man" open="">
-      <summary><span class="man-ix">02</span><span class="man-title">Ingestion Studio</span><span class="man-toggle"></span></summary>
-      <div class="man-body">
-        <ol>
-          <li><strong>Upload</strong> a proposal (PDF / XLSX / CSV) or <strong>paste</strong> a fee matrix or roster into the source box.</li>
-          <li>Run the parse. It extracts <strong>project meta, phases</strong> (durations → months, per-phase fee), any one-time discount, and the <strong>roster</strong> — people, staff titles, project roles, teams, allocations and rates.</li>
-          <li>Every rate is checked against the grid band <strong>[cost floor ↔ rack]</strong> and back-mapped to the closest title/tier. Below-floor and out-of-range rows are badged.</li>
-          <li><strong>Review and edit</strong> the roster and the extracted phase schedule. Fix any mismatched titles or allocations inline.</li>
-          <li>Click <strong>Create project</strong> — it saves a record and opens it in the Calculator, where you fine-tune FTE by phase and reconcile to the fee.</li>
-        </ol>
-        <div class="man-tip"><strong>No roster?</strong> Proposals that state a fee but only name contacts seed a starter team at grid rates — then use <em>Fit to target</em> in the calculator to solve their staffing.</div>
-      </div>
-    </details>
-
-    <details class="man" open="">
-      <summary><span class="man-ix">03</span><span class="man-title">Projects Index</span><span class="man-toggle"></span></summary>
-      <div class="man-body">
-        <ol>
-          <li>Scan the portfolio <strong>KPIs</strong> at the top — pipeline, won, active, win rate and all-time fee.</li>
-          <li><strong>Search and filter</strong> by status, client, industry or lead; sort by fee or last updated.</li>
-          <li>Each row shows the <strong>net fee</strong> computed by the same engine as the calculator (industry adjustment, contracted rates and escalation all honoured).</li>
-          <li spellcheck="false" style=""><strong>Click a row</strong> to open and/or edit that project in the Calculator. Use <em>Ingest proposal</em> or <em>+ New project</em> to create a new record.</li>
-          <li><strong>Export DB</strong> backs up every project to a JSON file; <strong>Import JSON</strong> restores or merges one — the sharing mechanism until cloud storage lands.</li>
-        </ol>
-        <div class="man-tip"><strong>Backup habit.</strong> Records live in your browser for now — export the DB regularly until the Phase-5 cloud migration.</div>
-      </div>
-    </details>
-
-    <details class="man" open="">
-      <summary><span class="man-ix">04</span><span class="man-title">Benchmarking Dashboard</span><span class="man-toggle"></span></summary>
-      <div class="man-body">
-        <ol>
-          <li>Open the <strong>Comparables finder</strong> and filter by client, industry, staff title, project size or project role to see matching historical rates.</li>
-          <li>Switch to the <strong>Rates explorer</strong> for the <strong>min / median / max</strong> quoted and effective rate by staff title, plus how often we've priced below the cost floor.</li>
-          <li>Use <strong>Project comparison</strong> to line up two or three past projects side by side — roles, rates, fees and structure.</li>
-          <li>Carry the read-out back into the <strong>Calculator</strong> to price a new pitch with evidence, not guesswork.</li>
-        </ol>
-        <div class="man-tip"><strong>Gets better with data.</strong> The more historicals you ingest, the sharper the benchmarks — this is the payoff for backtracking past proposals.</div>
-      </div>
-    </details>
-
-    <details class="man">
-      <summary><span class="man-ix">05</span><span class="man-title">Revenue Projections</span><span class="man-toggle"></span></summary>
-      <div class="man-body">
-        <ol>
-          <li>Set each project's <strong>projection rating (1–7)</strong> on the calculator cover — 1 Booked through 7 Dead Pursuit. It defaults from the lifecycle status; override it as confidence changes.</li>
-          <li>Tag each group's <strong>service line</strong> ("Revenue attributed to") in the calculator so fees roll up to the right area.</li>
-          <li>Open <strong>Revenue Projections</strong> to see every project's billings month-by-month across years, sorted by rating. Ratings 1–4 roll into the totals; 5–7 are greyed and excluded.</li>
-          <li>Use the <strong>filters</strong> — client, revenue leader, service line, industry, year / quarter / month — to slice the forecast; pick a service line (e.g. Change Management) to pull out just that portion.</li>
-          <li>Read the <strong>Projected (rated 1–4)</strong> and <strong>probability-weighted</strong> totals; click any project name to jump back into its calculator.</li>
-        </ol>
-        <div class="man-tip"><strong>First cut of the reporting engine.</strong> This is the foundation for accruals, the monthly flash report and P&amp;L — all driven off the same fee records, entered once.</div>
-      </div>
-    </details>
-  </section>
-
-  <!-- ===== Footer CTA ===== -->
-  <section style="margin-bottom: 0;">
-    <div class="footer-cta">
-      <div>
-        <h3>Ready to price something?</h3>
-        <p>Start a fresh proposal in the calculator, or pull up the database to find a comparable first.</p>
-      </div>
-      <div class="btns">
-        <a class="fbtn dark" href="Universal Fee Calculator.html">New proposal →</a>
-        <a class="fbtn ghost" href="Projects Index.html">Open the database</a>
-        <a class="fbtn ghost" href="Revenue Projections.html">Revenue projections</a>
-        <a class="fbtn ghost" href="Enterprise Migration Guide.html">Go live / hosting</a>
-        <a class="fbtn ghost" href="Fee System Roadmap.html">Full roadmap</a>
-      </div>
-    </div>
-    <div class="colophon">
-      <strong>Under the hood.</strong> &nbsp; All four tools share one rate engine — the Macro 2024 Hourly Rate Grid with its High/Mid/Low tiers and Col E/G cost-rate floors — so a fee reads identically in the calculator, the index and the dashboard. Project records are JSON, stored in your browser today; the roadmap covers the move to shared cloud storage and the Clockify-powered P&amp;L layer.
-    </div>
-  </section>
+<a class="mod" href="Staffing Matrix.html">
+<div class="mod-top">
+<div class="mod-num">09</div>
+<div class="mod-titles"><div class="mod-kicker">Bandwidth</div><div class="mod-name">Staffing &amp; Bandwidth</div></div>
+<span class="mod-status adm">Admin</span>
+</div>
+<div class="mod-body">
+<p class="mod-lede">Who is on what, how loaded they are month by month, and planned hours against Clockify actuals by person and project.</p>
+<div class="mod-sub">What it does</div>
+<ul>
+<li>Allocation by <strong>named resource × project × month</strong>, over- and under-loaded flagged</li>
+<li><strong>Planned vs. actual</strong> hours pulled from Clockify, with title pinning and fee-link mapping</li>
+<li>Entry-lateness stats so time gets booked in the week it happened</li>
+</ul>
+<div class="mod-feeds"><strong>Restricted:</strong> visible to PPM leadership and ops.</div>
+</div>
+<div class="mod-cta"><span>Open staffing</span><span class="arr">→</span></div>
+</a>
 
 </div>
+</section>
 
+<section>
+<header class="sec-head">
+<span class="ix">Restricted</span>
+<h2>Admin &amp; operations.</h2>
+<span class="h-meta">Leadership and ops only</span>
+</header>
+<div class="adm-grid">
+<a class="adm" href="Profitability.html">
+<div class="adm-name">Profitability</div>
+<p class="adm-desc">The revenue projection with <strong>Clockify burn</strong> (hours × cost rate) laid against it, month by month — margin per project, per month, per leader.</p>
+<div class="adm-go">Open →</div>
+</a>
+<a class="adm" href="Ingestion Studio.html">
+<div class="adm-name">Ingestion Studio</div>
+<p class="adm-desc">Drop in a past proposal — PDF, Excel, CSV or pasted text — and it extracts the roster, phases and fees, <strong>validates every rate against the grid band</strong>, and saves it as a record.</p>
+<div class="adm-go">Open →</div>
+</a>
+<a class="adm" href="Rate Grid Reconciliation.html">
+<div class="adm-name">Rate Grid Reconciliation</div>
+<p class="adm-desc">Adopt a new rate grid <strong>without moving anyone's projections</strong>. Solves a per-month reconciling discount so every frozen billing figure holds. Dry-run first; nothing writes until you commit.</p>
+<div class="adm-go">Open →</div>
+</a>
+<a class="adm" href="Import Revenues.html">
+<div class="adm-name">Import Revenues</div>
+<p class="adm-desc">Bulk-prime the system from the Detailed Revenues sheet — one project per row, monthly dollars mapped to month, staffing left for later reconciliation.</p>
+<div class="adm-go">Open →</div>
+</a>
+<a class="adm" href="Import Small Works.html">
+<div class="adm-name">Import Small Works</div>
+<p class="adm-desc">Loads the small-works book as <strong>pass-through only</strong> records — contractor WO billed at cost + markup, managed vendor billed as the fee alone.</p>
+<div class="adm-go">Open →</div>
+</a>
+<a class="adm" href="tests.html">
+<div class="adm-name">Regression Tests</div>
+<p class="adm-desc">The fee-engine test suite. Run it after any change to rates, the calculator or the store — every assertion should pass before a deploy.</p>
+<div class="adm-go">Run →</div>
+</a>
+</div>
+</section>
 
+<section>
+<header class="sec-head">
+<span class="ix">Access</span>
+<h2>Sign-in &amp; who sees what.</h2>
+<span class="h-meta">Box identity, two roles</span>
+</header>
+<div class="access">
+<div>
+<h4>Signing in</h4>
+<p>The system is hosted and signs you in with your <strong>Box (Savills) account</strong> — that's the only login. Your Box identity is what proves who you are and determines which projects you see. Nothing is visible until you sign in.</p>
+<p>All data lives in one Box folder as JSON — projects, rates, staff and studio baselines — and syncs live. Open a project on your laptop, and your colleague sees the same numbers.</p>
+</div>
+<div>
+<h4>Two roles</h4>
+<ul>
+<li><strong>Revenue leader</strong> — sees the projects they lead, own, or have been granted access to. Full calculator on their own work; read-out everywhere else.</li>
+<li><strong>Admin</strong> — leadership and ops. Sees everything, plus Profitability, Staffing, Ingestion, imports and rate reconciliation.</li>
+</ul>
+<p style="margin-top:10px">To share a project: add the person's Savills email under <strong>Grant access to</strong> in the calculator, then ask Sarah Abdin to add them to the Box folder. Both steps are needed.</p>
+</div>
+</div>
+</section>
+
+<section>
+<header class="sec-head">
+<span class="ix">Manual</span>
+<h2>How to use each tool.</h2>
+<span class="h-meta">Click a tool to expand</span>
+</header>
+<p class="manual-intro">Step-by-step for each module. New here? The natural path is <strong>Projects Index → + New project → Fee Calculator → save</strong> for a fresh pitch, then watch it appear in <strong>Revenue Projections</strong>. Look for the <strong>ⓘ</strong> markers in the app — they explain the tricky fields inline with an example.</p>
+
+<details class="man" open="">
+<summary><span class="man-ix">01</span><span class="man-title">Universal Fee Calculator</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Start a <strong>+ New project</strong> from the Index, or open an existing one. Fill in name, client, revenue leader, industry, project type and the Salesforce ID (P#) if there is one.</li>
+<li>Record what the fee is priced under in <strong>Assumptions &amp; exclusions</strong> and <strong>Notes</strong> — this is what makes benchmarking comparable later.</li>
+<li>Set the <strong>timeline</strong> (start and end month), then break it into <strong>phases</strong> with a length in months. The last phase absorbs any remainder.</li>
+<li>Define <strong>groups</strong> — by service line, scope or workstream. Each becomes its own column and subtotal in the monthly schedule, and can be shifted forward or back in time with the ◀ ▶ controls.</li>
+<li>Build the <strong>team</strong>: pick staff titles from the catalog (rate and cost floor come from the grid), name the resource where known, type the real project-role label, and assign each to a group. Choose <strong>Grid</strong> or <strong>Contracted</strong> per role.</li>
+<li>Enter <strong>allocations</strong> as % FTE or hours — toggle top-right, they convert automatically. Click a phase to open it into months when effort varies month to month.</li>
+<li>Set the <strong>assumptions</strong>: fee basis (Fixed or NTE), hours per month, escalation, industry adjustment, client discount, rate lock. Add <strong>broker fee share</strong> or <strong>pass-through</strong> lines if the deal has them.</li>
+<li>Watch the <strong>cost-floor advisory</strong> — any role billed below its cost rate is flagged. It's allowed, just surfaced.</li>
+<li>Use <strong>Fit to target</strong> to solve the client discount so the fee lands exactly on your number.</li>
+<li>Review the <strong>monthly schedule</strong>, set the <strong>status</strong> and <strong>rating (1–7)</strong>, and save. Export to <strong>Excel</strong> or print to <strong>PDF</strong> for the client proposal.</li>
+</ol>
+<div class="man-tip"><strong>Scope changed after booking?</strong> Don't edit the contract — use <strong>Change order</strong>. It forks the current contract, freezes it as the baseline, and shows a role-level diff and monthly delta. Approved COs roll into the revised contract value automatically. Every save also writes a restorable <strong>version</strong>.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">02</span><span class="man-title">Projects Index</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Scan the <strong>KPIs</strong> at the top — pipeline, booked, active, win rate and contract value for everything you can see.</li>
+<li><strong>Search and filter</strong> by status, client, industry, leader or service line; sort by fee or last updated.</li>
+<li>Each row shows the <strong>net fee</strong> from the same engine as the calculator, with approved change orders folded into the revised contract.</li>
+<li><strong>Click a row</strong> to open that project in the calculator. Use <strong>+ New project</strong> to create one, or <strong>Ingest proposal</strong> (admin) to reconstruct a historical one.</li>
+<li><strong>Export DB</strong> takes a JSON backup of everything you can see; <strong>Import JSON</strong> restores or merges.</li>
+</ol>
+<div class="man-tip"><strong>Deleted something by mistake?</strong> Deletions are tombstoned, not destroyed — restore from the index. The activity log records every create, save, status change and delete with who did it.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">03</span><span class="man-title">Revenue Projections</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Set each project's <strong>rating (1–7)</strong> in the calculator — 1 Booked through 7 Dead Pursuit. It defaults from the lifecycle status; override it as confidence changes.</li>
+<li>Tag each group's <strong>service line</strong> in the calculator so fees roll up to the right area.</li>
+<li>Open Projections to see every project's billings month by month, sorted by rating. <strong>1–4 roll into the totals; 5–7 are greyed and excluded.</strong></li>
+<li>Use the <strong>filters</strong> — client, leader, service line, industry, year / quarter / month — to slice the forecast.</li>
+<li>Read the <strong>projected</strong> and <strong>probability-weighted</strong> totals. Turn on the broker or pass-through split to see what leaves as broker share or vendor cost.</li>
+<li>In <strong>Edit</strong> mode, change a rating inline or override a monthly figure where actuals differ from plan — useful on NTE work. Export the matrix to Excel exactly as shown.</li>
+</ol>
+<div class="man-tip"><strong>Rule of thumb.</strong> If it's a real change to the fee, team or rates, do it in the calculator. Ratings and monthly actuals overrides belong here.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">04</span><span class="man-title">Revenue Studio</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Pick a <strong>baseline</strong> — the frozen Budget or revised forecast (RF1, RF2) you're measuring against.</li>
+<li>On <strong>Pipeline &amp; Budget</strong>, choose a <strong>slice</strong> (client, leader, industry, service line, rating), a year, and year or month granularity. Rows expand to show what's driving each number, with at / below / above flags against the baseline.</li>
+<li>Build a named <strong>scenario</strong> to test what-ifs: add a pool of projected future projects by client or overall and draw it down as real work books.</li>
+<li>Switch to <strong>Exec Report</strong> for the leadership read-out off the same numbers.</li>
+<li>Admins can use <strong>View as</strong> to see the Studio exactly as a given revenue leader sees it.</li>
+</ol>
+<div class="man-tip"><strong>Nothing here changes project data.</strong> Baselines and scenarios are stored separately. Real projections only move in the calculator.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">05</span><span class="man-title">Benchmarking Dashboard</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Open the <strong>Comparables finder</strong> and filter by client, industry, project type, staff title, project size or project role to see matching historical rates.</li>
+<li>Switch to the <strong>Rates explorer</strong> for min / median / max quoted and effective rate by staff title, plus how often we've priced below the cost floor.</li>
+<li>Use <strong>Project comparison</strong> to line up two or three projects side by side — roles, rates, fees and structure.</li>
+<li>Carry the read-out into the calculator and price the new pitch on evidence.</li>
+</ol>
+<div class="man-tip"><strong>Read the assumptions.</strong> A $5M fee with decommissioning isn't comparable to one without — that's why the calculator captures assumptions and exclusions per project.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">06</span><span class="man-title">Proposal Analytics</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Read the <strong>KPI strip</strong> — proposals out, decided, hit rate and fee at stake.</li>
+<li><strong>Win / loss by deal size</strong> shows where we actually convert. Only decided proposals count.</li>
+<li><strong>Why we lose</strong> reads the loss reason captured on the record — so set it when you mark a proposal lost, or the analysis is blind.</li>
+<li>Slice <strong>discount analytics</strong> by client, leader, industry, project type or deal size to see where we give margin away.</li>
+<li>Work the <strong>proposal health</strong> watchlist — anything scored for review, plus the per-client profile.</li>
+</ol>
+<div class="man-tip"><strong>Garbage in.</strong> Hit rate and discount analysis are only as good as the statuses and loss reasons people set. Data Entry Status shows who's behind.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">07</span><span class="man-title">Data Entry Status</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Find your name in the <strong>by-leader</strong> view for a completeness score across your projects.</li>
+<li>Open a leader to see each project and the <strong>exact fields still missing</strong> — staffing, Salesforce ID, rating, service line, dates.</li>
+<li>Click through to the project, fill the gap, and the score updates on the next load.</li>
+</ol>
+<div class="man-tip"><strong>Use it before every forecast cycle.</strong> A project with no staffing has no monthly curve — it silently under-reports the forecast.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">08</span><span class="man-title">Change Log</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Open it to see a dated feed of every change — newest first, grouped by day.</li>
+<li>Each entry names <strong>who</strong>, <strong>when</strong>, <strong>which project</strong>, and <strong>exactly which fields moved</strong> (old value → new value). Saves that changed the number also show the <strong>net fee delta</strong>.</li>
+<li>Filter by <strong>person, action, project or date range</strong> — or search by project, client or name.</li>
+<li><strong>⎓ CSV</strong> exports the filtered log, one row per changed field, for audit or month-end review.</li>
+</ol>
+<div class="man-tip"><strong>Scope.</strong> You see activity on the projects you can see; admins see the whole system. The log holds the most recent 1,500 entries and syncs through Box, so everyone reads the same history. For a full point-in-time rollback of one project, use <strong>version history</strong> in the calculator instead.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">09</span><span class="man-title">Profitability &amp; Staffing (admin)</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li><strong>Staffing &amp; Bandwidth</strong> shows allocation by named resource × project × month, with over- and under-loaded people flagged.</li>
+<li>Pull <strong>Clockify actuals</strong> for a date range. Map each Clockify project to a fee record and pin titles where the directory is ambiguous — mappings save for the whole team.</li>
+<li>Open <strong>Profitability</strong> for the revenue projection with burn (hours × cost rate) laid against it — margin per project, per month.</li>
+<li>Compare planned to actual hours by role and phase to see where a job is running hot before it closes.</li>
+</ol>
+<div class="man-tip"><strong>Mapping matters.</strong> Unmapped Clockify projects show as unattributed burn. Fix the mapping once and it holds for everyone.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">10</span><span class="man-title">Ingestion Studio &amp; imports (admin)</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>In the <strong>Ingestion Studio</strong>, drop a proposal (.xlsx / .csv / .pdf) or paste a fee matrix. Files parse in the browser; PDFs can be extracted with Claude.</li>
+<li>It pulls project meta, phases, discounts and the roster — people, titles, project roles, groups, allocations and rates — and <strong>back-maps each rate to the closest title and tier</strong>.</li>
+<li>Every rate is checked against the grid band <strong>[cost floor ↔ rack]</strong>. Below-floor and out-of-range rows are badged; review and fix inline.</li>
+<li><strong>Create project</strong> saves the record and opens it in the calculator to fine-tune allocations and reconcile to the fee.</li>
+<li>For bulk priming, <strong>Import Revenues</strong> loads the Detailed Revenues sheet (monthly dollars, staffing later) and <strong>Import Small Works</strong> loads the pass-through book.</li>
+</ol>
+<div class="man-tip"><strong>Fee but no roster?</strong> The studio seeds a starter team at grid rates — then use Fit to target in the calculator to land the number.</div>
+</div>
+</details>
+
+<details class="man">
+<summary><span class="man-ix">11</span><span class="man-title">Rate Grid Reconciliation (admin)</span><span class="man-toggle"></span></summary>
+<div class="man-body">
+<ol>
+<li>Load the candidate <code>rates.json</code>. It is used for a <strong>dry-run only</strong> — the live grid in Box is untouched.</li>
+<li>Read the report: for each project it solves a <strong>per-month reconciling discount</strong> so every frozen monthly billing figure holds exactly against the new rack rates.</li>
+<li>Review the <strong>exceptions</strong> — floor breaches, uplifts and unsolvable months are flagged only, never auto-changed.</li>
+<li><strong>Commit.</strong> Each project gets a reversible pre-reconciliation snapshot, stores its reconciling vector, is tagged to the new grid and re-stamped — billing unchanged.</li>
+</ol>
+<div class="man-tip"><strong>Order of operations.</strong> Dry-run and commit here first, then deploy the new grid to Box. Run the regression tests after.</div>
+</div>
+</details>
+</section>
+
+<section>
+<header class="sec-head">
+<span class="ix">Reference</span>
+<h2>Guides &amp; documentation.</h2>
+<span class="h-meta">Print-ready</span>
+</header>
+<div class="docs">
+<a class="doc" href="Revenue Leader Guide.html">
+<div class="doc-kick">For revenue leaders</div>
+<div class="doc-name">Revenue Leader Guide</div>
+<p class="doc-desc">Sign-in, sharing, building a fee matrix step by step, the nuances worth knowing, and what you can and can't change downstream.</p>
+</a>
+<a class="doc" href="Maintainers Runbook.html">
+<div class="doc-kick">For maintainers</div>
+<div class="doc-name">Maintainer's Runbook</div>
+<p class="doc-desc">Architecture, the Box data files, deploys, environment secrets, the rate-grid update procedure and how to fix things when they break.</p>
+</a>
+<a class="doc" href="Enterprise Migration Guide.html">
+<div class="doc-kick">For IT</div>
+<div class="doc-name">Hosting &amp; Migration Guide</div>
+<p class="doc-desc">How the app is hosted and authenticated today, and the path to a fully enterprise-managed deployment.</p>
+</a>
+</div>
+</section>
+
+<section style="margin-bottom:0">
+<div class="footer-cta">
+<div>
+<h3>Ready to price something?</h3>
+<p>Start a fresh proposal, or pull up the database and find a comparable first.</p>
+</div>
+<div class="btns">
+<a class="fbtn dark" href="Universal Fee Calculator.html">New proposal →</a>
+<a class="fbtn ghost" href="Projects Index.html">Open the database</a>
+<a class="fbtn ghost" href="Revenue Projections.html">Revenue projections</a>
+<a class="fbtn ghost" href="Revenue Leader Guide.html">Leader guide</a>
+</div>
+</div>
+<div class="colophon">
+<strong>Under the hood.</strong> &nbsp; Every tool shares one rate engine — the PPM Hourly Rate Grid with its High/Mid/Low tiers and cost-rate floors — so a fee reads identically in the calculator, the index, the forecast and the exec report. Project records, rates, staff actuals and studio baselines are JSON files in one Box folder, synced live and versioned on every save. Sign-in is Box SSO; access is by revenue leader with an admin allowlist for leadership and ops. Questions or access requests → <strong>Sarah Abdin</strong>.
+</div>
+</section>
+
+</div>
 <script src="universal-fee-calc/nav.js"></script>
-<grammarly-desktop-integration data-grammarly-shadow-root="true"></grammarly-desktop-integration></body></html>
+</body></html>

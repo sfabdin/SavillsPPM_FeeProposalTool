@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "source": "MACRO 2024 Hourly Rate Grid (9/9/2024)",
+  "baseYear": 2024,
+  "note": "HIGHLY CONFIDENTIAL — internal use only. This file lives in Box, NOT in the deployed app code. The app loads it only after a successful Box sign-in.",
+  "grid": [
+    { "id": "principal", "name": "Principal", "group": "advisory",
+      "rack": 455, "floor": { "high": 380, "mid": 380, "low": 380 },
+      "comcastRE": null, "comcastMC": null, "targetDisc": null,
+      "note": "Top of house. Source grid only partially populated for Principal — confirm rack & floor. Often a no-charge / PIC role under a standing relationship." },
+
+    { "id": "evp", "name": "Executive Vice President", "group": "core",
+      "rack": 455, "floor": { "high": 415, "mid": 390, "low": 375 },
+      "comcastRE": 380, "comcastMC": 390, "targetDisc": 14,
+      "note": "Maps from Managing Director & EVP staff titles." },
+
+    { "id": "ed", "name": "Executive Director", "group": "core",
+      "rack": 428, "floor": { "high": 351, "mid": 325, "low": 313 },
+      "comcastRE": 380, "comcastMC": 325, "targetDisc": 24 },
+
+    { "id": "sd", "name": "Senior Director", "group": "core",
+      "rack": 401, "floor": { "high": 279, "mid": 260, "low": 255 },
+      "comcastRE": 335, "comcastMC": 260, "targetDisc": 35 },
+
+    { "id": "director", "name": "Director", "group": "core",
+      "rack": 369, "floor": { "high": 250, "mid": 220, "low": 213 },
+      "comcastRE": 305, "comcastMC": 220, "targetDisc": 40,
+      "note": "Maps from Director, Director (Client Services / Operations)." },
+
+    { "id": "assoc-dir", "name": "Associate Director", "group": "core",
+      "rack": 337, "floor": { "high": 201, "mid": 195, "low": 191 },
+      "comcastRE": 295, "comcastMC": 250, "targetDisc": 42 },
+
+    { "id": "senior-pm", "name": "Senior Project Manager", "group": "core",
+      "rack": 321, "floor": { "high": 182, "mid": 175, "low": 157 },
+      "comcastRE": 275, "comcastMC": 195, "targetDisc": 45,
+      "note": "Maps from Senior Manager, Senior Program Manager, Senior PM." },
+
+    { "id": "pm", "name": "Project Manager", "group": "core",
+      "rack": 284, "floor": { "high": 138, "mid": 125, "low": 109 },
+      "comcastRE": 190, "comcastMC": 180, "targetDisc": 56,
+      "note": "Maps from Manager, Program Manager, Administrative Manager, PM." },
+
+    { "id": "assistant-pm", "name": "Assistant Project Manager", "group": "field",
+      "rack": 203, "floor": { "high": 90, "mid": 80, "low": 78 },
+      "comcastRE": 165, "comcastMC": 165, "targetDisc": 61,
+      "note": "Maps from Associate Project Manager, Senior Associate." },
+
+    { "id": "cost-control", "name": "Cost Control & Data Analysis", "group": "core",
+      "rack": 182, "floor": { "high": 74, "mid": 70, "low": 66 },
+      "comcastRE": 135, "comcastMC": 155, "targetDisc": 62,
+      "note": "Reporting & analysis / data roles." },
+
+    { "id": "proj-coord", "name": "Project Coordinator", "group": "field",
+      "rack": 182, "floor": { "high": 63, "mid": 60, "low": 56 },
+      "comcastRE": 135, "comcastMC": 155, "targetDisc": 67,
+      "note": "Maps from Project Coordinator, Program Coordinator." }
+  ]
+}

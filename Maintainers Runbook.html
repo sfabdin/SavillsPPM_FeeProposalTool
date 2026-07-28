@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PPM Fee Proposal Generator · Maintainer's Runbook</title>
+<title>PPM Fee &amp; Revenue System · Maintainer's Runbook</title>
 <style>
   :root {
     --navy: #25273A;
@@ -132,7 +132,7 @@
 <div class="page">
   <div class="masthead">
     <div class="kicker">Savills PPM · Internal Tooling · Maintainer's Runbook</div>
-    <h1>Fee Proposal Generator</h1>
+    <h1>Fee &amp; Revenue System</h1>
     <div class="sub">How this application is built, where its data lives, how to deploy it, and what to watch out for. Written for a future owner or developer inheriting the tool. Every statement here describes what the system does today, not what it might do.</div>
     <div class="metaline">
       <span><b>Status</b> &nbsp;Live, in production use</span>
@@ -154,7 +154,7 @@
   <h2><span class="n">2</span> The pages (front doors)</h2>
   <table>
     <tr><th>Page</th><th>Purpose</th></tr>
-    <tr><td class="k">Fee Generator.html</td><td>Home / hub. Links to every other page. One of the two front doors.</td></tr>
+    <tr><td class="k">Fee Generator.html</td><td>Home / hub (filename retained from the original build — the product is now the Fee &amp; Revenue System). Links to every other page. One of the two front doors.</td></tr>
     <tr><td class="k">Projects Index.html</td><td>The project database — every saved record, filtered by who you are. Rolls up change orders and totals by client. The other front door.</td></tr>
     <tr><td class="k">Universal Fee Calculator.html</td><td>The core tool — build and price a proposal (Fixed Fee or NTE); allocation entered as % FTE or hours; broker fee share (off-invoice or on-top); version history; change orders; autosave; Excel export; Salesforce intake.</td></tr>
     <tr><td class="k">Revenue Projections.html</td><td>Pipeline / revenue forecast across projects, by month and quarter, read from the stored billing series. Broker-split toggle, current-month marker, flash snapshots. Exports to Excel exactly as viewed.</td></tr>
@@ -163,6 +163,12 @@
     <tr><td class="k">Import Revenues.html</td><td><strong>Admin-only.</strong> Bulk-loads the monthly-billing workbook into locked-series project records.</td></tr>
     <tr><td class="k">Ingestion Studio.html</td><td>Import a historical proposal (PDF/text) via Claude into a structured record.</td></tr>
     <tr><td class="k">Benchmarking Dashboard.html</td><td>"What have we charged before?" — rate spreads, comparables, and side-by-side project comparison with a scope &amp; assumptions matrix.</td></tr>
+    <tr><td class="k">Staffing Matrix.html</td><td><strong>Admin-only.</strong> Staffing &amp; Bandwidth — allocation by named resource × project × month, over/under-load flags, planned vs. Clockify actual hours, title pinning, fee-link mapping, entry-lateness stats. Writes to <code>staff.json</code>.</td></tr>
+    <tr><td class="k">Profitability.html</td><td><strong>Admin-only.</strong> The whole revenue projection with Clockify burn (hours × cost rate by title) laid against it by month — margin per project per month. Reads <code>projects.json</code> + <code>staff.json</code> + <code>rates.json</code>.</td></tr>
+    <tr><td class="k">Data Entry Status.html</td><td>Completeness tracker — projects by revenue leader with the exact fields still missing (staffing, Salesforce ID, rating, service line, dates).</td></tr>
+    <tr><td class="k">Change Log.html</td><td>The audit trail surfaced — every create, edit, status change and deletion, with the fields that moved (old → new) and the net-fee delta. Filter by person / action / project / date; CSV export. Scoped to visible projects; admins see all.</td></tr>
+    <tr><td class="k">Rate Grid Reconciliation.html</td><td><strong>Admin-only.</strong> Adopt a new grid without moving projections: solves a per-month reconciling discount per project so every frozen billing figure holds. Dry-run → exception report → reversible commit (pre-reconciliation version snapshot per project).</td></tr>
+    <tr><td class="k">Import Small Works.html</td><td><strong>Admin-only.</strong> Loads the small-works book as pass-through-only records — contractor WO billed at cost + markup, managed vendor billed as the fee alone.</td></tr>
     <tr><td class="k">tests.html</td><td>Regression suite — 24 assertions on the pricing engine and data layer, run against an in-memory store (never touches real data). <strong>Run before every deploy.</strong></td></tr>
     <tr><td class="k">Enterprise&nbsp;Migration&nbsp;Guide.html<br>Fee System Roadmap.html<br>Maintainers Runbook.html</td><td>Internal reference docs (this is one of them — not part of the app runtime).</td></tr>
   </table>
@@ -179,11 +185,18 @@
 ├── Import Revenues.html          <span class="c">← admin-only</span>
 ├── Ingestion Studio.html
 ├── Benchmarking Dashboard.html
+├── Staffing Matrix.html            <span class="c">← admin-only · bandwidth + actuals</span>
+├── Profitability.html             <span class="c">← admin-only · revenue vs. burn</span>
+├── Data Entry Status.html
+├── Change Log.html                <span class="c">← audit trail (who changed what)</span>
+├── Rate Grid Reconciliation.html  <span class="c">← admin-only · new-grid adoption</span>
+├── Import Small Works.html        <span class="c">← admin-only</span>
 ├── tests.html                    <span class="c">← regression suite · run before deploy</span>
 ├── oauth-callback.html           <span class="c">← Box sign-in lands here (REQUIRED)</span>
 │
 ├── api/                          <span class="c">← Vercel serverless functions</span>
 │   ├── box-token.js              <span class="c">OAuth token exchange + refresh (holds the secret)</span>
+│   ├── clockify.js               <span class="c">Clockify Reports proxy — aggregated actuals CSV (key server-side only)</span>
 │   └── extract.js                <span class="c">proposal extraction via Claude · self-healing model fallback chain</span>
 │
 ├── universal-fee-calc/           <span class="c">← the application code (shared by all pages)</span>
@@ -198,6 +211,12 @@
 │   ├── export-excel.js           <span class="c">the Excel export (live formulas)</span>
 │   ├── revenue-studio.js / studio.css  <span class="c">Revenue Studio</span>
 │   ├── proposal-analytics.js     <span class="c">Proposal Analytics</span>
+│   ├── staff.js / staffing-page.js  <span class="c">staffing matrix data layer + page</span>
+│   ├── profitability-page.js     <span class="c">Profitability (revenue vs. burn)</span>
+│   ├── rate-reconcile.js         <span class="c">new-grid reconciliation engine</span>
+│   ├── smallworks-data.js        <span class="c">small-works pass-through seed</span>
+│   ├── guide.js                  <span class="c">the ⓘ inline help markers</span>
+│   ├── doc-page.js               <span class="c">print/paged shell used by the guides</span>
 │   ├── import-revenues.js        <span class="c">admin bulk import</span>
 │   ├── ingest.js / bench*.js     <span class="c">Ingestion + Benchmarking</span>
 │   └── styles.css
@@ -208,10 +227,12 @@
 └── .gitignore
 
 <span class="y">NEVER in the repo — confidential, lives ONLY in Box:</span>
-   rates.json      <span class="c">the Macro rate grid (rack rates, cost floors, discounts)</span>
-   projects.json   <span class="c">all saved projects, incl. frozen $ snapshots on booked records</span></div>
+   rates.json      <span class="c">the PPM rate grid (rack rates, cost floors, discounts)</span>
+   projects.json   <span class="c">all saved projects, incl. frozen $ snapshots on booked records</span>
+   staff.json      <span class="c">living staffing matrix — allocations, notes, Clockify actuals, mappings</span>
+   studio.json     <span class="c">Revenue Studio baselines + scenarios</span></div>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 1 / 7</span></div>
+  <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 1 / 7</span></div>
 </div>
 
 <!-- ============ PAGE 2 ============ -->
@@ -269,7 +290,7 @@
   </ol>
   <p><strong>Revenue Projections:</strong> a "⤓ Excel" button exports the matrix <strong>exactly as currently viewed</strong> — respects every active filter and the rated-5–7 toggle, mirrors the rating-grouped rows, year/month headers, row totals, the Projected and Probability-weighted totals rows, KPI band, and CO rollups.</p>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 2 / 7</span></div>
+  <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 2 / 7</span></div>
 </div>
 
 <!-- ============ PAGE 3 · CALCULATION PIPELINE ============ -->
@@ -316,6 +337,7 @@
     <tr><td class="k"><b>= Net (proposed fee)</b></td><td><b>Gross &minus; Rate&nbsp;Lock credit &minus; discount</b> — what the client pays</td></tr>
     <tr><td class="k">&minus; Fee share</td><td>Two broker modes. <strong>Off invoice:</strong> Net &times; fee-share % comes out of Savills revenue (client bill unchanged). <strong>On top:</strong> the broker fee is added to the client invoice (client pays Net + broker; Savills keeps Net). The monthly schedule shows a broker column and, in on-top mode, the invoice amount per month.</td></tr>
     <tr><td class="k">= Revenue</td><td>What Savills keeps, net of the broker share in either mode</td></tr>
+    <tr><td class="k">+ Pass-through</td><td>Vendor cost run through us, <strong>walled off</strong> from discount, rate lock and escalation. <strong>Billed:</strong> client pays cost + markup through us. <strong>Managed:</strong> the vendor bills the client direct and we invoice the markup only. Either way <em>only the markup is Savills revenue</em>. Distributed per line across the timeline (explicit monthly overrides, else spread evenly). A project with no priced roles (e.g. small works) lives entirely on these lines.</td></tr>
   </table>
   <div class="box key">
     <span class="tag">The rate-lock rule</span>
@@ -325,7 +347,7 @@
   <h3>Step 8 · Cost-floor check (advisory only — does not change the fee)</h3>
   <p>Each grid role's lowest billed rate — <code>rate(startYear) &times; (1 &minus; discount%)</code> — is compared to the tier's confidential cost floor. If it falls below, the role is flagged <strong>"below cost."</strong> A warning only; it never alters the calculated fee.</p>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 3 / 7</span></div>
+  <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 3 / 7</span></div>
 </div>
 
 <!-- ============ PAGE 4 · CAVEATS ============ -->
@@ -385,7 +407,7 @@
     <li><strong>"Discount on gross" footnote</strong> — one line in the summary so the basis is explicit to reviewers.</li>
   </ul>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 4 / 7</span></div>
+  <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 4 / 7</span></div>
 </div>
 
 <!-- ============ PAGE 5 · RECONCILE & CHANGE ORDERS ============ -->
@@ -414,7 +436,7 @@
     If a booked project's inputs drift from its frozen snapshot, the calculator shows a red banner — "Contract changed since it was booked" — with two actions: <strong>Restamp contract</strong> (<code>restampFinancials</code> refreshes the frozen figures to current scope) or <strong>Process as change order</strong> (capture the difference as a signed amendment).
   </div>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 5 / 7</span></div>
+  <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 5 / 7</span></div>
 </div>
 
 <!-- ============ PAGE 6 · REPORTING ============ -->
@@ -458,7 +480,19 @@
     The snapshot, stale flag, restamp, and change-order roll-up are all live in <code>store.js</code> and the calculator UI, and verified end-to-end.
   </div>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 6 / 7</span></div>
+  <h3>The audit trail (activity log)</h3>
+  <p>An append-only <code>activity</code> array rides inside <code>projects.json</code>, so the history syncs with the data and is union-merged by entry id in <code>mergeDb</code> — two people editing offline both keep their entries. Capped at the most recent <strong>1,500</strong>; oldest fall off the front.</p>
+  <p>Every entry carries <code>ts</code>, <code>actor</code> (real Box login — never the impersonated one), <code>actorName</code>, <code>action</code>, <code>projectId</code> and a <code>meta</code> payload. Actions: <code>create</code>, <code>edit</code>, <code>status</code>, <code>book</code>, <code>delete</code>. When an admin acts while using "View as", the entry also records <code>viewingAs</code> — accountability follows the real identity.</p>
+  <p><code>describeChanges(prev, next)</code> in <code>store.js</code> produces the field-level diff on every save: project meta, revenue leader, rating, timeline, phases, groups, all assumptions, broker fee share, pass-through lines, and the roster (through the same <code>rosterDiff</code> that powers version history). <code>feeDelta()</code> adds net-fee before/after when the rate grid is loaded. Logging is wrapped in try/catch at every level — <strong>a logging failure must never break a save</strong>.</p>
+  <div class="box">
+    <span class="tag">Note · log vs. versions</span>
+    The change log answers "who touched this and what did they move?" Version history answers "put it back the way it was." They are separate systems by design — the log is cheap and global, versions are heavy per-project snapshots.
+  </div>
+
+  <h3>The actuals layer (Clockify → staff.json)</h3>  <p>Actual hours never touch <code>projects.json</code>. They live in <code>staff.json</code> alongside the staffing matrix, notes and the mapping tables. <code>api/clockify.js</code> is a serverless proxy over Clockify's <strong>Reports</strong> API — it aggregates server-side and returns a small CSV of hours by <strong>user × project × month</strong>, so the browser never pages raw time entries and the API key never leaves the server. It also serves project and user lists, plus an entry-lateness report (creation time decoded from each entry's ObjectID vs. the day worked).</p>
+  <p>Two mapping tables make it usable, both saved to <code>staff.json</code> so a fix by one admin holds for everyone: <strong>fee-link</strong> (Clockify project → fee record) and <strong>title pinning</strong> (person → grid title, for cost rate). Unmapped Clockify projects surface as unattributed burn on the Profitability page rather than being silently dropped. Cost rates come from <code>rates.json</code> — so burn, like every other number, reconciles to the same grid.</p>
+
+  <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 6 / 7</span></div>
 </div>
 
 <!-- ============ PAGE 7 · CONFIG / DEPLOY ============ -->
@@ -474,10 +508,15 @@
     <tr><td class="k">clientSecret</td><td>box-adapter.js</td><td><strong>Empty — must stay empty.</strong> Never in the browser.</td></tr>
     <tr><td class="k">dataFileId</td><td>box-adapter.js</td><td>Box file id of <code>projects.json</code></td></tr>
     <tr><td class="k">ratesFileId</td><td>box-adapter.js</td><td>Box file id of <code>rates.json</code></td></tr>
+    <tr><td class="k">studioFileId</td><td>box-adapter.js</td><td>Box file id of <code>studio.json</code> (Studio baselines + scenarios). Blank = local-only.</td></tr>
+    <tr><td class="k">staffFileId</td><td>box-adapter.js</td><td>Box file id of <code>staff.json</code>. <strong>Self-configuring</strong> — if blank, the file is found by name in the folder (created on first run) so every admin lands on the same one.</td></tr>
+    <tr><td class="k">actualsFileId</td><td>box-adapter.js</td><td>Optional <code>clockify-actuals.csv</code> in Box. Blank = the page pulls live through <code>/api/clockify</code> or takes a manual drop.</td></tr>
     <tr><td class="k">folderId</td><td>box-adapter.js</td><td>Box folder id (used to recreate a missing data file)</td></tr>
     <tr><td class="k">BOX_CLIENT_ID</td><td>Vercel env var</td><td>Box app client id</td></tr>
     <tr><td class="k">BOX_CLIENT_SECRET</td><td>Vercel env var</td><td>Box app secret — server-side only, used by <code>api/box-token.js</code></td></tr>
     <tr><td class="k">ANTHROPIC_API_KEY</td><td>Vercel env var</td><td>For <code>api/extract.js</code> (Ingestion Studio)</td></tr>
+    <tr><td class="k">CLOCKIFY_API_KEY</td><td>Vercel env var</td><td>For <code>api/clockify.js</code> — server-side only. Never in browser code.</td></tr>
+    <tr><td class="k">CLOCKIFY_WORKSPACE_ID</td><td>Vercel env var</td><td>The workspace the Reports API aggregates over</td></tr>
   </table>
 
   <h2><span class="n">14</span> Deploying a change</h2>
@@ -504,6 +543,7 @@
     <li><strong>Box logins must match the allowlist emails exactly</strong> (<code>firstinitiallastname@savills.us</code>). A mismatch makes an admin look like a member.</li>
     <li><strong>Editing a booked project flags it stale</strong> — by design (&sect;11). Restamp or process a change order. NTE projects restamp automatically.</li>
     <li><strong>Run <code>tests.html</code> before every deploy</strong> — 24 regression assertions on the pricing engine and data layer; all must be green.</li>
+    <li><strong>Clockify mapping hygiene</strong> — an unmapped Clockify project shows as unattributed burn on Profitability. Fix the fee-link once and it holds for the whole team (&sect;12).</li>
     <li><strong>Token refresh</strong> — sign-in survives ~60 days idle; after that the user re-authenticates. Normal.</li>
     <li><strong>Claude model changes can't break Ingestion</strong> — <code>api/extract.js</code> tries a built-in list of model ids in order and uses the first that responds; a deprecated model is skipped automatically.</li>
   </ul>
@@ -513,9 +553,12 @@
     <li><strong>Server-side per-user filtering</strong> — the only way to let someone in while truly hiding other projects. Returns just the caller's records from a serverless endpoint.</li>
     <li><strong>Server auth (service account) for the reporting pull</strong> — so Power BI reads the data with no human logged in.</li>
     <li><strong>Parity self-check</strong> between the two calculation engines (&sect;9).</li>
+    <li><strong>Formal accrual / flash output</strong> — a standalone re-runnable monthly report; flash snapshots already exist inside Projections.</li>
+    <li><strong>90-day capacity view</strong> and per-resource utilization charts on top of the staffing data now being captured.</li>
+    <li><strong>Two-way Salesforce sync</strong> — the contract number written back onto the record instead of pasted from the intake reply.</li>
   </ol>
 
-  <div class="foot"><span>Savills PPM — Fee Proposal Generator</span><span>Maintainer's Runbook · 7 / 7</span></div>
+  <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 7 / 7</span></div>
 </div>
 
 </body>

@@ -1,5 +1,5 @@
 /* ============================================================
-   SAVILLS PPM · FEE SYSTEM · localStorage data store
+   SAVILLS PPM · FEE & REVENUE SYSTEM · localStorage data store
    Schema-versioned project records.
    ============================================================ */
 (function () {
@@ -116,6 +116,7 @@
     'TAMI',
     'Retail',
     'Data Center',
+    'Energy',
     'Life Sciences',
     'Healthcare',
     'Industrial',
@@ -187,7 +188,14 @@
 
   function writeDb(db) {
     db.schemaVersion = SCHEMA;
-    localStorage.setItem(KEY, JSON.stringify(db));
+    // Quota-safe local write: if localStorage is full, the local cache write
+    // fails but the Box push below STILL runs, so the save is never lost —
+    // and the failure is surfaced loudly instead of silently.
+    try { localStorage.setItem(KEY, JSON.stringify(db)); }
+    catch (e) {
+      console.error('Local cache write failed (storage full?) — data will still sync to Box', e);
+      try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error', message: 'Browser storage is full — your save is syncing to Box but cannot be cached locally. Clear old site data or contact the maintainer.', at: Date.now() } })); } catch (e2) {}
+    }
     // Sync layer: if a remote backend (Box) is attached, mirror local → remote.
     // No-op when nothing is attached, so the offline/localStorage app is unchanged.
     if (typeof _remotePush === 'function') { try { _remotePush(db); } catch (e) { console.warn('remote push failed', e); } }
@@ -197,17 +205,24 @@
      Rides inside projects.json (so it syncs to Box with the data). Union-merged
      by entry id in box-adapter's mergeDb, capped to the most recent entries.
      Records who did what: create, save, status change, book, delete, access grant. */
-  const ACTIVITY_CAP = 500;
+  const ACTIVITY_CAP = 1500;
   function logActivity(action, projectId, meta) {
     try {
       const db = readDb();
       if (!Array.isArray(db.activity)) db.activity = [];
-      const actor = (getCurrentUser() && getCurrentUser().username) || 'unknown';
-      db.activity.push({
+      const cu = getCurrentUser() || {};
+      const ri = (typeof realIdentityLabel === 'function' ? realIdentityLabel() : null) || {};
+      const actor = ri.username || cu.username || 'unknown';
+      const entry = {
         id: 'act_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
         ts: new Date().toISOString(),
-        actor, action, projectId: projectId || null, meta: meta || null,
-      });
+        actor,
+        actorName: ri.name || cu.name || '',
+        action, projectId: projectId || null, meta: meta || null,
+      };
+      // Record when an admin acted while previewing someone else's view.
+      if (cu.impersonating && cu.username && cu.username !== actor) entry.viewingAs = cu.username;
+      db.activity.push(entry);
       if (db.activity.length > ACTIVITY_CAP) db.activity = db.activity.slice(-ACTIVITY_CAP);
       // write WITHOUT re-logging; go straight to storage + push
       db.schemaVersion = SCHEMA;
@@ -221,6 +236,117 @@
     if (projectId) a = a.filter(x => x.projectId === projectId);
     a.sort((x, y) => (y.ts || '').localeCompare(x.ts || ''));
     return limit ? a.slice(0, limit) : a;
+  }
+
+  /* ===== Field-level change description =====
+     Compares the previous stored record to the one being saved and returns a
+     list of plain-language changes ({field, from, to, detail}). This is what
+     turns "someone saved" into "who changed what". Purely descriptive — it
+     never blocks or alters a save. */
+  const META_FIELDS = [
+    ['name', 'Project name'], ['client', 'Client'], ['industry', 'Industry'],
+    ['projectType', 'Project type'], ['salesforceId', 'Salesforce ID'],
+    ['firstProposalDate', 'Proposal date'], ['proposalDate', 'Proposal date'],
+    ['lossReason', 'Loss reason'], ['accessGrant', 'Granted access'],
+    ['assumptionsText', 'Assumptions'], ['exclusions', 'Exclusions'], ['notes', 'Notes'],
+  ];
+  const ASSUMPTION_FIELDS = [
+    ['hrsPerMo', 'Hours per month'], ['escalation', 'Escalation %'],
+    ['industryAdj', 'Industry adjustment %'], ['discount', 'Client discount %'],
+    ['rateLock', 'Rate lock'], ['billingMode', 'Fee basis'],
+    ['catalogBaseYear', 'Rate grid year'], ['nteCeiling', 'NTE ceiling'],
+  ];
+  function shortVal(v) {
+    if (v === true) return 'on'; if (v === false) return 'off';
+    if (v == null || v === '') return '—';
+    const s = String(v);
+    return s.length > 60 ? s.slice(0, 57) + '…' : s;
+  }
+  function describeChanges(prev, next) {
+    const out = [];
+    if (!prev || !next) return out;
+    const a = prev.project || {}, b = next.project || {};
+    META_FIELDS.forEach(([k, label]) => {
+      if ((a[k] || '') !== (b[k] || '')) out.push({ field: label, from: shortVal(a[k]), to: shortVal(b[k]) });
+    });
+    // Revenue leader resolves through the directory, so compare display names.
+    const lead = (p) => { const pj = p.project || {}; const raw = pj.leadId || pj.lead; return raw ? (leaderDisplay ? leaderDisplay(raw) : raw) : ''; };
+    if (lead(prev) !== lead(next)) out.push({ field: 'Revenue leader', from: shortVal(lead(prev)), to: shortVal(lead(next)) });
+    if ((a.rating || '') !== (b.rating || '')) out.push({ field: 'Rating', from: shortVal(a.rating), to: shortVal(b.rating) });
+    // Timeline
+    const tl = (p) => { const t = p.timeline || {}; return [t.startYear, t.startMonth, t.endYear, t.endMonth].join('/'); };
+    if (tl(prev) !== tl(next)) {
+      const f = (p) => { const t = p.timeline || {}; return (t.startMonth || '?') + '/' + (t.startYear || '?') + ' → ' + (t.endMonth || '?') + '/' + (t.endYear || '?'); };
+      out.push({ field: 'Timeline', from: f(prev), to: f(next) });
+    }
+    // Phases
+    const ph = (p) => (p.phases || []).map(x => x.length).join(',');
+    if (ph(prev) !== ph(next)) {
+      const n1 = (prev.phases || []).length, n2 = (next.phases || []).length;
+      out.push({ field: 'Phases', from: n1 + ' phase' + (n1 === 1 ? '' : 's'), to: n2 + ' phase' + (n2 === 1 ? '' : 's') + (n1 === n2 ? ' (lengths changed)' : '') });
+    }
+    // Groups
+    const gp = (p) => (p.groups || []).map(g => (g.name || '') + ':' + (g.serviceLine || '')).join('|');
+    if (gp(prev) !== gp(next)) {
+      const n1 = (prev.groups || []).length, n2 = (next.groups || []).length;
+      out.push({ field: 'Groups', from: n1 + '', to: n2 + (n1 === n2 ? ' (renamed / service line changed)' : '') });
+    }
+    // Assumptions
+    const aa = prev.assumptions || {}, bb = next.assumptions || {};
+    ASSUMPTION_FIELDS.forEach(([k, label]) => {
+      if (String(aa[k] == null ? '' : aa[k]) !== String(bb[k] == null ? '' : bb[k])) {
+        out.push({ field: label, from: shortVal(aa[k]), to: shortVal(bb[k]) });
+      }
+    });
+    // Broker fee share
+    const fs = (o) => { const f = (o || {}).feeShare || {}; return [!!f.enabled, f.pct || 0, f.mode || ''].join('/'); };
+    if (fs(aa) !== fs(bb)) {
+      const f = (o) => { const x = (o || {}).feeShare || {}; return x.enabled ? (x.pct || 0) + '% ' + (x.mode || '') : 'off'; };
+      out.push({ field: 'Broker fee share', from: f(aa), to: f(bb) });
+    }
+    // Pass-through
+    const ptSum = (p) => {
+      const pt = p.passthrough || {}; const lines = Array.isArray(pt.lines) ? pt.lines : [];
+      const cost = lines.reduce((s, l) => s + (parseFloat(l.cost) || 0), 0);
+      return { on: !!pt.enabled, n: lines.length, cost };
+    };
+    const p1 = ptSum(prev), p2 = ptSum(next);
+    if (p1.on !== p2.on || p1.n !== p2.n || Math.round(p1.cost) !== Math.round(p2.cost)) {
+      const f = (x) => x.on ? x.n + ' line' + (x.n === 1 ? '' : 's') + ' · $' + Math.round(x.cost).toLocaleString() : 'off';
+      out.push({ field: 'Pass-through', from: f(p1), to: f(p2) });
+    }
+    // Roles — reuse the roster diff that powers version history
+    try {
+      const rd = rosterDiff(rosterSnapshot(prev), rosterSnapshot(next));
+      const bits = [];
+      if (rd.added.length) bits.push(rd.added.length + ' added');
+      if (rd.removed.length) bits.push(rd.removed.length + ' removed');
+      if (rd.changed.length) bits.push(rd.changed.length + ' changed');
+      if (bits.length) {
+        out.push({
+          field: 'Team', from: (prev.roles || []).length + ' role' + ((prev.roles || []).length === 1 ? '' : 's'),
+          to: (next.roles || []).length + ' role' + ((next.roles || []).length === 1 ? '' : 's'),
+          detail: bits.join(', ') + ' — ' + [].concat(
+            rd.added.map(r => '+' + r.label), rd.removed.map(r => '−' + r.label),
+            rd.changed.map(r => '~' + r.label)
+          ).slice(0, 8).join(', '),
+        });
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  /** Net fee before/after, when the rate grid is loaded. Null when it isn't. */
+  function feeDelta(prev, next) {
+    try {
+      const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+      if (!catalog || !catalog.hydrated) return null;
+      const f1 = prev ? computeFinancials(prev, catalog) : null;
+      const f2 = next ? computeFinancials(next, catalog) : null;
+      if (!f1 || !f2) return null;
+      const from = Math.round(f1.net), to = Math.round(f2.net);
+      return from === to ? null : { from, to, delta: to - from };
+    } catch (e) { return null; }
   }
 
   /* Remote sync hook — set by a backend adapter (e.g. box-adapter.js) via
@@ -361,13 +487,40 @@
     return (p && !p._deleted) ? p : null;
   }
 
-  function saveProject(record) {
+  function saveProject(record, opts) {
+    opts = opts || {};
     const db = readDb();
     const prev = record.id ? db.projects[record.id] : null;
     const isNew = !record.id;
+    /* Optimistic concurrency. The editor tells us which version it started from
+       (baseUpdatedAt). If the stored record has moved on since, someone else (or
+       another tab) saved in the meantime — writing now would silently revert
+       their work, which is exactly the "my entries don't stick" symptom. Refuse
+       and let the caller decide. opts.force overrides after the user chooses. */
+    if (prev && !prev._deleted && opts.baseUpdatedAt && !opts.force
+        && (prev.updatedAt || '') > opts.baseUpdatedAt) {
+      const err = new Error('This project was saved by someone else while you were editing.');
+      err.code = 'STALE_WRITE';
+      err.remote = {
+        updatedAt: prev.updatedAt,
+        by: (prev.lastSavedBy && (prev.lastSavedBy.name || prev.lastSavedBy.username)) || null,
+      };
+      throw err;
+    }
     if (!record.id) record.id = 'proj_' + Math.random().toString(36).slice(2, 11);
     if (!record.createdAt) record.createdAt = new Date().toISOString();
-    record.updatedAt = new Date().toISOString();
+    /* updatedAt must be STRICTLY increasing per record: it's both the Box merge
+       tiebreaker and the concurrency token, and two saves inside the same
+       millisecond would otherwise be indistinguishable. */
+    {
+      let ts = new Date().toISOString();
+      const prevTs = (prev && prev.updatedAt) || '';
+      if (prevTs && ts <= prevTs) ts = new Date(new Date(prevTs).getTime() + 1).toISOString();
+      record.updatedAt = ts;
+    }
+    { const cu = getCurrentUser() || {};
+      const ri = (typeof realIdentityLabel === 'function' ? realIdentityLabel() : null) || {};
+      record.lastSavedBy = { username: ri.username || cu.username || null, name: ri.name || cu.name || null }; }
     maybeSnapshotFinancials(record);   // freeze derived figures once booked
     maybeAutoVersion(record, prev);    // capture a version when status crosses a lifecycle milestone
     db.projects[record.id] = record;
@@ -376,11 +529,22 @@
     try {
       const newStatus = record.project && record.project.status;
       const oldStatus = prev && prev.project && prev.project.status;
+      const name = record.project && record.project.name;
+      const client = record.project && record.project.client;
       if (isNew) {
-        logActivity('create', record.id, { name: record.project && record.project.name, status: newStatus });
-      } else if (oldStatus !== newStatus) {
-        const booked = ['won', 'active', 'closed'].includes(newStatus);
-        logActivity(booked ? 'book' : 'status', record.id, { from: oldStatus, to: newStatus });
+        logActivity('create', record.id, { name, client, status: newStatus });
+      } else {
+        const changes = describeChanges(prev, record);
+        const fee = feeDelta(prev, record);
+        if (oldStatus !== newStatus) {
+          const booked = ['won', 'active', 'closed'].includes(newStatus);
+          logActivity(booked ? 'book' : 'status', record.id, {
+            name, client, from: oldStatus, to: newStatus,
+            changes: changes.length ? changes : undefined, fee: fee || undefined,
+          });
+        } else if (changes.length || fee) {
+          logActivity('edit', record.id, { name, client, status: newStatus, changes, fee: fee || undefined });
+        }
       }
     } catch (e) {}
     return record;
@@ -661,16 +825,26 @@
 
   function importDb(jsonStr, mode = 'merge') {
     const incoming = JSON.parse(jsonStr);
-    if (!incoming.projects) throw new Error('Invalid file — no projects key.');
+    if (!incoming || typeof incoming !== 'object' || !incoming.projects || typeof incoming.projects !== 'object') throw new Error('Invalid file — no projects key.');
+    const db = readDb();
+    const inCount = Object.keys(incoming.projects).length;
     if (mode === 'replace') {
+      const localCount = Object.keys(db.projects).length;
+      // Never let an empty/near-empty file nuke a populated shared db.
+      if (localCount > 0 && inCount === 0) throw new Error('Refusing to replace ' + localCount + ' project(s) with an empty file. Use merge, or delete projects individually.');
+      // Preserve the audit trail across a replace.
+      incoming.activity = [...(db.activity || []), ...(incoming.activity || [])].slice(-500);
       writeDb(incoming);
-      return Object.keys(incoming.projects).length;
-    } else {
-      const db = readDb();
-      Object.assign(db.projects, incoming.projects);
-      writeDb(db);
-      return Object.keys(incoming.projects).length;
+      return inCount;
     }
+    // MERGE (default): newest-updatedAt wins per project, so importing an old
+    // backup can never clobber newer work (matches the Box merge strategy).
+    Object.entries(incoming.projects).forEach(([id, ip]) => {
+      const cur = db.projects[id];
+      if (!cur || ((ip && ip.updatedAt) || '') >= (cur.updatedAt || '')) db.projects[id] = ip;
+    });
+    writeDb(db);
+    return inCount;
   }
 
   function downloadJson(filename, jsonStr) {
@@ -1574,6 +1748,15 @@
     'eglatt@savills.us',     // Emily Glatt
   ].map(s => s.toLowerCase()));
 
+  /* Per-user EXTRA visibility: a member ALSO sees any project carrying a group
+     whose name matches one of their patterns — on top of lead/team/grant access.
+     Benay: every project with a "Change Management" group (plus her own and
+     Tonya's projects via the normal team/lead path). */
+  const GROUP_ACCESS = {
+    'bjosselson@savills.us': [/change\s*(management|mgmt)/i],
+  };
+  function groupAccessRules(login) { return GROUP_ACCESS[String(login || '').trim().toLowerCase()] || null; }
+
   /* These logins may use the "Viewing as" impersonation switch to preview
      other people's restricted views. Everyone else never sees the control. */
   const SUPERUSERS = new Set([
@@ -1751,6 +1934,9 @@
     // Explicit per-project access grant — match the signed-in user's Box email.
     const grant = accessGrantList(p);
     if (grant.length && u.username && grant.includes(String(u.username).trim().toLowerCase())) return true;
+    // Group-based visibility (e.g. Benay sees every Change Management group).
+    const rules = groupAccessRules(u.username);
+    if (rules && (p.groups || []).some(g => rules.some(rx => rx.test((g && g.name) || '')))) return true;
     return false;
   }
   /** The access wall: admins get everything; members get only their own. */
@@ -1766,7 +1952,7 @@
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING,
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
-    allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity,
+    allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity, describeChanges,
     saveVersion, listVersions, versionDiff, restoreVersionRecord, rosterDiff,
     reconcileToGrid, commitReconcile,
     proposalHealth,

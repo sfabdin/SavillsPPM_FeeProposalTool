@@ -198,6 +198,8 @@
       const created = Date.parse(p.createdAt || '');
       return {
         p, yearTotal, byMonth,
+        ptCost: (p.financials && p.financials.passThroughCost) || 0,
+        ptMarkup: (p.financials && p.financials.passThroughMarkup) || 0,
         rating: STORE.ratingFor(p),
         isNew: isFinite(cutoff) && isFinite(created) && created > cutoff,
         client: (pj.client || '—').trim() || '—',
@@ -248,10 +250,13 @@
     const importedRev = imported.reduce((a, r) => a + r.yearTotal, 0);
     const pctLive = Math.round((totalRev - importedRev) / totalRev * 100);
     const frozen = baseline.createdAt ? new Date(baseline.createdAt).toLocaleDateString() : '—';
+    const ptContract = rows.reduce((a, r) => a + (r.ptCost || 0) + (r.ptMarkup || 0), 0);
     const chip = (status, label, val) => `<div class="cf-chip"><span class="cf-dot ${status}"></span><span class="cf-l">${label}</span><span class="cf-v">${val}</span></div>`;
+    const fmtC = (v) => '$' + Math.round(v).toLocaleString();
     return chip(pctLive >= 80 ? 'live' : 'partial', 'Pipeline source', pctLive + '% calculated · ' + (100 - pctLive) + '% imported $')
       + chip(withStaff.length === n && n ? 'live' : (withStaff.length ? 'partial' : 'missing'), 'Staffing coverage', withStaff.length + '/' + n + ' have allocations')
       + chip('imported', 'Baseline', esc(baseline.name) + ' · frozen ' + frozen)
+      + (ptContract > 0 ? chip('planned', 'Pass-through contract', fmtC(ptContract) + ' billed through · excluded from revenue') : '')
       + chip('planned', 'Margin', 'Planned — floor-rate basis · actuals pending Clockify');
   }
 

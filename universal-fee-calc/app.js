@@ -70,7 +70,7 @@
     assumptions: {
       hrsPerMo: 173.33,
       escalation: 3.0,
-      industryAdj: 20,   // rate-wide “industry standard” trim off the high Macro rack rates
+      industryAdj: 20,   // rate-wide “industry standard” trim off the high PPM rack rates
       discount: 0,       // client / fixed-fee discount, applied at total level
       rateLock: false,
       feeBasis: 'fixed',   // 'fixed' = fixed fee (frozen on booking) · 'nte' = not-to-exceed (live forecast)
@@ -79,11 +79,18 @@
       feeShare: { enabled: false, pct: 10, mode: 'offtop' }, // broker cut · 'offtop'=% off invoice · 'ontop'=markup added for client
       catalogBaseYear: CATALOG.baseYear,
     },
+    // Pass-through / principal billing: vendor cost billed THROUGH Savills.
+    // Cost flows straight out to the vendor; only the markup is Savills revenue.
+    passthrough: { enabled: false, lines: [] },
   });
 
   let state = DEFAULT_STATE();
   let dirty = false;
   let autosaveTimer = null;
+  /* The record version this editor loaded / last wrote. Used for optimistic
+     concurrency so we never silently overwrite a teammate's newer save. */
+  let baseUpdatedAt = null;
+  let conflicted = false;
 
   /* ---------- Helpers ---------- */
   const uid = () => 'r' + Math.random().toString(36).slice(2, 9);
@@ -241,6 +248,59 @@
     if (role.fteMonthly && role.fteMonthly[mk] != null) return role.fteMonthly[mk];
     return role.fte[phaseId] || 0;
   }
+
+  /* ----- Option A: group-as-scope helpers -----
+     Groups double as concurrent scopes. Months are canonical, so overlapping
+     scopes already sum correctly; these helpers just make a scope's active
+     window legible and let you slide a whole team when a milestone slips. */
+  const absIdx = (y, m) => y * 12 + (m - 1);          // "YYYY-M" → absolute month index
+  function parseMk(mk) { const [y, m] = mk.split('-').map(Number); return { y, m }; }
+  function mkFromIdx(i) { return Math.floor(i / 12) + '-' + ((i % 12) + 1); }
+  /** Active month span for a group: earliest → latest month with any nonzero allocation. */
+  function groupActiveSpan(groupId) {
+    let lo = Infinity, hi = -Infinity;
+    state.roles.filter(r => r.groupId === groupId).forEach(r => {
+      Object.keys(r.fteMonthly || {}).forEach(mk => {
+        if ((r.fteMonthly[mk] || 0) <= 0) return;
+        const { y, m } = parseMk(mk); const i = absIdx(y, m);
+        if (i < lo) lo = i; if (i > hi) hi = i;
+      });
+    });
+    if (lo === Infinity) return null;
+    const lab = (i) => `${MONTH_NAMES[i % 12]} ${Math.floor(i / 12)}`;
+    return { lo, hi, months: (hi - lo + 1), label: lo === hi ? lab(lo) : `${lab(lo)} – ${lab(hi)}` };
+  }
+  /** Slide every role in a group by delta months (keys remapped, values kept).
+      Refuses if any allocation would land outside the project timeline. */
+  function shiftGroupMonths(groupId, delta) {
+    if (!delta) return;
+    const tl = getMonths().map(m => absIdx(m.year, m.month));
+    const loT = Math.min(...tl), hiT = Math.max(...tl);
+    const roles = state.roles.filter(r => r.groupId === groupId);
+    // preflight: would any nonzero allocation fall off the timeline?
+    for (const r of roles) {
+      for (const mk of Object.keys(r.fteMonthly || {})) {
+        if ((r.fteMonthly[mk] || 0) <= 0) continue;
+        const { y, m } = parseMk(mk); const ni = absIdx(y, m) + delta;
+        if (ni < loT || ni > hiT) {
+          alert('That shift would push this scope past the project timeline. Extend the project dates first, then shift.');
+          return;
+        }
+      }
+    }
+    roles.forEach(r => {
+      const next = {};
+      Object.keys(r.fteMonthly || {}).forEach(mk => {
+        const { y, m } = parseMk(mk); const ni = absIdx(y, m) + delta;
+        next[mkFromIdx(ni)] = r.fteMonthly[mk];
+      });
+      r.fteMonthly = next;
+      // phase display values are recomputed from months on render; clear stale mirror
+      state.phases.forEach(p => { if (r.fte) r.fte[p.id] = phaseAvgFte(r, p.id); });
+    });
+    renderMatrix(); renderMonthly(); renderSummary();
+    markDirty();
+  }
   /** Recompute a phase's stored fte as the average of its months' effective FTE
       (called after a per-month edit, so the collapsed phase reflects the months). */
   function recomputePhaseAvg(role, phase) {
@@ -261,13 +321,21 @@
     return fte * rate * state.assumptions.hrsPerMo;
   }
 
-  /** Rate Lock credit = (unlocked - locked) × hours × FTE, per role per month. Always positive when lock is on. */
-  function monthlyLockCredit(role, monthObj, phaseId) {
+  /** Rate Lock credit — RAW (pre-discount): (unlocked − locked) × hours × FTE, per role per month. Always positive when lock is on. */
+  function monthlyLockCreditRaw(role, monthObj, phaseId) {
     if (!state.assumptions.rateLock) return 0;
     const fte = effectiveFte(role, monthObj, phaseId) / 100;
     if (!fte) return 0;
     const diff = unlockedRateForYear(role, monthObj.year) - rateForYear(role, monthObj.year);
     return Math.max(0, diff) * fte * state.assumptions.hrsPerMo;
+  }
+  /** Rate Lock credit on the DISCOUNTED basis. The same (1 − discount) that scales the
+      fee scales the credit, so gross − credit − discount reconciles exactly to
+      lockedRate × (1 − discount) × hours × FTE — and the credit stays consistent when a
+      team is shifted across months (it never re-derives off the changing total). */
+  function monthlyLockCredit(role, monthObj, phaseId) {
+    const d = (state.assumptions.discount || 0) / 100;
+    return monthlyLockCreditRaw(role, monthObj, phaseId) * (1 - d);
   }
 
   /** Fee for a role over one phase (sum of months in that phase). */
@@ -298,6 +366,15 @@
   function lockCredit() {
     return state.roles.reduce((s, r) => s + roleLockCredit(r), 0);
   }
+  /** Total RAW (pre-discount) rate-lock credit — used only by fit-to-target's solve. */
+  function lockCreditRaw() {
+    let s = 0;
+    state.roles.forEach(r => state.phases.forEach(p => {
+      const months = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
+      months.forEach(m => { s += monthlyLockCreditRaw(r, m, p.id); });
+    }));
+    return s;
+  }
   function discountAmt() {
     return grossTotal() * (state.assumptions.discount / 100);
   }
@@ -319,6 +396,41 @@
   function clientBillTotal() { return (feeShareOn() && feeShareMode() === 'ontop') ? netTotal() + feeShareAmt() : netTotal(); }
   function revenueTotal() { return (feeShareOn() && feeShareMode() === 'offtop') ? netTotal() - feeShareAmt() : netTotal(); }
   function effectiveBrokerPct() { const cb = clientBillTotal(); return cb > 0 ? (feeShareAmt() / cb) * 100 : 0; }
+  /* Pass-through / principal billing. Cost flows to the vendor; only markup is revenue.
+     Walled off from discount / rate-lock / NTE fee math — reads only its own lines. */
+  function ptState() { return state.passthrough || (state.passthrough = { enabled: false, lines: [] }); }
+  function ptOn() { return !!(ptState().enabled && (ptState().lines || []).length); }
+  function ptLines() { return ptState().lines || []; }
+  function ptIsManaged(l) { return l && l.mode === 'managed'; }
+  // Cost that flows OUT to the vendor — billed lines only (managed = direct bill, no pass-through).
+  function ptCostTotal() { return ptOn() ? ptLines().reduce((s, l) => s + (ptIsManaged(l) ? 0 : (parseFloat(l.cost) || 0)), 0) : 0; }
+  // Markup fee = Savills revenue — both modes.
+  function ptMarkupTotal() { return ptOn() ? ptLines().reduce((s, l) => s + (parseFloat(l.cost) || 0) * ((parseFloat(l.markupPct) || 0) / 100), 0) : 0; }
+  // What the client is billed THROUGH Savills: billed = cost + markup; managed = markup fee only.
+  function ptClientTotal() { return ptOn() ? ptLines().reduce((s, l) => { const c = parseFloat(l.cost) || 0, m = c * ((parseFloat(l.markupPct) || 0) / 100); return s + (ptIsManaged(l) ? m : c + m); }, 0) : 0; }
+  /** Per-month CLIENT-BILLED pass-through (through Savills), keyed 'YYYY-M'. Billed lines =
+      cost + markup; managed lines = markup fee only. Explicit monthly distribution wins. */
+  function ptBilledMap() {
+    const map = {}; if (!ptOn()) return map;
+    const keys = getMonths().map(m => m.year + '-' + m.month);
+    ptLines().forEach(l => {
+      const cost = parseFloat(l.cost) || 0; if (!cost) return;
+      const mkFrac = (parseFloat(l.markupPct) || 0) / 100;
+      const managed = ptIsManaged(l);
+      const toClient = (c) => managed ? c * mkFrac : c * (1 + mkFrac);
+      const mo = (l.monthly && Object.keys(l.monthly).length) ? l.monthly : null;
+      if (mo) {
+        Object.keys(mo).forEach(ym => {
+          const norm = ym.split('-')[0] + '-' + parseInt(ym.split('-')[1], 10);
+          map[norm] = (map[norm] || 0) + toClient(parseFloat(mo[ym]) || 0);
+        });
+      } else if (keys.length) {
+        const per = toClient(cost) / keys.length;
+        keys.forEach(k => { map[k] = (map[k] || 0) + per; });
+      }
+    });
+    return map;
+  }
   /** A phase's display FTE for a role = the rounded average of its months'
       effective FTE. Phase is a derived rollup; months are canonical. */
   function phaseAvgFte(role, phaseId) {
@@ -383,6 +495,7 @@
     renderSelectedRoles();
     renderAssumptions();
     renderSummary();
+    renderPassthrough();
     renderMatrix();
     renderMonthly();
     renderFloorCheck();
@@ -599,11 +712,11 @@
 
   /** Back-solve to the target by adjusting ONLY the client discount — staffing
       allocations and per-role rates are held fixed (they come from the actual
-      proposal). net = gross − lockCredit − discount×gross, so for a target net
-      we solve discount = (gross − lock − target) / gross. If the target is
-      ABOVE gross at current rates, discount can't help (it can't go negative) —
-      we flag that and leave it for a manual rate change. Floor advisory still
-      applies after. */
+      proposal). The rate-lock credit rides the discount too, so
+      net = (gross − lockRaw) × (1 − discount); for a target net we solve
+      discount = 1 − target / (gross − lockRaw). If the target is ABOVE what current
+      rates can bill, discount can't help (it can't go negative) — we flag that and
+      leave it for a manual rate change. Floor advisory still applies after. */
   function fitToTarget() {
     const target = currentTargetFee();
     if (target == null || target <= 0) {
@@ -616,8 +729,8 @@
     }
 
     const grossNow = grossTotal();
-    const lock = lockCredit();
-    const maxNet = grossNow - lock;            // net with 0% discount — the ceiling
+    const lockRaw = lockCreditRaw();
+    const maxNet = grossNow - lockRaw;         // net with 0% discount — the ceiling
 
     // No allocations loaded (e.g. an ingested proposal with a fee but a blank
     // matrix) → SEED allocations to hit the target instead of failing.
@@ -626,7 +739,7 @@
       return;
     }
 
-    let d = (grossNow - lock - target) / grossNow;
+    let d = (grossNow - lockRaw > 0) ? 1 - target / (grossNow - lockRaw) : 1;
     let undershoot = false;                    // target is above what current rates can bill
     if (d < 0) { d = 0; undershoot = true; }
     d = Math.min(0.95, d);
@@ -720,6 +833,7 @@
     }
     $('#pm-date').value = f.proposalDate || '';
     $('#pm-location').value = f.location;
+    { const nt = $('#pm-notes'); if (nt) nt.value = f.notes || ''; }
 
     // Status dropdown
     const statusSel = $('#pm-status');
@@ -1486,6 +1600,83 @@
     }
   }
 
+  /* ----- Pass-through / principal billing editor ----- */
+  function renderPassthrough() {
+    const pt = ptState();
+    const on = $('#pt-on'), body = $('#pt-body');
+    if (!on) return;
+    on.checked = !!pt.enabled;
+    if (body) body.hidden = !pt.enabled;
+    if (!pt.enabled) return;
+    const tb = $('#pt-lines');
+    if (tb) {
+      if (!pt.lines.length) {
+        tb.innerHTML = `<tr class="pt-empty"><td colspan="6">No lines yet — add a vendor / pass-through cost below.</td></tr>`;
+      } else {
+        tb.innerHTML = pt.lines.map(l => {
+          const cost = parseFloat(l.cost) || 0;
+          const mk = parseFloat(l.markupPct) || 0;
+          const mkAmt = cost * mk / 100;
+          const managed = l.mode === 'managed';
+          const clientBilled = managed ? mkAmt : cost + mkAmt;
+          return `<tr data-id="${l.id}">
+            <td class="pt-c-lbl"><input type="text" class="pt-label" data-id="${l.id}" value="${escapeHtml(l.label || '')}" placeholder="e.g. AV vendor — direct contract"></td>
+            <td class="pt-c-type"><select class="pt-mode" data-id="${l.id}"><option value="billed" ${!managed ? 'selected' : ''}>Pass-through billed</option><option value="managed" ${managed ? 'selected' : ''}>Managed · direct bill</option></select></td>
+            <td class="pt-c-num"><input type="text" inputmode="decimal" class="pt-cost" data-id="${l.id}" value="${cost || ''}" placeholder="0"></td>
+            <td class="pt-c-num"><input type="text" inputmode="decimal" class="pt-mk" data-id="${l.id}" value="${l.markupPct != null && l.markupPct !== '' ? l.markupPct : ''}" placeholder="0"><span class="pt-pct">%</span></td>
+            <td class="pt-c-num pt-ro pt-fee" data-id="${l.id}">${fmtMoney(mkAmt)}</td>
+            <td class="pt-c-num pt-ro pt-client" data-id="${l.id}">${fmtMoney(clientBilled)}</td>
+            <td class="pt-c-x"><button type="button" class="icon-btn pt-rm" data-id="${l.id}" title="Remove line">×</button></td>
+          </tr>`;
+        }).join('');
+      }
+    }
+    const tot = $('#pt-totals');
+    if (tot) {
+      const c = ptCostTotal(), m = ptMarkupTotal(), cb = ptClientTotal();
+      tot.innerHTML = `
+        <span class="pt-t"><b>Cost passed through (out)</b> ${fmtMoney(c)}</span>
+        <span class="pt-t"><b>Fee · Savills revenue</b> ${fmtMoney(m)}</span>
+        <span class="pt-t pt-t-strong"><b>Client billed through Savills</b> ${fmtMoney(cb)}</span>`;
+    }
+    // wire line inputs — text/number inputs update state + derived cells IN PLACE
+    // (never rebuild the rows on keystroke, or the focused field would deselect).
+    $$('.pt-label').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.label = e.target.value; markDirty(); } }));
+    $$('.pt-cost').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.cost = e.target.value; refreshPtLive(); } }));
+    $$('.pt-mk').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.markupPct = e.target.value; refreshPtLive(); } }));
+    $$('.pt-mode').forEach(s => s.addEventListener('change', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.mode = e.target.value; refreshPtLive(); } }));
+    $$('.pt-rm').forEach(b => b.addEventListener('click', e => { const id = e.target.dataset.id; ptState().lines = ptLines().filter(x => x.id !== id); onPtChange(); }));
+  }
+  /** Recompute derived cells + totals + summary/monthly WITHOUT rebuilding the
+      input rows, so the field being typed in keeps focus. */
+  function refreshPtLive() {
+    ptLines().forEach(l => {
+      const cost = parseFloat(l.cost) || 0;
+      const mkAmt = cost * (parseFloat(l.markupPct) || 0) / 100;
+      const clientBilled = (l.mode === 'managed') ? mkAmt : cost + mkAmt;
+      const feeCell = document.querySelector(`.pt-fee[data-id="${l.id}"]`);
+      const cliCell = document.querySelector(`.pt-client[data-id="${l.id}"]`);
+      if (feeCell) feeCell.textContent = fmtMoney(mkAmt);
+      if (cliCell) cliCell.textContent = fmtMoney(clientBilled);
+    });
+    const tot = $('#pt-totals');
+    if (tot) {
+      const c = ptCostTotal(), m = ptMarkupTotal(), cb = ptClientTotal();
+      tot.innerHTML = `
+        <span class="pt-t"><b>Cost passed through (out)</b> ${fmtMoney(c)}</span>
+        <span class="pt-t"><b>Fee · Savills revenue</b> ${fmtMoney(m)}</span>
+        <span class="pt-t pt-t-strong"><b>Client billed through Savills</b> ${fmtMoney(cb)}</span>`;
+    }
+    renderSummary(); renderMonthly(); if (typeof updateNteHint === 'function') updateNteHint(); markDirty();
+  }
+  function onPtChange() { renderPassthrough(); renderSummary(); renderMonthly(); if (typeof updateNteHint === 'function') updateNteHint(); markDirty(); }
+  function wirePassthrough() {
+    const on = $('#pt-on');
+    if (on) on.addEventListener('change', e => { ptState().enabled = e.target.checked; if (e.target.checked && !ptLines().length) ptState().lines.push({ id: uid(), label: '', cost: '', markupPct: '' }); onPtChange(); });
+    const add = $('#pt-add');
+    if (add) add.addEventListener('click', () => { ptState().lines.push({ id: uid(), label: '', cost: '', markupPct: '' }); onPtChange(); });
+  }
+
   /* ----- Summary ----- */
   function renderSummary() {
     const gross = grossTotal();
@@ -1626,7 +1817,18 @@
       if (!rolesInGroup.length) return;
       const ghdr = document.createElement('tr');
       ghdr.className = 'group-head';
-      ghdr.innerHTML = `<td colspan="${matrixColumns().length + 2}">${escapeHtml(g.name)}</td>`;
+      const span = groupActiveSpan(g.id);
+      const spanLbl = span
+        ? `<span class="gh-span" title="Active window for this scope — earliest to latest month with staffing">${escapeHtml(span.label)} · ${span.months} mo</span>`
+        : '';
+      const shiftCtl = span
+        ? `<span class="gh-shift" title="Slide this whole scope's staffing earlier or later — use when a milestone slips">
+             <button class="gh-shift-btn" data-shift="${g.id}" data-delta="-1" title="Shift 1 month earlier">◀</button>
+             <span class="gh-shift-lbl">shift</span>
+             <button class="gh-shift-btn" data-shift="${g.id}" data-delta="1" title="Shift 1 month later">▶</button>
+           </span>`
+        : '';
+      ghdr.innerHTML = `<td colspan="${matrixColumns().length + 2}"><span class="gh-name">${escapeHtml(g.name)}</span>${spanLbl}${shiftCtl}</td>`;
       tbody.appendChild(ghdr);
       rolesInGroup.forEach(r => {
         const title = getTitle(r.titleId);
@@ -1720,6 +1922,10 @@
       const pid = e.target.dataset.toggle;
       if (expandedPhases.has(pid)) expandedPhases.delete(pid); else expandedPhases.add(pid);
       renderMatrix();
+    }));
+    // Option A: slide a whole scope's staffing when a milestone slips
+    $$('#matrix-tbody .gh-shift-btn').forEach(b => b.addEventListener('click', e => {
+      shiftGroupMonths(e.currentTarget.dataset.shift, parseInt(e.currentTarget.dataset.delta, 10));
     }));
   }
 
@@ -1909,15 +2115,52 @@
     tbody.appendChild(rev);
   }
 
+  /** Pass-through reconciliation rows under the monthly grand total. Shown whenever
+      pass-through is on. Builds on the client-facing fee number: + cost (to vendor)
+      + markup (Savills revenue) = total client contract; then Savills net revenue.
+      Values are whole-project totals in the value column (mirrors the broker rows). */
+  function appendPassThroughRows(tbody, visibleGroups, columnShown) {
+    if (!ptOn()) return;
+    const bk = feeShareOn();
+    const showInvoiceCol = bk && feeShareMode() === 'ontop';
+    const N = visibleGroups.length + (columnShown ? 1 : 0);
+    const cost = ptCostTotal(), markup = ptMarkupTotal();
+    const feeClient = clientBillTotal();
+    const feeRev = revenueTotal();
+    const cells = (val) => {
+      if (showInvoiceCol) return `<td colspan="${N}"></td><td></td><td class="bk-col"></td><td class="bk-col inv-col">${fmtMoney(val)}</td>`;
+      if (bk) return `<td colspan="${N}"></td><td>${fmtMoney(val)}</td><td class="bk-col"></td>`;
+      return `<td colspan="${N}"></td><td>${fmtMoney(val)}</td>`;
+    };
+    // When the pass-through COLUMN is shown, the grand total already folds in the
+    // client-billed pass-through — so just break out the vendor cost and Savills revenue.
+    const rows = columnShown
+      ? [
+          ['credit-row pt-row',       'of which pass-through cost · to vendor (flows out)', -cost],
+          ['total grand revenue-row', 'Savills net revenue · fee + markup',                feeRev + markup],
+        ]
+      : [
+          ['credit-row pt-row',       'Plus pass-through cost · to vendor',         cost],
+          ['credit-row pt-row',       'Plus pass-through markup · Savills revenue', markup],
+          ['total grand pt-contract', 'Total client contract · incl. pass-through', feeClient + cost + markup],
+          ['total grand revenue-row', 'Savills net revenue · incl. markup',         feeRev + markup],
+        ];
+    rows.forEach(([cls, label, val]) => {
+      const tr = document.createElement('tr'); tr.className = cls;
+      tr.innerHTML = `<td class="month-col">${label}</td>${cells(val)}`;
+      tbody.appendChild(tr);
+    });
+  }
+
   function renderMonthly() {
     const thead = $('#monthly-thead');
     const tbody = $('#monthly-tbody');
     syncBillingToggle();
     syncFeeShare();
     const months = getMonths();
-    if (!state.roles.length || !months.length) {
+    if (!months.length || (!state.roles.length && !ptOn())) {
       thead.innerHTML = '';
-      tbody.innerHTML = `<tr><td class="empty-matrix" colspan="3">Add roles + a valid timeline to see monthly schedule.</td></tr>`;
+      tbody.innerHTML = `<tr><td class="empty-matrix" colspan="3">Add roles (or a pass-through line) + a valid timeline to see the monthly schedule.</td></tr>`;
       return;
     }
     const d = (state.assumptions.discount || 0) / 100;
@@ -1957,12 +2200,21 @@
     const nBk = bk ? (showInvoiceCol ? 2 : 1) : 0;
     const emptyBk = bk ? ('<td class="bk-col"></td>' + (showInvoiceCol ? '<td class="bk-col inv-col"></td>' : '')) : '';
 
-    // header: Month + each group + main total (+ Broker [+ Invoice])
+    // Pass-through billed as its own column (client-billed cost + markup per month).
+    const pt = ptOn();
+    const ptMap = pt ? ptBilledMap() : {};
+    const ptBilledTotal = pt ? Object.values(ptMap).reduce((a, b) => a + b, 0) : 0;
+    const nPt = pt ? 1 : 0;
+    const ptCell = (m) => pt ? `<td class="pt-col">${fmtMoneySmall(ptMap[m.year + '-' + m.month] || 0)}</td>` : '';
+    const ptGap = pt ? '<td class="pt-col"></td>' : '';
+
+    // header: Month + each group + [Pass-through] + main total (+ Broker [+ Invoice])
     let hdr = `<tr><th class="month-col">Month</th>`;
     state.groups.forEach(g => {
       const has = state.roles.some(r => r.groupId === g.id);
       if (has) hdr += `<th>${escapeHtml(g.name)}</th>`;
     });
+    if (pt) hdr += `<th class="pt-col" title="Client-billed pass-through · vendor cost + markup">Pass-through</th>`;
     const mainLbl = !bk ? `Monthly ${billed ? 'billed' : 'total'}`
       : (showInvoiceCol && billed ? 'Monthly PPM billed' : (billed ? 'Monthly billed' : 'Monthly total'));
     hdr += `<th>${mainLbl}</th>`;
@@ -1979,7 +2231,7 @@
     let grandGross = 0, grandNet = 0, grandNetForBroker = 0;
     state.groups.forEach(g => totalsByGroup[g.id] = 0);
     const visibleGroups = state.groups.filter(g => state.roles.some(r => r.groupId === g.id));
-    const SPAN = visibleGroups.length + 2 + nBk;   // full-width colspan for caption/phase rows
+    const SPAN = visibleGroups.length + 2 + nBk + nPt;   // full-width colspan for caption/phase rows
 
     // ===== FLATLINE billing: net total ÷ months = even fixed monthly =====
     if (flat) {
@@ -2017,7 +2269,9 @@
             totalsByGroup[g.id] += cell;
             html += `<td>${fmtMoneySmall(cell)}</td>`;
           });
-          html += `<td><strong>${fmtMoneySmall(flatMonthly)}</strong></td>`;
+          const ptb = pt ? (ptMap[m.year + '-' + m.month] || 0) : 0;
+          html += ptCell(m);
+          html += `<td><strong>${fmtMoneySmall(flatMonthly + ptb)}</strong></td>`;
           html += bkRow(flatMonthly);
           tr.innerHTML = html;
           tbody.appendChild(tr);
@@ -2028,16 +2282,19 @@
       sub.className = 'total';
       let subHtml = `<td class="month-col">Flat monthly fee</td>`;
       visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id] / (monthCount || 1))}</td>`; });
-      subHtml += `<td>${fmtMoney(flatMonthly)}</td>`;
+      const ptAvg = pt ? ptBilledTotal / (monthCount || 1) : 0;
+      if (pt) subHtml += `<td class="pt-col">${fmtMoneySmall(ptAvg)}</td>`;
+      subHtml += `<td>${fmtMoney(flatMonthly + ptAvg)}</td>`;
       subHtml += bkTot(flatMonthly);
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${bkTot(net)}`;
+      tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(net + (pt ? ptClientTotal() : 0))}</td>${bkTot(net)}`;
       tbody.appendChild(tr);
       appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol);
+      appendPassThroughRows(tbody, visibleGroups, pt);
       return;
     }
 
@@ -2081,7 +2338,9 @@
         });
         grandNet += monthTotal;
         grandNetForBroker += monthNet;
-        html += `<td><strong>${fmtMoneySmall(monthTotal)}</strong></td>`;
+        const ptb = pt ? (ptMap[m.year + '-' + m.month] || 0) : 0;
+        html += ptCell(m);
+        html += `<td><strong>${fmtMoneySmall(monthTotal + ptb)}</strong></td>`;
         html += bkRow(monthNet);
         tr.innerHTML = html;
         tbody.appendChild(tr);
@@ -2097,16 +2356,18 @@
       sub.className = 'total';
       let subHtml = `<td class="month-col">Net billed subtotal</td>`;
       visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
-      subHtml += `<td>${fmtMoney(grandNet)}</td>`;
+      if (pt) subHtml += `<td class="pt-col">${fmtMoneySmall(ptBilledTotal)}</td>`;
+      subHtml += `<td>${fmtMoney(grandNet + (pt ? ptBilledTotal : 0))}</td>`;
       subHtml += bkTot(grandNetForBroker);
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(grandNet)}</td>${bkTot(grandNet)}`;
+      tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(grandNet + (pt ? ptClientTotal() : 0))}</td>${bkTot(grandNet)}`;
       tbody.appendChild(tr);
       appendFeeShareRows(tbody, visibleGroups, grandNet, onTop, showInvoiceCol);
+      appendPassThroughRows(tbody, visibleGroups, pt);
       return;
     }
 
@@ -2116,7 +2377,8 @@
     sub.className = 'total';
     let subHtml = `<td class="month-col">Gross subtotal</td>`;
     visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
-    subHtml += `<td>${fmtMoney(grandGross)}</td>`;
+    if (pt) subHtml += `<td class="pt-col">${fmtMoneySmall(ptBilledTotal)}</td>`;
+    subHtml += `<td>${fmtMoney(grandGross + (pt ? ptBilledTotal : 0))}</td>`;
     subHtml += bkTotNoInv(grandNetForBroker);
     sub.innerHTML = subHtml;
     tbody.appendChild(sub);
@@ -2124,20 +2386,21 @@
     if (state.assumptions.rateLock && lock > 0.5) {
       const lr = document.createElement('tr');
       lr.className = 'credit-row';
-      lr.innerHTML = `<td class="month-col">Less Rate Lock credit</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(-lock)}</td>${emptyBk}`;
+      lr.innerHTML = `<td class="month-col">Less Rate Lock credit</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(-lock)}</td>${emptyBk}`;
       tbody.appendChild(lr);
     }
     if (state.assumptions.discount > 0) {
       const dr = document.createElement('tr');
       dr.className = 'credit-row';
-      dr.innerHTML = `<td class="month-col">Less ${state.assumptions.discount}% client discount</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(-disc)}</td>${emptyBk}`;
+      dr.innerHTML = `<td class="month-col">Less ${state.assumptions.discount}% client discount</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(-disc)}</td>${emptyBk}`;
       tbody.appendChild(dr);
     }
     const tr = document.createElement('tr');
     tr.className = 'total grand';
-    tr.innerHTML = `<td class="month-col">Total proposed fee</td><td colspan="${visibleGroups.length}"></td><td>${fmtMoney(net)}</td>${bkTot(net)}`;
+    tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(net + (pt ? ptClientTotal() : 0))}</td>${bkTot(net)}`;
     tbody.appendChild(tr);
     appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol);
+    appendPassThroughRows(tbody, visibleGroups, pt);
   }
 
   /* ============================================================
@@ -2146,6 +2409,7 @@
   function wireControls() {
     wireUnitToggle();
     wireVersions();
+    wirePassthrough();
     // Monthly schedule discount-view toggle
     $$('.mt-btn').forEach(b => b.addEventListener('click', () => {
       monthlyMode = b.dataset.mode;
@@ -2208,6 +2472,7 @@
     });
     $('#pm-date').addEventListener('input',  e => { state.project.proposalDate = e.target.value; markDirty(); });
     $('#pm-location').addEventListener('input', e => { state.project.location = e.target.value; markDirty(); });
+    { const nt = $('#pm-notes'); if (nt) nt.addEventListener('input', e => { state.project.notes = e.target.value; markDirty(); }); }
     $('#pm-status').addEventListener('change', e => {
       state.project.status = e.target.value;
       const statusLabel = STORE.STATUS_LABELS[e.target.value] || '';
@@ -2340,6 +2605,9 @@
   // expose for export script
   window.__UFC__ = {
     getState: () => state,
+    setState: (s) => { state = s; },
+    renderPassthrough, renderMonthly, renderSummary,
+    ptCostTotal, ptMarkupTotal, ptClientTotal, ptOn,
     getMonths,
     getMonthsByPhase,
     rateForYear,
@@ -2424,6 +2692,7 @@
           roles: rec.roles || [],
         };
         setSavedLabel('Loaded · ' + formatTime(rec.updatedAt));
+        baseUpdatedAt = rec.updatedAt || null;
       } else {
         setSavedLabel('Project not found');
       }
@@ -2443,6 +2712,7 @@
     // or at least one role) — so forgetting to click Save can't lose work.
     const worthSaving = state.id || (state.project && state.project.name && state.project.name.trim()) || (state.roles && state.roles.length);
     if (worthSaving) {
+      if (conflicted) { setSavedLabel('Not saved — conflict'); return; }   // wait for the user to resolve
       clearTimeout(autosaveTimer);
       autosaveTimer = setTimeout(() => saveToStore({ silent: true }), 800);
       setSavedLabel('Unsaved…');
@@ -2458,10 +2728,16 @@
   function saveToStore(opts = {}) {
     try {
       const record = JSON.parse(JSON.stringify(state));
-      const saved = STORE.saveProject(record);
+      const saved = STORE.saveProject(record, {
+        baseUpdatedAt: opts.force ? null : baseUpdatedAt,
+        force: !!opts.force,
+      });
       state.id = saved.id;
       state.createdAt = saved.createdAt;
       state.updatedAt = saved.updatedAt;
+      baseUpdatedAt = saved.updatedAt;
+      conflicted = false;
+      clearConflictBanner();
       setProjectIdInUrl(saved.id);
       setSavedLabel('Saved · ' + formatTime(saved.updatedAt));
       refreshVersionCount();
@@ -2473,9 +2749,53 @@
         setTimeout(() => { btn.textContent = o; }, 1100);
       }
     } catch (e) {
+      if (e && e.code === 'STALE_WRITE') { showConflictBanner(e.remote); return; }
       console.error('Save failed', e);
       alert('Save failed: ' + e.message);
     }
+  }
+
+  /* ----- Concurrent-edit conflict ----------------------------------------
+     Two people (or two tabs) on the same project: whoever saved last used to
+     win, silently reverting the other's work. Now the second write is refused
+     and we ask. Nothing is lost either way — the unsaved edits stay in this
+     tab until the user chooses. */
+  function clearConflictBanner() {
+    document.getElementById('ufc-conflict')?.remove();
+  }
+  function showConflictBanner(remote) {
+    conflicted = true;
+    dirty = true;
+    clearTimeout(autosaveTimer);
+    setSavedLabel('Not saved — conflict');
+    if (document.getElementById('ufc-conflict')) return;
+    const who = (remote && remote.by) ? escapeHtml(remote.by) : 'Someone else';
+    const when = (remote && remote.updatedAt) ? formatTime(remote.updatedAt) : 'just now';
+    const el = document.createElement('div');
+    el.id = 'ufc-conflict';
+    el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9998;background:#CE181E;color:#fff;padding:14px 22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;box-shadow:0 -6px 24px rgba(0,0,0,.25);font-family:var(--font-body),sans-serif;';
+    el.innerHTML = `
+      <div style="flex:1;min-width:280px;font-size:13px;line-height:1.5;">
+        <strong style="font-family:var(--font-display),sans-serif;font-weight:700;">${who} saved this project at ${escapeHtml(when)}, while you were editing.</strong><br>
+        Your changes are still here on screen but are <b>not saved</b>. Reload theirs to start from the current version, or keep yours to overwrite it.
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button id="ufc-conflict-reload" style="font-family:var(--font-display),sans-serif;font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:11px 16px;border:0;background:#fff;color:#CE181E;cursor:pointer;">Reload their version</button>
+        <button id="ufc-conflict-force" style="font-family:var(--font-display),sans-serif;font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:11px 16px;border:2px solid #fff;background:transparent;color:#fff;cursor:pointer;">Keep mine · overwrite</button>
+      </div>`;
+    document.body.appendChild(el);
+    document.getElementById('ufc-conflict-reload').onclick = () => {
+      clearConflictBanner();
+      conflicted = false;
+      window.location.reload();
+    };
+    document.getElementById('ufc-conflict-force').onclick = () => {
+      if (!confirm('Overwrite their version with yours? Their changes since you opened this project will be replaced. A version snapshot is kept either way.')) return;
+      // Snapshot what's currently stored so their work is recoverable.
+      try { if (state.id) STORE.saveVersion(state.id, { label: 'Before overwrite (conflict)', auto: true }); } catch (err) {}
+      clearConflictBanner();
+      saveToStore({ force: true, explicit: true });
+    };
   }
 
   function setSavedLabel(text) {
@@ -2591,7 +2911,9 @@
       groups: restored.groups || defaults.groups,
       roles: restored.roles || [],
     };
-    saveToStore({ silent: true });
+    // Restoring is a deliberate act on this record — bypass the staleness guard
+    // (saveVersion above just touched the stored copy).
+    saveToStore({ silent: true, force: true });
     renderAll();
     refreshVersionCount();
     closeVersions();

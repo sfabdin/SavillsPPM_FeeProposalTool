@@ -906,6 +906,41 @@ window.UFC_buildAndDownloadExcel = async function () {
     s3.getCell(`A${effRow}`).font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
   }
 
+  // ---- Pass-through / principal billing (only when present) ----
+  const ptX = state.passthrough;
+  const ptEnabled = ptX && ptX.enabled && Array.isArray(ptX.lines) && ptX.lines.some(l => (parseFloat(l.cost) || 0) > 0);
+  if (ptEnabled) {
+    let pr = (s3.lastRow ? s3.lastRow.number : wNet) + 2;
+    s3.mergeCells(`A${pr}:${colLetter(4 + nMonths)}${pr}`);
+    s3.getCell(`A${pr}`).value = 'Pass-through / principal billing — vendor cost billed through Savills (cost flows out; only markup is revenue)';
+    s3.getCell(`A${pr}`).font = { name: 'Calibri', bold: true, size: 12, color: { argb: WHITE } };
+    s3.getCell(`A${pr}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+    s3.getCell(`${totCol}${pr}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+    s3.getRow(pr).height = 22; pr++;
+    let ptCostSum = 0, ptMkSum = 0, ptClientSum = 0;
+    ptX.lines.forEach(l => {
+      const cost = parseFloat(l.cost) || 0; if (!cost) return;
+      const mkPct = parseFloat(l.markupPct) || 0;
+      const mk = cost * mkPct / 100;
+      const managed = l.mode === 'managed';
+      const clientBilled = managed ? mk : cost + mk;
+      if (!managed) ptCostSum += cost;
+      ptMkSum += mk; ptClientSum += clientBilled;
+      const desc = managed
+        ? `managed · direct bill · ${mkPct}% fee → client billed (fee only)`
+        : `cost ${'$' + Math.round(cost).toLocaleString()} + ${mkPct}% markup → client billed`;
+      wLabel(pr, `  ${l.label || 'Pass-through line'} · ${desc}`, NAVY);
+      wVal(pr, `${clientBilled.toFixed(2)}`, NAVY);
+      pr++;
+    });
+    wLabel(pr, 'Pass-through cost · to vendor, flows out (billed lines only)', STEEL); wVal(pr, `${ptCostSum.toFixed(2)}`, STEEL); pr++;
+    wLabel(pr, 'Fee · Savills revenue (all lines)', TEAL); wVal(pr, `${ptMkSum.toFixed(2)}`, TEAL); pr++;
+    wLabel(pr, 'Total client contract · fee + pass-through', NAVY);
+    wVal(pr, `${totCol}${wNet}+${ptClientSum.toFixed(2)}`, NAVY, 12); pr++;
+    wLabel(pr, 'Savills net revenue · fee + markup', TEAL);
+    wVal(pr, `${totCol}${s3NetRow}+${ptMkSum.toFixed(2)}`, TEAL, 12);
+  }
+
   /* ============================================================
      SHEET 4 · Billing Summary — BY GROUP, by month
      Group gross rows (Core / Field / Advisory) reference Sheet 3's
