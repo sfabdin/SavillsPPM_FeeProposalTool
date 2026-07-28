@@ -84,6 +84,7 @@
     winStart: null, winLen: 12, incPursuit: true,
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
+    pplSearch: '', expandedRoster: new Set(),
     varProject: '', varPerson: '', varGroup: 'project', varUnit: 'hours',
     bwSearch: '', bwOver: false, bwProject: '',
     expandedPeople: new Set(), expandedProjects: new Set(),
@@ -147,6 +148,20 @@
     const ov = $('#bw-over'); if (ov) ov.onchange = (e) => { state.bwOver = e.target.checked; rerender(); };
   }
 
+  /* Compact callout: who's freeing up over the next 3 months — surfaced
+     directly on Bandwidth (not just buried in the Insights tab) since it's
+     the "who can take the next assignment" question people come here for. */
+  function comingAvailableCard() {
+    const list = S.comingAvailable({ includePursuit: state.incPursuit }).slice(0, 8);
+    if (!list.length) return '';
+    return `<div class="ins-card" style="margin-bottom:16px">
+      <h3>📉 Coming available — next 3 months <span>· load drops under 100%, freeing hours</span></h3>
+      <table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th>When</th><th class="num">~Freed h/mo</th></tr></thead><tbody>
+      ${list.map(f => `<tr><td class="pname">${esc(f.person.name)}<div class="vmini">${esc(f.person.title || '')}</div></td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td>${esc(S.ymLabel(f.m))}</td><td class="num">${f.freedH}</td></tr>`).join('')}
+      </tbody></table>
+    </div>`;
+  }
+
   function renderBandwidth() {
     const ms = months();
     if (ms.length === 1) { renderMonthFocus(ms[0]); return; }
@@ -183,7 +198,7 @@
       <span style="margin-left:auto">Click a name for their project breakdown.</span>
     </div>`;
 
-    $('#p-bandwidth').innerHTML = kpis + bwToolbar() + `<div class="hm-wrap"><table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table></div>` + legend;
+    $('#p-bandwidth').innerHTML = kpis + comingAvailableCard() + bwToolbar() + `<div class="hm-wrap"><table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table></div>` + legend;
     wireBwToolbar(renderBandwidth);
     $$('#p-bandwidth .who-name').forEach(el => el.onclick = () => { const id = el.dataset.exp; if (state.expandedPeople.has(id)) state.expandedPeople.delete(id); else state.expandedPeople.add(id); renderBandwidth(); });
   }
@@ -217,7 +232,7 @@
       </div>`;
     });
     const legend = `<div class="legend"><span>Tick mark = 100% capacity. Chips show each project's share; amber chips are pursuits.</span><span style="margin-left:auto">◀ ▶ in the toolbar pivots month to month.</span></div>`;
-    $('#p-bandwidth').innerHTML = kpis + bwToolbar() + `<div style="border:1px solid rgba(37,39,58,0.12)"><div class="mv-row" style="background:#faf9f7;border-top:0;font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel)"><div>Person</div><div>Load · ${esc(S.ymLabel(ym))}</div><div>Projects this month</div></div>${body || '<div class="empty" style="border:0">Nobody staffed this month.</div>'}</div>` + legend;
+    $('#p-bandwidth').innerHTML = kpis + comingAvailableCard() + bwToolbar() + `<div style="border:1px solid rgba(37,39,58,0.12)"><div class="mv-row" style="background:#faf9f7;border-top:0;font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel)"><div>Person</div><div>Load · ${esc(S.ymLabel(ym))}</div><div>Projects this month</div></div>${body || '<div class="empty" style="border:0">Nobody staffed this month.</div>'}</div>` + legend;
     wireBwToolbar(() => renderMonthFocus(ym));
   }
 
@@ -303,9 +318,12 @@
     if (state.projClient) rows = rows.filter(r => r.client === state.projClient);
     const maxFte = Math.max(1, ...rows.map(r => r.peakFte));
     const feeOpts = S.listFeeProjects().map(p => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+    const unassignedByProj = {};
+    S.unassignedRoles(ms).forEach(u => { (unassignedByProj[u.project] = unassignedByProj[u.project] || []).push(u); });
 
     const clientOpts = ['<option value="">All clients</option>'].concat(S.distinctClients().map(c => `<option ${state.projClient === c ? 'selected' : ''}>${esc(c)}</option>`)).join('');
-    const toolbar = `<div class="toolbar"><input type="search" id="pj-search" placeholder="Filter project or client…" value="${esc(state.projSearch)}"><select id="pj-client">${clientOpts}</select><span class="grow"></span><span class="note-txt">${rows.length} projects · ${rows.filter(r => r.feeProject).length} linked to the fee tool</span></div>`;
+    const unCount = Object.keys(unassignedByProj).length;
+    const toolbar = `<div class="toolbar"><input type="search" id="pj-search" placeholder="Filter project or client…" value="${esc(state.projSearch)}"><select id="pj-client">${clientOpts}</select><span class="grow"></span><span class="note-txt">${rows.length} projects · ${rows.filter(r => r.feeProject).length} linked to the fee tool${unCount ? ` · <span style="color:#8f2418">${unCount} with unassigned contract role${unCount > 1 ? 's' : ''}</span>` : ''}</span></div>`;
 
     let body = '';
     rows.forEach(r => {
@@ -313,8 +331,10 @@
       const link = r.feeProject
         ? `<a class="link-fee" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.feeProject.id)}" title="Open in fee tool · matched by ${esc(r.feeProject.via || 'name')}${r.feeProject.score ? ' (' + r.feeProject.score + '%)' : ''}">fee ${r.feeProject.via === 'tokens' ? '≈' : r.feeProject.via === 'mapped' ? '⚯' : ''}↗</a>${r.feeProject.via === 'tokens' ? `<button class="row-act-link" data-fee-confirm="${esc(r.project)}" data-fee-id="${esc(r.feeProject.id)}" title="Confirm this smart match — saves it permanently">✓</button>` : ''}`
         : `<select class="fee-link-sel" data-fee-link="${esc(r.project)}" title="Link this matrix project to a fee-tool project — saved once, shared"><option value="">link to fee…</option>${feeOpts}</select>`;
+      const un = unassignedByProj[r.project];
+      const unBadge = un ? ` <span class="badge" style="color:#8f2418;background:#fbe9e7" title="${esc(un.map(u => u.role + ' — ' + fmtH(u.hours) + 'h unstaffed').join(' · '))}">⚠ ${un.length} unassigned</span>` : '';
       body += `<tr>
-        <td class="pname"><span class="expand-btn" data-exp="${esc(r.project)}">${state.expandedProjects.has(r.project) ? '▾' : '▸'}</span> ${esc(r.project)} ${link}</td>
+        <td class="pname"><span class="expand-btn" data-exp="${esc(r.project)}">${state.expandedProjects.has(r.project) ? '▾' : '▸'}</span> ${esc(r.project)} ${link}${unBadge}</td>
         <td>${esc(r.client || '—')}</td>
         <td class="num">${r.headcount}</td>
         <td class="num">${r.peakFte.toFixed(2)}</td>
@@ -337,6 +357,86 @@
     $$('#p-projects [data-exp]').forEach(b => b.onclick = () => { const p = b.dataset.exp; if (state.expandedProjects.has(p)) state.expandedProjects.delete(p); else state.expandedProjects.add(p); renderProjects(); });
     $$('#p-projects [data-fee-link]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setFeeMapping(sel.dataset.feeLink, sel.value); toast('Linked — saved for everyone.'); renderProjects(); });
     $$('#p-projects [data-fee-confirm]').forEach(b => b.onclick = () => { S.setFeeMapping(b.dataset.feeConfirm, b.dataset.feeId); toast('Match confirmed — saved.'); renderProjects(); });
+  }
+
+  /* ---------- BY PERSON ---------- */
+  /* Mirror of By Project: one row per person with headcount-equivalent
+     (concurrent project count), peak/avg load and a load sparkline, drawer
+     expands to their project mix plus a Gantt-style timeline of each
+     allocation's start/end so you can see people transfer project → project. */
+  function renderPeople() {
+    const ms = months();
+    let rows = S.bandwidthGrid(ms, { includePursuit: state.incPursuit }).filter(r => r.activeMonths > 0);
+    const q = state.pplSearch.toLowerCase();
+    if (q) rows = rows.filter(r => r.person.name.toLowerCase().includes(q));
+    rows.sort((a, b) => b.peak - a.peak || a.person.name.localeCompare(b.person.name));
+    const maxPeak = Math.max(1, ...rows.map(r => r.peak));
+
+    const toolbar = `<div class="toolbar"><input type="search" id="ppl-search" placeholder="Filter person…" value="${esc(state.pplSearch)}"><span class="grow"></span><span class="note-txt">${rows.length} people active in this window</span></div>`;
+
+    let body = '';
+    rows.forEach(r => {
+      const allocs = S.listAllocations().filter(a => a.personId === r.person.id && (state.incPursuit || (a.status !== 'Pursuit' && a.type !== 'Opportunity')));
+      const inWin = allocs.filter(a => ms.some(m => S.allocActiveIn(a, m)));
+      const projectCount = new Set(inWin.map(a => a.project)).size;
+      const spark = `<span class="fte-spark">${ms.map(m => { const v = r.byMonth[m] || 0; const h = Math.max(1, Math.round(v / maxPeak * 26)); return `<i style="height:${h}px;background:${v > 100 ? '#e4453a' : 'var(--sav-teal)'}" title="${S.ymLabel(m)}: ${Math.round(v)}%"></i>`; }).join('')}</span>`;
+      body += `<tr>
+        <td class="pname"><span class="expand-btn" data-exp="${esc(r.person.id)}">${state.expandedRoster.has(r.person.id) ? '▾' : '▸'}</span> ${esc(r.person.name)}${r.person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}<div class="who-meta">${esc(r.person.title || '')}</div></td>
+        <td class="num">${projectCount}</td>
+        <td class="num ${r.peak > 100 ? 'var-over' : ''}">${Math.round(r.peak)}%</td>
+        <td class="num">${Math.round(r.avg)}%</td>
+        <td>${spark}</td>
+      </tr>`;
+      if (state.expandedRoster.has(r.person.id)) {
+        let pr = '';
+        inWin.slice().sort((a, b) => b.pct - a.pct).forEach(a => {
+          const isP = a.status === 'Pursuit' || a.type === 'Opportunity';
+          pr += `<tr><td>${esc(a.project)}${isP ? ' <span class="status-p">pursuit</span>' : ''}</td><td style="text-align:right">${a.pct}%</td><td style="text-align:right">${esc(a.start ? S.ymLabel(a.start) : '—')} – ${esc(a.end ? S.ymLabel(a.end) : '—')}</td><td>${esc(a.note || '')}</td></tr>`;
+        });
+        body += `<tr class="drawer-row"><td colspan="5"><div class="drawer">${ganttSvg(inWin, ms)}<table class="mini" style="margin-top:10px"><thead><tr><th>Project</th><th>Alloc</th><th>Window</th><th>Note</th></tr></thead><tbody>${pr}</tbody></table></div></td></tr>`;
+      }
+    });
+    const table = rows.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Projects</th><th class="num">Peak load</th><th class="num">Avg load</th><th>Load over window</th></tr></thead><tbody>${body}</tbody></table>` : `<div class="empty">No people match.</div>`;
+    $('#p-people').innerHTML = toolbar + table;
+    $('#ppl-search').oninput = (e) => { state.pplSearch = e.target.value; renderPeople(); const el = $('#ppl-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $$('#p-people [data-exp]').forEach(b => b.onclick = () => { const id = b.dataset.exp; if (state.expandedRoster.has(id)) state.expandedRoster.delete(id); else state.expandedRoster.add(id); renderPeople(); });
+  }
+
+  /* Hand-rolled inline-SVG Gantt: one row per allocation, x-axis = the
+     display window's months, bar = that allocation's start→end (clipped to
+     the window, with an arrow where it runs off either edge). Same idiom as
+     compareChart/profitChart — no charting library in this app. */
+  function ganttSvg(allocs, ms) {
+    if (!allocs.length || !ms.length) return '';
+    const rowH = 22, padL = 170, padT = 20, padR = 10, gw = 64;
+    const rightEdge = padL + ms.length * gw;
+    const W = rightEdge + padR, H = padT + allocs.length * rowH + 8;
+    const xOf = (ym) => padL + Math.max(0, ms.indexOf(ym)) * gw;
+    let s = '';
+    ms.forEach((m, i) => {
+      const x = padL + i * gw;
+      s += `<line x1="${x}" x2="${x}" y1="${padT - 12}" y2="${H - 4}" stroke="rgba(37,39,58,.06)"></line>`;
+      s += `<text x="${x + gw / 2}" y="${padT - 3}" text-anchor="middle" font-size="9" fill="#79828C">${esc(S.ymLabel(m))}</text>`;
+    });
+    s += `<line x1="${rightEdge}" x2="${rightEdge}" y1="${padT - 12}" y2="${H - 4}" stroke="rgba(37,39,58,.06)"></line>`;
+    allocs.forEach((a, i) => {
+      const y = padT + i * rowH;
+      if (a.start && a.start > ms[ms.length - 1]) return;     // starts after the window
+      if (a.end && a.end < ms[0]) return;                     // ends before the window
+      const startYm = a.start && a.start > ms[0] ? a.start : ms[0];
+      const endYm = a.end && a.end < ms[ms.length - 1] ? a.end : ms[ms.length - 1];
+      let x0 = xOf(startYm), x1 = xOf(endYm) + gw;
+      const isP = a.status === 'Pursuit' || a.type === 'Opportunity';
+      const openStart = !!a.start && a.start < ms[0];
+      const openEnd = !a.end || a.end > ms[ms.length - 1];
+      const color = isP ? '#e8b563' : '#0E7C7B';
+      const label = a.project.length > 24 ? a.project.slice(0, 23) + '…' : a.project;
+      s += `<text x="4" y="${y + rowH / 2 + 4}" font-size="10.5" fill="#25273A" font-weight="600">${esc(label)}</text>`;
+      s += `<rect x="${x0}" y="${y + 3}" width="${Math.max(2, x1 - x0)}" height="${rowH - 8}" rx="2" fill="${color}" opacity="${Math.min(1, (a.pct || 0) / 100 + 0.35)}"><title>${esc(a.project)} · ${a.pct}% · ${esc(a.start || 'open start')}–${esc(a.end || 'open end')}</title></rect>`;
+      if (openStart) s += `<text x="${x0 + 3}" y="${y + rowH / 2 + 4}" font-size="9" fill="#fff">◀</text>`;
+      if (openEnd) s += `<text x="${x1 - 11}" y="${y + rowH / 2 + 4}" font-size="9" fill="#fff">▶</text>`;
+    });
+    return `<div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="min-width:${W}px;display:block">${s}</svg></div>`;
   }
 
   /* ---------- ACTUALS vs EXPECTED ---------- */
@@ -873,33 +973,10 @@
     gaps.sort((a, b) => b.gap - a.gap);
 
     // ---- unassigned contract roles: contract titles with no allocated person whose title matches ----
-    const unassigned = [];
-    S.distinctProjects().forEach(pn => {
-      const client = (S.listAllocations().find(a => a.project === pn) || {}).client || '';
-      const cp = S.contractPlan(pn, ms, client); if (!cp || !cp.roles.length) return;
-      const staffedTitles = [...new Set(S.listAllocations().filter(a => a.project === pn).map(a => ((S.getPerson(a.personId) || {}).title || '').trim()))].filter(Boolean);
-      const famOf = (t) => { const f = S.titleFamily && S.titleFamily(t); return f ? f.titleId : null; };
-      const fams = new Set(staffedTitles.map(famOf).filter(Boolean));
-      cp.roles.forEach(r => {
-        if (r.hours < 20) return;                                  // ignore slivers
-        const fam = famOf(r.title);
-        const covered = (fam && fams.has(fam)) || staffedTitles.some(t => S.tokenScore(t, r.title) >= 0.5);
-        if (!covered) unassigned.push({ project: pn, role: r.title, hours: r.hours, fte: r.fteMonths });
-      });
-    });
-    unassigned.sort((a, b) => b.hours - a.hours);
+    const unassigned = S.unassignedRoles(ms);
 
     // ---- bandwidth coming available in the next 3 months ----
-    const nextMs = []; { let [fy, fm] = nowYm.split('-').map(Number); for (let i = 0; i < 4; i++) { nextMs.push(fy + '-' + String(fm).padStart(2, '0')); fm++; if (fm > 12) { fm = 1; fy++; } } }
-    const freeing = S.bandwidthGrid(nextMs, { includePursuit: state.incPursuit }).map(r => {
-      const cur = r.byMonth[nextMs[0]] || 0;
-      let best = null;
-      nextMs.slice(1).forEach(m => { const v = r.byMonth[m] || 0; if (v < 100 && cur - v >= 25 && (!best || v < best.v)) best = { m, v }; });
-      if (!best) return null;
-      // freed = capacity that opens up BELOW the 100% line (loads over 100% free nothing until they cross it)
-      const freedH = Math.round((Math.min(cur, 100) - best.v) / 100 * S.capacityHours(r.person));
-      return freedH > 0 ? { person: r.person, cur, to: best.v, m: best.m, freedH } : null;
-    }).filter(Boolean).sort((a, b) => b.freedH - a.freedH).slice(0, 12);
+    const freeing = S.comingAvailable({ includePursuit: state.incPursuit }).slice(0, 12);
 
     // ---- pursuit exposure: how much of forward load is unsigned work ----
     const fwdMs = ms.filter(m => m >= nowYm);
@@ -934,9 +1011,9 @@
     }
 
     // ---- substantial macro / non-client time (> 40 h in the window) ----
-    const macroAll = (hasAct && S.macroHours) ? S.macroHours(msPast) : [];
-    const boh = macroAll.filter(r => r.pct >= 0.9 && r.hours > 40);
-    const macro = macroAll.filter(r => r.pct < 0.9 && r.hours > 40).slice(0, 12);
+    const macroTime = S.substantialMacroTime(msPast);
+    const boh = macroTime.boh;
+    const macro = macroTime.flagged.slice(0, 12);
 
     const fH = (n) => fmtH(Math.round(n * 10) / 10);
     const noAct = hasAct ? '' : `<div class="note-txt" style="margin-bottom:14px;color:#8a6d00">No Clockify actuals loaded — burn-based insights are empty. Pull actuals on the Compare tab first.</div>`;
@@ -991,6 +1068,8 @@
       + '</div>';
     if (r.noRate.length) html += '<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for ' + r.noRate.length + ' people: ' + esc(r.noRate.slice(0, 10).join(' · ')) + (r.noRate.length > 10 ? ' …' : '') + ' — their hours are EXCLUDED. Pin their titles on the Mapping tab. <button class="btn btn-ghost" id="pf-titles" style="padding:2px 10px;font-size:11px">⟳ Pull job titles from Clockify</button></div>';
     if (!r.hasActuals) html += '<div class="note-txt" style="margin:-4px 0 12px;color:#8a6d00">No Clockify actuals loaded — cost rows are empty. Pull actuals on the Compare tab.</div>';
+    const macroFlag = S.substantialMacroTime(ms);
+    if (macroFlag.flagged.length) html += '<div class="note-txt" style="margin:-4px 0 12px;color:#8a6d00">🏢 ' + macroFlag.flagged.length + ' ' + (macroFlag.flagged.length > 1 ? 'people' : 'person') + ' with &gt;40h non-billable/internal time this window: ' + esc(macroFlag.flagged.slice(0, 8).map(x => x.person.name + ' (' + Math.round(x.hours) + 'h)').join(' · ')) + (macroFlag.flagged.length > 8 ? ' …' : '') + ' — see “Non-billable / internal time” below for the $ detail.</div>';
     html += '<div class="toolbar">'
       + '<input type="search" id="pf-search" placeholder="Filter projects…" value="' + esc(state.pfSearch) + '">'
       + '<select id="pf-client"><option value="">All clients</option>' + clients.map(c => '<option ' + (state.pfClient === c ? 'selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>'
@@ -1014,12 +1093,22 @@
     let totRowCells = '';
     ms.forEach(m => { totRowCells += '<td class="num"><div style="font-weight:700">' + (fmtK(revM[m]) || '·') + '</div>' + (costM[m] ? '<div class="vmini" style="color:' + (costM[m] > revM[m] ? '#C0392B' : '#0E7C7B') + '">' + fmtK(costM[m]) + '</div>' : '') + '</td>'; });
     const totRow = '<tr style="background:#f4f6f7;border-top:2px solid rgba(37,39,58,0.25)"><td class="pname sticky-col" style="background:#f4f6f7;font-weight:700">Total · ' + inc.length + ' included</td>' + totRowCells + '<td class="num" style="font-weight:700">' + fmtD(totRev) + '</td><td class="num" style="font-weight:700">' + fmtD(totCost) + '</td><td class="num ' + (totRev - totCost < 0 ? 'var-over' : 'var-ok') + '" style="font-weight:700">' + fmtD(totRev - totCost) + '</td><td class="num">' + (totRev ? Math.round((totRev - totCost) / totRev * 100) + '%' : '—') + '</td></tr>';
-    html += '<div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">Project</th>' + ms.map(m => '<th class="num">' + esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">current</div>' : '') + '<div class="vmini" style="text-transform:none;letter-spacing:0">rev / cost</div></th>').join('') + '<th class="num">Revenue</th><th class="num">Cost</th><th class="num">Margin</th><th class="num">%</th></tr></thead><tbody>' + (body || '<tr><td colspan="' + (ms.length + 5) + '"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>') + totRow + '</tbody></table></div>';
+    // ---- bottom lines: staff cost OUTSIDE the fee mapping (macro/internal time) ----
+    const oh = r.overhead || { byMonth: {}, cost: 0, hours: 0, ppl: [], byProj: {} };
+    const ohTop = Object.entries(oh.byProj || {}).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([p2, c2]) => esc(p2) + ' ' + fmtK(c2)).join(' · ');
+    let ohCells = ''; ms.forEach(m => { ohCells += '<td class="num vmini" style="color:#8a6d00">' + (oh.byMonth[m] ? fmtK(oh.byMonth[m]) : '·') + '</td>'; });
+    const ohRow = oh.cost ? '<tr class="pf-oh" style="background:#fdf9ee;cursor:pointer"><td class="pname sticky-col" style="background:#fdf9ee">Non-billable / internal time <span class="badge pursuit">outside fee mapping</span><div class="vmini">' + ohTop + (Object.keys(oh.byProj).length > 4 ? ' …' : '') + ' · click for people</div></td>' + ohCells + '<td class="num">—</td><td class="num" style="font-weight:700;color:#8a6d00">' + fmtD(oh.cost) + '<div class="vmini">' + Math.round(oh.hours).toLocaleString() + ' h</div></td><td class="num">—</td><td class="num">—</td></tr>'
+      + '<tr class="pf-oh-detail" style="display:none"><td colspan="' + (ms.length + 5) + '" style="background:#fdf9ee;padding:8px 16px 12px">' + (oh.ppl.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px">' + oh.ppl.map(p => '<span class="mv-chip"><b>' + fmtD(p.cost) + '</b> ' + esc(p.name) + ' · ' + Math.round(p.hours) + ' h × $' + p.rate + '/h' + (p.title ? ' · ' + esc(p.title) : '') + '</span>').join('') + '</div>' : '<span class="note-txt">No non-billable hours in this window.</span>') + '</td></tr>' : '';
+    const allCost = totCost + oh.cost;
+    let allCells = ''; ms.forEach(m => { const v = (costM[m] || 0) + (oh.byMonth[m] || 0); allCells += '<td class="num" style="font-weight:700">' + (v ? fmtK(v) : '·') + '</td>'; });
+    const allRow = '<tr style="background:#eceff1;border-top:2px solid rgba(37,39,58,0.35)"><td class="pname sticky-col" style="background:#eceff1;font-weight:700">All staff cost · fee-mapped + non-billable</td>' + allCells + '<td class="num">' + fmtD(totRev) + '</td><td class="num" style="font-weight:700">' + fmtD(allCost) + '</td><td class="num ' + (totRev - allCost < 0 ? 'var-over' : 'var-ok') + '" style="font-weight:700">' + fmtD(totRev - allCost) + '</td><td class="num">' + (totRev ? Math.round((totRev - allCost) / totRev * 100) + '%' : '—') + '</td></tr>';
+    html += '<div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">Project</th>' + ms.map(m => '<th class="num">' + esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">current</div>' : '') + '<div class="vmini" style="text-transform:none;letter-spacing:0">rev / cost</div></th>').join('') + '<th class="num">Revenue</th><th class="num">Cost</th><th class="num">Margin</th><th class="num">%</th></tr></thead><tbody>' + (body || '<tr><td colspan="' + (ms.length + 5) + '"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>') + totRow + ohRow + allRow + '</tbody></table></div>';
     $('#p-profit').innerHTML = html;
     $('#pf-search').oninput = (e) => { state.pfSearch = e.target.value; renderProfit(); const el = $('#pf-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $('#pf-client').onchange = (e) => { state.pfClient = e.target.value; renderProfit(); };
     $('#pf-scope').onchange = (e) => { state.pfScope = e.target.value; renderProfit(); };
     $$('#p-profit .pf-row').forEach(tr => tr.onclick = () => { const d = $('#p-profit .pf-detail[data-i="' + tr.dataset.i + '"]'); if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; });
+    $$('#p-profit .pf-oh').forEach(tr => tr.onclick = () => { const d = $('#p-profit .pf-oh-detail'); if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; });
     const pt = $('#pf-titles');
     if (pt) pt.onclick = async () => { pt.disabled = true; pt.textContent = 'Pulling titles…'; try { await pullClockifyNames(); renderProfit(); } catch (e) { pt.disabled = false; pt.textContent = 'Pull failed — retry'; } };
   }
@@ -1299,6 +1388,7 @@
   function renderCounts() {
     $('#cnt-alloc').textContent = '(' + S.listAllocations().length + ')';
     $('#cnt-proj').textContent = '(' + S.distinctProjects().length + ')';
+    $('#cnt-ppl').textContent = '(' + S.listPeople().length + ')';
   }
   function renderActive() {
     const panel = $('#p-' + state.tab);
@@ -1306,6 +1396,7 @@
       if (state.tab === 'bandwidth') renderBandwidth();
       else if (state.tab === 'allocations') renderAllocations();
       else if (state.tab === 'projects') renderProjects();
+      else if (state.tab === 'people') renderPeople();
       else if (state.tab === 'actuals') renderActuals();
       else if (state.tab === 'mapping') renderMapping();
       else if (state.tab === 'insights') renderInsights();

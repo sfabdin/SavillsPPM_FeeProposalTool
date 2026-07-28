@@ -75,6 +75,8 @@
       + '</div>';
     if (r.noRate.length) html += '<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for ' + r.noRate.length + ' people: ' + esc(r.noRate.slice(0, 10).join(' · ')) + (r.noRate.length > 10 ? ' …' : '') + ' — their hours are EXCLUDED. Pin their titles on the <a href="Staffing Matrix.html">Staffing Matrix</a> Mapping tab.</div>';
     if (!r.hasActuals) html += '<div class="note-txt" style="margin:-4px 0 12px;color:#8a6d00">No Clockify actuals loaded — cost rows are empty. Pull actuals on the <a href="Staffing Matrix.html">Staffing Matrix</a> Compare tab.</div>';
+    const macroFlag = S.substantialMacroTime(ms);
+    if (macroFlag.flagged.length) html += '<div class="note-txt" style="margin:-4px 0 12px;color:#8a6d00">🏢 ' + macroFlag.flagged.length + ' ' + (macroFlag.flagged.length > 1 ? 'people' : 'person') + ' with &gt;40h non-billable/internal time this window: ' + esc(macroFlag.flagged.slice(0, 8).map(x => x.person.name + ' (' + Math.round(x.hours) + 'h)').join(' · ')) + (macroFlag.flagged.length > 8 ? ' …' : '') + ' — see “Non-billable / internal time” below for the $ detail.</div>';
     html += '<div class="toolbar">'
       + '<input type="search" id="pf-search" placeholder="Filter projects…" value="' + esc(state.search) + '">'
       + '<select id="pf-client"><option value="">All clients</option>' + clients.map(c => '<option ' + (state.client === c ? 'selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>'

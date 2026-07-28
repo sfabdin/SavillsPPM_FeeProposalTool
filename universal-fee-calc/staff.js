@@ -833,6 +833,55 @@
 
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
 
+  /** Contract role titles with no allocated person whose title plausibly
+      covers them — "who's this project's contract-priced role, unstaffed?"
+      Shared by the Insights tab and the By Project view badge. */
+  function unassignedRoles(months) {
+    const out = [];
+    distinctProjects().forEach(pn => {
+      const client = (listAllocations().find(a => a.project === pn) || {}).client || '';
+      const cp = contractPlan(pn, months, client); if (!cp || !cp.roles.length) return;
+      const staffedTitles = [...new Set(listAllocations().filter(a => a.project === pn).map(a => ((getPerson(a.personId) || {}).title || '').trim()))].filter(Boolean);
+      const famOf = (t) => { const f = titleFamily(t); return f ? f.titleId : null; };
+      const fams = new Set(staffedTitles.map(famOf).filter(Boolean));
+      cp.roles.forEach(r => {
+        if (r.hours < 20) return;                                  // ignore slivers
+        const fam = famOf(r.title);
+        const covered = (fam && fams.has(fam)) || staffedTitles.some(t => tokenScore(t, r.title) >= 0.5);
+        if (!covered) out.push({ project: pn, role: r.title, hours: r.hours, fte: r.fteMonths });
+      });
+    });
+    return out.sort((a, b) => b.hours - a.hours);
+  }
+
+  /** Bandwidth freeing up over the next 3 months, per person — the biggest
+      drop below the 100% line and when it lands. Always looks forward from
+      "now", independent of whatever window the page happens to be showing. */
+  function comingAvailable(opts) {
+    const nowYm = currentYM();
+    const nextMs = []; { let [fy, fm] = nowYm.split('-').map(Number); for (let i = 0; i < 4; i++) { nextMs.push(fy + '-' + String(fm).padStart(2, '0')); fm++; if (fm > 12) { fm = 1; fy++; } } }
+    return bandwidthGrid(nextMs, opts).map(r => {
+      const cur = r.byMonth[nextMs[0]] || 0;
+      let best = null;
+      nextMs.slice(1).forEach(m => { const v = r.byMonth[m] || 0; if (v < 100 && cur - v >= 25 && (!best || v < best.v)) best = { m, v }; });
+      if (!best) return null;
+      // freed = capacity that opens up BELOW the 100% line (loads over 100% free nothing until they cross it)
+      const freedH = Math.round((Math.min(cur, 100) - best.v) / 100 * capacityHours(r.person));
+      return freedH > 0 ? { person: r.person, cur, to: best.v, m: best.m, freedH } : null;
+    }).filter(Boolean).sort((a, b) => b.freedH - a.freedH);
+  }
+
+  /** People with meaningfully large non-client ("macro") time in the window —
+      the >40h leadership threshold. Dedicated BOH staff (≥90% internal) are
+      split out separately since that's expected, not a flag. */
+  function substantialMacroTime(months) {
+    const all = (hasActuals() && macroHours) ? macroHours(months) : [];
+    return {
+      boh: all.filter(r => r.pct >= 0.9 && r.hours > 40),
+      flagged: all.filter(r => r.pct < 0.9 && r.hours > 40),
+    };
+  }
+
   /** Apply Clockify job titles to the roster (Clockify is the source of truth
       for titles). users: [{name, title}] from /api/clockify?list=users&titles=1.
       Uses saved people-mappings first, then tolerant name match. */
@@ -1154,8 +1203,9 @@
     listAllocations, saveAllocation, deleteAllocation, personIdForName,
     distinctProjects, distinctClients, allocationWindow, defaultWindow,
     // engine
-    personLoad, personAllocationsIn, bandwidthGrid, projectRollup, matchFeeProject, listFeeProjects,
+    personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
+    unassignedRoles, comingAvailable, substantialMacroTime,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, tokenScore,
