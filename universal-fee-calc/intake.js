@@ -20,12 +20,55 @@
   const NAME_CONFIRM = 'Please confirm that this is the name you want this project referred to in Salesforce and Clockify.';
 
   function dstr(m, y) { return (m && y) ? `${String(m).padStart(2, '0')}/01/${y}` : ''; }
+  /** End dates land on the LAST day of the month — work is often allocated across
+      the whole final month, so the 1st would cut the contract short. */
+  function dstrEnd(m, y) {
+    if (!m || !y) return '';
+    const last = new Date(Number(y), Number(m), 0).getDate();
+    return `${String(m).padStart(2, '0')}/${last}/${y}`;
+  }
   function money(n) { return (n == null || isNaN(n)) ? '' : '$' + Math.round(n).toLocaleString(); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
   function intakeSignature(state, netFee) {
     const t = state.timeline || {};
     return [Math.round(netFee || 0), t.startMonth, t.startYear, t.endMonth, t.endYear].join('|');
+  }
+
+  /** Services / Scope reads from the Project Type and the sub-services ticked on
+      it — that's the engagement taxonomy Salesforce wants. Falls back to the
+      group service lines when no type has been set. */
+  function scopeText(state, opts) {
+    const p = state.project || {};
+    const type = p.projectType || '';
+    const subs = Array.isArray(p.projectSubtypes) ? p.projectSubtypes.filter(Boolean) : [];
+    if (type && subs.length) return `${type} — ${subs.join(', ')}`;
+    if (type) return type;
+    return (opts.serviceLines || []).join(', ');
+  }
+
+  /** Row 1 — "is this the first authorization for this client?" We can usually
+      answer this: look for other BOOKED projects for the same client. Prior work
+      found → a confident "No" plus the list. Nothing found → "Yes" flagged for
+      confirmation, since absence of a record isn't proof (the client may predate
+      the system). Change orders are excluded — they aren't separate
+      authorizations. */
+  function priorAuthorizations(state) {
+    const S = window.UFC_Store;
+    const client = ((state.project || {}).client || '').trim().toLowerCase();
+    if (!S || !S.listProjects || !client) return null;
+    const BOOKED = { won: 1, active: 1, closed: 1 };
+    try {
+      let list = S.listProjects().filter(p =>
+        p && p.id !== state.id && !p._deleted
+        && !(S.isChangeOrder && S.isChangeOrder(p))
+        && ((p.project || {}).client || '').trim().toLowerCase() === client
+        && BOOKED[(p.project || {}).status]);
+      // Only count what this user is allowed to see.
+      if (S.visibleProjects) list = S.visibleProjects(list);
+      list.sort((a, b) => ((a.project || {}).name || '').localeCompare((b.project || {}).name || ''));
+      return list;
+    } catch (e) { return null; }
   }
 
   /** Rows: [num, question, value, needsInput, kind].
@@ -37,12 +80,30 @@
     const t = state.timeline || {};
     const fs = state.assumptions && state.assumptions.feeShare;
     const feeShare = fs && fs.enabled;
-    const scope = (opts.serviceLines || []).join(', ');
+    const scope = scopeText(state, opts);
+
+    const priors = priorAuthorizations(state);
+    const names = (priors || []).map(x => (x.project || {}).name).filter(Boolean);
+    const shown = names.slice(0, 4).join('; ') + (names.length > 4 ? `; +${names.length - 4} more` : '');
+    let firstAuth, firstAuthNeeds, additive, additiveNeeds;
+    if (priors === null) {
+      firstAuth = ''; firstAuthNeeds = true;
+      additive = ''; additiveNeeds = true;
+    } else if (names.length) {
+      firstAuth = `No — ${names.length} prior booked authorization${names.length === 1 ? '' : 's'} for this client: ${shown}`;
+      firstAuthNeeds = false;
+      additive = shown; additiveNeeds = true;
+    } else {
+      firstAuth = 'Yes — no prior booked work for this client in the system';
+      firstAuthNeeds = true;
+      additive = 'N/A'; additiveNeeds = false;
+    }
+
     return [
       ['SECTION', 'Authorization'],
-      [1, 'Is this the first authorization/contract for this client?', '', true],
+      [1, 'Is this the first authorization/contract for this client?', firstAuth, firstAuthNeeds],
       [2, 'If not, does the client expect this authorization to be tracked and invoiced separately (standalone), or is this WA additive to prior WAs (i.e. where does this fit within the client’s portfolio)?', '', true],
-      [3, 'If additive, which authorizations/contracts go together?', 'N/A', false],
+      [3, 'If additive, which authorizations/contracts go together?', additive, additiveNeeds],
       ['SECTION', 'Client & Project Information'],
       [4, 'Project Name', p.name || '', !p.name, 'confirm'],
       [5, 'Client Industry / Sector', p.industry || '', !p.industry],
@@ -64,7 +125,7 @@
       [19, 'Total Fee [explain if this is fixed fee or timecard]', money(opts.netFee), opts.netFee == null],
       [20, 'Total NTE reimbursable expenses', '', true],
       [21, 'Start Date [explain if contract start differs from work start]', dstr(t.startMonth, t.startYear), !(t.startMonth && t.startYear)],
-      [22, 'End Date [explain if contract end differs from work end]', dstr(t.endMonth, t.endYear), !(t.endMonth && t.endYear)],
+      [22, 'End Date [explain if contract end differs from work end]', dstrEnd(t.endMonth, t.endYear), !(t.endMonth && t.endYear)],
       ['SECTION', 'Commission'],
       [23, 'Does a fee share apply? [if yes, include a co-broker agreement or co-broker understanding email with this email]', feeShare ? `Yes — ${fs.pct}% to broker (attach co-broker agreement)` : 'No', false],
       [24, 'Percentage split [be specific, especially if this is not a simple % to one broker]', feeShare ? `${fs.pct}%` : 'N/A', feeShare],
