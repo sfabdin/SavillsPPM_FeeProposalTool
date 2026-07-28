@@ -16,6 +16,8 @@
   const INTAKE_TO = 'ppmprojectintake@savills.us';
   const HL = 'background:#FFF36B;';        // yellow highlight for fields to complete
   const TODO = 'background:#FFF36B;color:#7a6a00;font-style:italic;';
+  const RED = 'color:#CE181E;font-weight:bold;';   // pre-filled but MUST be confirmed
+  const NAME_CONFIRM = 'Please confirm that this is the name you want this project referred to in Salesforce and Clockify.';
 
   function dstr(m, y) { return (m && y) ? `${String(m).padStart(2, '0')}/01/${y}` : ''; }
   function money(n) { return (n == null || isNaN(n)) ? '' : '$' + Math.round(n).toLocaleString(); }
@@ -26,7 +28,10 @@
     return [Math.round(netFee || 0), t.startMonth, t.startYear, t.endMonth, t.endYear].join('|');
   }
 
-  /** Rows: [num, question, value, needsInput]. needsInput → yellow highlight. */
+  /** Rows: [num, question, value, needsInput, kind].
+      needsInput → yellow highlight. kind 'confirm' → red, pre-filled but must be
+      verified before sending. Order and wording follow DOC A · Project Intake
+      Process & Form (2026.06.08). */
   function intakeRows(state, opts) {
     const p = state.project || {};
     const t = state.timeline || {};
@@ -36,32 +41,36 @@
     return [
       ['SECTION', 'Authorization'],
       [1, 'Is this the first authorization/contract for this client?', '', true],
-      [2, 'Tracked separately (standalone) or additive to prior WAs?', '', true],
+      [2, 'If not, does the client expect this authorization to be tracked and invoiced separately (standalone), or is this WA additive to prior WAs (i.e. where does this fit within the client’s portfolio)?', '', true],
       [3, 'If additive, which authorizations/contracts go together?', 'N/A', false],
-      ['SECTION', 'Client Payer Information'],
-      [4, 'Entity Name (full legal name from contract)', p.client || '', !p.client],
-      [5, 'Client "short name"', p.client || '', !p.client],
-      [6, "Payer's Physical Address", '', true],
-      [7, 'Payer POC', p.clientContact || '', !p.clientContact],
-      [8, 'Payer Phone', '', true],
-      [9, 'Payer Email', '', true],
-      ['SECTION', 'Fees and Dates'],
-      [10, 'Total Fee (note if fixed fee or timecard)', money(opts.netFee), opts.netFee == null],
-      [11, 'Total NTE reimbursable expenses', '', true],
-      [12, 'Start Date (note if contract start differs from work start)', dstr(t.startMonth, t.startYear), !(t.startMonth && t.startYear)],
-      [13, 'End Date (note if contract end differs from work end)', dstr(t.endMonth, t.endYear), !(t.endMonth && t.endYear)],
-      ['SECTION', 'Commission'],
-      [14, 'Does a fee share apply?', feeShare ? `Yes — ${fs.pct}% to broker (attach co-broker agreement)` : 'No', false],
-      [15, 'Percentage split', feeShare ? `${fs.pct}%` : 'N/A', feeShare],
-      [16, 'Is this a domestic (U.S.) fee split?', feeShare ? '' : 'N/A', feeShare],
-      [17, 'Is this an international fee split?', 'N/A', false],
-      [18, 'Third Party Commission / Fees', 'N/A', false],
       ['SECTION', 'Client & Project Information'],
-      [19, 'Client Industry / Sector', p.industry || '', !p.industry],
-      [20, 'Services / Scope', scope, !scope],
-      [21, 'Project Address (full street address with zip)', p.location || '', !p.location],
-      [22, 'RSF', '', true],
-      [23, 'Project Budget', '', true],
+      [4, 'Project Name', p.name || '', !p.name, 'confirm'],
+      [5, 'Client Industry / Sector', p.industry || '', !p.industry],
+      [6, 'Services / Scope', scope, !scope],
+      [7, 'Project’s Complete Address', p.location || '', !p.location],
+      [8, 'RSF', '', true],
+      [9, 'Project Budget', '', true],
+      ['SECTION', 'Client Payer Information'],
+      [10, 'Contracting Entity Name — is it different from the payer entity?', p.client || '', !p.client],
+      [11, 'Client “short name” [i.e. Comcast]', p.client || '', !p.client],
+      [12, 'Payer’s Physical Address', '', true],
+      [13, 'Payer POC', p.clientContact || '', !p.clientContact],
+      [14, 'Payer Email', '', true],
+      [15, 'Payer Terms', '', true],
+      [16, 'Provide the names and emails of those who should be copied on invoices.', '', true],
+      [17, 'Provide payment schedule', '', true],
+      [18, 'Does the client require any vendor onboarding forms to be completed, banking authorization letter, W9, etc.?', '', true],
+      ['SECTION', 'Fees and Dates'],
+      [19, 'Total Fee [explain if this is fixed fee or timecard]', money(opts.netFee), opts.netFee == null],
+      [20, 'Total NTE reimbursable expenses', '', true],
+      [21, 'Start Date [explain if contract start differs from work start]', dstr(t.startMonth, t.startYear), !(t.startMonth && t.startYear)],
+      [22, 'End Date [explain if contract end differs from work end]', dstr(t.endMonth, t.endYear), !(t.endMonth && t.endYear)],
+      ['SECTION', 'Commission'],
+      [23, 'Does a fee share apply? [if yes, include a co-broker agreement or co-broker understanding email with this email]', feeShare ? `Yes — ${fs.pct}% to broker (attach co-broker agreement)` : 'No', false],
+      [24, 'Percentage split [be specific, especially if this is not a simple % to one broker]', feeShare ? `${fs.pct}%` : 'N/A', feeShare],
+      [25, 'Is this a domestic (U.S.) fee split? [if yes, state the % split, broker name(s), office, and team]', feeShare ? '' : 'N/A', feeShare],
+      [26, 'Is this an international fee split? [if yes, state the % split, broker name(s), office, team, and international Savills entity]', 'N/A', false],
+      [27, 'Third Party Commission / Fees [if applicable — for us this would be a subcontractor, rarely applicable]', 'N/A', false],
     ];
   }
 
@@ -75,9 +84,17 @@
         body += `<tr><td colspan="3" style="background:#25273A;color:#fff;font-weight:bold;padding:6px 10px;border:1px solid #c9c9c4;">${esc(r[1])}</td></tr>`;
         return;
       }
-      const [num, q, val, needs] = r;
-      const valStyle = needs ? HL : '';
-      const valText = needs ? (val ? esc(val) + ' &nbsp;<i>(confirm)</i>' : '&nbsp;') : esc(val);
+      const [num, q, val, needs, kind] = r;
+      const isConfirm = kind === 'confirm';
+      let valStyle = needs ? HL : '';
+      let valText = needs ? (val ? esc(val) + ' &nbsp;<i>(confirm)</i>' : '&nbsp;') : esc(val);
+      if (isConfirm) {
+        // Pre-filled from the calculator, but names repeat across projects — so it
+        // reads in red with an explicit confirmation note.
+        valStyle = val ? RED : HL;
+        valText = (val ? `<span style="${RED}">${esc(val)}</span>` : '&nbsp;')
+          + `<div style="color:#CE181E;font-size:11px;font-style:italic;margin-top:3px;">${NAME_CONFIRM}</div>`;
+      }
       body += `<tr>`
         + `<td style="padding:5px 8px;border:1px solid #c9c9c4;text-align:center;color:#79828c;">${num}</td>`
         + `<td style="padding:5px 8px;border:1px solid #c9c9c4;">${esc(q)}</td>`
@@ -88,7 +105,7 @@
     const FF = "'Gotham','Montserrat',Tahoma,Arial,sans-serif";
     return `<div style="font-family:${FF};font-size:13px;color:#25273A;">`
       + `<p>PPM Project Intake — <b>${esc(p.name || 'New Project')}</b>${p.client ? ' · ' + esc(p.client) : ''}</p>`
-      + `<p style="color:#79828c;">Yellow cells need to be completed/confirmed by the submitter before sending.</p>`
+      + `<p style="color:#79828c;">Yellow cells need to be completed/confirmed by the submitter before sending. <span style="color:#CE181E;">Red</span> is pre-filled from the fee record and must be confirmed.</p>`
       + reflag
       + `<table style="border-collapse:collapse;border:1px solid #c9c9c4;width:100%;max-width:760px;font-family:${FF};">`
       + `<tr><td style="background:#25273A;color:#fff;font-weight:bold;padding:6px 8px;border:1px solid #c9c9c4;width:32px;">#</td>`
@@ -104,6 +121,7 @@
     rows.forEach(r => {
       if (r[0] === 'SECTION') { L.push('', '== ' + r[1] + ' =='); return; }
       L.push(`${r[0]}. ${r[1]}: ${r[3] && !r[2] ? '>> TO COMPLETE >>' : (r[2] || (r[3] ? '>> CONFIRM >>' : ''))}`);
+      if (r[4] === 'confirm') L.push(`    >> ${NAME_CONFIRM}`);
     });
     return L.join('\n');
   }

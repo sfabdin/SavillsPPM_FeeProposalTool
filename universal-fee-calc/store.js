@@ -116,6 +116,7 @@
     'TAMI',
     'Retail',
     'Data Center',
+    'Energy',
     'Life Sciences',
     'Healthcare',
     'Industrial',
