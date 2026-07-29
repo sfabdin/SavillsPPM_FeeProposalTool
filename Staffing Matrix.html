@@ -25,6 +25,10 @@
   .tab:hover { color:var(--sav-navy); }
   .tab.active { color:var(--sav-navy); border-bottom-color:var(--sav-yellow); }
   .tab .cnt { font-family:var(--font-body); font-weight:600; font-size:11px; color:var(--sav-steel); margin-left:6px; }
+  .tabs .grow { flex:1; }
+  .tab.tab-mapping { color:#fff; background:var(--sav-teal); border-radius:3px 3px 0 0; margin-bottom:0; padding-bottom:11px; }
+  .tab.tab-mapping:hover { color:#fff; background:#0a6564; }
+  .tab.tab-mapping.active { color:#fff; border-bottom-color:var(--sav-navy); }
   .panel { display:none; }
   .panel.active { display:block; }
 
@@ -242,24 +246,21 @@
   </div>
 
   <div class="tabs" id="tabs">
-    <button class="tab active" data-tab="bandwidth">Bandwidth</button>
-    <button class="tab" data-tab="allocations">Allocations <span class="cnt" id="cnt-alloc"></span></button>
+    <button class="tab active" data-tab="actuals">Compare · Plan / Contract / Actual</button>
     <button class="tab" data-tab="projects">By Project <span class="cnt" id="cnt-proj"></span></button>
     <button class="tab" data-tab="people">By Person <span class="cnt" id="cnt-ppl"></span></button>
-    <button class="tab" data-tab="actuals">Compare · Plan / Contract / Actual</button>
+    <button class="tab" data-tab="allocations">Allocations <span class="cnt" id="cnt-alloc"></span></button>
     <button class="tab" data-tab="insights">Insights</button>
-    <button class="tab" data-tab="profit">Profitability $</button>
     <button class="tab" data-tab="compliance">Time Entry</button>
-    <button class="tab" data-tab="mapping">Mapping</button>
+    <span class="grow"></span>
+    <button class="tab tab-mapping" data-tab="mapping">🔗 Mapping</button>
   </div>
 
-  <section class="panel active" id="p-bandwidth"></section>
-  <section class="panel" id="p-allocations"></section>
+  <section class="panel active" id="p-actuals"></section>
   <section class="panel" id="p-projects"></section>
   <section class="panel" id="p-people"></section>
-  <section class="panel" id="p-actuals"></section>
+  <section class="panel" id="p-allocations"></section>
   <section class="panel" id="p-insights"></section>
-  <section class="panel" id="p-profit"></section>
   <section class="panel" id="p-compliance"></section>
   <section class="panel" id="p-mapping"></section>
 
