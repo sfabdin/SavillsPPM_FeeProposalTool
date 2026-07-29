@@ -84,7 +84,7 @@
     winStart: null, winLen: 12, incPursuit: true,
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
-    pplSearch: '', expandedRoster: new Set(),
+    pplSearch: '', expandedRoster: new Set(), pplExpandInit: false,
     varProject: '', varPerson: '', varGroup: 'project', varUnit: 'hours',
     expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
@@ -237,7 +237,8 @@
     </div>`;
 
     const clientOpts = ['<option value="">All clients</option>'].concat(S.distinctClients().map(c => `<option ${state.projClient === c ? 'selected' : ''}>${esc(c)}</option>`)).join('');
-    const toolbar = `<div class="toolbar"><input type="search" id="pj-search" placeholder="Filter project or client…" value="${esc(state.projSearch)}"><select id="pj-client">${clientOpts}</select><span class="grow"></span><span class="note-txt">${rows.length} projects · ${linked} linked to the fee tool</span></div>`;
+    const allProjExpanded = rows.length > 0 && rows.every(r => state.expandedProjects.has(r.project));
+    const toolbar = `<div class="toolbar"><input type="search" id="pj-search" placeholder="Filter project or client…" value="${esc(state.projSearch)}"><select id="pj-client">${clientOpts}</select><button class="btn btn-ghost" id="pj-expand-toggle">${allProjExpanded ? '▾ Collapse all' : '▸ Expand all'}</button><span class="grow"></span><span class="note-txt">${rows.length} projects · ${linked} linked to the fee tool</span></div>`;
 
     const nowYm = S.currentYM();
     let head = '<tr><th class="who">Project</th>' + ms.map(m => `<th${m < nowYm ? ' style="opacity:.6"' : ''}>${esc(S.ymLabel(m))}</th>`).join('') + '<th>Headcount</th><th class="pk">Peak FTE</th></tr>';
@@ -278,6 +279,11 @@
     $('#p-projects').innerHTML = kpis + toolbar + table + legend;
     $('#pj-search').oninput = (e) => { state.projSearch = e.target.value; renderProjects(); const el = $('#pj-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     const pjc = $('#pj-client'); if (pjc) pjc.onchange = (e) => { state.projClient = e.target.value; renderProjects(); };
+    $('#pj-expand-toggle').onclick = () => {
+      if (allProjExpanded) state.expandedProjects.clear();
+      else rows.forEach(r => state.expandedProjects.add(r.project));
+      renderProjects();
+    };
     $$('#p-projects .who-name').forEach(el => el.onclick = () => { const p = el.dataset.exp; if (state.expandedProjects.has(p)) state.expandedProjects.delete(p); else state.expandedProjects.add(p); renderProjects(); });
     $$('#p-projects [data-fee-link]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setFeeMapping(sel.dataset.feeLink, sel.value); toast('Linked — saved for everyone.'); renderProjects(); });
     $$('#p-projects [data-fee-confirm]').forEach(b => b.onclick = () => { S.setFeeMapping(b.dataset.feeConfirm, b.dataset.feeId); toast('Match confirmed — saved.'); renderProjects(); });
@@ -295,7 +301,8 @@
     let rows = S.bandwidthGrid(ms, { includePursuit: state.incPursuit }).filter(r => r.activeMonths > 0);
     const q = state.pplSearch.toLowerCase();
     if (q) rows = rows.filter(r => r.person.name.toLowerCase().includes(q));
-    rows.sort((a, b) => b.peak - a.peak || a.person.name.localeCompare(b.person.name));
+    rows.sort((a, b) => a.person.name.localeCompare(b.person.name));
+    if (!state.pplExpandInit) { rows.forEach(r => state.expandedRoster.add(r.person.id)); state.pplExpandInit = true; }
     const over = rows.filter(r => r.peak > 100).length;
     const nh = rows.filter(r => r.person.isNewHire).length;
     const avgLoad = rows.length ? rows.reduce((s, r) => s + r.avg, 0) / rows.length : 0;
@@ -307,7 +314,8 @@
       <div class="kpi-card"><div class="k-num">${nh}</div><div class="k-lbl">Planned new hires in view</div></div>
     </div>`;
 
-    const toolbar = `<div class="toolbar"><input type="search" id="ppl-search" placeholder="Filter person…" value="${esc(state.pplSearch)}"><span class="grow"></span><span class="note-txt">${rows.length} people active in this window</span></div>`;
+    const allExpanded = rows.length > 0 && rows.every(r => state.expandedRoster.has(r.person.id));
+    const toolbar = `<div class="toolbar"><input type="search" id="ppl-search" placeholder="Filter person…" value="${esc(state.pplSearch)}"><button class="btn btn-ghost" id="ppl-expand-toggle">${allExpanded ? '▾ Collapse all' : '▸ Expand all'}</button><span class="grow"></span><span class="note-txt">${rows.length} people active in this window</span></div>`;
 
     const nowYm = S.currentYM();
     let head = '<tr><th class="who">Person</th>' + ms.map(m => `<th${m < nowYm ? ' style="opacity:.6"' : ''}>${esc(S.ymLabel(m))}</th>`).join('') + '<th>Projects</th><th class="pk">Peak</th></tr>';
@@ -348,6 +356,11 @@
     </div>`;
     $('#p-people').innerHTML = kpis + comingAvailableCard() + toolbar + table + legend;
     $('#ppl-search').oninput = (e) => { state.pplSearch = e.target.value; renderPeople(); const el = $('#ppl-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $('#ppl-expand-toggle').onclick = () => {
+      if (allExpanded) state.expandedRoster.clear();
+      else rows.forEach(r => state.expandedRoster.add(r.person.id));
+      renderPeople();
+    };
     $$('#p-people .who-name').forEach(el => el.onclick = () => { const id = el.dataset.exp; if (state.expandedRoster.has(id)) state.expandedRoster.delete(id); else state.expandedRoster.add(id); renderPeople(); });
     $$('#p-people [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
   }
@@ -398,10 +411,12 @@
       // Contract only applies when grouped by project (the contract has no names)
       let totContract = 0; const contractByProj = {};
       (byPerson ? [...new Set(rows.map(r => r.project))] : projNames).forEach(pn => { const cl = (rows.find(r => r.project === pn) || {}).client || ''; const cp = S.contractPlan(pn, ms, cl); if (cp) { contractByProj[pn] = cp; totContract += cpTot(cp); } });
-      // monthly sums for the trend chart
-      const planM = {}, actM = {}, conM = {};
-      ms.forEach(m => { planM[m] = 0; actM[m] = 0; conM[m] = 0; });
-      rows.forEach(r => ms.forEach(m => { const c = r.byMonth[m]; planM[m] += c.e; actM[m] += c.a; }));
+      // monthly sums for the trend chart — macroM tracks how much of actM is
+      // Macro/non-billable time (S.isMacroProject), so the chart can show
+      // billable actuals separately from overhead instead of blending them.
+      const planM = {}, actM = {}, conM = {}, macroM = {};
+      ms.forEach(m => { planM[m] = 0; actM[m] = 0; conM[m] = 0; macroM[m] = 0; });
+      rows.forEach(r => { const isMacro = S.isMacroProject(r.project); ms.forEach(m => { const c = r.byMonth[m]; planM[m] += c.e; actM[m] += c.a; if (isMacro) macroM[m] += c.a; }); });
       Object.values(contractByProj).forEach(cp => ms.forEach(m => { conM[m] += cpM(cp, m); }));
       html += dollars ? `<div class="kpi-strip">
         <div class="kpi-card accent"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">① Planned cost (matrix × cost rate)</div></div>
@@ -423,7 +438,7 @@
         <select id="var-person">${pplOpts}</select>
         ${canDollars ? `<select id="var-unit" title="Show hours or dollars"><option value="hours">Units: hours</option><option value="dollars" ${dollars ? 'selected' : ''}>Units: $ cost vs fee</option></select>` : ''}
         <span class="grow"></span><span class="note-txt">${dollars ? '① ③ = hours × internal COST rate for each person’s title (rates.json · titles from Clockify) · ② = contracted NET fee from the fee tool. Profitable = ③ below ②.' : `▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.`}</span></div>`;
-      html += compareChart(ms, planM, conM, actM, projFilter, dollars);
+      html += compareChart(ms, planM, conM, actM, macroM, projFilter, dollars);
 
       if (!projNames.length) html += `<div class="empty">No matched allocations or actuals in this window.</div>`;
       projNames.forEach(pn => {
@@ -447,7 +462,7 @@
         let contractTbl = '';
         if (cp && cp.roles.length) {
           contractTbl = `<div style="padding:8px 16px 12px;border-top:1px dashed rgba(37,39,58,0.12);background:#faf9f7">
-            <div style="font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel);margin-bottom:5px">② Per contract · ${esc(cp.feeProject.name)} <span style="text-transform:none;letter-spacing:0">(titles — match people to these when staffing)</span></div>
+            <div style="font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel);margin-bottom:5px">② Per contract · ${esc((cp.feeProjects || []).map(f => f.name).join(' + '))} <span style="text-transform:none;letter-spacing:0">(titles — match people to these when staffing)</span></div>
             <div style="display:flex;flex-wrap:wrap;gap:6px">${cp.roles.map(r => `<span class="mv-chip" style="background:#e7eef0"><b>${_fmtHours(r.hours)}h</b> ${esc(r.title)} · ${r.fteMonths} FTE-mo</span>`).join('')}</div>
           </div>`;
         }
@@ -493,8 +508,11 @@
     const vu = $('#var-unit'); if (vu) vu.onchange = (e) => { state.varUnit = e.target.value; renderActuals(); };
   }
 
-  /* Grouped-bar trend chart: ① plan / ② contract / ③ actual per month. */
-  function compareChart(ms, planM, conM, actM, projFilter, dollars) {
+  /* Grouped-bar trend chart: ① plan / ② contract / ③ actual per month. The
+     ③ Actual bar is itself stacked — billable (yellow, bottom) + macro/
+     non-billable (tan, on top) — so overhead work never masquerades as
+     billable actuals in the total bar height. */
+  function compareChart(ms, planM, conM, actM, macroM, projFilter, dollars) {
     const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 24, padB = 30, padR = 8;
     const max = Math.max(1, ...ms.map(m => Math.max(planM[m] || 0, conM[m] || 0, actM[m] || 0)));
     const y = (v) => padT + (H - padT - padB) * (1 - v / max);
@@ -504,20 +522,30 @@
     for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += `<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="rgba(37,39,58,.08)"></line><text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#79828C">${tf(v)}</text>`; }
     const bw = Math.max(8, Math.min(26, (gw - 26) / 3));
     const names = dollars ? ['① Plan cost', '② Contract fee', '③ Actual cost'] : ['① Matrix plan', '② Contract', '③ Actual'];
+    let totBillable = 0, totMacro = 0;
     ms.forEach((m, i) => {
       const x0 = padL + i * gw + (gw - 3 * bw - 8) / 2;
-      [[planM[m] || 0, '#0E7C7B', ''], [conM[m] || 0, '#9aa3ad', ''], [actM[m] || 0, '#FFDF00', 'stroke="#25273A" stroke-width="1"']].forEach(([v, c, st], j) => {
+      [[planM[m] || 0, '#0E7C7B', ''], [conM[m] || 0, '#9aa3ad', '']].forEach(([v, c, st], j) => {
         const xx = x0 + j * (bw + 4), yy = y(v);
         s += `<rect x="${xx}" y="${yy}" width="${bw}" height="${Math.max(0, H - padB - yy)}" fill="${c}" ${st}><title>${names[j]} · ${S.ymLabel(m)}: ${tf(v)}${dollars ? '' : ' h'}</title></rect>`;
         if (v > 0) s += `<text x="${xx + bw / 2}" y="${Math.max(10, yy - 4)}" text-anchor="middle" font-size="7.5" fill="#4b5563">${tf(v)}</text>`;
       });
+      // ③ Actual — stacked: billable (bottom) + macro/non-billable (top)
+      const macro = Math.max(0, macroM[m] || 0);
+      const billable = Math.max(0, (actM[m] || 0) - macro);
+      totBillable += billable; totMacro += macro;
+      const xx = x0 + 2 * (bw + 4), yBase = H - padB, yBillTop = y(billable), yTotTop = y(billable + macro);
+      if (billable > 0) s += `<rect x="${xx}" y="${yBillTop}" width="${bw}" height="${Math.max(0, yBase - yBillTop)}" fill="#FFDF00" stroke="#25273A" stroke-width="1"><title>③ Actual (billable) · ${S.ymLabel(m)}: ${tf(billable)}${dollars ? '' : ' h'}</title></rect>`;
+      if (macro > 0) s += `<rect x="${xx}" y="${yTotTop}" width="${bw}" height="${Math.max(0, yBillTop - yTotTop)}" fill="#E5DCC0" stroke="#25273A" stroke-width="1"><title>③ Actual (macro / non-billable) · ${S.ymLabel(m)}: ${tf(macro)}${dollars ? '' : ' h'}</title></rect>`;
+      if (billable + macro > 0) s += `<text x="${xx + bw / 2}" y="${Math.max(10, yTotTop - 4)}" text-anchor="middle" font-size="7.5" fill="#4b5563">${tf(billable + macro)}</text>`;
       s += `<text x="${padL + i * gw + gw / 2}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#25273A" font-weight="600">${esc(S.ymLabel(m))}</text>`;
     });
     return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);padding:14px 16px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
         <div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">${dollars ? 'Dollars' : 'Hours'} by month — ${projFilter ? esc(projFilter) : 'all projects'}</div>
-        <div class="note-txt"><span style="color:#0E7C7B">■</span> ${names[0]}&nbsp;&nbsp;<span style="color:#9aa3ad">■</span> ${names[1]}&nbsp;&nbsp;<span style="color:#e8c400">■</span> ${names[2]} · hover a bar for the number</div>
+        <div class="note-txt"><span style="color:#0E7C7B">■</span> ${names[0]}&nbsp;&nbsp;<span style="color:#9aa3ad">■</span> ${names[1]}&nbsp;&nbsp;<span style="color:#e8c400">■</span> ${names[2]} billable&nbsp;&nbsp;<span style="color:#E5DCC0;border:1px solid rgba(37,39,58,0.3)">■</span> ${names[2]} macro · hover a bar for the number</div>
       </div>
+      <div class="note-txt" style="margin-bottom:8px">③ Actual, this window: <b style="color:var(--sav-navy)">${tf(totBillable)}</b> billable + <b style="color:var(--sav-navy)">${tf(totMacro)}</b> macro/non-billable = <b style="color:var(--sav-navy)">${tf(totBillable + totMacro)}</b> total</div>
       <svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block">${s}</svg></div>`;
   }
 
@@ -731,21 +759,21 @@
     S.distinctProjects().forEach(mp => {
       // client comes from the matrix rows for this project — disambiguates same-name projects
       const mpClient = (S.listAllocations().find(a => a.project === mp) || {}).client || '';
-      const fee = S.matchFeeProject(mp, mpClient);
+      const fees = S.matchFeeProjects(mp, mpClient);
       const cks = ckResolved[mp] || [];
-      const isProblem = !fee || !cks.length;
+      const isProblem = !fees.length || !cks.length;
       if (isProblem) problems++;
       if (q && !mp.toLowerCase().includes(q)) return;
       if (state.mapOnlyProblems && !isProblem) return;
-      const feeCell = fee
-        ? `<span class="badge ${fee.via === 'tokens' ? 'pursuit' : 'active'}" title="matched by ${esc(fee.via || 'name')}">${esc(fee.client ? fee.client + ' — ' + fee.name : fee.name)}</span>`
+      const feeCell = fees.length
+        ? fees.map(fee => `<span class="badge ${fee.via === 'tokens' ? 'pursuit' : 'active'}" title="matched by ${esc(fee.via || 'name')}">${esc(fee.client ? fee.client + ' — ' + fee.name : fee.name)}${fee.via === 'mapped' ? ` <a href="#" data-unmap-fee="${esc(mp)}" data-unmap-fee-id="${esc(fee.id)}" style="color:inherit;text-decoration:none;font-weight:800" title="Remove this fee link">✕</a>` : ''}</span>`).join(' ')
         : '<span class="no-link" style="margin:0">not linked</span>';
       const ckCell = cks.length
         ? cks.map(c => `<span class="badge ${c.via === 'name' || c.via === 'mapped' ? 'active' : 'pursuit'}" title="${esc(c.via)}">${esc(c.ck)}</span>`).join(' ')
         : (ckList.length ? '<span class="no-link" style="margin:0">no Clockify project resolves here</span>' : '<span class="vmini">list unavailable</span>');
       rows += `<tr>
         <td class="pname">${esc(mp)}</td>
-        <td>${feeCell}<br><input list="map-fee-dl" data-map-fee="${esc(mp)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${fee ? 'type to change… (— to unlink)' : 'type to link fee…'}"></td>
+        <td>${feeCell}<br><input list="map-fee-dl" data-map-fee="${esc(mp)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${fees.length ? 'type to link another… (— unlink — clears all)' : 'type to link fee…'}"></td>
         <td>${ckCell}<br><input list="map-ck-dl" data-map-ck="${esc(mp)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${cks.length ? 'type to add another…' : 'type Clockify project…'}"></td>
       </tr>`;
     });
@@ -817,6 +845,11 @@
       if (!id) { const hit = resolveTyped(v, feeList, ['label', 'name', 'client']); if (hit) id = hit.id; }
       if (!id) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project from the list — or type more of the name/client, it only needs to be unique.'; return; }
       S.setFeeMapping(inp.dataset.mapFee, id); toast('Fee link saved.'); renderMapping();
+    });
+    $$('#p-mapping [data-unmap-fee]').forEach(a => a.onclick = (e) => {
+      e.preventDefault();
+      S.setFeeMapping(a.dataset.unmapFee, a.dataset.unmapFeeId, { remove: true });
+      toast('Fee link removed.'); renderMapping();
     });
     $$('#p-mapping [data-unmap-user]').forEach(a => a.onclick = (e) => {
       e.preventDefault();

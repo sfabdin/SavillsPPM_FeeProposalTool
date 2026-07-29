@@ -271,10 +271,22 @@
       Object.entries(lMap.userX || {}).forEach(([k, arr]) => { merged[k] = [...new Set([...(merged[k] || []), ...(arr || [])])]; });
       return merged;
     };
+    // fee: each key is now an ARRAY of fee-project ids (multi-link) — union
+    // rather than last-write-wins, so two people pinning DIFFERENT fee
+    // projects to the same matrix project around the same time both survive
+    // instead of one silently clobbering the other's addition.
+    const unionFee = () => {
+      const asArr = (v) => Array.isArray(v) ? v : (v ? [v] : []);
+      const merged = {};
+      new Set([...Object.keys(rMap.fee || {}), ...Object.keys(lMap.fee || {})]).forEach(k => {
+        merged[k] = [...new Set([...asArr((rMap.fee || {})[k]), ...asArr((lMap.fee || {})[k])])];
+      });
+      return merged;
+    };
     out.mappings = {
       users: Object.assign({}, rMap.users || {}, lMap.users || {}),
       projects: Object.assign({}, rMap.projects || {}, lMap.projects || {}),
-      fee: Object.assign({}, rMap.fee || {}, lMap.fee || {}),
+      fee: unionFee(),
       titles: Object.assign({}, rMap.titles || {}, lMap.titles || {}),
       renames: Object.assign({}, rMap.renames || {}, lMap.renames || {}),
       userX: unionUserX(),
@@ -434,9 +446,12 @@
 
   function matchFeeProject(name, client) {
     const k = projKey(name); if (!k) return null;
-    // 0) saved manual link wins
+    // 0) saved manual link wins — a matrix project can be pinned to several fee
+    // projects (setFeeMapping stores an array); this single-result function
+    // returns the first/primary one for callers that only want one.
     const feeMap = (readDb().mappings || {}).fee || {};
-    const mapped = feeMap[nkey(name)];
+    const mappedRaw = feeMap[nkey(name)];
+    const mapped = Array.isArray(mappedRaw) ? mappedRaw[0] : mappedRaw;
     if (mapped) { const hit = feeIndex().find(p => p.id === mapped); if (hit) return { id: hit.id, name: hit.name, client: hit.client, via: 'mapped' }; }
     const idx = feeIndex();
     // prefer same-client candidates when a client is given and names collide
@@ -456,6 +471,23 @@
     idx.forEach(p => { let s = tokenScore(name, p.name); if (client && p.client) s = s * 0.8 + tokenScore(client, p.client) * 0.2; if (s > bestScore) { bestScore = s; best = p; } });
     if (best && bestScore >= 0.7) return { id: best.id, name: best.name, client: best.client, via: 'tokens', score: Math.round(bestScore * 100) };
     return null;
+  }
+
+  /** Every fee project pinned to a matrix project — plural counterpart to
+      matchFeeProject(). Multiple manual links all count (their figures sum
+      wherever this feeds contractPlan); falls back to the single best
+      auto-match when nothing's pinned yet, same as before multi-link existed. */
+  function matchFeeProjects(name, client) {
+    const k = projKey(name); if (!k) return [];
+    const feeMap = (readDb().mappings || {}).fee || {};
+    const mappedRaw = feeMap[nkey(name)];
+    if (mappedRaw) {
+      const ids = Array.isArray(mappedRaw) ? mappedRaw : [mappedRaw];
+      const idx = feeIndex();
+      return ids.map(id => idx.find(p => p.id === id)).filter(Boolean).map(hit => ({ id: hit.id, name: hit.name, client: hit.client, via: 'mapped' }));
+    }
+    const auto = matchFeeProject(name, client);
+    return auto ? [auto] : [];
   }
 
   /** Salesforce-ID index over fee-tool projects — Clockify project names carry
@@ -571,58 +603,61 @@
   /** Planned hours per month from the MATCHED fee-tool project's staffing
       (roles × FTE × hrsPerMo) — the "once proposals are built out" baseline the
       matrix converges to. Returns null when the project isn't in the fee tool
-      or carries no staffing. { byMonth:{ym:hrs}, total, feeProject } */
+      or carries no staffing. { byMonth:{ym:hrs}, total, feeProjects } */
   function feePlanHours(projectName, months) {
     const cp = contractPlan(projectName, months);
-    return cp ? { byMonth: cp.byMonth, total: cp.total, feeProject: cp.feeProject } : null;
+    return cp ? { byMonth: cp.byMonth, total: cp.total, feeProjects: cp.feeProjects } : null;
   }
 
   /** CONTRACT plan — the fee-tool staffing for a window, with a per-TITLE
       breakdown (contract knows titles + allocations, not names). Rate-free.
-      { byMonth:{ym:hrs}, total, roles:[{title, fteMonths, hours}], feeProject } */
+      A matrix project can be pinned to SEVERAL fee projects; their figures
+      sum into one plan. { byMonth:{ym:hrs}, total, roles:[{title, fteMonths, hours}], feeProjects } */
   function contractPlan(projectName, months, client) {
-    const link = matchFeeProject(projectName, client);
-    if (!link) return null;
+    const links = matchFeeProjects(projectName, client);
+    if (!links.length) return null;
     const S2 = window.UFC_Store;
-    const p = feeRecords().find(x => x.id === link.id);
-    if (!p || !p.roles || !p.roles.length || !p.timeline) return null;
-    const hrs = (p.assumptions && p.assumptions.hrsPerMo) || 173.33;
-    const byPhase = S2.computeMonthsByPhase(p);
-    const phaseOf = {};
-    (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
-    const inWin = new Set(months);
     const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
-    const titleOf = (r) => {
-      const t = cat && cat.titles && cat.titles.find(x => x.id === r.titleId);
-      return (r.projectRole || '').trim() || (t && (t.name || t.label)) || r.titleId || 'Role';
-    };
+    const inWin = new Set(months);
     const byMonth = {}; const roleAgg = {}; let total = 0, any = false;
-    S2.enumerateMonths(p.timeline).forEach(m => {
-      const ym = m.year + '-' + String(m.month).padStart(2, '0');
-      if (!inWin.has(ym)) return;
-      const mk = m.year + '-' + m.month;              // fee tool keys are non-padded
-      p.roles.forEach(r => {
-        const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : ((r.fte && r.fte[phaseOf[mk]]) || 0)) / 100;
-        if (!fte) return;
-        const h = fte * hrs;
-        byMonth[ym] = (byMonth[ym] || 0) + h;
-        const tl = titleOf(r);
-        const ra = roleAgg[tl] || (roleAgg[tl] = { title: tl, fteMonths: 0, hours: 0 });
-        ra.fteMonths += fte; ra.hours += h;
-        total += h; any = true;
+    let feeByMonth = null, feeTotal = 0, anyFee = false;
+    links.forEach(link => {
+      const p = feeRecords().find(x => x.id === link.id);
+      if (!p || !p.roles || !p.roles.length || !p.timeline) return;
+      const hrs = (p.assumptions && p.assumptions.hrsPerMo) || 173.33;
+      const byPhase = S2.computeMonthsByPhase(p);
+      const phaseOf = {};
+      (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
+      const titleOf = (r) => {
+        const t = cat && cat.titles && cat.titles.find(x => x.id === r.titleId);
+        return (r.projectRole || '').trim() || (t && (t.name || t.label)) || r.titleId || 'Role';
+      };
+      S2.enumerateMonths(p.timeline).forEach(m => {
+        const ym = m.year + '-' + String(m.month).padStart(2, '0');
+        if (!inWin.has(ym)) return;
+        const mk = m.year + '-' + m.month;              // fee tool keys are non-padded
+        p.roles.forEach(r => {
+          const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : ((r.fte && r.fte[phaseOf[mk]]) || 0)) / 100;
+          if (!fte) return;
+          const h = fte * hrs;
+          byMonth[ym] = (byMonth[ym] || 0) + h;
+          const tl = titleOf(r);
+          const ra = roleAgg[tl] || (roleAgg[tl] = { title: tl, fteMonths: 0, hours: 0 });
+          ra.fteMonths += fte; ra.hours += h;
+          total += h; any = true;
+        });
       });
+      // billed fee $ by month (net of discounts/locks) — powers the dollars view
+      if (cat && cat.hydrated) {
+        try {
+          const series = S2.monthlySeries(p, cat) || [];
+          if (series.length) { feeByMonth = feeByMonth || {}; series.forEach(m => { const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (inWin.has(ym)) { feeByMonth[ym] = (feeByMonth[ym] || 0) + m.amount; feeTotal += m.amount; anyFee = true; } }); }
+        } catch (e) {}
+      }
     });
     if (!any) return null;
     const roles = Object.values(roleAgg).map(r => ({ title: r.title, fteMonths: Math.round(r.fteMonths * 100) / 100, hours: Math.round(r.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours);
-    // billed fee $ by month (net of discounts/locks) — powers the dollars view
-    let feeByMonth = null, feeTotal = 0;
-    if (cat && cat.hydrated) {
-      try {
-        const series = S2.monthlySeries(p, cat) || [];
-        if (series.length) { feeByMonth = {}; series.forEach(m => { const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (inWin.has(ym)) { feeByMonth[ym] = (feeByMonth[ym] || 0) + m.amount; feeTotal += m.amount; } }); }
-      } catch (e) {}
-    }
-    return { byMonth, total: Math.round(total * 10) / 10, roles, feeProject: link, feeByMonth, feeTotal: Math.round(feeTotal) };
+    return { byMonth, total: Math.round(total * 10) / 10, roles, feeProjects: links, feeByMonth: anyFee ? feeByMonth : null, feeTotal: Math.round(feeTotal) };
   }
 
   function actualsMeta() { const m = readDb().meta || {}; return { importedAt: m.clockifyImportedAt, rows: Object.keys(readDb().actuals).length, months: m.clockifyMonths || [] }; }
@@ -1027,11 +1062,27 @@
     }
     writeDb(db);
   }
-  /** Manual matrix-project → fee-tool-project link (map once, shared via staff.json). */
-  function setFeeMapping(matrixProject, feeProjectId) {
+  /** Manual matrix-project → fee-tool-project link(s), shared via staff.json.
+      A matrix project can be pinned to SEVERAL fee projects (their figures
+      then sum in contractPlan) — stored as an array under the hood, but
+      legacy single-string mappings from before multi-link still read fine.
+      setFeeMapping(mp, id)                  → add id to the set
+      setFeeMapping(mp, id, { remove: true }) → remove just that id
+      setFeeMapping(mp, null)                → clear the whole set (revert to auto-match) */
+  function setFeeMapping(matrixProject, feeProjectId, opts) {
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
     db.mappings.fee = db.mappings.fee || {};
-    if (feeProjectId) db.mappings.fee[nkey(matrixProject)] = feeProjectId; else delete db.mappings.fee[nkey(matrixProject)];
+    const key = nkey(matrixProject);
+    if (!feeProjectId) { delete db.mappings.fee[key]; writeDb(db); return; }
+    let arr = db.mappings.fee[key];
+    arr = Array.isArray(arr) ? arr.slice() : (arr ? [arr] : []);
+    if (opts && opts.remove) {
+      arr = arr.filter(id => id !== feeProjectId);
+      if (arr.length) db.mappings.fee[key] = arr; else delete db.mappings.fee[key];
+    } else {
+      if (!arr.includes(feeProjectId)) arr.push(feeProjectId);
+      db.mappings.fee[key] = arr;
+    }
     writeDb(db);
   }
 
@@ -1230,7 +1281,7 @@
     listAllocations, saveAllocation, deleteAllocation, personIdForName,
     distinctProjects, distinctClients, allocationWindow, defaultWindow,
     // engine
-    personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, listFeeProjects,
+    personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
     unassignedRoles, comingAvailable, substantialMacroTime,
     // clockify
