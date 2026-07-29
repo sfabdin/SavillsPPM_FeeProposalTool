@@ -258,11 +258,25 @@
       if ((lp.updatedAt || '') >= (rp.updatedAt || '')) out.people[id] = lp;
     });
 
-    // Actuals + mappings: key-wise union, local wins on a clash.
+    // Actuals + mappings: key-wise union, local wins on a clash. Every
+    // mappings sub-key the app writes to (staff.js:setUserMapping,
+    // setProjectMapping, setFeeMapping, setTitleMapping, setUserExclusion,
+    // commitRenames) must be listed here — a key missing from this union is
+    // silently dropped on every merge, not just when it clashes.
     out.actuals = Object.assign({}, remote.actuals || {}, local.actuals || {});
+    const rMap = remote.mappings || {}, lMap = local.mappings || {};
+    const unionUserX = () => {
+      const merged = Object.assign({}, rMap.userX || {});
+      Object.entries(lMap.userX || {}).forEach(([k, arr]) => { merged[k] = [...new Set([...(merged[k] || []), ...(arr || [])])]; });
+      return merged;
+    };
     out.mappings = {
-      users: Object.assign({}, (remote.mappings || {}).users || {}, (local.mappings || {}).users || {}),
-      projects: Object.assign({}, (remote.mappings || {}).projects || {}, (local.mappings || {}).projects || {}),
+      users: Object.assign({}, rMap.users || {}, lMap.users || {}),
+      projects: Object.assign({}, rMap.projects || {}, lMap.projects || {}),
+      fee: Object.assign({}, rMap.fee || {}, lMap.fee || {}),
+      titles: Object.assign({}, rMap.titles || {}, lMap.titles || {}),
+      renames: Object.assign({}, rMap.renames || {}, lMap.renames || {}),
+      userX: unionUserX(),
     };
 
     // Meta: whichever side was written last.
