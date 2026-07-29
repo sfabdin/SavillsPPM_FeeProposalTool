@@ -47,6 +47,7 @@
 
   function runDryRun() {
     const projects = STORE.listProjects();
+    const byId = {}; projects.forEach(p => { byId[p.id] = p; });
     let okCount = 0, skipCount = 0, exProjects = 0, totalDelta = 0, totalExc = 0, heldSum = 0;
     okList = [];
     const rowsHtml = [];
@@ -90,7 +91,7 @@
       const items = [];
       okList.forEach(id => {
         const rep = reports[id]; if (!rep.exceptions) return;
-        const nm = esc(STORE.getProject(id)?.project?.name || id);
+        const nm = esc(byId[id]?.project?.name || id);
         rep.flags.forEach(f => items.push(`<div><strong>${nm}</strong> · <span class="flag ${f.type}">${f.type.toUpperCase()}</span> ${esc(f.ym)} — ${esc(f.detail)}</div>`));
       });
       excList.innerHTML = items.join('');
