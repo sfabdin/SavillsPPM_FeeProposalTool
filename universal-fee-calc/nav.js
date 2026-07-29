@@ -23,7 +23,7 @@
     { href: 'Proposal Analytics.html',        label: 'Proposal Analytics',  group: 'Manage' },
     { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Manage' },
     { href: 'Change Log.html',               label: 'Change Log',          group: 'Manage' },
-    { href: 'Import Revenues.html',          label: 'Import Revenues',     group: 'Admin', admin: true },
+    { href: 'Ingestion Studio.html?mode=bulk', label: 'Import Revenues',   group: 'Admin', admin: true },
     { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Admin', admin: true },
     { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Admin', admin: true },
     { href: 'Enterprise Migration Guide.html', label: 'Migration Guide',   group: 'Docs' },

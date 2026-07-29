@@ -149,10 +149,27 @@
     return { rows: out, years };
   }
 
-  /** Multiple sheet rows can share a Project ID (Base Contract + amendments) —
-      sum them into one group. No ID → group by client+project name instead. */
+  /** A fee-share-to-another-party row is booked as its OWN row on the sheet —
+      same Client/Project/Project ID as the "real" revenue rows for that
+      project, just with this revenue type and a negative $ sign. It's not a
+      separate project; it's a deduction from the one it shares an ID with. */
+  const FEESHARE_OUT_RX = /revenue\s*out|fee\s*shar.*other\s*party/i;
+  function isFeeShareOutRow(r) {
+    if (!FEESHARE_OUT_RX.test(r.revenueType || '')) return false;
+    return Object.values(r.totalsByYear).some(v => v < 0);
+  }
+
+  /** Multiple sheet rows can share a Project ID (Base Contract + amendments,
+      or a gross-revenue row + its fee-share-out deduction) — sum them into
+      one group. No ID → group by client+project name instead. Gross revenue
+      and the fee-share-out deduction are tracked SEPARATELY (byYear stays
+      gross-only, matching what "revenue" means everywhere else in the app)
+      so a blended feeSharePct can be computed without silently netting them
+      into one number and losing the fact that a broker split exists at all. */
   function groupRows(dataRows, years) {
     const groups = {};
+    const zeroByYear = () => { const o = {}; years.forEach(y => { o[y] = {}; for (let m = 1; m <= 12; m++) o[y][m] = 0; }); return o; };
+    const zeroTotals = () => { const o = {}; years.forEach(y => { o[y] = 0; }); return o; };
     dataRows.forEach(r => {
       const key = r.projectId ? 'id:' + r.projectId.toLowerCase() : 'nc:' + r.client.toLowerCase() + '|' + r.project.toLowerCase();
       let g = groups[key];
@@ -161,20 +178,31 @@
           key, client: r.client, project: r.project, projectId: r.projectId,
           rating: r.rating, revenueType: r.revenueType, leader: r.leader, newOrEdit: r.newOrEdit,
           startDate: r.startDate, endDate: r.endDate,
-          byYear: {}, totalsByYear: {}, rows: [],
+          byYear: zeroByYear(), totalsByYear: zeroTotals(),
+          brokerByYear: zeroByYear(), brokerTotalsByYear: zeroTotals(),
+          rows: [],
         };
-        years.forEach(y => { g.byYear[y] = {}; for (let m = 1; m <= 12; m++) g.byYear[y][m] = 0; g.totalsByYear[y] = 0; });
       }
       g.rows.push(r);
       // widen the date range across amendments
       if (r.startDate && (!g.startDate || r.startDate < g.startDate)) g.startDate = r.startDate;
       if (r.endDate && (!g.endDate || r.endDate > g.endDate)) g.endDate = r.endDate;
+      const isFee = isFeeShareOutRow(r);
       years.forEach(y => {
-        Object.keys(r.byYear[y] || {}).forEach(m => { g.byYear[y][m] += r.byYear[y][m] || 0; });
-        g.totalsByYear[y] += r.totalsByYear[y] || 0;
+        Object.keys(r.byYear[y] || {}).forEach(m => {
+          const v = r.byYear[y][m] || 0;
+          if (isFee) g.brokerByYear[y][m] += Math.abs(v); else g.byYear[y][m] += v;
+        });
+        if (isFee) g.brokerTotalsByYear[y] += Math.abs(r.totalsByYear[y] || 0); else g.totalsByYear[y] += r.totalsByYear[y] || 0;
       });
     });
-    return Object.values(groups);
+    const out = Object.values(groups);
+    out.forEach(g => {
+      const gross = Object.values(g.totalsByYear).reduce((s, v) => s + v, 0);
+      const broker = Object.values(g.brokerTotalsByYear).reduce((s, v) => s + v, 0);
+      g.feeSharePct = gross > 0 ? Math.round((broker / gross) * 1000) / 10 : 0;
+    });
+    return out;
   }
 
   /** Leadership's cutoff for this cycle: drop anything with $0 in both 2026 and 2027. */
@@ -225,10 +253,16 @@
     years.forEach(y => { for (let m = 1; m <= 12; m++) { const v = g.byYear[y][m] || 0; if (v) ov[y + '-' + m] = Math.round(v * 100) / 100; } });
     return ov;
   }
+  function buildBrokerByMonth(g, years) {
+    const ov = {};
+    years.forEach(y => { for (let m = 1; m <= 12; m++) { const v = (g.brokerByYear[y] || {})[m] || 0; if (v) ov[y + '-' + m] = Math.round(v * 100) / 100; } });
+    return ov;
+  }
   function createLightweightProject(g, years) {
     const tl = monthsFromDates(g.startDate, g.endDate, years);
     const totalMonths = Math.max(1, (tl.endYear - tl.startYear) * 12 + (tl.endMonth - tl.startMonth) + 1);
     const booked = /^1\s*:/.test(g.rating || '');
+    const hasFeeShare = g.feeSharePct > 0;
     const record = {
       project: {
         name: g.project || 'Untitled', client: g.client || '', lead: '', proposalDate: new Date().toISOString().slice(0, 10),
@@ -240,9 +274,17 @@
       phases: [{ id: uid(), name: 'Full term', length: totalMonths }],
       groups: [{ id: uid(), name: 'Core team' }],
       roles: [],
-      assumptions: { hrsPerMo: 173.33, escalation: 3.0, industryAdj: 20, discount: 0, rateLock: false, billingMode: 'phase', catalogBaseYear: (window.RATES_CATALOG && window.RATES_CATALOG.baseYear) || 2024 },
+      assumptions: {
+        hrsPerMo: 173.33, escalation: 3.0, industryAdj: 20, discount: 0, rateLock: false, billingMode: 'phase',
+        catalogBaseYear: (window.RATES_CATALOG && window.RATES_CATALOG.baseYear) || 2024,
+        feeShare: { enabled: hasFeeShare, pct: hasFeeShare ? g.feeSharePct : 0, mode: 'offtop' },
+      },
       monthlyOverrides: buildOverrides(g, years),
-      source: { type: 'revenue-import', name: state.fileName || 'revenue projections', ingestedAt: new Date().toISOString(), sheetProjectId: g.projectId || null, sheetRating: g.rating || null },
+      source: {
+        type: 'revenue-import', name: state.fileName || 'revenue projections', ingestedAt: new Date().toISOString(),
+        sheetProjectId: g.projectId || null, sheetRating: g.rating || null,
+        brokerByMonth: hasFeeShare ? buildBrokerByMonth(g, years) : undefined,
+      },
     };
     return STORE.saveProject(record);
   }
@@ -265,12 +307,13 @@
   function summarize() {
     const total = state.groups.length;
     let matched = 0, changed = 0, unchanged = 0, unmatched = 0;
+    const feeShare = state.groups.filter(g => g.feeSharePct > 0).length;
     state.groups.forEach(g => {
       const pid = state.overrides[g.key] !== undefined ? state.overrides[g.key] : (g.match && g.match.id);
       if (pid) { matched++; const d = diffGroup(g, STORE.getProject(pid), state.years); if (d.changedMonths) changed++; else unchanged++; }
       else unmatched++;
     });
-    return { total, matched, changed, unchanged, unmatched, selected: state.included.size };
+    return { total, matched, changed, unchanged, unmatched, feeShare, selected: state.included.size };
   }
 
   function renderSummary() {
@@ -279,7 +322,8 @@
       <div class="sumcard"><div class="lbl">Projects in sheet</div><div class="val">${s.total}</div></div>
       <div class="sumcard ok"><div class="lbl">Matched · changed</div><div class="val">${s.changed}</div></div>
       <div class="sumcard"><div class="lbl">Matched · unchanged</div><div class="val">${s.unchanged}</div></div>
-      <div class="sumcard warn"><div class="lbl">New / unmatched</div><div class="val">${s.unmatched}</div></div>`;
+      <div class="sumcard warn"><div class="lbl">New / unmatched</div><div class="val">${s.unmatched}</div></div>
+      <div class="sumcard"><div class="lbl">With fee share</div><div class="val">${s.feeShare}</div></div>`;
     $('#ri-apply-btn').textContent = `Import selected (${s.selected}) →`;
     $('#ri-apply-btn').disabled = s.selected === 0;
   }
@@ -316,10 +360,13 @@
         : (g.match && g.match.via === 'id' ? `<span class="ri-badge ri-id">ID match</span>` : `<span class="ri-badge ri-name">Name match${g.match && g.match.score ? ' · ' + g.match.score + '%' : ''}</span>`);
       const deltaTxt = d.isNew ? `${money(d.totalDelta)} (new)` : (d.changedMonths ? `${d.totalDelta >= 0 ? '+' : ''}${money(d.totalDelta)} across ${d.changedMonths} mo` : 'no change');
       const lockWarn = d.locked ? `<div class="ri-warn">⚠ locked to its original import — a new override won't show until this project is reconciled</div>` : '';
+      const feeShareNote = g.feeSharePct > 0
+        ? `<div class="raw" style="color:#8a6d00">− broker ${g.feeSharePct}%${matchedId ? ' (existing project — set feeShare manually if needed, not auto-applied)' : ' — applied on create'}</div>`
+        : '';
       return `<tr class="ri-row" data-key="${esc(g.key)}">
         <td><input type="checkbox" class="ri-check" data-key="${esc(g.key)}" ${checked ? 'checked' : ''}></td>
         <td>${esc(g.client)}</td>
-        <td>${esc(g.project)}${g.rows.length > 1 ? `<span class="raw">${g.rows.length} sheet rows summed</span>` : ''}</td>
+        <td>${esc(g.project)}${g.rows.length > 1 ? `<span class="raw">${g.rows.length} sheet rows summed</span>` : ''}${feeShareNote}</td>
         <td>${esc(g.rating || '—')}</td>
         <td>${matchBadge}<div class="ri-match-pick"><input list="ri-projects-${i}" class="ri-match-input" data-key="${esc(g.key)}" value="${matchedProject ? esc(((matchedProject.project||{}).client||'') + ' — ' + ((matchedProject.project||{}).name||'')) : ''}" placeholder="type to link… or leave blank = new"><datalist id="ri-projects-${i}">${projectOptionsDatalist()}</datalist></div></td>
         <td class="num">${money(g.totalsByYear[2026] || 0)}</td>
