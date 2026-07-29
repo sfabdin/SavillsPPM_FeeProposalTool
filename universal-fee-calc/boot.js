@@ -93,10 +93,37 @@
     document.getElementById('ufc-box-login').addEventListener('click', () => window.UFC_Box.login());
   }
 
+  /* Live refresh: while Box is enabled and a tab stays open, periodically check
+     projects.json/studio.json for a teammate's save and merge it in — same
+     pattern the staffing page already uses for staff.json. A page doesn't have
+     to do anything to benefit: this just keeps the local cache from going
+     stale, which is what lets saveProject()'s existing STALE_WRITE guard catch
+     a real conflict instead of it only surfacing later as a silent Box merge.
+     Pages that want to visually refresh can listen for 'ufc:remote-updated'. */
+  function startLiveRefresh() {
+    if (!Box || !Box.enabled) return;
+    let busy = false;
+    const refresh = async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        const projects = Box.refreshProjectsIfChanged ? await Box.refreshProjectsIfChanged() : false;
+        const studio = Box.refreshStudioIfChanged ? await Box.refreshStudioIfChanged() : false;
+        if (projects || studio) {
+          try { document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects, studio } })); } catch (e) {}
+        }
+      } catch (e) { /* a missed refresh just tries again next tick */ }
+      finally { busy = false; }
+    };
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+    setInterval(refresh, 180000);   // same 3-min cadence as staff.json's live refresh
+  }
+
   window.ufcReady = run().then((r) => {
     // Normalize local cache: run schema migrations + sweep old tombstones once.
     try { if (window.UFC_Store) { window.UFC_Store.runMigrations(); window.UFC_Store.purgeTombstones(); } } catch (e) {}
     try { document.dispatchEvent(new CustomEvent('ufc:ready', { detail: r })); } catch (e) {}
+    if (r && r.backend === 'box') startLiveRefresh();
     return r;
   });
 })();

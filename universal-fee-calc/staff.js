@@ -146,6 +146,7 @@
     db.schemaVersion = SCHEMA;
     localStorage.setItem(KEY, JSON.stringify(db));
     _dbCache = db;
+    _feeIndex = null; _feeRecords = null;   // fee-tool project list may have changed too
     return true;
   }
   function writeDb(db) {
@@ -292,6 +293,7 @@
     const merged = mergeStaffDb(remote, readDb());
     localStorage.setItem(KEY, JSON.stringify(merged));
     _dbCache = merged;
+    _feeIndex = null; _feeRecords = null;   // fee-tool project list may have changed too
     return merged;
   }
 
@@ -383,6 +385,15 @@
 
   /** Best-effort match of a matrix project name to a fee-tool project. */
   let _feeIndex = null, _feeRecords = null;
+  // Invalidate when boot.js's live-refresh loop pulls a newer projects.json —
+  // otherwise this cache goes stale for the rest of the tab's session the
+  // moment a teammate adds/renames a project, and Staffing's fee-tool links
+  // silently keep pointing at old data.
+  if (typeof document !== 'undefined') {
+    document.addEventListener('ufc:remote-updated', (e) => {
+      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; }
+    });
+  }
   /** Fee-tool project records, parsed ONCE per page load — UFC_Store.getProject
       re-parses the whole projects.json every call, which froze the Compare tab. */
   function feeRecords() {

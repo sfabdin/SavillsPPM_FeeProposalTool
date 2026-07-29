@@ -330,6 +330,34 @@
     return out;
   }
 
+  /** Cheap change check: compares the remote etag to the one we last saw;
+      returns the fresh projects db only when a TEAMMATE saved since, else null. */
+  async function pullRemoteIfChanged() {
+    const meta = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '?fields=etag');
+    if (!meta.ok) return null;
+    const m = await meta.json();
+    if (_etag && m.etag === _etag) return null;                  // unchanged since our last pull/push
+    return pullRemote();
+  }
+  /** Pull-if-changed + merge + hydrate, in one call. Existing per-project saves
+      already refuse to overwrite a record someone else updated more recently
+      (the STALE_WRITE guard in saveProject) — but that guard only protects a
+      save if this tab's local cache is fresh enough to see the conflict. Without
+      this periodic refresh, a long-lived tab's cache can go stale for as long as
+      it's open, so its own save looks "clean" locally and the conflict only
+      surfaces later at the Box 412 layer, where mergeDb's whole-record
+      newest-wins can discard a teammate's edit to a DIFFERENT field of the same
+      project. Keeping the local cache fresh lets the STALE_WRITE guard do its
+      job — warn the human — instead of that silent loss. */
+  Box.refreshProjectsIfChanged = async function () {
+    const remote = await pullRemoteIfChanged();
+    if (!remote) return false;
+    const local = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1') || 'null') || Store.defaultDb();
+    const merged = mergeDb(remote, local);
+    Store.hydrateFromRemote(merged);
+    return true;
+  };
+
   /* Merge strategy: newest-updatedAt wins per project (tombstones included, so
      deletions propagate). Activity log is union-merged by entry id. */
   function mergeDb(remote, local) {
@@ -506,7 +534,23 @@
     if (!res.ok) throw new Error('studio pull failed: ' + res.status);
     return JSON.parse(await res.text());
   }
-  async function uploadStudio(s) {
+  /* Merge strategy: baselines carry no updatedAt (they're frozen targets, rarely
+     edited concurrently) so a same-id collision keeps the local copy — it's the
+     one this upload is actively trying to save. Scenarios DO carry updatedAt, so
+     those merge newest-wins per id, same pattern as projects. Either way, every
+     record from BOTH sides survives the merge — nothing is silently dropped. */
+  function mergeStudioDb(remote, local) {
+    const out = Store.defaultStudio();
+    out.baselines = { ...(remote.baselines || {}), ...(local.baselines || {}) };
+    const scen = { ...(remote.scenarios || {}) };
+    Object.entries(local.scenarios || {}).forEach(([id, ls]) => {
+      const rs = scen[id];
+      if (!rs || (ls.updatedAt || '') >= (rs.updatedAt || '')) scen[id] = ls;
+    });
+    out.scenarios = scen;
+    return out;
+  }
+  async function uploadStudio(s, depth) {
     const id = BOX_CONFIG.studioFileId;
     if (!id || /PASTE/.test(id)) return;                         // local-only until configured
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
@@ -518,8 +562,18 @@
       headers: { Authorization: 'Bearer ' + token, ...(_studioEtag ? { 'If-Match': _studioEtag } : {}) },
       body: form,
     });
-    if (res.ok) { const j = await res.json(); if (j.entries && j.entries[0]) _studioEtag = j.entries[0].etag; }
-    else if (res.status !== 412) throw new Error('studio upload failed: ' + res.status);
+    if (res.status === 412) {
+      // Someone else saved first. Re-uploading our copy as-is would erase their
+      // baselines/scenarios, so PULL → MERGE at record level → retry, same as
+      // staff.json — this used to just give up silently here, dropping the edit.
+      if ((depth || 0) >= 2) throw new Error('studio push failed: repeated conflicts');
+      const remote = await pullStudio();          // also refreshes _studioEtag
+      const merged = mergeStudioDb(remote, s);
+      Store.hydrateStudioFromRemote(merged);
+      return uploadStudio(merged, (depth || 0) + 1);
+    }
+    if (!res.ok) throw new Error('studio upload failed: ' + res.status);
+    const j = await res.json(); if (j.entries && j.entries[0]) _studioEtag = j.entries[0].etag;
   }
   let _studioTimer = null, _studioPending = null;
   function scheduleStudioPush(s) {
@@ -534,6 +588,27 @@
     try { await uploadStudio(s); } catch (e) { _studioPending = s; console.warn('studio push failed', e); }
   }
   Box.pullStudio = pullStudio;
+  /** Cheap change check: compares the remote etag to the one we last saw;
+      returns the fresh studio db only when a TEAMMATE saved since, else null. */
+  async function pullStudioIfChanged() {
+    const id = BOX_CONFIG.studioFileId;
+    if (!id || /PASTE/.test(id)) return null;
+    const meta = await boxFetch('/files/' + id + '?fields=etag');
+    if (!meta.ok) return null;
+    const m = await meta.json();
+    if (_studioEtag && m.etag === _studioEtag) return null;      // unchanged since our last pull/push
+    return pullStudio();
+  }
+  /** Pull-if-changed + record-level merge + hydrate, in one call — used by the
+      live-refresh loop so a long-lived tab's local cache never goes stale
+      enough for the next save to conflict with (or clobber) a teammate's. */
+  Box.refreshStudioIfChanged = async function () {
+    const remote = await pullStudioIfChanged();
+    if (!remote) return false;
+    const merged = mergeStudioDb(remote, Store.readStudio());
+    Store.hydrateStudioFromRemote(merged);
+    return true;
+  };
 
   /* ---- Rolling weekly backup ----------------------------------------------
      Box already versions projects.json on every upload (first-line recovery:
