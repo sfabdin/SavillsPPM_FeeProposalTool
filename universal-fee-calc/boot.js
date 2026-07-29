@@ -42,6 +42,25 @@
     return res;
   }
 
+  /* Last-resort gate: only reached if boot() rejects unexpectedly (something
+     it doesn't already try/catch internally — e.g. storage blocked entirely by
+     browser privacy settings). Without this, window.ufcReady rejected with no
+     handler, and every page waiting on ufcReady.then(start) just hung with a
+     blank screen and no console-visible explanation for a non-technical user. */
+  function renderBootErrorGate(err) {
+    document.documentElement.style.background = '#f3f3f0';
+    document.body.innerHTML = `
+      <div style="height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#25273a;">
+        <div style="text-align:center;max-width:460px;padding:0 24px;">
+          <div style="font-weight:800;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6b7280;margin-bottom:14px;">Savills PPM · Fee &amp; Revenue System</div>
+          <div style="font-weight:900;font-size:26px;letter-spacing:-0.01em;margin-bottom:10px;">Couldn't start the app</div>
+          <div style="font-size:14px;line-height:1.6;color:#6b7280;margin-bottom:20px;">Something went wrong loading data before the page could render. This is usually temporary — a network hiccup or a browser storage restriction.</div>
+          <button onclick="window.location.reload()" style="font-family:system-ui,sans-serif;font-weight:700;font-size:13px;letter-spacing:0.06em;text-transform:uppercase;padding:13px 26px;background:#25273a;color:#fff;border:0;cursor:pointer;">Retry</button>
+          <div style="color:#a0a0a0;font-size:11px;margin-top:14px;">${err ? String((err && err.message) || err).replace(/</g, '&lt;') : ''}</div>
+        </div>
+      </div>`;
+  }
+
   function renderRatesGate(detail) {
     document.documentElement.style.background = '#f3f3f0';
     document.body.innerHTML = `
@@ -125,5 +144,9 @@
     try { document.dispatchEvent(new CustomEvent('ufc:ready', { detail: r })); } catch (e) {}
     if (r && r.backend === 'box') startLiveRefresh();
     return r;
+  }).catch((e) => {
+    console.error('Boot failed unexpectedly', e);
+    renderBootErrorGate(e);
+    return new Promise(() => {});   // halt — same convention as the other gates
   });
 })();
