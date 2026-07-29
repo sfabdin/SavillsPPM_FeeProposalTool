@@ -2,78 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Savills PPM · Import Revenues</title>
+<title>Savills PPM · Import Revenues (moved)</title>
 <link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
 <link rel="stylesheet" href="design-system/colors_and_type.css">
+<meta http-equiv="refresh" content="0; url=Ingestion Studio.html?mode=bulk">
 <style>
   body { margin:0; font-family:var(--font-body,Arial,sans-serif); color:var(--sav-navy,#25273A); background:#f3f3f0; }
-  .wrap { max-width:1100px; margin:0 auto; padding:36px 28px 80px; }
-  h1 { font-family:var(--font-display); font-weight:800; font-size:26px; margin:0 0 4px; }
-  .sub { color:#79828C; font-size:13px; margin-bottom:24px; }
-  .card { background:#fff; border:1px solid rgba(37,39,58,0.12); padding:22px 24px; margin-bottom:20px; }
-  .card h2 { font-family:var(--font-display); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; margin:0 0 12px; }
-  .btn { font-family:var(--font-display); font-weight:700; font-size:13px; letter-spacing:0.04em; padding:11px 20px; border:0; cursor:pointer; background:var(--sav-navy); color:#fff; }
-  .btn.go { background:var(--sav-teal,#0E7C7B); }
-  .btn:disabled { opacity:0.4; cursor:not-allowed; }
-  .btn.ghost { background:transparent; color:var(--sav-navy); border:1px solid rgba(37,39,58,0.25); }
-  input[type=file] { font-size:13px; }
-  .stat { display:inline-block; margin-right:28px; }
-  .stat b { font-family:var(--font-display); font-size:22px; display:block; }
-  .stat span { font-size:11px; color:#79828C; text-transform:uppercase; letter-spacing:0.08em; }
-  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:12px; }
-  th,td { text-align:left; padding:6px 9px; border-bottom:1px solid rgba(37,39,58,0.1); }
-  th { font-family:var(--font-display); font-size:9.5px; letter-spacing:0.07em; text-transform:uppercase; color:#79828C; }
-  td.num { text-align:right; font-variant-numeric:tabular-nums; }
-  .fs { color:var(--sav-teal,#0E7C7B); font-size:11px; }
-  .msg { font-size:13px; padding:10px 14px; margin-top:12px; }
-  .msg.ok { background:#e8f3ec; color:#1f7a44; }
-  .msg.err { background:#fbe9ea; color:#b3151b; }
-  .note { font-size:12px; color:#79828C; line-height:1.6; }
-  code { background:#EEE8E3; padding:1px 5px; font-size:11px; }
+  .wrap { max-width:640px; margin:15vh auto 0; padding:0 28px; text-align:center; }
+  h1 { font-family:var(--font-display); font-weight:800; font-size:22px; margin:0 0 10px; }
+  p { color:#79828C; font-size:14px; line-height:1.6; }
+  a.btn { display:inline-block; margin-top:18px; font-family:var(--font-display); font-weight:700; font-size:13px; letter-spacing:0.04em; padding:11px 22px; background:var(--sav-teal,#0E7C7B); color:#fff; text-decoration:none; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Import Revenue Projections</h1>
-  <div id="dep-banner" style="display:none;background:#fbe9ea;color:#b3151b;padding:12px 16px;margin-bottom:16px;font-size:13px;"></div>
-  <div class="sub">Prime the system from the "3 · Detailed Revenues" sheet. One project per row, monthly $ mapped to WP month, staffing left blank for later reconciliation.</div>
-
-  <div class="card">
-    <h2>1 · Choose the workbook</h2>
-    <input type="file" id="file" accept=".xlsx,.xls">
-    <div id="parse-msg"></div>
-  </div>
-
-  <div class="card" id="preview-card" hidden>
-    <h2>2 · Preview</h2>
-    <div id="stats"></div>
-    <div class="note" style="margin-top:10px;">Rules: only projects with 2026 or 2027 dollars · zero-dollar rows skipped · fee-share lines (negative, matching the row above) folded into that project as a broker reduction &amp; flagged.</div>
-    <div style="max-height:380px; overflow:auto;"><table id="preview"></table></div>
-  </div>
-
-  <div class="card" id="commit-card" hidden>
-    <h2>3 · Import</h2>
-    <div class="note">This writes the projects into your local store. Open <code>Projects Index</code> afterward while signed in to Box and they sync up. Existing projects are not touched.</div>
-    <div style="margin-top:14px; display:flex; gap:12px; align-items:center;">
-      <button class="btn go" id="commit">Import <span id="commit-n"></span> projects</button>
-      <a class="btn ghost" href="Projects Index.html">Open Projects Index →</a>
-    </div>
-    <div id="commit-msg"></div>
-  </div>
+  <h1>This tool has moved.</h1>
+  <p>Revenue projections import now lives inside <b>Ingestion Studio</b>, which diffs your workbook against what's already in the system and lets you pick exactly which projects to bring in — so re-importing an updated workbook no longer creates duplicates.</p>
+  <p>Redirecting you now…</p>
+  <a class="btn" href="Ingestion Studio.html?mode=bulk">Open Ingestion Studio →</a>
 </div>
-
-<script>
-  window.__xlsxStatus = 'pending';
-  function __xlsxLoaded(){ window.__xlsxStatus = (typeof XLSX !== 'undefined') ? 'ok' : 'fail'; var b=document.getElementById('dep-banner'); if(b){ if(window.__xlsxStatus==='ok'){ b.style.display='none'; } else { b.style.display='block'; b.textContent='⚠ Spreadsheet engine (SheetJS) failed to load from the CDN — your site may block it. Tell me and I will bundle it into the repo.'; } } }
-</script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" onload="__xlsxLoaded()" onerror="document.getElementById('dep-banner').style.display='block';document.getElementById('dep-banner').textContent='⚠ Could not load the spreadsheet engine from the CDN (blocked or offline). Tell me and I will bundle it into the repo so no CDN is needed.';"></script>
-<script>if (typeof XLSX === 'undefined') { var s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload=__xlsxLoaded; document.head.appendChild(s); } else { __xlsxLoaded(); }</script>
-<script src="universal-fee-calc/rates-catalog.js"></script>
-<script src="universal-fee-calc/store.js"></script>
-<script src="universal-fee-calc/box-adapter.js"></script>
-<script src="universal-fee-calc/boot.js"></script>
-<script src="universal-fee-calc/sync-status.js"></script>
-<script src="universal-fee-calc/import-revenues.js" onerror="document.getElementById('dep-banner').style.display='block';document.getElementById('dep-banner').innerHTML='⚠ import-revenues.js did not load (404 / not deployed). Make sure that file is in universal-fee-calc/ on the live site.';"></script>
-<script src="universal-fee-calc/nav.js"></script>
 </body>
 </html>
