@@ -362,9 +362,11 @@
   /** Per-project: distinct people, FTE this month (Σpct/100), and the fee-tool
       project it links to (name match), if any. */
   function projectRollup(months, opts) {
+    const includePursuit = !opts || opts.includePursuit !== false;
     const db = readDb();
     const byProj = {};
     db.allocations.forEach(a => {
+      if (!includePursuit && (a.status === 'Pursuit' || a.type === 'Opportunity')) return;
       const key = a.project || '—';
       const b = byProj[key] || (byProj[key] = { project: key, client: a.client || '', people: new Set(), status: a.status, type: a.type, byMonth: {}, allocs: [] });
       b.people.add(a.personId); b.allocs.push(a);

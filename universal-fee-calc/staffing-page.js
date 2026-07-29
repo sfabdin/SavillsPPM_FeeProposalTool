@@ -80,14 +80,13 @@
   const fmtPct = (n) => n ? Math.round(n) + '%' : '';
 
   const state = {
-    tab: 'bandwidth',
+    tab: 'actuals',
     winStart: null, winLen: 12, incPursuit: true,
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
     pplSearch: '', expandedRoster: new Set(),
     varProject: '', varPerson: '', varGroup: 'project', varUnit: 'hours',
-    bwSearch: '', bwOver: false, bwProject: '',
-    expandedPeople: new Set(), expandedProjects: new Set(),
+    expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
     canonProposals: null,
@@ -96,6 +95,7 @@
 
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
   function uCls(v) { if (!v) return 'u0'; if (v <= 85) return 'u1'; if (v <= 100) return 'u2'; if (v <= 120) return 'u3'; if (v <= 150) return 'u4'; return 'u5'; }
+  function isPursuitAlloc(a) { return a.status === 'Pursuit' || a.type === 'Opportunity'; }
 
   /* ---------- identity bar (shared pattern) ---------- */
   function buildIdentityBar() {
@@ -119,41 +119,13 @@
     if (noteEl) noteEl.textContent = cur.impersonating ? 'Previewing ' + (cur.name || 'this person') : '';
   }
 
-  /* ---------- BANDWIDTH ---------- */
-  /* Shared bandwidth filters (heatmap + single-month view). Project filter
-     keeps people ON that project; their load still counts ALL their work. */
-  function bwToolbar() {
-    const projOpts = ['<option value="">All projects</option>'].concat(S.distinctProjects().map(p => `<option ${state.bwProject === p ? 'selected' : ''}>${esc(p)}</option>`)).join('');
-    return `<div class="toolbar">
-      <input type="search" id="bw-search" placeholder="Filter people…" value="${esc(state.bwSearch)}">
-      <select id="bw-project" title="Show only people allocated to this project (their load still counts everything)">${projOpts}</select>
-      <label class="chk" style="font-size:12.5px;display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="bw-over" ${state.bwOver ? 'checked' : ''}> Only over-allocated</label>
-      <span class="grow"></span>
-    </div>`;
-  }
-  function bwFilter(rows, loadOf) {
-    let out = rows;
-    const q = state.bwSearch.toLowerCase();
-    if (q) out = out.filter(r => r.person.name.toLowerCase().includes(q));
-    if (state.bwOver) out = out.filter(r => loadOf(r) > 100);
-    if (state.bwProject) {
-      const ppl = new Set(S.listAllocations().filter(a => a.project === state.bwProject).map(a => a.personId));
-      out = out.filter(r => ppl.has(r.person.id));
-    }
-    return out;
-  }
-  function wireBwToolbar(rerender) {
-    const si = $('#bw-search'); if (si) si.oninput = (e) => { state.bwSearch = e.target.value; rerender(); const el = $('#bw-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
-    const pj = $('#bw-project'); if (pj) pj.onchange = (e) => { state.bwProject = e.target.value; rerender(); };
-    const ov = $('#bw-over'); if (ov) ov.onchange = (e) => { state.bwOver = e.target.checked; rerender(); };
-  }
-
-  /* Compact callout: who's freeing up over the next 3 months — surfaced
-     directly on Bandwidth (not just buried in the Insights tab) since it's
-     the "who can take the next assignment" question people come here for.
-     Collapsed to a one-line summary by default; expands (native <details>,
-     same pattern as matchAudit()) into a scrollable gradient timeline
-     covering everyone active in the window, not just those freeing up. */
+  /* Compact callout: who's freeing up over the next 3 months — surfaced on
+     By Person (Bandwidth was folded into that view; this is the natural
+     home for it now) since it's the "who can take the next assignment"
+     question people come here for. Collapsed to a one-line summary by
+     default; expands (native <details>, same pattern as matchAudit()) into
+     a scrollable gradient timeline covering everyone active in the window,
+     not just those freeing up. */
   function comingAvailableCard() {
     const list = S.comingAvailable({ includePursuit: state.incPursuit });
     if (!list.length) return '';
@@ -176,101 +148,6 @@
         </tbody></table>
       </div>
     </details>`;
-  }
-
-  function renderBandwidth() {
-    const ms = months();
-    if (ms.length === 1) { renderMonthFocus(ms[0]); return; }
-    const rows = bwFilter(S.bandwidthGrid(ms, { includePursuit: state.incPursuit }).filter(r => r.activeMonths > 0), (r) => r.peak);
-    rows.sort((a, b) => b.peak - a.peak || a.person.name.localeCompare(b.person.name));
-    const over = rows.filter(r => r.peak > 100).length;
-    const nh = rows.filter(r => r.person.isNewHire).length;
-    const avgLoad = rows.length ? rows.reduce((s, r) => s + r.avg, 0) / rows.length : 0;
-
-    const kpis = `<div class="kpi-strip">
-      <div class="kpi-card"><div class="k-num">${rows.length}</div><div class="k-lbl">People allocated</div></div>
-      <div class="kpi-card ${over ? 'warn' : ''}"><div class="k-num">${over}</div><div class="k-lbl">Over-allocated (peak &gt; 100%)</div></div>
-      <div class="kpi-card accent"><div class="k-num">${Math.round(avgLoad)}%</div><div class="k-lbl">Avg load, active months</div></div>
-      <div class="kpi-card"><div class="k-num">${nh}</div><div class="k-lbl">Planned new hires in view</div></div>
-    </div>`;
-
-    const nowYm = S.currentYM();
-    let head = '<tr><th class="who">Person</th>' + ms.map(m => `<th${m < nowYm ? ' style="opacity:.6"' : ''}>${esc(S.ymLabel(m))}</th>`).join('') + '<th class="pk">Peak</th></tr>';
-    let body = '';
-    rows.forEach(r => {
-      const meta = [r.person.isNewHire ? '<span class="nh-tag">New hire</span>' : '', r.person.capacityPct !== 100 ? `${r.person.capacityPct}% cap` : ''].filter(Boolean).join('');
-      body += `<tr data-person="${esc(r.person.id)}"><td class="who"><div class="who-name" data-exp="${esc(r.person.id)}">${esc(r.person.name)}</div>${meta ? `<div class="who-meta">${meta}</div>` : ''}</td>`;
-      ms.forEach(m => { const v = Math.round(r.byMonth[m] || 0); body += `<td><span class="cell ${uCls(v)} ${m < nowYm ? 'past' : ''}">${v ? v : '·'}</span></td>`; });
-      body += `<td class="pk ${r.peak > 100 ? 'over' : ''}">${Math.round(r.peak)}%</td></tr>`;
-      if (state.expandedPeople.has(r.person.id)) body += personDrawer(r.person, ms);
-    });
-
-    const legend = `<div class="legend">
-      <span><span class="sw" style="background:#eef4f4"></span>≤85% headroom</span>
-      <span><span class="sw" style="background:#cfe6e4"></span>86–100% full</span>
-      <span><span class="sw" style="background:#fce7c2"></span>101–120% over</span>
-      <span><span class="sw" style="background:#f6c9c2"></span>121–150%</span>
-      <span><span class="sw" style="background:#e4453a"></span>&gt;150% critical</span>
-      <span style="margin-left:auto">Click a name for their project breakdown.</span>
-    </div>`;
-
-    $('#p-bandwidth').innerHTML = kpis + comingAvailableCard() + bwToolbar() + `<div class="hm-wrap"><table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table></div>` + legend;
-    wireBwToolbar(renderBandwidth);
-    $$('#p-bandwidth .who-name').forEach(el => el.onclick = () => { const id = el.dataset.exp; if (state.expandedPeople.has(id)) state.expandedPeople.delete(id); else state.expandedPeople.add(id); renderBandwidth(); });
-    $$('#p-bandwidth [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
-  }
-
-  /* Single-month focus: everyone's load THIS month with their project mix,
-     heaviest first — the "who can take work in July?" pivot. */
-  function renderMonthFocus(ym) {
-    const rows = bwFilter(S.bandwidthGrid([ym], { includePursuit: state.incPursuit }).filter(r => (r.byMonth[ym] || 0) > 0), (r) => r.byMonth[ym] || 0);
-    rows.sort((a, b) => (b.byMonth[ym] || 0) - (a.byMonth[ym] || 0) || a.person.name.localeCompare(b.person.name));
-    const over = rows.filter(r => r.byMonth[ym] > 100).length;
-    const free = rows.filter(r => r.byMonth[ym] <= 85).length;
-    const avg = rows.length ? rows.reduce((s, r) => s + r.byMonth[ym], 0) / rows.length : 0;
-    const kpis = `<div class="kpi-strip">
-      <div class="kpi-card"><div class="k-num">${rows.length}</div><div class="k-lbl">People staffed · ${esc(S.ymLabel(ym))}</div></div>
-      <div class="kpi-card ${over ? 'warn' : ''}"><div class="k-num">${over}</div><div class="k-lbl">Over 100% this month</div></div>
-      <div class="kpi-card accent"><div class="k-num">${free}</div><div class="k-lbl">With headroom (≤85%)</div></div>
-      <div class="kpi-card"><div class="k-num">${Math.round(avg)}%</div><div class="k-lbl">Avg load</div></div>
-    </div>`;
-    const barCol = (v) => v > 150 ? '#e4453a' : v > 120 ? '#e08a7d' : v > 100 ? '#e8b563' : v > 85 ? '#5ba8a5' : '#a9cfcd';
-    let body = '';
-    rows.forEach(r => {
-      const v = Math.round(r.byMonth[ym] || 0);
-      const allocs = S.personAllocationsIn(r.person.id, ym).filter(a => state.incPursuit || (a.status !== 'Pursuit' && a.type !== 'Opportunity'));
-      const chips = allocs.sort((a, b) => b.pct - a.pct).map(a => `<span class="mv-chip ${(a.status === 'Pursuit' || a.type === 'Opportunity') ? 'pursuit' : ''}" data-edit-alloc="${esc(a.id)}" style="cursor:pointer" title="${esc(a.note || 'Click to edit this allocation')}"><b>${a.pct}%</b> ${esc(a.project)}</span>`).join('');
-      const w = Math.min(100, v / 1.6);   // bar scaled to 160% full-width
-      body += `<div class="mv-row">
-        <div><div class="who-name" style="cursor:default">${esc(r.person.name)}</div>${r.person.isNewHire ? '<div class="who-meta"><span class="nh-tag">New hire</span></div>' : ''}</div>
-        <div style="display:flex;align-items:center;gap:10px"><span class="mv-load" style="color:${v > 100 ? '#C0392B' : 'var(--sav-navy)'}">${v}%</span>
-          <div class="mv-bar" style="flex:1"><i style="width:${w}%;background:${barCol(v)}"></i><span class="cap" style="left:${100 / 1.6}%"></span></div></div>
-        <div class="mv-projs">${chips}</div>
-      </div>`;
-    });
-    const legend = `<div class="legend"><span>Tick mark = 100% capacity. Chips show each project's share; amber chips are pursuits.</span><span style="margin-left:auto">◀ ▶ in the toolbar pivots month to month.</span></div>`;
-    $('#p-bandwidth').innerHTML = kpis + comingAvailableCard() + bwToolbar() + `<div style="border:1px solid rgba(37,39,58,0.12)"><div class="mv-row" style="background:#faf9f7;border-top:0;font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel)"><div>Person</div><div>Load · ${esc(S.ymLabel(ym))}</div><div>Projects this month</div></div>${body || '<div class="empty" style="border:0">Nobody staffed this month.</div>'}</div>` + legend;
-    wireBwToolbar(() => renderMonthFocus(ym));
-    $$('#p-bandwidth [data-edit-alloc]').forEach(el => el.onclick = () => openAllocModal(el.dataset.editAlloc));
-  }
-
-  function personDrawer(person, ms) {
-    const allocs = S.listAllocations().filter(a => a.personId === person.id && (state.incPursuit || (a.status !== 'Pursuit' && a.type !== 'Opportunity')));
-    const inWin = allocs.filter(a => ms.some(m => (a.start ? a.start <= m : false) && (a.end ? m <= a.end : true)));
-    if (!inWin.length) return `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td></tr>`;
-    const on = (a, m) => (a.start ? a.start <= m : false) && (a.end ? m <= a.end : true);
-    let rows = '';
-    inWin.forEach(a => {
-      const stat = (a.status === 'Pursuit' || a.type === 'Opportunity') ? ' <span class="status-p">pursuit</span>' : '';
-      const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-      rows += `<tr class="drawer-tr alloc-row" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${on(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td></tr>`;
-    });
-    // total row — per-month load, same math as the heatmap cell above (Σ alloc% ÷ capacity)
-    const cap = person.capacityPct || 100;
-    const tot = ms.map(m => inWin.reduce((s, a) => s + (on(a, m) ? (+a.pct || 0) : 0), 0));
-    const load = (t) => Math.round(t / cap * 100);
-    rows += `<tr class="drawer-tr drawer-tot"><td class="who dproj">Total load${cap !== 100 ? ` <span class="vmini">Σ alloc ÷ ${cap}% capacity</span>` : ''}</td>${tot.map(t => `<td class="dcell">${t ? load(t) + '%' : '·'}</td>`).join('')}<td class="dcell">${Math.max(0, ...tot.map(load))}%</td></tr>`;
-    return rows;
   }
 
   /* ---------- ALLOCATIONS ---------- */
@@ -297,8 +174,8 @@
     let body = '';
     list.forEach(a => {
       const person = S.getPerson(a.personId) || { name: a.personId };
-      const isP = a.status === 'Pursuit' || a.type === 'Opportunity';
-      body += `<tr>
+      const isP = isPursuitAlloc(a);
+      body += `<tr class="${isP ? 'pursuit-row' : ''}">
         <td class="pname">${esc(a.project)}</td>
         <td>${esc(a.client || '—')}</td>
         <td>${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}</td>
@@ -362,16 +239,20 @@
       const unBadge = un ? ` <span class="badge" style="color:#8f2418;background:#fbe9e7" title="${esc(un.map(u => u.role + ' — ' + fmtH(u.hours) + 'h unstaffed').join(' · '))}">⚠ ${un.length} unassigned</span>` : '';
       const peak = Math.max(1e-6, r.peakFte);
       body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.project)}">${esc(r.project)}</div><div class="who-meta">${esc(r.client || '—')} ${link}${unBadge}</div></td>`;
-      ms.forEach(m => { const v = r.byMonth[m] || 0; const pct = Math.round(v / peak * 100); body += `<td><span class="cell ${uCls(pct)} ${m < nowYm ? 'past' : ''}" title="${v.toFixed(2)} FTE">${v ? v.toFixed(2) : '·'}</span></td>`; });
+      ms.forEach(m => {
+        const v = r.byMonth[m] || 0; const pct = Math.round(v / peak * 100);
+        const hasPursuit = r.allocs.some(a => isPursuitAlloc(a) && S.allocActiveIn(a, m));
+        body += `<td><span class="cell ${uCls(pct)} ${hasPursuit ? 'has-pursuit' : ''} ${m < nowYm ? 'past' : ''}" title="${v.toFixed(2)} FTE${hasPursuit ? ' · includes pursuit hours' : ''}">${v ? v.toFixed(2) : '·'}</span></td>`;
+      });
       body += `<td>${r.headcount}</td><td class="pk">${r.peakFte.toFixed(2)}</td></tr>`;
       if (state.expandedProjects.has(r.project)) {
         let pr = '';
         r.allocs.slice().sort((a, b) => b.pct - a.pct).forEach(a => {
           const person = S.getPerson(a.personId) || { name: a.personId };
-          const isP = a.status === 'Pursuit' || a.type === 'Opportunity';
+          const isP = isPursuitAlloc(a);
           const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
           const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-          pr += `<tr class="drawer-tr alloc-row" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+          pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         });
         if (!pr) pr = `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         body += pr;
@@ -380,6 +261,7 @@
     const table = rows.length ? `<div class="hm-wrap"><table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table></div>` : `<div class="empty">No projects match.</div>`;
     const legend = `<div class="legend">
       <span>Cell shade = that month's FTE relative to the project's own peak.</span>
+      <span><span class="sw sw-stripe"></span>includes pursuit hours — not yet signed</span>
       <span style="margin-left:auto">Click a project for its staffing, click an allocation row to edit it.</span>
     </div>`;
     $('#p-projects').innerHTML = kpis + toolbar + table + legend;
@@ -425,15 +307,19 @@
       const projectCount = new Set(inWin.map(a => a.project)).size;
       const meta = [r.person.isNewHire ? '<span class="nh-tag">New hire</span>' : '', r.person.title ? esc(r.person.title) : ''].filter(Boolean).join(' ');
       body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.person.id)}">${esc(r.person.name)}</div>${meta ? `<div class="who-meta">${meta}</div>` : ''}</td>`;
-      ms.forEach(m => { const v = Math.round(r.byMonth[m] || 0); body += `<td><span class="cell ${uCls(v)} ${m < nowYm ? 'past' : ''}">${v ? v : '·'}</span></td>`; });
+      ms.forEach(m => {
+        const v = Math.round(r.byMonth[m] || 0);
+        const hasPursuit = inWin.some(a => isPursuitAlloc(a) && S.allocActiveIn(a, m));
+        body += `<td><span class="cell ${uCls(v)} ${hasPursuit ? 'has-pursuit' : ''} ${m < nowYm ? 'past' : ''}" title="${v}%${hasPursuit ? ' · includes pursuit hours' : ''}">${v ? v : '·'}</span></td>`;
+      });
       body += `<td>${projectCount}</td><td class="pk ${r.peak > 100 ? 'over' : ''}">${Math.round(r.peak)}%</td></tr>`;
       if (state.expandedRoster.has(r.person.id)) {
         let pr = '';
         inWin.slice().sort((a, b) => b.pct - a.pct).forEach(a => {
-          const isP = a.status === 'Pursuit' || a.type === 'Opportunity';
+          const isP = isPursuitAlloc(a);
           const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
           const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-          pr += `<tr class="drawer-tr alloc-row" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+          pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         });
         if (!pr) pr = `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         body += pr;
@@ -446,9 +332,10 @@
       <span><span class="sw" style="background:#fce7c2"></span>101–120% over</span>
       <span><span class="sw" style="background:#f6c9c2"></span>121–150%</span>
       <span><span class="sw" style="background:#e4453a"></span>&gt;150% critical</span>
+      <span><span class="sw sw-stripe"></span>includes pursuit hours — not yet signed</span>
       <span style="margin-left:auto">Click a name for their allocations, click an allocation row to edit it.</span>
     </div>`;
-    $('#p-people').innerHTML = kpis + toolbar + table + legend;
+    $('#p-people').innerHTML = kpis + comingAvailableCard() + toolbar + table + legend;
     $('#ppl-search').oninput = (e) => { state.pplSearch = e.target.value; renderPeople(); const el = $('#ppl-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $$('#p-people .who-name').forEach(el => el.onclick = () => { const id = el.dataset.exp; if (state.expandedRoster.has(id)) state.expandedRoster.delete(id); else state.expandedRoster.add(id); renderPeople(); });
     $$('#p-people [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
@@ -1046,108 +933,6 @@
     </div>`;
   }
 
-  /* ---------- PROFITABILITY — the revenue projection with Clockify burn
-     (hours × cost rate) laid against it, month by month. Same row set,
-     rating sort and inclusion rules as Revenue Projections. ---------- */
-  function renderProfit() {
-    const ms = months();                                  // full window, chronological
-    const nowYm = S.currentYM();
-    const fmtD = (n) => (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
-    const fmtK = (n) => { if (!n) return ''; const k = n / 1000; return Math.abs(k) >= 1000 ? '$' + (k / 1000).toFixed(1) + 'M' : '$' + (Math.abs(k) >= 100 ? Math.round(k) : k.toFixed(1)) + 'K'; };
-    const r = S.profitability(ms);
-    if (!r.ok) { $('#p-profit').innerHTML = '<div class="empty">Rates not loaded — sign in and wait for rates.json (dollars need the cost-rate catalog).</div>'; return; }
-    let rows = r.rows;
-    state.pfSearch = state.pfSearch || ''; state.pfClient = state.pfClient || ''; state.pfScope = state.pfScope || 'included';
-    const clients = [...new Set(r.rows.map(x => x.client).filter(Boolean))].sort();
-    const q = state.pfSearch.toLowerCase();
-    if (q) rows = rows.filter(x => (x.project + ' ' + x.client).toLowerCase().includes(q));
-    if (state.pfClient) rows = rows.filter(x => x.client === state.pfClient);
-    if (state.pfScope === 'booked') rows = rows.filter(x => x.booked || x.noLink);
-    else if (state.pfScope === 'included') rows = rows.filter(x => x.included || x.noLink || x.cost > 0);
-    const inc = rows.filter(x => x.included);
-    const revM = {}, costM = {}; ms.forEach(m => { revM[m] = 0; costM[m] = 0; });
-    let totRev = 0, totCost = 0;
-    inc.forEach(x => ms.forEach(m => { revM[m] += x.revByMonth[m] || 0; }));
-    rows.forEach(x => ms.forEach(m => { costM[m] += x.costByMonth[m] || 0; }));
-    inc.forEach(x => totRev += x.revTotal);
-    rows.forEach(x => totCost += x.cost);
-    const losing = inc.filter(x => x.cost > 0 && x.revTotal > 0 && x.cost > x.revTotal);
-    let html = '<div class="kpi-strip">'
-      + '<div class="kpi-card accent"><div class="k-num">' + fmtD(totRev) + '</div><div class="k-lbl">Revenue · ratings 1–4 · ' + esc(S.ymLabel(ms[0])) + '–' + esc(S.ymLabel(ms[ms.length - 1])) + '</div></div>'
-      + '<div class="kpi-card"><div class="k-num">' + fmtD(totCost) + '</div><div class="k-lbl">Cost · Clockify hours × cost rate</div></div>'
-      + '<div class="kpi-card ' + (totRev - totCost < 0 ? 'warn' : '') + '"><div class="k-num">' + fmtD(totRev - totCost) + '</div><div class="k-lbl">Margin' + (totRev ? ' · ' + Math.round((totRev - totCost) / totRev * 100) + '%' : '') + '</div></div>'
-      + '<div class="kpi-card ' + (losing.length ? 'warn' : '') + '"><div class="k-num">' + losing.length + '</div><div class="k-lbl">Projects with cost above revenue</div></div>'
-      + '</div>';
-    if (r.noRate.length) html += '<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for ' + r.noRate.length + ' people: ' + esc(r.noRate.slice(0, 10).join(' · ')) + (r.noRate.length > 10 ? ' …' : '') + ' — their hours are EXCLUDED. Pin their titles on the Mapping tab. <button class="btn btn-ghost" id="pf-titles" style="padding:2px 10px;font-size:11px">⟳ Pull job titles from Clockify</button></div>';
-    if (!r.hasActuals) html += '<div class="note-txt" style="margin:-4px 0 12px;color:#8a6d00">No Clockify actuals loaded — cost rows are empty. Pull actuals on the Compare tab.</div>';
-    const macroFlag = S.substantialMacroTime(ms);
-    if (macroFlag.flagged.length) html += '<div class="note-txt" style="margin:-4px 0 12px;color:#8a6d00">🏢 ' + macroFlag.flagged.length + ' ' + (macroFlag.flagged.length > 1 ? 'people' : 'person') + ' with &gt;40h non-billable/internal time this window: ' + esc(macroFlag.flagged.slice(0, 8).map(x => x.person.name + ' (' + Math.round(x.hours) + 'h)').join(' · ')) + (macroFlag.flagged.length > 8 ? ' …' : '') + ' — see “Non-billable / internal time” below for the $ detail.</div>';
-    html += '<div class="toolbar">'
-      + '<input type="search" id="pf-search" placeholder="Filter projects…" value="' + esc(state.pfSearch) + '">'
-      + '<select id="pf-client"><option value="">All clients</option>' + clients.map(c => '<option ' + (state.pfClient === c ? 'selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>'
-      + '<select id="pf-scope"><option value="included" ' + (state.pfScope === 'included' ? 'selected' : '') + '>Ratings 1–4 + anything with hours</option><option value="booked" ' + (state.pfScope === 'booked' ? 'selected' : '') + '>Booked (rating 1) only</option><option value="all" ' + (state.pfScope === 'all' ? 'selected' : '') + '>All ratings</option></select>'
-      + '<span class="grow"></span>'
-      + '<span class="note-txt">Rev = projection invoice (booked snapshot / fee schedule + COs) · Cost = hours × cost rate · greyed rows are excluded from totals · click a row for who\'s burning</span></div>';
-    html += profitChart(ms, revM, costM, fmtD);
-    const ratingBadge = (x) => x.noLink ? '<span class="badge pursuit" title="hours logged, no fee-tool link — link it on the Mapping tab">no fee link</span>' : '<span class="badge ' + (x.booked ? 'active' : x.included ? '' : 'pursuit') + '" title="projection rating">' + x.rating + (x.booked ? ' · booked' : '') + '</span>';
-    let body = '';
-    rows.forEach((x, i) => {
-      const margin = x.revTotal - x.cost;
-      const dim = !(x.included || x.noLink) ? 'opacity:0.55;' : '';
-      body += '<tr class="pf-row" data-i="' + i + '" style="cursor:pointer;' + dim + '"><td class="pname sticky-col" style="background:#fff">' + esc(x.project) + '<div class="vmini">' + esc(x.client || '') + ' ' + ratingBadge(x) + (x.srcNames.length && x.srcNames[0] !== x.project ? ' <span class="vmini" title="matrix/Clockify source">⇐ ' + esc(x.srcNames.join(', ')) + '</span>' : '') + '</div></td>';
-      ms.forEach(m => {
-        const rv = x.revByMonth[m] || 0, cv = x.costByMonth[m] || 0;
-        body += '<td class="num" title="' + esc(S.ymLabel(m)) + ' · rev ' + fmtD(rv) + ' · cost ' + fmtD(cv) + '">' + (rv ? '<div>' + fmtK(rv) + '</div>' : '<div style="color:#c9cdd3">·</div>') + (cv ? '<div class="vmini" style="color:' + (cv > rv ? '#C0392B' : '#0E7C7B') + '">' + fmtK(cv) + '</div>' : '') + '</td>';
-      });
-      body += '<td class="num" style="font-weight:700">' + (x.revTotal ? fmtD(x.revTotal) : '—') + '</td><td class="num">' + (x.cost ? fmtD(x.cost) : '—') + '<div class="vmini">' + (x.hours ? Math.round(x.hours).toLocaleString() + ' h' : '') + '</div></td><td class="num ' + (margin < 0 ? 'var-over' : x.revTotal ? 'var-ok' : '') + '">' + ((x.revTotal || x.cost) ? fmtD(margin) : '—') + '</td><td class="num ' + (x.revTotal && margin / x.revTotal < 0.2 ? 'var-over' : '') + '">' + (x.revTotal ? Math.round(margin / x.revTotal * 100) + '%' : '—') + '</td></tr>';
-      body += '<tr class="pf-detail" data-i="' + i + '" style="display:none"><td colspan="' + (ms.length + 5) + '" style="background:#faf9f7;padding:8px 16px 12px">' + (x.ppl.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px">' + x.ppl.map(p => '<span class="mv-chip"><b>' + fmtD(p.cost) + '</b> ' + esc(p.name) + ' · ' + Math.round(p.hours) + ' h × $' + p.rate + '/h' + (p.title ? ' · ' + esc(p.title) : '') + '</span>').join('') + '</div>' : '<span class="note-txt">No logged hours against this project in the window.</span>') + '</td></tr>';
-    });
-    let totRowCells = '';
-    ms.forEach(m => { totRowCells += '<td class="num"><div style="font-weight:700">' + (fmtK(revM[m]) || '·') + '</div>' + (costM[m] ? '<div class="vmini" style="color:' + (costM[m] > revM[m] ? '#C0392B' : '#0E7C7B') + '">' + fmtK(costM[m]) + '</div>' : '') + '</td>'; });
-    const totRow = '<tr style="background:#f4f6f7;border-top:2px solid rgba(37,39,58,0.25)"><td class="pname sticky-col" style="background:#f4f6f7;font-weight:700">Total · ' + inc.length + ' included</td>' + totRowCells + '<td class="num" style="font-weight:700">' + fmtD(totRev) + '</td><td class="num" style="font-weight:700">' + fmtD(totCost) + '</td><td class="num ' + (totRev - totCost < 0 ? 'var-over' : 'var-ok') + '" style="font-weight:700">' + fmtD(totRev - totCost) + '</td><td class="num">' + (totRev ? Math.round((totRev - totCost) / totRev * 100) + '%' : '—') + '</td></tr>';
-    // ---- bottom lines: staff cost OUTSIDE the fee mapping (macro/internal time) ----
-    const oh = r.overhead || { byMonth: {}, cost: 0, hours: 0, ppl: [], byProj: {} };
-    const ohTop = Object.entries(oh.byProj || {}).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([p2, c2]) => esc(p2) + ' ' + fmtK(c2)).join(' · ');
-    let ohCells = ''; ms.forEach(m => { ohCells += '<td class="num vmini" style="color:#8a6d00">' + (oh.byMonth[m] ? fmtK(oh.byMonth[m]) : '·') + '</td>'; });
-    const ohRow = oh.cost ? '<tr class="pf-oh" style="background:#fdf9ee;cursor:pointer"><td class="pname sticky-col" style="background:#fdf9ee">Non-billable / internal time <span class="badge pursuit">outside fee mapping</span><div class="vmini">' + ohTop + (Object.keys(oh.byProj).length > 4 ? ' …' : '') + ' · click for people</div></td>' + ohCells + '<td class="num">—</td><td class="num" style="font-weight:700;color:#8a6d00">' + fmtD(oh.cost) + '<div class="vmini">' + Math.round(oh.hours).toLocaleString() + ' h</div></td><td class="num">—</td><td class="num">—</td></tr>'
-      + '<tr class="pf-oh-detail" style="display:none"><td colspan="' + (ms.length + 5) + '" style="background:#fdf9ee;padding:8px 16px 12px">' + (oh.ppl.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px">' + oh.ppl.map(p => '<span class="mv-chip"><b>' + fmtD(p.cost) + '</b> ' + esc(p.name) + ' · ' + Math.round(p.hours) + ' h × $' + p.rate + '/h' + (p.title ? ' · ' + esc(p.title) : '') + '</span>').join('') + '</div>' : '<span class="note-txt">No non-billable hours in this window.</span>') + '</td></tr>' : '';
-    const allCost = totCost + oh.cost;
-    let allCells = ''; ms.forEach(m => { const v = (costM[m] || 0) + (oh.byMonth[m] || 0); allCells += '<td class="num" style="font-weight:700">' + (v ? fmtK(v) : '·') + '</td>'; });
-    const allRow = '<tr style="background:#eceff1;border-top:2px solid rgba(37,39,58,0.35)"><td class="pname sticky-col" style="background:#eceff1;font-weight:700">All staff cost · fee-mapped + non-billable</td>' + allCells + '<td class="num">' + fmtD(totRev) + '</td><td class="num" style="font-weight:700">' + fmtD(allCost) + '</td><td class="num ' + (totRev - allCost < 0 ? 'var-over' : 'var-ok') + '" style="font-weight:700">' + fmtD(totRev - allCost) + '</td><td class="num">' + (totRev ? Math.round((totRev - allCost) / totRev * 100) + '%' : '—') + '</td></tr>';
-    html += '<div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">Project</th>' + ms.map(m => '<th class="num">' + esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">current</div>' : '') + '<div class="vmini" style="text-transform:none;letter-spacing:0">rev / cost</div></th>').join('') + '<th class="num">Revenue</th><th class="num">Cost</th><th class="num">Margin</th><th class="num">%</th></tr></thead><tbody>' + (body || '<tr><td colspan="' + (ms.length + 5) + '"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>') + totRow + ohRow + allRow + '</tbody></table></div>';
-    $('#p-profit').innerHTML = html;
-    $('#pf-search').oninput = (e) => { state.pfSearch = e.target.value; renderProfit(); const el = $('#pf-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
-    $('#pf-client').onchange = (e) => { state.pfClient = e.target.value; renderProfit(); };
-    $('#pf-scope').onchange = (e) => { state.pfScope = e.target.value; renderProfit(); };
-    $$('#p-profit .pf-row').forEach(tr => tr.onclick = () => { const d = $('#p-profit .pf-detail[data-i="' + tr.dataset.i + '"]'); if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; });
-    $$('#p-profit .pf-oh').forEach(tr => tr.onclick = () => { const d = $('#p-profit .pf-oh-detail'); if (d) d.style.display = d.style.display === 'none' ? '' : 'none'; });
-    const pt = $('#pf-titles');
-    if (pt) pt.onclick = async () => { pt.disabled = true; pt.textContent = 'Pulling titles…'; try { await pullClockifyNames(); renderProfit(); } catch (e) { pt.disabled = false; pt.textContent = 'Pull failed — retry'; } };
-  }
-
-  function profitChart(ms, bM, cM, fmtD) {
-    const W = Math.max(560, ms.length * 90), H = 200, padL = 58, padT = 14, padB = 28, padR = 8;
-    const max = Math.max(1, ...ms.map(m => Math.max(bM[m], cM[m])));
-    const y = (v) => padT + (H - padT - padB) * (1 - v / max);
-    const gw = (W - padL - padR) / ms.length;
-    let s = '';
-    for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yy + '" y2="' + yy + '" stroke="rgba(37,39,58,.08)"></line><text x="' + (padL - 6) + '" y="' + (yy + 3) + '" text-anchor="end" font-size="9" fill="#79828C">$' + Math.round(v / 1000) + 'k</text>'; }
-    const bw = Math.max(10, Math.min(30, (gw - 18) / 2));
-    ms.forEach((m, i) => {
-      const x0 = padL + i * gw + (gw - 2 * bw - 4) / 2;
-      [[bM[m], '#0E7C7B', 'Revenue', ''], [cM[m], '#FFDF00', 'Cost', 'stroke="#25273A" stroke-width="1"']].forEach(([v, c, nm, st], j) => {
-        const xx = x0 + j * (bw + 4), yy = y(v);
-        s += '<rect x="' + xx + '" y="' + yy + '" width="' + bw + '" height="' + Math.max(0, H - padB - yy) + '" fill="' + c + '" ' + st + '><title>' + nm + ' · ' + S.ymLabel(m) + ': ' + fmtD(v) + '</title></rect>';
-      });
-      s += '<text x="' + (padL + i * gw + gw / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#25273A" font-weight="600">' + esc(S.ymLabel(m)) + '</text>';
-    });
-    return '<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);padding:14px 16px;margin-bottom:16px">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">'
-      + '<div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">Revenue vs cost by month — filtered set</div>'
-      + '<div class="note-txt"><span style="color:#0E7C7B">■</span> Revenue (projection)&nbsp;&nbsp;<span style="color:#e8c400">■</span> Cost (hours × cost rate) · gap = margin</div>'
-      + '</div><svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;display:block">' + s + '</svg></div>';
-  }
-
   /* ---------- TIME ENTRY COMPLIANCE — who logs, who's behind ----------
      Works off committed Clockify actuals (person × project × month). A month
      counts as "logged" against capacity (monthHours × cap%); people with
@@ -1405,14 +1190,12 @@
   function renderActive() {
     const panel = $('#p-' + state.tab);
     try {
-      if (state.tab === 'bandwidth') renderBandwidth();
-      else if (state.tab === 'allocations') renderAllocations();
+      if (state.tab === 'allocations') renderAllocations();
       else if (state.tab === 'projects') renderProjects();
       else if (state.tab === 'people') renderPeople();
       else if (state.tab === 'actuals') renderActuals();
       else if (state.tab === 'mapping') renderMapping();
       else if (state.tab === 'insights') renderInsights();
-      else if (state.tab === 'profit') renderProfit();
       else if (state.tab === 'compliance') renderCompliance();
     } catch (e) {
       console.error('render failed', e);
