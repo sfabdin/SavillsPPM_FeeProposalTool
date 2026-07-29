@@ -440,17 +440,39 @@
             <div style="display:flex;flex-wrap:wrap;gap:6px">${cp.roles.map(r => `<span class="mv-chip" style="background:#e7eef0"><b>${_fmtHours(r.hours)}h</b> ${esc(r.title)} · ${r.fteMonths} FTE-mo</span>`).join('')}</div>
           </div>`;
         }
-        html += `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px">
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;border-bottom:1px solid rgba(37,39,58,0.1)">
+        html += `<details class="cmp-card" style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px">
+          <summary style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;cursor:pointer">
             <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span></div>
             <div class="note-txt">① matrix <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · ${contractCell} · ③ actual <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)} vs plan</span></div>
-          </div>
+          </summary>
+          <div style="border-top:1px solid rgba(37,39,58,0.1)">
           <div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">${byPerson ? 'Project' : 'Person'}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">act /plan · %</div></th>`).join('')}<th class="num">${dollars ? '① Plan cost' : '① Plan hrs'}</th><th class="num">${dollars ? '③ Actual cost' : '③ Actual hrs'}</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}${totRow}
           ${cp ? `<tr style="background:#f4f6f7"><td class="vmini sticky-col" style="font-weight:700">${dollars ? '② Contract fee $' : '② Contract (titles)'}</td>${msDesc.map(m => `<td class="num vmini">${cpM(cp, m) ? fmtH(cpM(cp, m)) : '·'}</td>`).join('')}<td class="num vmini" style="font-weight:700">${fmtH(cpTot(cp))}</td><td class="num vmini">${fmtH(pa)}</td><td class="num vmini ${varCls(cpTot(cp), pa)}">${pa >= cpTot(cp) ? '+' : ''}${fmtH(pa - cpTot(cp))}</td><td class="num vmini">${cpTot(cp) ? Math.round(pa / cpTot(cp) * 100) + '%' : '—'}</td></tr>` : ''}
           </tbody></table></div>
           ${contractTbl}
-        </div>`;
+          </div>
+        </details>`;
       });
+      if (projNames.length) {
+        const gtCells = msDesc.map(m => {
+          const e = planM[m] || 0, a = actM[m] || 0;
+          const cls = (e || a) ? varCls(e, a) : '';
+          const pct = e ? Math.round(a / e * 100) + '%' : (a ? '—' : '');
+          return `<td class="num ${cls}" style="white-space:nowrap">${(e || a) ? `${varArrow(e, a)} <b>${fmtH(a)}</b><span class="vmini"> /${fmtH(e)}</span><div class="vmini">${pct}</div>` : '·'}</td>`;
+        }).join('');
+        const gtConCells = msDesc.map(m => `<td class="num vmini">${conM[m] ? fmtH(conM[m]) : '·'}</td>`).join('');
+        const gtCls = varCls(totExp, totAct);
+        html += `<div class="cmp-card" style="background:#fff;border:2px solid var(--sav-navy);margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;border-bottom:1px solid rgba(37,39,58,0.1)">
+            <div class="pname" style="font-size:14px">Grand total <span class="note-txt">· ${projNames.length} ${byPerson ? 'people' : 'projects'} in view — matches the chart above</span></div>
+            <div class="note-txt">① matrix <b style="color:var(--sav-navy)">${fmtH(totExp)}</b> · ② contract <b style="color:var(--sav-navy)">${fmtH(totContract)}</b> · ③ actual <b style="color:var(--sav-navy)">${fmtH(totAct)}</b> · <span class="${gtCls}">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)} vs plan</span></div>
+          </div>
+          <div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">All ${byPerson ? 'people' : 'projects'}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">act /plan · %</div></th>`).join('')}<th class="num">${dollars ? '① Plan cost' : '① Plan hrs'}</th><th class="num">${dollars ? '③ Actual cost' : '③ Actual hrs'}</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>
+            <tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total</td>${gtCells}<td class="num" style="font-weight:800">${fmtH(totExp)}</td><td class="num" style="font-weight:800">${fmtH(totAct)}</td><td class="num ${gtCls}" style="font-weight:800">${varArrow(totExp, totAct)} ${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)}</td><td class="num vmini" style="font-weight:700">${totExp ? Math.round(totAct / totExp * 100) + '%' : '—'}</td></tr>
+            ${totContract ? `<tr style="background:#f4f6f7"><td class="vmini sticky-col" style="font-weight:700">${dollars ? '② Contract fee $' : '② Contract (titles)'}</td>${gtConCells}<td class="num vmini" style="font-weight:700">${fmtH(totContract)}</td><td class="num vmini">${fmtH(totAct)}</td><td class="num vmini ${varCls(totContract, totAct)}">${totAct >= totContract ? '+' : ''}${fmtH(totAct - totContract)}</td><td class="num vmini">${totContract ? Math.round(totAct / totContract * 100) + '%' : '—'}</td></tr>` : ''}
+          </tbody></table></div>
+        </div>`;
+      }
     }
     $('#p-actuals').innerHTML = html;
     wireImport();
@@ -462,7 +484,7 @@
 
   /* Grouped-bar trend chart: ① plan / ② contract / ③ actual per month. */
   function compareChart(ms, planM, conM, actM, projFilter, dollars) {
-    const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 14, padB = 30, padR = 8;
+    const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 24, padB = 30, padR = 8;
     const max = Math.max(1, ...ms.map(m => Math.max(planM[m] || 0, conM[m] || 0, actM[m] || 0)));
     const y = (v) => padT + (H - padT - padB) * (1 - v / max);
     const gw = (W - padL - padR) / ms.length;
@@ -476,6 +498,7 @@
       [[planM[m] || 0, '#0E7C7B', ''], [conM[m] || 0, '#9aa3ad', ''], [actM[m] || 0, '#FFDF00', 'stroke="#25273A" stroke-width="1"']].forEach(([v, c, st], j) => {
         const xx = x0 + j * (bw + 4), yy = y(v);
         s += `<rect x="${xx}" y="${yy}" width="${bw}" height="${Math.max(0, H - padB - yy)}" fill="${c}" ${st}><title>${names[j]} · ${S.ymLabel(m)}: ${tf(v)}${dollars ? '' : ' h'}</title></rect>`;
+        if (v > 0) s += `<text x="${xx + bw / 2}" y="${Math.max(10, yy - 4)}" text-anchor="middle" font-size="7.5" fill="#4b5563">${tf(v)}</text>`;
       });
       s += `<text x="${padL + i * gw + gw / 2}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#25273A" font-weight="600">${esc(S.ymLabel(m))}</text>`;
     });
