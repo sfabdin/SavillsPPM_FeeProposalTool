@@ -95,6 +95,17 @@
 
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
   function uCls(v) { if (!v) return 'u0'; if (v <= 85) return 'u1'; if (v <= 100) return 'u2'; if (v <= 120) return 'u3'; if (v <= 150) return 'u4'; return 'u5'; }
+  /** Datalist inputs need an exact match to commit, but browsers don't always
+      auto-complete what someone typed even when it uniquely identifies one
+      option — so a good-faith partial ("Carlyle Investment Manag…") gets
+      rejected outright. Falls back to a substring match across the given
+      fields; only resolves when exactly one candidate matches, so an
+      ambiguous partial still asks the person to be more specific. */
+  function resolveTyped(typed, list, fields) {
+    const v = typed.trim().toLowerCase(); if (!v) return null;
+    const hits = list.filter(item => fields.some(f => String(item[f] || '').toLowerCase().includes(v)));
+    return hits.length === 1 ? hits[0] : null;
+  }
   function isPursuitAlloc(a) { return a.status === 'Pursuit' || a.type === 'Opportunity'; }
 
   /* ---------- identity bar (shared pattern) ---------- */
@@ -802,8 +813,9 @@
     $$('#p-mapping [data-map-fee]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;
       if (v === '— unlink —') { S.setFeeMapping(inp.dataset.mapFee, null); toast('Fee link removed.'); renderMapping(); return; }
-      const id = feeByName[v.toLowerCase()];
-      if (!id) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project from the list'; return; }
+      let id = feeByName[v.toLowerCase()];
+      if (!id) { const hit = resolveTyped(v, feeList, ['label', 'name', 'client']); if (hit) id = hit.id; }
+      if (!id) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project from the list — or type more of the name/client, it only needs to be unique.'; return; }
       S.setFeeMapping(inp.dataset.mapFee, id); toast('Fee link saved.'); renderMapping();
     });
     $$('#p-mapping [data-unmap-user]').forEach(a => a.onclick = (e) => {
@@ -816,16 +828,18 @@
     });
     $$('#p-mapping [data-map-ckuser]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;
-      const u = (state.clockifyUsers || []).find(x => x.name.toLowerCase() === v.toLowerCase());
-      if (!u) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a Clockify user from the list'; return; }
+      let u = (state.clockifyUsers || []).find(x => x.name.toLowerCase() === v.toLowerCase());
+      if (!u) u = resolveTyped(v, state.clockifyUsers || [], ['name', 'email']);
+      if (!u) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a Clockify user from the list — or type more of the name/email, it only needs to be unique.'; return; }
       S.setUserMapping(u.name, inp.dataset.mapCkuser);
       toast('Person mapped — now re-pull actuals on the Compare tab to backfill their hours.');
       renderMapping();
     });
     $$('#p-mapping [data-map-title]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;
-      const o = rateByLabel[v.toLowerCase()];
-      if (!o) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a rate-grid title from the list'; return; }
+      let o = rateByLabel[v.toLowerCase()];
+      if (!o) o = resolveTyped(v, rateOpts, ['label']);
+      if (!o) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a rate-grid title from the list — or type more of it, it only needs to be unique.'; return; }
       S.setTitleMapping(inp.dataset.mapTitle, o.titleId, o.tierId);
       toast('Title pinned — “' + inp.dataset.mapTitle + '” now costs $' + o.rate + '/h everywhere.');
       renderMapping();
@@ -835,8 +849,9 @@
     });
     $$('#p-mapping [data-map-ck]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;
-      const ck = ckByName[v.toLowerCase()];
-      if (!ck) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a Clockify project from the list'; return; }
+      let ck = ckByName[v.toLowerCase()];
+      if (!ck) { const hit = resolveTyped(v, ckList, ['name', 'client']); if (hit) ck = hit.name; }
+      if (!ck) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a Clockify project from the list — or type more of the name/client, it only needs to be unique.'; return; }
       S.setProjectMapping(ck, inp.dataset.mapCk); toast('Clockify mapping saved — existing hours moved, applies to every future import.'); renderMapping();
     });
   }
