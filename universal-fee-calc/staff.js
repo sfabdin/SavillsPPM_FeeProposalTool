@@ -997,6 +997,11 @@
      worked that are not attributed to a client. */
   const MACRO_RX = /\bmacro\b|non-?billable|business\s*development|^\s*ppm\b/i;
   function isMacroProject(name) { return MACRO_RX.test(String(name || '')); }
+  /** PTO/vacation/holiday time — a distinct slice of "macro" worth breaking
+      out on its own (e.g. "Macro- Time Off"), rather than blending into
+      general non-billable/overhead time. */
+  const TIMEOFF_RX = /time\s*-?\s*off|\bpto\b|\bvacation\b|\bholiday\b/i;
+  function isTimeOffProject(name) { return TIMEOFF_RX.test(String(name || '')); }
   function macroHours(monthsList) {
     const db = readDb(); const inWin = new Set(monthsList); const per = {};
     Object.entries(db.actuals || {}).forEach(([k, h]) => {
@@ -1287,7 +1292,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, tokenScore,
-    titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject, profitability,
+    titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject, isTimeOffProject, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers

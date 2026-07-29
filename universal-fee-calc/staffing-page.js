@@ -85,7 +85,7 @@
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
     pplSearch: '', expandedRoster: new Set(), pplExpandInit: false,
-    varProject: '', varPerson: '', varGroup: 'project', varUnit: 'hours',
+    varProject: '', varPerson: '', varGroup: 'project', varUnit: 'hours', showMacro: true,
     expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
@@ -403,6 +403,19 @@
       // group by project or by person
       const byProj = {};
       rows.forEach(r => { const k = byPerson ? r.person.id : r.project; (byProj[k] = byProj[k] || []).push(r); });
+      // Roll every Macro/Time-Off-named project into one combined row instead
+      // of cluttering the list with each overhead line item separately — the
+      // chart above already shows the true billable/macro/PTO split. The
+      // "Include Macro / Time Off" checkbox controls whether that combined
+      // row shows at all (unchecked = hide it from this list entirely).
+      if (!byPerson) {
+        const macroKeys = Object.keys(byProj).filter(k => S.isTimeOffProject(k) || S.isMacroProject(k));
+        if (macroKeys.length) {
+          const combined = [];
+          macroKeys.forEach(k => { combined.push(...byProj[k]); delete byProj[k]; });
+          if (state.showMacro) byProj['Macro / Time Off'] = combined;
+        }
+      }
       const projNames = Object.keys(byProj).sort((a, b) => byPerson ? (S.getPerson(a) || { name: a }).name.localeCompare((S.getPerson(b) || { name: b }).name) : a.localeCompare(b));
       const totExp = rows.reduce((s, r) => s + r.expected, 0), totAct = rows.reduce((s, r) => s + r.actual, 0);
 
@@ -411,12 +424,16 @@
       // Contract only applies when grouped by project (the contract has no names)
       let totContract = 0; const contractByProj = {};
       (byPerson ? [...new Set(rows.map(r => r.project))] : projNames).forEach(pn => { const cl = (rows.find(r => r.project === pn) || {}).client || ''; const cp = S.contractPlan(pn, ms, cl); if (cp) { contractByProj[pn] = cp; totContract += cpTot(cp); } });
-      // monthly sums for the trend chart — macroM tracks how much of actM is
-      // Macro/non-billable time (S.isMacroProject), so the chart can show
+      // monthly sums for the trend chart — macroM/ptoM track how much of actM
+      // is Macro/non-billable vs Time Off specifically, so the chart can show
       // billable actuals separately from overhead instead of blending them.
-      const planM = {}, actM = {}, conM = {}, macroM = {};
-      ms.forEach(m => { planM[m] = 0; actM[m] = 0; conM[m] = 0; macroM[m] = 0; });
-      rows.forEach(r => { const isMacro = S.isMacroProject(r.project); ms.forEach(m => { const c = r.byMonth[m]; planM[m] += c.e; actM[m] += c.a; if (isMacro) macroM[m] += c.a; }); });
+      const planM = {}, actM = {}, conM = {}, macroM = {}, ptoM = {};
+      ms.forEach(m => { planM[m] = 0; actM[m] = 0; conM[m] = 0; macroM[m] = 0; ptoM[m] = 0; });
+      rows.forEach(r => {
+        const isPto = S.isTimeOffProject(r.project);
+        const isMacro = !isPto && S.isMacroProject(r.project);
+        ms.forEach(m => { const c = r.byMonth[m]; planM[m] += c.e; actM[m] += c.a; if (isPto) ptoM[m] += c.a; else if (isMacro) macroM[m] += c.a; });
+      });
       Object.values(contractByProj).forEach(cp => ms.forEach(m => { conM[m] += cpM(cp, m); }));
       html += dollars ? `<div class="kpi-strip">
         <div class="kpi-card accent"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">① Planned cost (matrix × cost rate)</div></div>
@@ -437,8 +454,9 @@
         <select id="var-project">${projOpts}</select>
         <select id="var-person">${pplOpts}</select>
         ${canDollars ? `<select id="var-unit" title="Show hours or dollars"><option value="hours">Units: hours</option><option value="dollars" ${dollars ? 'selected' : ''}>Units: $ cost vs fee</option></select>` : ''}
+        ${!byPerson ? `<label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" id="var-showmacro" ${state.showMacro ? 'checked' : ''}> Include Macro / Time Off</label>` : ''}
         <span class="grow"></span><span class="note-txt">${dollars ? '① ③ = hours × internal COST rate for each person’s title (rates.json · titles from Clockify) · ② = contracted NET fee from the fee tool. Profitable = ③ below ②.' : `▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.`}</span></div>`;
-      html += compareChart(ms, planM, conM, actM, macroM, projFilter, dollars);
+      html += compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars);
 
       if (!projNames.length) html += `<div class="empty">No matched allocations or actuals in this window.</div>`;
       projNames.forEach(pn => {
@@ -506,46 +524,61 @@
     const vpp = $('#var-person'); if (vpp) vpp.onchange = (e) => { state.varPerson = e.target.value; renderActuals(); };
     $$('#p-actuals [data-group]').forEach(b => b.onclick = () => { state.varGroup = b.dataset.group; renderActuals(); });
     const vu = $('#var-unit'); if (vu) vu.onchange = (e) => { state.varUnit = e.target.value; renderActuals(); };
+    const vsm = $('#var-showmacro'); if (vsm) vsm.onchange = (e) => { state.showMacro = e.target.checked; renderActuals(); };
   }
 
   /* Grouped-bar trend chart: ① plan / ② contract / ③ actual per month. The
      ③ Actual bar is itself stacked — billable (yellow, bottom) + macro/
-     non-billable (tan, on top) — so overhead work never masquerades as
-     billable actuals in the total bar height. */
-  function compareChart(ms, planM, conM, actM, macroM, projFilter, dollars) {
-    const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 24, padB = 30, padR = 8;
+     non-billable (tan) + Time Off (striped tan, top) — so overhead and PTO
+     never masquerade as billable actuals in the total bar height. Every
+     segment's value is printed INSIDE the segment (when tall enough to hold
+     it) rather than floating above the bar. */
+  function compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars) {
+    const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 14, padB = 30, padR = 8;
     const max = Math.max(1, ...ms.map(m => Math.max(planM[m] || 0, conM[m] || 0, actM[m] || 0)));
     const y = (v) => padT + (H - padT - padB) * (1 - v / max);
     const gw = (W - padL - padR) / ms.length;
     const tf = (v) => (dollars ? '$' : '') + Math.round(v).toLocaleString();
-    let s = '';
+    // Label INSIDE a segment, centered — only when the segment is tall enough
+    // to hold readable text; otherwise it's skipped (never floated elsewhere).
+    const segLabel = (xx, bw, yTop, yBot, val, color) => {
+      if (!val || (yBot - yTop) < 13) return '';
+      return `<text x="${xx + bw / 2}" y="${(yTop + yBot) / 2 + 3}" text-anchor="middle" font-size="7.5" fill="${color}">${tf(val)}</text>`;
+    };
+    let s = `<defs><pattern id="pto-stripe" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="#EDE6D6"></rect>
+      <line x1="0" y1="0" x2="0" y2="6" stroke="#25273A" stroke-width="2" stroke-opacity="0.3"></line>
+    </pattern></defs>`;
     for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += `<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="rgba(37,39,58,.08)"></line><text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#79828C">${tf(v)}</text>`; }
     const bw = Math.max(8, Math.min(26, (gw - 26) / 3));
     const names = dollars ? ['① Plan cost', '② Contract fee', '③ Actual cost'] : ['① Matrix plan', '② Contract', '③ Actual'];
-    let totBillable = 0, totMacro = 0;
+    let totBillable = 0, totMacro = 0, totPto = 0;
     ms.forEach((m, i) => {
       const x0 = padL + i * gw + (gw - 3 * bw - 8) / 2;
-      [[planM[m] || 0, '#0E7C7B', ''], [conM[m] || 0, '#9aa3ad', '']].forEach(([v, c, st], j) => {
+      const yBase = H - padB;
+      [[planM[m] || 0, '#0E7C7B', '#fff'], [conM[m] || 0, '#9aa3ad', '#25273A']].forEach(([v, c, txt], j) => {
         const xx = x0 + j * (bw + 4), yy = y(v);
-        s += `<rect x="${xx}" y="${yy}" width="${bw}" height="${Math.max(0, H - padB - yy)}" fill="${c}" ${st}><title>${names[j]} · ${S.ymLabel(m)}: ${tf(v)}${dollars ? '' : ' h'}</title></rect>`;
-        if (v > 0) s += `<text x="${xx + bw / 2}" y="${Math.max(10, yy - 4)}" text-anchor="middle" font-size="7.5" fill="#4b5563">${tf(v)}</text>`;
+        s += `<rect x="${xx}" y="${yy}" width="${bw}" height="${Math.max(0, yBase - yy)}" fill="${c}" stroke="#25273A" stroke-width="0.5"><title>${names[j]} · ${S.ymLabel(m)}: ${tf(v)}${dollars ? '' : ' h'}</title></rect>`;
+        s += segLabel(xx, bw, yy, yBase, v, txt);
       });
-      // ③ Actual — stacked: billable (bottom) + macro/non-billable (top)
+      // ③ Actual — stacked: billable (bottom) + macro/non-billable (middle) + Time Off (top, striped)
+      const pto = Math.max(0, ptoM[m] || 0);
       const macro = Math.max(0, macroM[m] || 0);
-      const billable = Math.max(0, (actM[m] || 0) - macro);
-      totBillable += billable; totMacro += macro;
-      const xx = x0 + 2 * (bw + 4), yBase = H - padB, yBillTop = y(billable), yTotTop = y(billable + macro);
-      if (billable > 0) s += `<rect x="${xx}" y="${yBillTop}" width="${bw}" height="${Math.max(0, yBase - yBillTop)}" fill="#FFDF00" stroke="#25273A" stroke-width="1"><title>③ Actual (billable) · ${S.ymLabel(m)}: ${tf(billable)}${dollars ? '' : ' h'}</title></rect>`;
-      if (macro > 0) s += `<rect x="${xx}" y="${yTotTop}" width="${bw}" height="${Math.max(0, yBillTop - yTotTop)}" fill="#E5DCC0" stroke="#25273A" stroke-width="1"><title>③ Actual (macro / non-billable) · ${S.ymLabel(m)}: ${tf(macro)}${dollars ? '' : ' h'}</title></rect>`;
-      if (billable + macro > 0) s += `<text x="${xx + bw / 2}" y="${Math.max(10, yTotTop - 4)}" text-anchor="middle" font-size="7.5" fill="#4b5563">${tf(billable + macro)}</text>`;
+      const billable = Math.max(0, (actM[m] || 0) - macro - pto);
+      totBillable += billable; totMacro += macro; totPto += pto;
+      const xx = x0 + 2 * (bw + 4);
+      const yBillTop = y(billable), yMacroTop = y(billable + macro), yPtoTop = y(billable + macro + pto);
+      if (billable > 0) { s += `<rect x="${xx}" y="${yBillTop}" width="${bw}" height="${Math.max(0, yBase - yBillTop)}" fill="#FFDF00" stroke="#25273A" stroke-width="1"><title>③ Actual (billable) · ${S.ymLabel(m)}: ${tf(billable)}${dollars ? '' : ' h'}</title></rect>`; s += segLabel(xx, bw, yBillTop, yBase, billable, '#25273A'); }
+      if (macro > 0) { s += `<rect x="${xx}" y="${yMacroTop}" width="${bw}" height="${Math.max(0, yBillTop - yMacroTop)}" fill="#E5DCC0" stroke="#25273A" stroke-width="1"><title>③ Actual (macro / non-billable) · ${S.ymLabel(m)}: ${tf(macro)}${dollars ? '' : ' h'}</title></rect>`; s += segLabel(xx, bw, yMacroTop, yBillTop, macro, '#25273A'); }
+      if (pto > 0) { s += `<rect x="${xx}" y="${yPtoTop}" width="${bw}" height="${Math.max(0, yMacroTop - yPtoTop)}" fill="url(#pto-stripe)" stroke="#25273A" stroke-width="1"><title>③ Actual (Time Off) · ${S.ymLabel(m)}: ${tf(pto)}${dollars ? '' : ' h'}</title></rect>`; s += segLabel(xx, bw, yPtoTop, yMacroTop, pto, '#25273A'); }
       s += `<text x="${padL + i * gw + gw / 2}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#25273A" font-weight="600">${esc(S.ymLabel(m))}</text>`;
     });
     return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);padding:14px 16px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
         <div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">${dollars ? 'Dollars' : 'Hours'} by month — ${projFilter ? esc(projFilter) : 'all projects'}</div>
-        <div class="note-txt"><span style="color:#0E7C7B">■</span> ${names[0]}&nbsp;&nbsp;<span style="color:#9aa3ad">■</span> ${names[1]}&nbsp;&nbsp;<span style="color:#e8c400">■</span> ${names[2]} billable&nbsp;&nbsp;<span style="color:#E5DCC0;border:1px solid rgba(37,39,58,0.3)">■</span> ${names[2]} macro · hover a bar for the number</div>
+        <div class="note-txt"><span style="color:#0E7C7B">■</span> ${names[0]}&nbsp;&nbsp;<span style="color:#9aa3ad">■</span> ${names[1]}&nbsp;&nbsp;<span style="color:#e8c400">■</span> ${names[2]} billable&nbsp;&nbsp;<span style="color:#E5DCC0;border:1px solid rgba(37,39,58,0.3)">■</span> ${names[2]} macro&nbsp;&nbsp;<span style="display:inline-block;width:12px;height:12px;vertical-align:-2px;border:1px solid rgba(37,39,58,0.3);background-color:#EDE6D6;background-image:repeating-linear-gradient(45deg, rgba(37,39,58,0.35) 0 3px, transparent 3px 7px)"></span> ${names[2]} Time Off · hover a bar for the number</div>
       </div>
-      <div class="note-txt" style="margin-bottom:8px">③ Actual, this window: <b style="color:var(--sav-navy)">${tf(totBillable)}</b> billable + <b style="color:var(--sav-navy)">${tf(totMacro)}</b> macro/non-billable = <b style="color:var(--sav-navy)">${tf(totBillable + totMacro)}</b> total</div>
+      <div class="note-txt" style="margin-bottom:8px">③ Actual, this window: <b style="color:var(--sav-navy)">${tf(totBillable)}</b> billable + <b style="color:var(--sav-navy)">${tf(totMacro)}</b> macro + <b style="color:var(--sav-navy)">${tf(totPto)}</b> Time Off = <b style="color:var(--sav-navy)">${tf(totBillable + totMacro + totPto)}</b> total</div>
       <svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block">${s}</svg></div>`;
   }
 
