@@ -95,6 +95,7 @@
 
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
   function uCls(v) { if (!v) return 'u0'; if (v <= 85) return 'u1'; if (v <= 100) return 'u2'; if (v <= 120) return 'u3'; if (v <= 150) return 'u4'; return 'u5'; }
+  function isPursuitAlloc(a) { return a.status === 'Pursuit' || a.type === 'Opportunity'; }
 
   /* ---------- identity bar (shared pattern) ---------- */
   function buildIdentityBar() {
@@ -173,8 +174,8 @@
     let body = '';
     list.forEach(a => {
       const person = S.getPerson(a.personId) || { name: a.personId };
-      const isP = a.status === 'Pursuit' || a.type === 'Opportunity';
-      body += `<tr>
+      const isP = isPursuitAlloc(a);
+      body += `<tr class="${isP ? 'pursuit-row' : ''}">
         <td class="pname">${esc(a.project)}</td>
         <td>${esc(a.client || '—')}</td>
         <td>${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}</td>
@@ -238,16 +239,20 @@
       const unBadge = un ? ` <span class="badge" style="color:#8f2418;background:#fbe9e7" title="${esc(un.map(u => u.role + ' — ' + fmtH(u.hours) + 'h unstaffed').join(' · '))}">⚠ ${un.length} unassigned</span>` : '';
       const peak = Math.max(1e-6, r.peakFte);
       body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.project)}">${esc(r.project)}</div><div class="who-meta">${esc(r.client || '—')} ${link}${unBadge}</div></td>`;
-      ms.forEach(m => { const v = r.byMonth[m] || 0; const pct = Math.round(v / peak * 100); body += `<td><span class="cell ${uCls(pct)} ${m < nowYm ? 'past' : ''}" title="${v.toFixed(2)} FTE">${v ? v.toFixed(2) : '·'}</span></td>`; });
+      ms.forEach(m => {
+        const v = r.byMonth[m] || 0; const pct = Math.round(v / peak * 100);
+        const hasPursuit = r.allocs.some(a => isPursuitAlloc(a) && S.allocActiveIn(a, m));
+        body += `<td><span class="cell ${uCls(pct)} ${hasPursuit ? 'has-pursuit' : ''} ${m < nowYm ? 'past' : ''}" title="${v.toFixed(2)} FTE${hasPursuit ? ' · includes pursuit hours' : ''}">${v ? v.toFixed(2) : '·'}</span></td>`;
+      });
       body += `<td>${r.headcount}</td><td class="pk">${r.peakFte.toFixed(2)}</td></tr>`;
       if (state.expandedProjects.has(r.project)) {
         let pr = '';
         r.allocs.slice().sort((a, b) => b.pct - a.pct).forEach(a => {
           const person = S.getPerson(a.personId) || { name: a.personId };
-          const isP = a.status === 'Pursuit' || a.type === 'Opportunity';
+          const isP = isPursuitAlloc(a);
           const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
           const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-          pr += `<tr class="drawer-tr alloc-row" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+          pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         });
         if (!pr) pr = `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         body += pr;
@@ -256,6 +261,7 @@
     const table = rows.length ? `<div class="hm-wrap"><table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table></div>` : `<div class="empty">No projects match.</div>`;
     const legend = `<div class="legend">
       <span>Cell shade = that month's FTE relative to the project's own peak.</span>
+      <span><span class="sw sw-stripe"></span>includes pursuit hours — not yet signed</span>
       <span style="margin-left:auto">Click a project for its staffing, click an allocation row to edit it.</span>
     </div>`;
     $('#p-projects').innerHTML = kpis + toolbar + table + legend;
@@ -301,15 +307,19 @@
       const projectCount = new Set(inWin.map(a => a.project)).size;
       const meta = [r.person.isNewHire ? '<span class="nh-tag">New hire</span>' : '', r.person.title ? esc(r.person.title) : ''].filter(Boolean).join(' ');
       body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.person.id)}">${esc(r.person.name)}</div>${meta ? `<div class="who-meta">${meta}</div>` : ''}</td>`;
-      ms.forEach(m => { const v = Math.round(r.byMonth[m] || 0); body += `<td><span class="cell ${uCls(v)} ${m < nowYm ? 'past' : ''}">${v ? v : '·'}</span></td>`; });
+      ms.forEach(m => {
+        const v = Math.round(r.byMonth[m] || 0);
+        const hasPursuit = inWin.some(a => isPursuitAlloc(a) && S.allocActiveIn(a, m));
+        body += `<td><span class="cell ${uCls(v)} ${hasPursuit ? 'has-pursuit' : ''} ${m < nowYm ? 'past' : ''}" title="${v}%${hasPursuit ? ' · includes pursuit hours' : ''}">${v ? v : '·'}</span></td>`;
+      });
       body += `<td>${projectCount}</td><td class="pk ${r.peak > 100 ? 'over' : ''}">${Math.round(r.peak)}%</td></tr>`;
       if (state.expandedRoster.has(r.person.id)) {
         let pr = '';
         inWin.slice().sort((a, b) => b.pct - a.pct).forEach(a => {
-          const isP = a.status === 'Pursuit' || a.type === 'Opportunity';
+          const isP = isPursuitAlloc(a);
           const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
           const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-          pr += `<tr class="drawer-tr alloc-row" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+          pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         });
         if (!pr) pr = `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         body += pr;
@@ -322,6 +332,7 @@
       <span><span class="sw" style="background:#fce7c2"></span>101–120% over</span>
       <span><span class="sw" style="background:#f6c9c2"></span>121–150%</span>
       <span><span class="sw" style="background:#e4453a"></span>&gt;150% critical</span>
+      <span><span class="sw sw-stripe"></span>includes pursuit hours — not yet signed</span>
       <span style="margin-left:auto">Click a name for their allocations, click an allocation row to edit it.</span>
     </div>`;
     $('#p-people').innerHTML = kpis + comingAvailableCard() + toolbar + table + legend;
