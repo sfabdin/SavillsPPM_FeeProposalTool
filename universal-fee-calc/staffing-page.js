@@ -1331,6 +1331,14 @@
     $('#win-len').onchange = (e) => { state.winLen = +e.target.value; renderActive(); };
     $('#month-hrs').onchange = (e) => { S.setMonthHours(+e.target.value); renderActive(); };
     $('#inc-pursuit').onchange = (e) => { state.incPursuit = e.target.checked; renderActive(); };
+    $('#export-snapshot-btn').onclick = async () => {
+      if (typeof ExcelJS === 'undefined') { alert('Excel library failed to load.'); return; }
+      const btn = $('#export-snapshot-btn'); const orig = btn.textContent;
+      btn.textContent = 'Building…'; btn.disabled = true;
+      try { await window.UFC_buildAndDownloadStaffingSnapshot(); }
+      catch (e) { console.error(e); alert('Snapshot export failed: ' + e.message); }
+      finally { btn.textContent = orig; btn.disabled = false; }
+    };
     $$('#tabs .tab').forEach(t => t.onclick = () => { state.tab = t.dataset.tab; $$('#tabs .tab').forEach(x => x.classList.toggle('active', x === t)); $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'p-' + state.tab)); renderActive(); });
     $('#am-close').onclick = closeAllocModal; $('#am-cancel').onclick = closeAllocModal; $('#am-save').onclick = saveAllocModal;
     $('#alloc-modal').onclick = (e) => { if (e.target.id === 'alloc-modal') closeAllocModal(); };
