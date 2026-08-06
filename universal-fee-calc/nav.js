@@ -24,8 +24,9 @@
     { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Manage' },
     { href: 'Change Log.html',               label: 'Change Log',          group: 'Manage' },
     { href: 'Ingestion Studio.html?mode=bulk', label: 'Import Revenues',   group: 'Admin', admin: true },
-    { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Admin', admin: true },
+    { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Admin', admin: true, note: 'one-time' },
     { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Admin', admin: true },
+    { href: 'Getting Started.html',          label: 'Getting Started',     group: 'Docs' },
     { href: 'Enterprise Migration Guide.html', label: 'Migration Guide',   group: 'Docs' },
     { href: 'Fee System Roadmap.html',       label: 'Roadmap',             group: 'Docs' },
     { href: 'Maintainers Runbook.html',      label: 'Maintainer’s Runbook', group: 'Docs' },
@@ -54,6 +55,12 @@
   #ppm-nav-list a:hover{background:#f4f2ef;}
   #ppm-nav-list a.here{border-left-color:${TEAL};background:#f0efec;color:${TEAL};}
   #ppm-nav-list a.here::after{content:'●';color:${TEAL};font-size:9px;}
+  #ppm-nav-search{padding:12px 16px 4px;}
+  #ppm-nav-search input{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid rgba(37,39,58,.25);font-size:13px;font-family:inherit;outline:none;}
+  #ppm-nav-search input:focus{border-color:${TEAL};}
+  #ppm-nav-list .pn-grp.pn-docs{border-top:1px solid rgba(37,39,58,.12);margin-top:12px;padding-top:16px;}
+  #ppm-nav-list a.pn-doc{font-weight:500;font-size:13px;color:#6a707c;}
+  #ppm-nav-list .pn-note{font-size:8.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6d00;background:#fdf3d7;padding:3px 7px;flex:none;}
   @media print{#ppm-nav-btn,#ppm-nav-ov,#ppm-nav-panel{display:none!important;}}
   `;
 
@@ -68,31 +75,55 @@
     const panel = document.createElement('nav'); panel.id = 'ppm-nav-panel';
 
     const groups = [...new Set(LINKS.map(l => l.group))];
-    let inner = `<div class="pn-head"><div><div class="pn-t">PPM · Fee &amp; Revenue System</div><div class="pn-s">Navigate</div></div><button class="pn-x" aria-label="Close">×</button></div><div id="ppm-nav-list">`;
+    let inner = `<div class="pn-head"><div><div class="pn-t">PPM · Fee &amp; Revenue System</div><div class="pn-s">Navigate</div></div><button class="pn-x" aria-label="Close">×</button></div>
+      <div id="ppm-nav-search"><input type="search" placeholder="Jump to a tool… (type to filter)" aria-label="Filter tools"></div><div id="ppm-nav-list">`;
     groups.forEach(g => {
-      inner += `<div class="pn-grp">${g}</div>`;
+      inner += `<div class="pn-grp${g === 'Docs' ? ' pn-docs' : ''}">${g}</div>`;
       LINKS.filter(l => l.group === g).forEach(l => {
         const cur = l.href.toLowerCase() === here ? ' here' : '';
-        inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" class="${cur.trim()}">${l.label}</a>`;
+        inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" class="${(g === 'Docs' ? 'pn-doc' : '') + cur}">${l.label}${l.note ? `<span class="pn-note">${l.note}</span>` : ''}</a>`;
       });
     });
     inner += `</div>`;
     panel.innerHTML = inner;
 
     document.body.appendChild(btn); document.body.appendChild(ov); document.body.appendChild(panel);
-    const open = () => { ov.classList.add('open'); panel.classList.add('open'); };
+    const search = panel.querySelector('#ppm-nav-search input');
+    const open = () => { ov.classList.add('open'); panel.classList.add('open'); search.value = ''; applyFilter(); setTimeout(() => search.focus(), 220); };
     const close = () => { ov.classList.remove('open'); panel.classList.remove('open'); };
     btn.addEventListener('click', open);
     ov.addEventListener('click', close);
     panel.querySelector('.pn-x').addEventListener('click', close);
     document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
 
+    // Quick-search: filter links as you type; groups hide when emptied; Enter
+    // opens the single remaining match.
+    function applyFilter() {
+      const q = search.value.trim().toLowerCase();
+      panel.querySelectorAll('#ppm-nav-list a').forEach(a => {
+        const hidden = a.dataset.roleHidden === '1' || (q && !a.textContent.toLowerCase().includes(q));
+        a.style.display = hidden ? 'none' : '';
+      });
+      panel.querySelectorAll('.pn-grp').forEach(h => {
+        let el = h.nextElementSibling, any = false;
+        while (el && !el.classList.contains('pn-grp')) { if (el.tagName === 'A' && el.style.display !== 'none') any = true; el = el.nextElementSibling; }
+        h.style.display = any ? '' : 'none';
+      });
+    }
+    search.addEventListener('input', applyFilter);
+    search.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const vis = [...panel.querySelectorAll('#ppm-nav-list a')].filter(a => a.style.display !== 'none');
+      if (vis.length === 1) location.href = vis[0].href;
+    });
+
     // Hide admin-only items for non-admins once identity is known.
     function applyRole() {
       try {
         const S = window.UFC_Store; if (!S || !S.getCurrentUser) return;
         const admin = S.isAdmin(S.getCurrentUser());
-        panel.querySelectorAll('a[data-admin="1"]').forEach(a => { a.style.display = admin ? '' : 'none'; });
+        panel.querySelectorAll('a[data-admin="1"]').forEach(a => { a.dataset.roleHidden = admin ? '0' : '1'; });
+        applyFilter();
       } catch (e) {}
     }
     if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(applyRole); else applyRole();

@@ -327,6 +327,29 @@
 <script src="universal-fee-calc/revenue-import.js"></script>
 <script src="universal-fee-calc/nav.js"></script>
 <script>
+  // ---- Access gate (fail-closed) ----------------------------------------
+  // The nav hides this page from non-admins, but hiding a link is not access
+  // control: this tool writes bulk data into the live store, so the page
+  // itself must check. Mirrors the allowlist pattern on Staffing/Profitability
+  // (via STORE.isAdmin, same as Import Small Works / Rate Reconciliation).
+  (window.ufcReady && window.ufcReady.then ? window.ufcReady
+    : new Promise(r => { if (document.readyState !== 'loading') r(); else document.addEventListener('DOMContentLoaded', r); })
+  ).then(() => {
+    const S = window.UFC_Store;
+    const u = S && S.getCurrentUser ? S.getCurrentUser() : null;
+    if (S && S.isAdmin && S.isAdmin(u)) return;
+    document.querySelector('.wrap').innerHTML = `
+      <header class="head">
+        <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+        <div><h1>Ingestion Studio</h1></div>
+      </header>
+      <div style="padding:70px 40px;text-align:center">
+        <div style="font-family:var(--font-display);font-weight:800;font-size:20px;color:var(--sav-navy);margin-bottom:10px">This tool is admin-only.</div>
+        <div style="max-width:460px;margin:0 auto;line-height:1.6;color:var(--sav-steel)">You're signed in as <strong>${(u && u.username ? String(u.username) : '(no identity)').replace(/[&<>"]/g, '')}</strong>, which isn't on the admin list. Ingestion writes project records for everyone — if you need something imported, contact Sarah Abdin.</div>
+        <div style="margin-top:22px"><a href="Fee Generator.html" class="btn" style="text-decoration:none">System home</a></div>
+      </div>`;
+  });
+
   document.querySelectorAll('.mode-toggle button').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.mode-toggle button').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
