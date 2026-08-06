@@ -39,7 +39,7 @@
   function cleanName(n) { return String(n || '').replace(/\[new hire\]/ig, '').trim().replace(/\s+/g, ' '); }
   /* Known name changes — old name (normalized) → current name. Applied at seed,
      re-import, and match time so both names resolve to ONE person. */
-  const NAME_ALIASES = { 'sarah alim': 'Sarah Abdin' };
+  const NAME_ALIASES = { 'sarah alim': 'Sarah Abdin', 'anastasia long': 'Tasia Long' };
   function canonicalName(n) { const c = cleanName(n); return NAME_ALIASES[c.toLowerCase()] || c; }
   function nkey(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
   /** Tolerant name match (surname fallback), mirrors the fee store. */
@@ -190,9 +190,11 @@
   function listAllocations() { return readDb().allocations.slice(); }
   function saveAllocation(a) {
     const db = readDb();
-    // ensure the person exists in the roster
+    // ensure the person exists in the roster. Names like "Pooled Support"
+    // are contract pools — a shared bucket several people bill toward, not
+    // an individual — flagged so views can label them.
     if (a.personId && !db.people[a.personId]) {
-      db.people[a.personId] = { id: a.personId, name: a.personName || a.personId, isNewHire: false, title: '', homeTeam: '', capacityPct: 100, active: true };
+      db.people[a.personId] = { id: a.personId, name: a.personName || a.personId, isNewHire: false, isPool: /\bpool/i.test(a.personName || ''), title: '', homeTeam: '', capacityPct: 100, active: true };
     }
     a.updatedAt = new Date().toISOString();
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u && u.username) a.updatedBy = u.username; } catch (e) {}
@@ -289,6 +291,7 @@
       fee: unionFee(),
       titles: Object.assign({}, rMap.titles || {}, lMap.titles || {}),
       renames: Object.assign({}, rMap.renames || {}, lMap.renames || {}),
+      personAliases: Object.assign({}, rMap.personAliases || {}, lMap.personAliases || {}),
       userX: unionUserX(),
     };
 
@@ -934,10 +937,11 @@
     const nowYm = currentYM();
     const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
     const out = [];
-    distinctProjects().forEach(pn => {
-      const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
-      const links = matchFeeProjects(pn, client);
-      if (!links.length) return;
+    const visitedFee = new Set();
+
+    // Diff ONE matrix project's contract demand (across its linked fee
+    // projects) against existing allocations, pushing gap entries into out.
+    const collect = (pn, client, links) => {
       // Contract demand per NAMED person, summed across roles and linked fee
       // projects (one person can hold two roles, or appear in two links).
       const byName = {};
@@ -945,6 +949,7 @@
         const p = feeRecords().find(x => x.id === link.id);
         if (!p || !p.roles || !p.roles.length || !p.timeline) return;
         if (p.project && p.project.status === 'lost') return;   // dead proposals aren't staffing demand
+        visitedFee.add(p.id);
         let byPhase; try { byPhase = S2.computeMonthsByPhase(p); } catch (e) { return; }
         const phaseOf = {};
         (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
@@ -956,7 +961,7 @@
           const isOpen = !nm || /^tbd\b/i.test(nm) || isNewHireName(r.resource);
           const t = cat && cat.titles && cat.titles.find(x => x.id === r.titleId);
           const roleLabel = (r.projectRole || '').trim() || (t && (t.name || t.label)) || 'Role';
-          const key = isOpen ? ' open:' + roleLabel.toLowerCase() : nm.toLowerCase();
+          const key = isOpen ? ' open:' + roleLabel.toLowerCase() : nm.toLowerCase();
           const e = byName[key] || (byName[key] = { name: isOpen ? null : nm, open: isOpen, roleLabel, want: {}, roles: new Set(), via: link.via });
           e.roles.add(roleLabel);
           pMonths.forEach(m => {
@@ -983,8 +988,14 @@
             covers(((db.people[a.personId] || {}).title || '').trim())
           ));
         } else {
-          person = Object.values(db.people).find(pp => namesMatch(pp.name, e.name)) || null;
-          existing = person ? db.allocations.filter(a => a.personId === person.id && a.project === pn) : [];
+          person = personForContractName(e.name);   // saved alias first, then tolerant match
+          const nameKey = nkey(canonicalName(e.name));
+          existing = db.allocations.filter(a => a.project === pn && (
+            (person && a.personId === person.id) ||
+            // allocation created FOR this contract name (leader mapped it to
+            // someone else) counts even before/without a saved alias
+            nkey(canonicalName(a.contractResource || '')) === nameKey
+          ));
         }
         const covAt = (ym) => existing.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
         // Month-by-month shortfall (contract minus what's already allocated),
@@ -1014,7 +1025,29 @@
           totalNeedFteMo: Math.round(future.reduce((s, sg) => s + sg.need * monthsBetween(sg.start, sg.end).length, 0)) / 100,
         });
       });
+    };
+
+    // 1) Matrix projects with allocations — diff against their linked fee projects.
+    distinctProjects().forEach(pn => {
+      const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
+      const links = matchFeeProjects(pn, client);
+      if (links.length) collect(pn, client, links);
     });
+
+    // 2) SIGNED fee projects no matrix project links to — the most
+    // under-staffed case of all: the contract exists and nobody is on it.
+    // Surfaced under the fee project's own name, so confirming seeds the
+    // matrix project with a name that auto-links back to the fee record.
+    feeRecords().forEach(p => {
+      if (visitedFee.has(p.id)) return;
+      const st = (p.project && p.project.status) || '';
+      if (st !== 'won' && st !== 'active') return;              // unsigned work doesn't demand staffing
+      if (!p.roles || !p.roles.length || !p.timeline) return;
+      const name = (p.project && p.project.name || '').trim();
+      if (!name) return;
+      collect(name, (p.project && p.project.client) || '', [{ id: p.id, via: 'direct' }]);
+    });
+
     return out.sort((a, b) => b.totalNeedFteMo - a.totalNeedFteMo);
   }
 
@@ -1191,6 +1224,24 @@
       db.mappings.fee[key] = arr;
     }
     writeDb(db);
+  }
+
+  /** Persistent contract-name → roster-person link, shared via staff.json.
+      Covers nicknames and spelling drift ("Anastasia Long" ↔ "Tasia Long"):
+      once a leader maps a contract name onto an existing person, every
+      future contract using that name resolves to them automatically. */
+  function setPersonAlias(contractName, personId) {
+    const k = nkey(cleanName(contractName)); if (!k || !personId) return;
+    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    db.mappings.personAliases = db.mappings.personAliases || {};
+    db.mappings.personAliases[k] = personId;
+    writeDb(db);
+  }
+  function personForContractName(name) {
+    const db = readDb();
+    const aliasId = ((db.mappings || {}).personAliases || {})[nkey(canonicalName(name))];
+    if (aliasId && db.people[aliasId]) return db.people[aliasId];
+    return Object.values(db.people).find(pp => namesMatch(pp.name, name)) || null;
   }
 
   /* ---------- canonical name sync (Clockify project list → matrix renames) ----------
@@ -1393,7 +1444,7 @@
     unassignedRoles, contractStaffingGaps, comingAvailable, substantialMacroTime,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
-    getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, tokenScore,
+    getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
     titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject, isTimeOffProject, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,

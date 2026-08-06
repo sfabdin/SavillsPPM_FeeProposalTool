@@ -162,6 +162,106 @@
   }
 
   /* ---------- ALLOCATIONS ---------- */
+  /* ---------- Contract → Allocation bridge (lives on the Allocations tab —
+     it proposes allocations, so it belongs where allocations are managed).
+     Gaps are cached against the db snapshot so re-renders (search keystrokes)
+     don't recompute the whole contract diff. ---------- */
+  function bridgeGapsCached() {
+    // Key on meta.updatedAt (stamped by every writeDb) — object identity is
+    // useless here because writeDb caches the same mutated object.
+    const db = S.readDb();
+    const key = (db.meta && db.meta.updatedAt) || '';
+    if (state._gapsKey !== key) { state._bridgeGaps = S.contractStaffingGaps(); state._gapsKey = key; }
+    return state._bridgeGaps || [];
+  }
+
+  function bridgeSectionHtml() {
+    const gaps = bridgeGapsCached();
+    if (!gaps.length) return '';
+    const segRow = (sg) => `<tr><td>${esc(S.ymLabel(sg.start))}${sg.start !== sg.end ? ' → ' + esc(S.ymLabel(sg.end)) : ''}</td><td class="num">${sg.want}%</td><td class="num">${sg.have ? sg.have + '%' : '—'}</td><td class="num" style="font-weight:800;color:var(--sav-teal)">+${sg.need}%</td></tr>`;
+    const rosterOptions = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
+    return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid var(--sav-teal);padding:12px 16px;margin-bottom:14px">
+      <div style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy);margin-bottom:2px">🤝 Contract staffing not yet in the matrix <span class="note-txt" style="font-weight:400">· every under-covered contract role — named people AND open slots. Review the segments, adjust the name if it maps to someone already here (nicknames count — the link is remembered), then confirm. Nothing is created without your OK.</span></div>
+      <datalist id="bridge-people">${rosterOptions}</datalist>
+      ${gaps.map((g, i) => `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
+        <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
+          <b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(g.project)}</span>
+          ${g.open
+            ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">unstaffed — needs a name</span>'
+            : (g.isNew
+              ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">not on the roster — map or create below</span>'
+              : `<span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700">links to existing: ${esc(g.person.name)}</span>`)}
+          ${g.topUp ? `<span class="mv-chip" style="background:#e7eef0">${g.open ? 'partially covered by matching titles' : 'top-up — partial allocation exists'}</span>` : ''}
+          ${g.via === 'direct' ? '<span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">signed project — nobody staffed yet</span>' : ''}
+          <span class="note-txt">· ${esc(g.roles.join(', '))} · ${g.totalNeedFteMo} FTE-mo missing</span>
+        </summary>
+        <div style="padding:4px 4px 12px">
+          ${g.via !== 'mapped' && g.via !== 'direct' ? '<div class="note-txt" style="color:#8a6d00;margin-bottom:6px">≈ this project’s fee link is auto-matched, not confirmed — verify it in Mapping before creating allocations from it.</div>' : ''}
+          <table class="dt" style="max-width:520px"><thead><tr><th>Window</th><th class="num">Contract</th><th class="num">${g.open ? 'Covered (matching titles)' : 'Already staffed'}</th><th class="num">Will create</th></tr></thead><tbody>${g.segments.map(segRow).join('')}</tbody></table>
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span class="note-txt" style="font-weight:700">Assign to:</span>
+            <input list="bridge-people" data-bridge-name="${i}" value="${g.open ? '' : esc(g.person ? g.person.name : g.resource)}" placeholder="${g.open ? 'Who takes this role? Type a name…' : 'Change to map onto someone else…'}" style="padding:8px 10px;border:1px solid rgba(37,39,58,0.3);font-size:13px;min-width:240px">
+            <span class="note-txt" data-bridge-hint="${i}"></span>
+          </div>
+          ${!g.open && g.isNew ? `<div class="note-txt" style="margin-top:4px">Contract says “${esc(g.resource)}” — if that's a nickname or old spelling of someone already on the roster, type their roster name above and the mapping is saved for every future contract.</div>` : ''}
+          <button class="btn btn-primary" style="margin-top:10px;padding:8px 16px;font-size:12px" data-bridge-apply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}</button>
+        </div>
+      </details>`).join('')}
+    </div>`;
+  }
+
+  function wireBridge() {
+    const root = $('#p-allocations');
+    if (!root) return;
+    $$('#p-allocations [data-bridge-name]').forEach(inp => inp.oninput = () => {
+      const hint = $(`#p-allocations [data-bridge-hint="${inp.dataset.bridgeName}"]`);
+      if (!hint) return;
+      const v = inp.value.trim();
+      if (!v) { hint.textContent = ''; return; }
+      const hit = S.listPeople().find(p => S.namesMatch(p.name, v));
+      const pool = /\bpool/i.test(v);
+      hint.innerHTML = hit
+        ? `→ links to existing <b style="color:#0E7C7B">${esc(hit.name)}</b>${hit.isPool ? ' (shared pool)' : ''}`
+        : `→ will create <b style="color:#8a6d00">NEW ${pool ? 'shared POOL — several people can bill toward it' : 'person'}</b>`;
+    });
+    $$('#p-allocations [data-bridge-apply]').forEach(b => b.onclick = () => {
+      const i = +b.dataset.bridgeApply;
+      const g = bridgeGapsCached()[i];
+      if (!g) return;
+      const inp = $(`#p-allocations [data-bridge-name="${i}"]`);
+      let typed = inp ? inp.value.trim() : '';
+      if (!typed) {
+        if (g.open) { toast('Type a name for this open role first — nothing was created.'); if (inp) inp.focus(); return; }
+        typed = g.resource;
+      }
+      const hit = S.listPeople().find(p => S.namesMatch(p.name, typed));
+      const personId = hit ? hit.id : S.personIdForName(typed);
+      const personName = hit ? hit.name : typed;
+      g.segments.forEach(sg => {
+        S.saveAllocation({
+          personId, personName,
+          project: g.project, client: g.client,
+          status: 'Active', type: 'Awarded',
+          start: sg.start, end: sg.end, pct: sg.need,
+          // ties the row back to the contract slot/name it satisfies, so the
+          // gap clears even when the assignee differs from the contract label
+          contractRole: g.open ? g.roleTitle : undefined,
+          contractResource: g.open ? undefined : g.resource,
+          note: (g.open ? `Open contract role staffed`
+            : (g.topUp ? `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%)` : `From contract staffing`)) + ` · ${g.roles.join(', ')}`,
+        });
+      });
+      // Contract name ≠ roster name (nickname, spelling drift)? Remember the
+      // mapping so every future contract naming them resolves automatically.
+      if (!g.open && g.resource) {
+        const per = S.getPerson(personId);
+        if (per && !S.namesMatch(per.name, g.resource)) S.setPersonAlias(g.resource, personId);
+      }
+      toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${personName}`);
+      renderCounts(); renderAllocations();
+    });
+  }
+
   function renderAllocations() {
     let list = S.listAllocations();
     const q = state.allocSearch.toLowerCase();
@@ -189,7 +289,7 @@
       body += `<tr class="${isP ? 'pursuit-row' : ''}">
         <td class="pname">${esc(a.project)}</td>
         <td>${esc(a.client || '—')}</td>
-        <td>${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}</td>
+        <td>${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${person.isPool ? ' <span class="nh-tag" style="background:#dff0ee;color:#0E7C7B" title="Shared contract pool — several people can bill toward this line">POOL</span>' : ''}</td>
         <td><span class="badge ${isP ? 'pursuit' : 'active'}">${esc(a.status)}${a.type === 'Opportunity' ? ' · opp' : ''}</span></td>
         <td>${esc(a.start ? S.ymLabel(a.start) : '—')} – ${esc(a.end ? S.ymLabel(a.end) : '—')}</td>
         <td class="num">${a.pct}%</td>
@@ -199,7 +299,8 @@
     });
     const table = list.length ? `<table class="dt"><thead><tr><th>Project</th><th>Client</th><th>Person</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note / decision</th><th></th></tr></thead><tbody>${body}</tbody></table>`
       : `<div class="empty">No allocations match. <a href="#" id="al-clear">Clear filters</a></div>`;
-    $('#p-allocations').innerHTML = toolbar + table;
+    $('#p-allocations').innerHTML = bridgeSectionHtml() + toolbar + table;
+    wireBridge();
 
     $('#al-search').oninput = (e) => { state.allocSearch = e.target.value; renderAllocations(); const el = $('#al-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $('#al-status').onchange = (e) => { state.allocStatus = e.target.value; renderAllocations(); };
@@ -324,7 +425,7 @@
       const allocs = S.listAllocations().filter(a => a.personId === r.person.id && (state.incPursuit || (a.status !== 'Pursuit' && a.type !== 'Opportunity')));
       const inWin = allocs.filter(a => ms.some(m => S.allocActiveIn(a, m)));
       const projectCount = new Set(inWin.map(a => a.project)).size;
-      const meta = [r.person.isNewHire ? '<span class="nh-tag">New hire</span>' : '', r.person.title ? esc(r.person.title) : ''].filter(Boolean).join(' ');
+      const meta = [r.person.isNewHire ? '<span class="nh-tag">New hire</span>' : '', r.person.isPool ? '<span class="nh-tag" style="background:#dff0ee;color:#0E7C7B" title="Shared contract pool — several people can bill toward this line">POOL</span>' : '', r.person.title ? esc(r.person.title) : ''].filter(Boolean).join(' ');
       body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.person.id)}">${esc(r.person.name)}</div>${meta ? `<div class="who-meta">${meta}</div>` : ''}</td>`;
       ms.forEach(m => {
         const v = Math.round(r.byMonth[m] || 0);
@@ -470,10 +571,10 @@
         <div class="kpi-card"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">③ Actual (Clockify) · hrs</div></div>
         <div class="kpi-card ${Math.abs(totAct - totExp) > totExp * 0.1 ? 'warn' : ''}"><div class="k-num">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)}</div><div class="k-lbl">Actual − matrix plan</div></div>
       </div>`;
-      // Bridge nudge — contract-named people the matrix hasn't staffed yet.
+      // Bridge nudge — contract roles the matrix hasn't staffed yet.
       if (!byPerson && !projFilter) {
-        const bg = S.contractStaffingGaps();
-        if (bg.length) html += `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#e7f0ee;border-left:3px solid var(--sav-teal)">🤝 <b>${bg.length}</b> contract role${bg.length === 1 ? ' isn’t' : 's aren’t'} fully staffed in the matrix — <a href="#" data-goto-insights style="font-weight:700">review &amp; confirm in Insights →</a></div>`;
+        const bg = bridgeGapsCached();
+        if (bg.length) html += `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#e7f0ee;border-left:3px solid var(--sav-teal)">🤝 <b>${bg.length}</b> contract role${bg.length === 1 ? ' isn’t' : 's aren’t'} fully staffed in the matrix — <a href="#" data-goto-tab="allocations" style="font-weight:700">review &amp; confirm in Allocations →</a></div>`;
       }
       html += `<div class="toolbar">
         <div class="seg-toggle" role="group" aria-label="Group by">
@@ -561,7 +662,6 @@
     $$('#p-actuals [data-group]').forEach(b => b.onclick = () => { state.varGroup = b.dataset.group; renderActuals(); });
     const vu = $('#var-unit'); if (vu) vu.onchange = (e) => { state.varUnit = e.target.value; renderActuals(); };
     const vsm = $('#var-showmacro'); if (vsm) vsm.onchange = (e) => { state.showMacro = e.target.checked; renderActuals(); };
-    $$('#p-actuals [data-goto-insights]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = document.querySelector('#tabs .tab[data-tab="insights"]'); if (t) t.click(); });
     $$('#p-actuals [data-goto-tab]').forEach(a => a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const t = document.querySelector(`#tabs .tab[data-tab="${a.dataset.gotoTab}"]`); if (t) t.click(); });
     const gl = $('#cmp-glossary'); if (gl) gl.ontoggle = () => { state.glossaryOpen = gl.open; };
     const xa = $('#cmp-expand-all'); if (xa) xa.onclick = () => {
@@ -1026,12 +1126,6 @@
     });
     gaps.sort((a, b) => b.gap - a.gap);
 
-    // ---- Contract → Allocation bridge: NAMED people in contracts who aren't
-    // (fully) allocated. Preview-and-confirm only — nothing writes until the
-    // leader approves the exact segments shown. ----
-    const bridgeGaps = S.contractStaffingGaps();
-    state._bridgeGaps = bridgeGaps;
-
     // ---- bandwidth coming available in the next 3 months ----
     const freeing = S.comingAvailable({ includePursuit: state.incPursuit }).slice(0, 5);
 
@@ -1071,35 +1165,8 @@
     const gapsShown = gaps.slice(0, 5), trendsShown = trends.slice(0, 5);
     const more = (n, total) => total > n ? `<div class="vmini" style="padding:6px 2px 0">+${total - n} more</div>` : '';
 
-    const segRow = (sg) => `<tr><td>${esc(S.ymLabel(sg.start))}${sg.start !== sg.end ? ' → ' + esc(S.ymLabel(sg.end)) : ''}</td><td class="num">${sg.want}%</td><td class="num">${sg.have ? sg.have + '%' : '—'}</td><td class="num" style="font-weight:800;color:var(--sav-teal)">+${sg.need}%</td></tr>`;
-    const rosterOptions = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
-    const bridgeCard = bridgeGaps.length ? `<div class="ins-card" style="grid-column:1/-1;border-left:4px solid var(--sav-teal);margin-bottom:4px">
-      <h3>🤝 Contract staffing not yet in the matrix <span>· every under-covered contract role — named people AND open slots. Review the exact segments (open roles ask for a name), then confirm. Nothing is created without your OK.</span></h3>
-      <datalist id="bridge-people">${rosterOptions}</datalist>
-      ${bridgeGaps.map((g, i) => `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
-        <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
-          <b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(g.project)}</span>
-          ${g.open
-            ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">unstaffed — needs a name</span>'
-            : (g.isNew
-              ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">will create NEW person</span>'
-              : `<span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700">links to existing: ${esc(g.person.name)}</span>`)}
-          ${g.topUp ? `<span class="mv-chip" style="background:#e7eef0">${g.open ? 'partially covered by matching titles' : 'top-up — partial allocation exists'}</span>` : ''}
-          <span class="note-txt">· ${esc(g.roles.join(', '))} · ${g.totalNeedFteMo} FTE-mo missing</span>
-        </summary>
-        <div style="padding:4px 4px 12px">
-          ${g.via !== 'mapped' ? '<div class="note-txt" style="color:#8a6d00;margin-bottom:6px">≈ this project’s fee link is auto-matched, not confirmed — verify it in Mapping before creating allocations from it.</div>' : ''}
-          <table class="dt" style="max-width:520px"><thead><tr><th>Window</th><th class="num">Contract</th><th class="num">${g.open ? 'Covered (matching titles)' : 'Already staffed'}</th><th class="num">Will create</th></tr></thead><tbody>${g.segments.map(segRow).join('')}</tbody></table>
-          ${g.open ? `<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <input list="bridge-people" data-bridge-name="${i}" placeholder="Who takes this role? Type a name…" style="padding:8px 10px;border:1px solid rgba(37,39,58,0.3);font-size:13px;min-width:240px">
-            <span class="note-txt" data-bridge-hint="${i}"></span>
-          </div>` : ''}
-          <button class="btn btn-primary" style="margin-top:10px;padding:8px 16px;font-size:12px" data-bridge-apply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}${g.isNew ? ' + new person' : ''}</button>
-        </div>
-      </details>`).join('')}
-    </div>` : '';
 
-    $('#p-insights').innerHTML = `${noAct}${bridgeCard ? `<div class="ins-grid" style="grid-template-columns:1fr">${bridgeCard}</div>` : ''}<div class="ins-grid">
+    $('#p-insights').innerHTML = `${noAct}<div class="ins-grid">
       <div class="ins-card"><h3>🔥 Burning over plan <span>· ${esc(S.ymLabel(msPast[0] || ms[0]))}–${esc(S.ymLabel(msPast[msPast.length - 1] || ms[ms.length - 1]))}</span></h3>${projTable(hot, 'Over')}</div>
       <div class="ins-card"><h3>🧊 Under-served <span>· scope risk or stale plan</span></h3>${projTable(cold, 'Under')}</div>
       <div class="ins-card"><h3>⚠️ Most overextended <span>· load + burn vs capacity</span></h3>${overext.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Peak</th><th class="num">Months &gt;100%</th><th class="num">Burn</th></tr></thead><tbody>${overext.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num ${p.peak > 100 ? 'var-over' : ''}">${Math.round(p.peak)}%</td><td class="num">${p.overMonths}</td><td class="num ${p.burnPct > 1.05 ? 'var-over' : ''}">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nobody over the line.</div>'}</div>
@@ -1112,48 +1179,6 @@
       <div class="ins-card"><h3>🏢 Substantial internal time <span>· &gt;40h, BOH excluded</span></h3>${boh.length ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="display:flex;flex-wrap:wrap;gap:6px">${boh.map(r => `<span class="mv-chip" style="background:#e7eef0">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th class="num">%</th></tr></thead><tbody>${macro.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="num">${Math.round(r.pct * 100)}%</td></tr>`).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40h.' : 'Needs Clockify actuals.'}</div>`}</div>
     </div>`;
 
-    // Open-role name inputs: live hint — existing person vs. brand-new.
-    $$('#p-insights [data-bridge-name]').forEach(inp => inp.oninput = () => {
-      const hint = $(`#p-insights [data-bridge-hint="${inp.dataset.bridgeName}"]`);
-      if (!hint) return;
-      const v = inp.value.trim();
-      if (!v) { hint.textContent = ''; return; }
-      const hit = S.listPeople().find(p => S.namesMatch(p.name, v));
-      hint.innerHTML = hit
-        ? `→ links to existing <b style="color:#0E7C7B">${esc(hit.name)}</b>`
-        : `→ will create <b style="color:#8a6d00">NEW person</b>`;
-    });
-
-    // Bridge confirm — the ONLY write path, and it only fires on the button
-    // for the exact preview the leader just looked at. Open roles must have
-    // a name typed before anything is created.
-    $$('#p-insights [data-bridge-apply]').forEach(b => b.onclick = () => {
-      const i = +b.dataset.bridgeApply;
-      const g = (state._bridgeGaps || [])[i];
-      if (!g) return;
-      let personId = g.personId, personName = g.resource;
-      if (g.open) {
-        const inp = $(`#p-insights [data-bridge-name="${i}"]`);
-        personName = inp ? inp.value.trim() : '';
-        if (!personName) { toast('Type a name for this open role first — nothing was created.'); if (inp) inp.focus(); return; }
-        personId = S.personIdForName(personName);
-      }
-      g.segments.forEach(sg => {
-        S.saveAllocation({
-          personId, personName,
-          project: g.project, client: g.client,
-          status: 'Active', type: 'Awarded',
-          start: sg.start, end: sg.end, pct: sg.need,
-          // contractRole ties the row back to the open slot it fills, so the
-          // gap engine sees it as covered even if the person's title differs
-          contractRole: g.open ? g.roleTitle : undefined,
-          note: (g.open ? `Open contract role staffed`
-            : (g.topUp ? `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%)` : `From contract staffing`)) + ` · ${g.roles.join(', ')}`,
-        });
-      });
-      toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${personName}`);
-      renderCounts(); renderInsights();
-    });
   }
 
   /* ---------- TIME ENTRY COMPLIANCE — who logs, who's behind ----------
