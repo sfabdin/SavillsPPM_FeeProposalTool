@@ -85,7 +85,7 @@
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
     pplSearch: '', expandedRoster: new Set(), pplExpandInit: false,
-    varProject: '', varPerson: '', varGroup: 'project', varUnit: 'hours', showMacro: true,
+    varProject: '', varPerson: '', varGroup: 'project', varUnit: 'hours', showMacro: true, glossaryOpen: false,
     expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
@@ -371,6 +371,30 @@
     const meta = S.actualsMeta();
     let html = importCard(has, meta);
 
+    // Always-available explainer for the ①②③ vocabulary this whole tab runs on.
+    html += `<details style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px" ${state.glossaryOpen ? 'open' : ''} id="cmp-glossary">
+      <summary style="padding:9px 14px;cursor:pointer;font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">❓ What do ① ② ③ mean?</summary>
+      <div style="padding:2px 16px 12px;font-size:12.5px;line-height:1.7;color:var(--sav-steel)">
+        <div><b style="color:#0E7C7B">① Plan (matrix)</b> — who we <b>plan</b> to staff: names and allocation % entered in this tool. Expected hours = ${S.monthHours()} hrs/mo × capacity% × allocation%.</div>
+        <div><b style="color:#79828C">② Contract (fee tool)</b> — what the signed fee matrix <b>priced</b>: titles and hours, no names. Flows in from the linked fee-tool project — the <b>Mapping</b> tab controls that link.</div>
+        <div><b style="color:#b39b00">③ Actual (Clockify)</b> — what actually got <b>logged</b>, split into billable / macro / Time Off in the chart.</div>
+        <div style="margin-top:4px">Healthy = ③ tracks ①, and both stay inside ②. ▲ over plan · ▼ under · ● on plan (±10%).</div>
+      </div>
+    </details>`;
+
+    // Data health — surface entry gaps here, where people actually look,
+    // instead of only on the separate Data Entry Status page.
+    {
+      const missEnd = S.listAllocations().filter(a => !a.end).length;
+      const noTitle = S.listPeople().filter(p => p.active !== false && !(p.title || '').trim()).length;
+      const unlinked = S.distinctProjects().filter(pn => !S.isMacroProject(pn) && !S.isTimeOffProject(pn) && !S.matchFeeProjects(pn, '').length).length;
+      const bits = [];
+      if (missEnd) bits.push(`<a href="#" data-goto-tab="allocations"><b>${missEnd}</b> allocation${missEnd === 1 ? '' : 's'} missing an end date</a>`);
+      if (noTitle) bits.push(`<a href="#" data-goto-tab="mapping"><b>${noTitle}</b> ${noTitle === 1 ? 'person' : 'people'} without a title</a> (their cost rate reads $0)`);
+      if (unlinked) bits.push(`<a href="#" data-goto-tab="mapping"><b>${unlinked}</b> project${unlinked === 1 ? '' : 's'} not linked to the fee tool</a> (no ② Contract line)`);
+      if (bits.length) html += `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#fdf6e3;border-left:3px solid #e8b563">🩺 Data health: ${bits.join(' · ')}</div>`;
+    }
+
     if (state.clockifyReport) html += reportBlock(state.clockifyReport);
 
     const cat = window.RATES_CATALOG;
@@ -460,6 +484,7 @@
         <select id="var-person">${pplOpts}</select>
         ${canDollars ? `<select id="var-unit" title="Show hours or dollars"><option value="hours">Units: hours</option><option value="dollars" ${dollars ? 'selected' : ''}>Units: $ cost vs fee</option></select>` : ''}
         ${!byPerson ? `<label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" id="var-showmacro" ${state.showMacro ? 'checked' : ''}> Include Macro / Time Off</label>` : ''}
+        <button type="button" class="seg-btn" id="cmp-expand-all" style="border:1px solid rgba(37,39,58,0.25)">Expand all</button>
         <span class="grow"></span><span class="note-txt">${dollars ? '① ③ = hours × internal COST rate for each person’s title (rates.json · titles from Clockify) · ② = contracted NET fee from the fee tool. Profitable = ③ below ②.' : `▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.`}</span></div>`;
       html += compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars);
 
@@ -481,11 +506,17 @@
         const totCells = msDesc.map(m => { let e = 0, a = 0; list.forEach(r => { e += r.byMonth[m].e; a += r.byMonth[m].a; }); const pct = e ? Math.round(a / e * 100) + '%' : (a ? '—' : ''); return `<td class="num ${e || a ? varCls(e, a) : ''}" style="white-space:nowrap">${(e || a) ? `${varArrow(e, a)} <b>${fmtH(a)}</b><span class="vmini"> /${fmtH(e)}</span><div class="vmini">${pct}</div>` : '·'}</td>`; }).join('');
         const totRow = `<tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total</td>${totCells}<td class="num" style="font-weight:800">${fmtH(pe)}</td><td class="num" style="font-weight:800">${fmtH(pa)}</td><td class="num ${pcls}" style="font-weight:800">${varArrow(pe, pa)} ${pa >= pe ? '+' : ''}${fmtH(pa - pe)}</td><td class="num vmini" style="font-weight:700">${pe ? Math.round(pa / pe * 100) + '%' : '—'}</td></tr>`;
         const cp = byPerson ? null : contractByProj[pn];
-        const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cpTot(cp))}</b>` : `<span style="color:#b0b5bc">no contract staffing</span>`;
+        // Trust marker: a pinned Mapping link and a fuzzy auto-match look the
+        // same everywhere else — say which one this ② number is riding on.
+        const autoMatched = cp && (cp.feeProjects || []).some(f => f.via !== 'mapped');
+        const linkBadge = cp ? (autoMatched
+          ? ` <span title="Fee link is auto-matched by name — confirm it in Mapping" style="color:#8a6d00;cursor:help">≈ auto</span>`
+          : ` <span title="Fee link confirmed in Mapping" style="color:#0E7C7B;cursor:help">🔗</span>`) : '';
+        const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cpTot(cp))}</b>${linkBadge}` : (byPerson ? `<span style="color:#b0b5bc">no contract staffing</span>` : `<a href="#" data-goto-tab="mapping" style="color:#b0b5bc" title="Link this project to its fee-tool record">no contract staffing — link in Mapping</a>`);
         let contractTbl = '';
         if (cp && cp.roles.length) {
           contractTbl = `<div style="padding:8px 16px 12px;border-top:1px dashed rgba(37,39,58,0.12);background:#faf9f7">
-            <div style="font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel);margin-bottom:5px">② Per contract · ${esc((cp.feeProjects || []).map(f => f.name).join(' + '))} <span style="text-transform:none;letter-spacing:0">(titles — match people to these when staffing)</span></div>
+            <div style="font-family:var(--font-display);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--sav-steel);margin-bottom:5px">② Per contract · ${esc((cp.feeProjects || []).map(f => f.name).join(' + '))} ${autoMatched ? '<span style="text-transform:none;letter-spacing:0;color:#8a6d00">≈ auto-matched — confirm in Mapping</span>' : '<span style="text-transform:none;letter-spacing:0;color:#0E7C7B">🔗 confirmed link</span>'} <span style="text-transform:none;letter-spacing:0">(titles — match people to these when staffing)</span></div>
             <div style="display:flex;flex-wrap:wrap;gap:6px">${cp.roles.map(r => `<span class="mv-chip" style="background:#e7eef0"><b>${_fmtHours(r.hours)}h</b> ${esc(r.title)} · ${r.fteMonths} FTE-mo</span>`).join('')}</div>
           </div>`;
         }
@@ -531,6 +562,14 @@
     const vu = $('#var-unit'); if (vu) vu.onchange = (e) => { state.varUnit = e.target.value; renderActuals(); };
     const vsm = $('#var-showmacro'); if (vsm) vsm.onchange = (e) => { state.showMacro = e.target.checked; renderActuals(); };
     $$('#p-actuals [data-goto-insights]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = document.querySelector('#tabs .tab[data-tab="insights"]'); if (t) t.click(); });
+    $$('#p-actuals [data-goto-tab]').forEach(a => a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const t = document.querySelector(`#tabs .tab[data-tab="${a.dataset.gotoTab}"]`); if (t) t.click(); });
+    const gl = $('#cmp-glossary'); if (gl) gl.ontoggle = () => { state.glossaryOpen = gl.open; };
+    const xa = $('#cmp-expand-all'); if (xa) xa.onclick = () => {
+      const ds = $$('#p-actuals details.cmp-card');
+      const anyClosed = ds.some(d => !d.open);
+      ds.forEach(d => { d.open = anyClosed; });
+      xa.textContent = anyClosed ? 'Collapse all' : 'Expand all';
+    };
   }
 
   /* Grouped-bar trend chart: ① plan / ② contract / ③ actual per month. The
@@ -1246,7 +1285,7 @@
       S.attachRemote((db) => {
         clearTimeout(t); pushing = true;
         t = setTimeout(async () => {
-          try { Box.emitSync && Box.emitSync('syncing', 'staff.json'); await Box.uploadStaff(db); Box.emitSync && Box.emitSync('synced', ''); setStoreNote('box'); }
+          try { Box.emitSync && Box.emitSync('syncing', 'staff.json'); await Box.uploadStaff(db); Box.emitSync && Box.emitSync('synced', ''); setStoreNote('box'); toast('Saved — synced to Box ✓'); }
           catch (e) { Box.emitSync && Box.emitSync('error', 'staff.json: ' + e.message); setStoreNote('error', e.message); }
           finally { pushing = false; }
         }, 1200);
