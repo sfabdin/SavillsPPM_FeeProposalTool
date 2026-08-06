@@ -916,15 +916,17 @@
     return out.sort((a, b) => b.hours - a.hours);
   }
 
-  /** Contract → Allocation bridge: fee-tool roles that NAME a person the
-      staffing matrix hasn't (fully) allocated on that project. The contract
-      knows who and how much per month; this diffs that against existing
-      allocations and proposes the shortfall as ready-to-confirm segments.
+  /** Contract → Allocation bridge: EVERY fee-tool role whose demand the
+      staffing matrix hasn't (fully) covered on that project — named or not.
+      A named resource diffs against that person's own allocations; an
+      unnamed/placeholder role (blank, TBD, [NEW HIRE]) is still open demand,
+      diffed against project allocations from people whose TITLE matches the
+      role, and the page prompts for a name before anything is created.
       NOTHING is written here — the page shows a preview and the leader
       confirms before any allocation is created.
-      Returns [{ project, client, resource, roles[], person|null, isNew,
-                 personId, topUp, via, segments:[{start,end,need,want,have}],
-                 totalNeedFteMo }] */
+      Returns [{ project, client, open, roleTitle, resource|null, roles[],
+                 person|null, isNew, personId|null, topUp, via,
+                 segments:[{start,end,need,want,have}], totalNeedFteMo }] */
   function contractStaffingGaps() {
     const S2 = window.UFC_Store;
     if (!S2 || !S2.computeMonthsByPhase) return [];
@@ -948,14 +950,14 @@
         (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
         const pMonths = S2.enumerateMonths(p.timeline);
         p.roles.forEach(r => {
-          // Placeholders aren't people: skip TBD and [NEW HIRE] resources.
-          if (isNewHireName(r.resource)) return;
+          // Blank, TBD and [NEW HIRE] resources aren't people — but the role
+          // is still open demand: track it per role TITLE, to be named later.
           const nm = cleanName(r.resource || '');
-          if (!nm || /^tbd\b/i.test(nm)) return;
-          const key = nm.toLowerCase();
+          const isOpen = !nm || /^tbd\b/i.test(nm) || isNewHireName(r.resource);
           const t = cat && cat.titles && cat.titles.find(x => x.id === r.titleId);
           const roleLabel = (r.projectRole || '').trim() || (t && (t.name || t.label)) || 'Role';
-          const e = byName[key] || (byName[key] = { name: nm, want: {}, roles: new Set(), via: link.via });
+          const key = isOpen ? ' open:' + roleLabel.toLowerCase() : nm.toLowerCase();
+          const e = byName[key] || (byName[key] = { name: isOpen ? null : nm, open: isOpen, roleLabel, want: {}, roles: new Set(), via: link.via });
           e.roles.add(roleLabel);
           pMonths.forEach(m => {
             const ym = m.year + '-' + String(m.month).padStart(2, '0');
@@ -966,8 +968,24 @@
         });
       });
       Object.values(byName).forEach(e => {
-        const person = Object.values(db.people).find(pp => namesMatch(pp.name, e.name)) || null;
-        const existing = person ? db.allocations.filter(a => a.personId === person.id && a.project === pn) : [];
+        let person = null, existing = [];
+        if (e.open) {
+          // Open role: coverage = this project's allocations from people whose
+          // TITLE matches the role (same heuristic as unassignedRoles), so a
+          // PM already staffed against an open PM slot isn't double-demanded.
+          const rf = titleFamily(e.roleLabel);
+          const covers = (pt) => { if (!pt) return false; const f = titleFamily(pt); return (f && rf && f.titleId === rf.titleId) || tokenScore(pt, e.roleLabel) >= 0.5; };
+          const roleKey = String(e.roleLabel).toLowerCase();
+          existing = db.allocations.filter(a => a.project === pn && (
+            // an allocation created FOR this open role always counts, whatever
+            // the assignee's title says — otherwise confirming never clears it
+            String(a.contractRole || '').toLowerCase() === roleKey ||
+            covers(((db.people[a.personId] || {}).title || '').trim())
+          ));
+        } else {
+          person = Object.values(db.people).find(pp => namesMatch(pp.name, e.name)) || null;
+          existing = person ? db.allocations.filter(a => a.personId === person.id && a.project === pn) : [];
+        }
         const covAt = (ym) => existing.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
         // Month-by-month shortfall (contract minus what's already allocated),
         // compressed into consecutive equal-% segments — Option A: one
@@ -986,9 +1004,10 @@
         if (!future.length) return;
         out.push({
           project: pn, client,
+          open: !!e.open, roleTitle: e.roleLabel || [...e.roles][0] || 'Role',
           resource: e.name, roles: [...e.roles],
-          person, isNew: !person,
-          personId: person ? person.id : personIdForName(e.name),
+          person, isNew: e.open ? false : !person,
+          personId: e.open ? null : (person ? person.id : personIdForName(e.name)),
           topUp: existing.length > 0,
           via: e.via,
           segments: future,
