@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Getting Started</title>
+<link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  body { margin:0; font-family:var(--font-body,Arial,sans-serif); color:var(--sav-navy,#25273A); background:#f3f3f0; }
+  .wrap { max-width:880px; margin:0 auto; padding:36px 28px 90px; }
+  h1 { font-family:var(--font-display); font-weight:800; font-size:28px; margin:0 0 6px; }
+  .sub { color:#79828C; font-size:14px; line-height:1.6; margin-bottom:30px; }
+  h2 { font-family:var(--font-display); font-weight:800; font-size:15px; letter-spacing:0.08em; text-transform:uppercase; margin:38px 0 12px; padding-bottom:8px; border-bottom:2px solid var(--sav-navy); }
+  .card { background:#fff; border:1px solid rgba(37,39,58,0.12); padding:18px 22px; margin-bottom:14px; }
+  .card h3 { font-family:var(--font-display); font-size:14px; margin:0 0 6px; }
+  .card p { font-size:13.5px; line-height:1.65; color:#4a4f5e; margin:0; }
+  .step { display:flex; gap:14px; align-items:flex-start; }
+  .step .n { flex:none; width:30px; height:30px; background:var(--sav-yellow,#FFDF00); color:var(--sav-navy); font-family:var(--font-display); font-weight:800; display:flex; align-items:center; justify-content:center; }
+  ol, ul { font-size:13.5px; line-height:1.7; color:#4a4f5e; padding-left:20px; margin:0; }
+  a { color:var(--sav-teal,#0E7C7B); font-weight:600; }
+  dl { margin:0; font-size:13.5px; line-height:1.65; }
+  dt { font-weight:800; font-family:var(--font-display); margin-top:12px; }
+  dd { margin:2px 0 0 0; color:#4a4f5e; }
+  .pill { display:inline-block; background:#EEE8E3; padding:2px 8px; font-size:11px; font-weight:700; }
+  code { background:#EEE8E3; padding:1px 5px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Getting started.</h1>
+  <div class="sub">The five-minute orientation for revenue leaders: how the pieces fit together, what you're responsible for entering, and what every number means. Bookmark this — everything links to the tool it describes.</div>
+
+  <h2>The flow — where a number is born and where it goes</h2>
+  <div class="card"><div class="step"><div class="n">1</div><div><h3><a href="Universal Fee Calculator.html">Fee Calculator</a> — price the work</h3>
+    <p>Build the roster (roles, tiers, allocation %, phases), and the fee comes out. Rates come from the shared grid; discounts and escalation are applied here, once. This record is the source of truth for everything downstream — the fee is <b>born here and never re-keyed</b>.</p></div></div></div>
+  <div class="card"><div class="step"><div class="n">2</div><div><h3><a href="Projects Index.html">Projects Index</a> — your project list</h3>
+    <p>Every project you own, in one place. Open a project to edit it in the calculator; statuses (draft → submitted → won/lost) drive the pipeline and weighted forecast numbers leadership sees.</p></div></div></div>
+  <div class="card"><div class="step"><div class="n">3</div><div><h3><a href="Revenue Projections.html">Revenue Projections</a> — true-up the monthly picture</h3>
+    <p>Your projects' revenue spread by month. It starts from the roster-computed schedule; where reality differs, enter a monthly override. <b>This is the layer you're asked to keep current</b> — it feeds the booked/weighted totals and the exec dashboard.</p></div></div></div>
+  <div class="card"><div class="step"><div class="n">4</div><div><h3>Reporting reads it all — you don't re-enter anything</h3>
+    <p><a href="Revenue Studio.html">Revenue Studio</a> (slice &amp; compare against frozen baselines), <a href="Benchmarking Dashboard.html">Benchmarking</a>, <a href="Proposal Analytics.html">Proposal Analytics</a>, and <a href="Data Entry Status.html">Data Entry Status</a> all read the same records. If a report looks wrong, fix the project — not the report.</p></div></div></div>
+  <div class="card"><div class="step"><div class="n">5</div><div><h3>Admin layer <span class="pill">leadership only</span></h3>
+    <p>Staffing &amp; Bandwidth (allocations vs. contract vs. Clockify actuals), Profitability, Ingestion Studio (bulk imports with diff-and-select), and Rate Reconciliation. Gated to the admin allowlist — you may not see these in the menu, and that's expected.</p></div></div></div>
+
+  <h2>What's expected of you</h2>
+  <div class="card"><ul>
+    <li><b>Keep your projects current in the calculator</b> — status, dates, roster, and fee should match what's actually signed or proposed.</li>
+    <li><b>Keep monthly projections honest in Revenue Projections</b> — override the months that have shifted; leave the rest computed.</li>
+    <li><b>Don't edit the same project at the same time as someone else.</b> The tool merges most concurrent edits safely, but simultaneous edits to the <i>same project</i> follow "last save wins." Coordinate ownership.</li>
+    <li><b>Check <a href="Data Entry Status.html">Data Entry Status</a></b> to see what's still missing on your projects — it's the same list leadership sees.</li>
+    <li>Everything is gated through your Box sign-in; the pill in the bottom-right corner tells you when your changes last synced. If it turns red, your edits are local-only — sign back in before closing the tab.</li>
+  </ul></div>
+
+  <h2>Glossary — the words mean the same thing everywhere</h2>
+  <div class="card"><dl>
+    <dt>Gross fee</dt><dd>Roster hours × rates, before any deductions — what the published rates would price the work at.</dd>
+    <dt>Net fee (proposed fee)</dt><dd>Gross minus rate-lock credit and client discount. This is the number quoted to the client, and the one reports mean when they say "fee."</dd>
+    <dt>Fee share / broker split</dt><dd>A percentage of revenue owed to another party, deducted from Savills revenue. Configured per-project; bulk imports detect it from the projections workbook.</dd>
+    <dt>Monthly override</dt><dd>A hand-entered revenue figure for one month of one project that takes priority over the computed schedule. The "currently in effect" number is always: override if set, otherwise computed.</dd>
+    <dt>Booked · Pipeline · Weighted</dt><dd>Booked = won/active work. Pipeline = everything still open. Weighted = pipeline × probability by status — the forecast number.</dd>
+    <dt>① Plan · ② Contract · ③ Actual <span class="pill">staffing</span></dt><dd>① who we <i>plan</i> to staff (names, from the matrix) · ② what the contract <i>priced</i> (titles, from the fee tool) · ③ what actually got <i>logged</i> (Clockify). Healthy = ③ tracks ① and both stay inside ②.</dd>
+    <dt>Pursuit / opportunity</dt><dd>Unsigned work being chased. Staffing views stripe it and let you include/exclude it, so tentative load never masquerades as firm.</dd>
+    <dt>Rate lock</dt><dd>Client keeps start-year rates for the whole engagement; the forgone escalation shows once, as a credit line — not by silently lowering the rates.</dd>
+  </dl></div>
+
+  <h2>If you're stuck</h2>
+  <div class="card"><p style="font-size:13.5px;line-height:1.65;color:#4a4f5e;margin:0">The hamburger menu (top-right) reaches every tool — start typing in its search box to jump. Something looks wrong or missing? Contact <b>Sarah Abdin</b> before working around it in a spreadsheet — if the tool has a gap we'd rather fix it than fork the data.</p></div>
+</div>
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+</body>
+</html>
