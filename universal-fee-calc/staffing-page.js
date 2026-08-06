@@ -446,6 +446,11 @@
         <div class="kpi-card"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">③ Actual (Clockify) · hrs</div></div>
         <div class="kpi-card ${Math.abs(totAct - totExp) > totExp * 0.1 ? 'warn' : ''}"><div class="k-num">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)}</div><div class="k-lbl">Actual − matrix plan</div></div>
       </div>`;
+      // Bridge nudge — contract-named people the matrix hasn't staffed yet.
+      if (!byPerson && !projFilter) {
+        const bg = S.contractStaffingGaps();
+        if (bg.length) html += `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#e7f0ee;border-left:3px solid var(--sav-teal)">🤝 <b>${bg.length}</b> contract role${bg.length === 1 ? ' isn’t' : 's aren’t'} fully staffed in the matrix — <a href="#" data-goto-insights style="font-weight:700">review &amp; confirm in Insights →</a></div>`;
+      }
       html += `<div class="toolbar">
         <div class="seg-toggle" role="group" aria-label="Group by">
           <button type="button" class="seg-btn ${!byPerson ? 'active' : ''}" data-group="project">By Project</button>
@@ -525,6 +530,7 @@
     $$('#p-actuals [data-group]').forEach(b => b.onclick = () => { state.varGroup = b.dataset.group; renderActuals(); });
     const vu = $('#var-unit'); if (vu) vu.onchange = (e) => { state.varUnit = e.target.value; renderActuals(); };
     const vsm = $('#var-showmacro'); if (vsm) vsm.onchange = (e) => { state.showMacro = e.target.checked; renderActuals(); };
+    $$('#p-actuals [data-goto-insights]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = document.querySelector('#tabs .tab[data-tab="insights"]'); if (t) t.click(); });
   }
 
   /* Grouped-bar trend chart: ① plan / ② contract / ③ actual per month. The
@@ -981,8 +987,11 @@
     });
     gaps.sort((a, b) => b.gap - a.gap);
 
-    // ---- unassigned contract roles: contract titles with no allocated person whose title matches ----
-    const unassigned = S.unassignedRoles(ms);
+    // ---- Contract → Allocation bridge: NAMED people in contracts who aren't
+    // (fully) allocated. Preview-and-confirm only — nothing writes until the
+    // leader approves the exact segments shown. ----
+    const bridgeGaps = S.contractStaffingGaps();
+    state._bridgeGaps = bridgeGaps;
 
     // ---- bandwidth coming available in the next 3 months ----
     const freeing = S.comingAvailable({ includePursuit: state.incPursuit }).slice(0, 5);
@@ -1020,9 +1029,38 @@
     const noAct = hasAct ? '' : `<div class="note-txt" style="margin-bottom:14px;color:#8a6d00">No Clockify actuals loaded — burn-based insights are empty. Pull actuals on the Compare tab first.</div>`;
     const projTable = (list, dir) => list.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">③ Actual</th><th class="num">① Plan</th><th class="num">② Contract</th><th class="num">${dir}</th></tr></thead><tbody>${list.map(p => `<tr><td class="pname">${esc(p.project)}<div class="vmini">${esc(p.client || '')}</div></td><td class="num"><b>${fH(p.act)}</b></td><td class="num">${fH(p.plan)}</td><td class="num">${p.contract != null ? fH(p.contract) : '—'}</td><td class="num ${dir === 'Over' ? 'var-over' : 'var-under'}">${p.varPlan >= 0 ? '+' : ''}${fH(p.varPlan)}${p.pctPlan != null ? `<div class="vmini">${Math.round(p.pctPlan * 100)}% of plan</div>` : '<div class="vmini">no plan</div>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nothing here — clean.</div>';
 
-    const gapsShown = gaps.slice(0, 5), trendsShown = trends.slice(0, 5), unassignedShown = unassigned.slice(0, 5);
+    const gapsShown = gaps.slice(0, 5), trendsShown = trends.slice(0, 5);
     const more = (n, total) => total > n ? `<div class="vmini" style="padding:6px 2px 0">+${total - n} more</div>` : '';
-    $('#p-insights').innerHTML = `${noAct}<div class="ins-grid">
+
+    const segRow = (sg) => `<tr><td>${esc(S.ymLabel(sg.start))}${sg.start !== sg.end ? ' → ' + esc(S.ymLabel(sg.end)) : ''}</td><td class="num">${sg.want}%</td><td class="num">${sg.have ? sg.have + '%' : '—'}</td><td class="num" style="font-weight:800;color:var(--sav-teal)">+${sg.need}%</td></tr>`;
+    const rosterOptions = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
+    const bridgeCard = bridgeGaps.length ? `<div class="ins-card" style="grid-column:1/-1;border-left:4px solid var(--sav-teal);margin-bottom:4px">
+      <h3>🤝 Contract staffing not yet in the matrix <span>· every under-covered contract role — named people AND open slots. Review the exact segments (open roles ask for a name), then confirm. Nothing is created without your OK.</span></h3>
+      <datalist id="bridge-people">${rosterOptions}</datalist>
+      ${bridgeGaps.map((g, i) => `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
+        <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
+          <b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(g.project)}</span>
+          ${g.open
+            ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">unstaffed — needs a name</span>'
+            : (g.isNew
+              ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">will create NEW person</span>'
+              : `<span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700">links to existing: ${esc(g.person.name)}</span>`)}
+          ${g.topUp ? `<span class="mv-chip" style="background:#e7eef0">${g.open ? 'partially covered by matching titles' : 'top-up — partial allocation exists'}</span>` : ''}
+          <span class="note-txt">· ${esc(g.roles.join(', '))} · ${g.totalNeedFteMo} FTE-mo missing</span>
+        </summary>
+        <div style="padding:4px 4px 12px">
+          ${g.via !== 'mapped' ? '<div class="note-txt" style="color:#8a6d00;margin-bottom:6px">≈ this project’s fee link is auto-matched, not confirmed — verify it in Mapping before creating allocations from it.</div>' : ''}
+          <table class="dt" style="max-width:520px"><thead><tr><th>Window</th><th class="num">Contract</th><th class="num">${g.open ? 'Covered (matching titles)' : 'Already staffed'}</th><th class="num">Will create</th></tr></thead><tbody>${g.segments.map(segRow).join('')}</tbody></table>
+          ${g.open ? `<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input list="bridge-people" data-bridge-name="${i}" placeholder="Who takes this role? Type a name…" style="padding:8px 10px;border:1px solid rgba(37,39,58,0.3);font-size:13px;min-width:240px">
+            <span class="note-txt" data-bridge-hint="${i}"></span>
+          </div>` : ''}
+          <button class="btn btn-primary" style="margin-top:10px;padding:8px 16px;font-size:12px" data-bridge-apply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}${g.isNew ? ' + new person' : ''}</button>
+        </div>
+      </details>`).join('')}
+    </div>` : '';
+
+    $('#p-insights').innerHTML = `${noAct}${bridgeCard ? `<div class="ins-grid" style="grid-template-columns:1fr">${bridgeCard}</div>` : ''}<div class="ins-grid">
       <div class="ins-card"><h3>🔥 Burning over plan <span>· ${esc(S.ymLabel(msPast[0] || ms[0]))}–${esc(S.ymLabel(msPast[msPast.length - 1] || ms[ms.length - 1]))}</span></h3>${projTable(hot, 'Over')}</div>
       <div class="ins-card"><h3>🧊 Under-served <span>· scope risk or stale plan</span></h3>${projTable(cold, 'Under')}</div>
       <div class="ins-card"><h3>⚠️ Most overextended <span>· load + burn vs capacity</span></h3>${overext.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Peak</th><th class="num">Months &gt;100%</th><th class="num">Burn</th></tr></thead><tbody>${overext.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num ${p.peak > 100 ? 'var-over' : ''}">${Math.round(p.peak)}%</td><td class="num">${p.overMonths}</td><td class="num ${p.burnPct > 1.05 ? 'var-over' : ''}">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nobody over the line.</div>'}</div>
@@ -1031,10 +1069,52 @@
       <div class="ins-card"><h3>🟢 Headroom <span>· first call before hiring</span></h3>${headroom.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Avg load</th><th class="num">Burn</th></tr></thead><tbody>${headroom.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.avg)}%</td><td class="num">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No one with meaningful headroom.</div>'}</div>
       <div class="ins-card"><h3>🎯 Pursuit exposure <span>· forward load on unsigned work</span></h3>${pursuitPpl.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Firm</th><th class="num">+ Pursuit</th><th class="num">If landed</th></tr></thead><tbody>${pursuitPpl.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.firm)}%</td><td class="num" style="color:#8a6d00;font-weight:700">+${Math.round(p.pur)}</td><td class="num ${p.all > 100 ? 'var-over' : ''}">${Math.round(p.all)}%</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No pursuit allocations in the forward window.</div>'}</div>
       <div class="ins-card"><h3>📈 Burn trend <span>· last 3 months, ±30%+ swings</span></h3>${trendsShown.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Trend</th></tr></thead><tbody>${trendsShown.map(t => `<tr><td class="pname">${esc(t.project)}</td><td class="num ${t.delta > 0 ? 'var-over' : 'var-under'}">${t.delta > 0 ? '▲' : '▼'} ${t.pct > 0 ? '+' : ''}${Math.round(t.pct * 100)}%</td></tr>`).join('')}</tbody></table>${more(5, trends.length)}` : `<div class="empty" style="border:0">${hasAct ? (msPast.length >= 3 ? 'No big swings.' : 'Widen the window to ≥3 past months.') : 'Needs Clockify actuals.'}</div>`}</div>
-      <div class="ins-card"><h3>🧩 Unassigned contract roles <span>· assign or confirm coverage</span></h3>${unassignedShown.length ? `<table class="dt"><thead><tr><th>Project</th><th>Role</th><th class="num">Hours</th></tr></thead><tbody>${unassignedShown.map(u => `<tr><td class="pname">${esc(u.project)}</td><td>${esc(u.role)}</td><td class="num"><b>${fH(u.hours)}</b></td></tr>`).join('')}</tbody></table>${more(5, unassigned.length)}` : '<div class="empty" style="border:0">Every contract role is covered.</div>'}</div>
       <div class="ins-card"><h3>📉 Coming available <span>· next 3 months</span></h3>${freeing.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th>When</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}</td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td>${esc(S.ymLabel(f.m))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No meaningful load drops.</div>'}</div>
       <div class="ins-card"><h3>🏢 Substantial internal time <span>· &gt;40h, BOH excluded</span></h3>${boh.length ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="display:flex;flex-wrap:wrap;gap:6px">${boh.map(r => `<span class="mv-chip" style="background:#e7eef0">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th class="num">%</th></tr></thead><tbody>${macro.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="num">${Math.round(r.pct * 100)}%</td></tr>`).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40h.' : 'Needs Clockify actuals.'}</div>`}</div>
     </div>`;
+
+    // Open-role name inputs: live hint — existing person vs. brand-new.
+    $$('#p-insights [data-bridge-name]').forEach(inp => inp.oninput = () => {
+      const hint = $(`#p-insights [data-bridge-hint="${inp.dataset.bridgeName}"]`);
+      if (!hint) return;
+      const v = inp.value.trim();
+      if (!v) { hint.textContent = ''; return; }
+      const hit = S.listPeople().find(p => S.namesMatch(p.name, v));
+      hint.innerHTML = hit
+        ? `→ links to existing <b style="color:#0E7C7B">${esc(hit.name)}</b>`
+        : `→ will create <b style="color:#8a6d00">NEW person</b>`;
+    });
+
+    // Bridge confirm — the ONLY write path, and it only fires on the button
+    // for the exact preview the leader just looked at. Open roles must have
+    // a name typed before anything is created.
+    $$('#p-insights [data-bridge-apply]').forEach(b => b.onclick = () => {
+      const i = +b.dataset.bridgeApply;
+      const g = (state._bridgeGaps || [])[i];
+      if (!g) return;
+      let personId = g.personId, personName = g.resource;
+      if (g.open) {
+        const inp = $(`#p-insights [data-bridge-name="${i}"]`);
+        personName = inp ? inp.value.trim() : '';
+        if (!personName) { toast('Type a name for this open role first — nothing was created.'); if (inp) inp.focus(); return; }
+        personId = S.personIdForName(personName);
+      }
+      g.segments.forEach(sg => {
+        S.saveAllocation({
+          personId, personName,
+          project: g.project, client: g.client,
+          status: 'Active', type: 'Awarded',
+          start: sg.start, end: sg.end, pct: sg.need,
+          // contractRole ties the row back to the open slot it fills, so the
+          // gap engine sees it as covered even if the person's title differs
+          contractRole: g.open ? g.roleTitle : undefined,
+          note: (g.open ? `Open contract role staffed`
+            : (g.topUp ? `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%)` : `From contract staffing`)) + ` · ${g.roles.join(', ')}`,
+        });
+      });
+      toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${personName}`);
+      renderCounts(); renderInsights();
+    });
   }
 
   /* ---------- TIME ENTRY COMPLIANCE — who logs, who's behind ----------

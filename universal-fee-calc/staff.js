@@ -916,6 +916,108 @@
     return out.sort((a, b) => b.hours - a.hours);
   }
 
+  /** Contract → Allocation bridge: EVERY fee-tool role whose demand the
+      staffing matrix hasn't (fully) covered on that project — named or not.
+      A named resource diffs against that person's own allocations; an
+      unnamed/placeholder role (blank, TBD, [NEW HIRE]) is still open demand,
+      diffed against project allocations from people whose TITLE matches the
+      role, and the page prompts for a name before anything is created.
+      NOTHING is written here — the page shows a preview and the leader
+      confirms before any allocation is created.
+      Returns [{ project, client, open, roleTitle, resource|null, roles[],
+                 person|null, isNew, personId|null, topUp, via,
+                 segments:[{start,end,need,want,have}], totalNeedFteMo }] */
+  function contractStaffingGaps() {
+    const S2 = window.UFC_Store;
+    if (!S2 || !S2.computeMonthsByPhase) return [];
+    const db = readDb();
+    const nowYm = currentYM();
+    const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    const out = [];
+    distinctProjects().forEach(pn => {
+      const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
+      const links = matchFeeProjects(pn, client);
+      if (!links.length) return;
+      // Contract demand per NAMED person, summed across roles and linked fee
+      // projects (one person can hold two roles, or appear in two links).
+      const byName = {};
+      links.forEach(link => {
+        const p = feeRecords().find(x => x.id === link.id);
+        if (!p || !p.roles || !p.roles.length || !p.timeline) return;
+        if (p.project && p.project.status === 'lost') return;   // dead proposals aren't staffing demand
+        let byPhase; try { byPhase = S2.computeMonthsByPhase(p); } catch (e) { return; }
+        const phaseOf = {};
+        (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
+        const pMonths = S2.enumerateMonths(p.timeline);
+        p.roles.forEach(r => {
+          // Blank, TBD and [NEW HIRE] resources aren't people — but the role
+          // is still open demand: track it per role TITLE, to be named later.
+          const nm = cleanName(r.resource || '');
+          const isOpen = !nm || /^tbd\b/i.test(nm) || isNewHireName(r.resource);
+          const t = cat && cat.titles && cat.titles.find(x => x.id === r.titleId);
+          const roleLabel = (r.projectRole || '').trim() || (t && (t.name || t.label)) || 'Role';
+          const key = isOpen ? ' open:' + roleLabel.toLowerCase() : nm.toLowerCase();
+          const e = byName[key] || (byName[key] = { name: isOpen ? null : nm, open: isOpen, roleLabel, want: {}, roles: new Set(), via: link.via });
+          e.roles.add(roleLabel);
+          pMonths.forEach(m => {
+            const ym = m.year + '-' + String(m.month).padStart(2, '0');
+            const mk = m.year + '-' + m.month;                 // fee-tool keys are non-padded
+            const fte = (r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : ((r.fte && r.fte[phaseOf[mk]]) || 0);
+            if (fte) e.want[ym] = (e.want[ym] || 0) + fte;
+          });
+        });
+      });
+      Object.values(byName).forEach(e => {
+        let person = null, existing = [];
+        if (e.open) {
+          // Open role: coverage = this project's allocations from people whose
+          // TITLE matches the role (same heuristic as unassignedRoles), so a
+          // PM already staffed against an open PM slot isn't double-demanded.
+          const rf = titleFamily(e.roleLabel);
+          const covers = (pt) => { if (!pt) return false; const f = titleFamily(pt); return (f && rf && f.titleId === rf.titleId) || tokenScore(pt, e.roleLabel) >= 0.5; };
+          const roleKey = String(e.roleLabel).toLowerCase();
+          existing = db.allocations.filter(a => a.project === pn && (
+            // an allocation created FOR this open role always counts, whatever
+            // the assignee's title says — otherwise confirming never clears it
+            String(a.contractRole || '').toLowerCase() === roleKey ||
+            covers(((db.people[a.personId] || {}).title || '').trim())
+          ));
+        } else {
+          person = Object.values(db.people).find(pp => namesMatch(pp.name, e.name)) || null;
+          existing = person ? db.allocations.filter(a => a.personId === person.id && a.project === pn) : [];
+        }
+        const covAt = (ym) => existing.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
+        // Month-by-month shortfall (contract minus what's already allocated),
+        // compressed into consecutive equal-% segments — Option A: one
+        // proposed allocation per distinct FTE window, faithful to the phases.
+        const segs = []; let cur = null;
+        Object.keys(e.want).sort().forEach(ym => {
+          const want = Math.round(e.want[ym]);
+          const have = Math.round(covAt(ym));
+          const need = Math.max(0, want - have);
+          if (!need) { cur = null; return; }
+          if (cur && cur.need === need && ymAdd(cur.end, 1) === ym) { cur.end = ym; }
+          else { cur = { start: ym, end: ym, need, want, have }; segs.push(cur); }
+        });
+        // Segments that ended before this month are history, not a staffing action.
+        const future = segs.filter(sg => sg.end >= nowYm);
+        if (!future.length) return;
+        out.push({
+          project: pn, client,
+          open: !!e.open, roleTitle: e.roleLabel || [...e.roles][0] || 'Role',
+          resource: e.name, roles: [...e.roles],
+          person, isNew: e.open ? false : !person,
+          personId: e.open ? null : (person ? person.id : personIdForName(e.name)),
+          topUp: existing.length > 0,
+          via: e.via,
+          segments: future,
+          totalNeedFteMo: Math.round(future.reduce((s, sg) => s + sg.need * monthsBetween(sg.start, sg.end).length, 0)) / 100,
+        });
+      });
+    });
+    return out.sort((a, b) => b.totalNeedFteMo - a.totalNeedFteMo);
+  }
+
   /** Bandwidth freeing up over the next 3 months, per person — the biggest
       drop below the 100% line and when it lands. Always looks forward from
       "now", independent of whatever window the page happens to be showing. */
@@ -1288,7 +1390,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, comingAvailable, substantialMacroTime,
+    unassignedRoles, contractStaffingGaps, comingAvailable, substantialMacroTime,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, tokenScore,
