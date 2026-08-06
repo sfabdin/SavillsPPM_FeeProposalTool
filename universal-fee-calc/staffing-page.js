@@ -446,6 +446,11 @@
         <div class="kpi-card"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">③ Actual (Clockify) · hrs</div></div>
         <div class="kpi-card ${Math.abs(totAct - totExp) > totExp * 0.1 ? 'warn' : ''}"><div class="k-num">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)}</div><div class="k-lbl">Actual − matrix plan</div></div>
       </div>`;
+      // Bridge nudge — contract-named people the matrix hasn't staffed yet.
+      if (!byPerson && !projFilter) {
+        const bg = S.contractStaffingGaps();
+        if (bg.length) html += `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#e7f0ee;border-left:3px solid var(--sav-teal)">🤝 <b>${bg.length}</b> contract-named ${bg.length === 1 ? 'person isn’t' : 'people aren’t'} fully staffed on their project — <a href="#" data-goto-insights style="font-weight:700">review &amp; confirm in Insights →</a></div>`;
+      }
       html += `<div class="toolbar">
         <div class="seg-toggle" role="group" aria-label="Group by">
           <button type="button" class="seg-btn ${!byPerson ? 'active' : ''}" data-group="project">By Project</button>
@@ -525,6 +530,7 @@
     $$('#p-actuals [data-group]').forEach(b => b.onclick = () => { state.varGroup = b.dataset.group; renderActuals(); });
     const vu = $('#var-unit'); if (vu) vu.onchange = (e) => { state.varUnit = e.target.value; renderActuals(); };
     const vsm = $('#var-showmacro'); if (vsm) vsm.onchange = (e) => { state.showMacro = e.target.checked; renderActuals(); };
+    $$('#p-actuals [data-goto-insights]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = document.querySelector('#tabs .tab[data-tab="insights"]'); if (t) t.click(); });
   }
 
   /* Grouped-bar trend chart: ① plan / ② contract / ③ actual per month. The
@@ -984,6 +990,12 @@
     // ---- unassigned contract roles: contract titles with no allocated person whose title matches ----
     const unassigned = S.unassignedRoles(ms);
 
+    // ---- Contract → Allocation bridge: NAMED people in contracts who aren't
+    // (fully) allocated. Preview-and-confirm only — nothing writes until the
+    // leader approves the exact segments shown. ----
+    const bridgeGaps = S.contractStaffingGaps();
+    state._bridgeGaps = bridgeGaps;
+
     // ---- bandwidth coming available in the next 3 months ----
     const freeing = S.comingAvailable({ includePursuit: state.incPursuit }).slice(0, 5);
 
@@ -1022,7 +1034,28 @@
 
     const gapsShown = gaps.slice(0, 5), trendsShown = trends.slice(0, 5), unassignedShown = unassigned.slice(0, 5);
     const more = (n, total) => total > n ? `<div class="vmini" style="padding:6px 2px 0">+${total - n} more</div>` : '';
-    $('#p-insights').innerHTML = `${noAct}<div class="ins-grid">
+
+    const segRow = (sg) => `<tr><td>${esc(S.ymLabel(sg.start))}${sg.start !== sg.end ? ' → ' + esc(S.ymLabel(sg.end)) : ''}</td><td class="num">${sg.want}%</td><td class="num">${sg.have ? sg.have + '%' : '—'}</td><td class="num" style="font-weight:800;color:var(--sav-teal)">+${sg.need}%</td></tr>`;
+    const bridgeCard = bridgeGaps.length ? `<div class="ins-card" style="grid-column:1/-1;border-left:4px solid var(--sav-teal);margin-bottom:4px">
+      <h3>🤝 Contract-named people not yet staffed <span>· named in a fee-tool contract, missing (or under-allocated) in the matrix — review the exact segments, then confirm. Nothing is created without your OK.</span></h3>
+      ${bridgeGaps.map((g, i) => `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
+        <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
+          <b>${esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(g.project)}</span>
+          ${g.isNew
+            ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">will create NEW person</span>'
+            : `<span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700">links to existing: ${esc(g.person.name)}</span>`}
+          ${g.topUp ? '<span class="mv-chip" style="background:#e7eef0">top-up — partial allocation exists</span>' : ''}
+          <span class="note-txt">· ${esc(g.roles.join(', '))} · ${g.totalNeedFteMo} FTE-mo missing</span>
+        </summary>
+        <div style="padding:4px 4px 12px">
+          ${g.via !== 'mapped' ? '<div class="note-txt" style="color:#8a6d00;margin-bottom:6px">≈ this project’s fee link is auto-matched, not confirmed — verify it in Mapping before creating allocations from it.</div>' : ''}
+          <table class="dt" style="max-width:520px"><thead><tr><th>Window</th><th class="num">Contract</th><th class="num">Already staffed</th><th class="num">Will create</th></tr></thead><tbody>${g.segments.map(segRow).join('')}</tbody></table>
+          <button class="btn btn-primary" style="margin-top:10px;padding:8px 16px;font-size:12px" data-bridge-apply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}${g.isNew ? ' + new person' : ''}</button>
+        </div>
+      </details>`).join('')}
+    </div>` : '';
+
+    $('#p-insights').innerHTML = `${noAct}${bridgeCard ? `<div class="ins-grid" style="grid-template-columns:1fr">${bridgeCard}</div>` : ''}<div class="ins-grid">
       <div class="ins-card"><h3>🔥 Burning over plan <span>· ${esc(S.ymLabel(msPast[0] || ms[0]))}–${esc(S.ymLabel(msPast[msPast.length - 1] || ms[ms.length - 1]))}</span></h3>${projTable(hot, 'Over')}</div>
       <div class="ins-card"><h3>🧊 Under-served <span>· scope risk or stale plan</span></h3>${projTable(cold, 'Under')}</div>
       <div class="ins-card"><h3>⚠️ Most overextended <span>· load + burn vs capacity</span></h3>${overext.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Peak</th><th class="num">Months &gt;100%</th><th class="num">Burn</th></tr></thead><tbody>${overext.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num ${p.peak > 100 ? 'var-over' : ''}">${Math.round(p.peak)}%</td><td class="num">${p.overMonths}</td><td class="num ${p.burnPct > 1.05 ? 'var-over' : ''}">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nobody over the line.</div>'}</div>
@@ -1035,6 +1068,24 @@
       <div class="ins-card"><h3>📉 Coming available <span>· next 3 months</span></h3>${freeing.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th>When</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}</td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td>${esc(S.ymLabel(f.m))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No meaningful load drops.</div>'}</div>
       <div class="ins-card"><h3>🏢 Substantial internal time <span>· &gt;40h, BOH excluded</span></h3>${boh.length ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="display:flex;flex-wrap:wrap;gap:6px">${boh.map(r => `<span class="mv-chip" style="background:#e7eef0">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th class="num">%</th></tr></thead><tbody>${macro.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="num">${Math.round(r.pct * 100)}%</td></tr>`).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40h.' : 'Needs Clockify actuals.'}</div>`}</div>
     </div>`;
+
+    // Bridge confirm — the ONLY write path, and it only fires on the button
+    // for the exact preview the leader just looked at.
+    $$('#p-insights [data-bridge-apply]').forEach(b => b.onclick = () => {
+      const g = (state._bridgeGaps || [])[+b.dataset.bridgeApply];
+      if (!g) return;
+      g.segments.forEach(sg => {
+        S.saveAllocation({
+          personId: g.personId, personName: g.resource,
+          project: g.project, client: g.client,
+          status: 'Active', type: 'Awarded',
+          start: sg.start, end: sg.end, pct: sg.need,
+          note: (g.topUp ? `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%)` : `From contract staffing`) + ` · ${g.roles.join(', ')}`,
+        });
+      });
+      toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${g.resource}${g.isNew ? ' (new person added to roster)' : ''}`);
+      renderCounts(); renderInsights();
+    });
   }
 
   /* ---------- TIME ENTRY COMPLIANCE — who logs, who's behind ----------
