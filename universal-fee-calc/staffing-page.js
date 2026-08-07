@@ -1134,10 +1134,10 @@
       const cell = hits.length
         ? hits.map(u => { const saved = userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()] === p.id; return `<span class="badge active" title="${esc(u.email)}${saved ? ' · pinned mapping' : ' · name match'}">${esc(u.name)} <a href="#" data-unmap-user="${esc(u.name)}" data-unmap-pid="${esc(p.id)}" data-unmap-saved="${saved ? 1 : 0}" style="color:inherit;text-decoration:none;font-weight:800" title="Not this person — remove">✕</a></span>`; }).join(' ')
         : (ckUsers.length ? '<span class="no-link" style="margin:0">no Clockify user matches — their hours are being DROPPED at import</span>' : '<span class="vmini">user list unavailable</span>');
-      pplRows += `<tr><td class="pname">${esc(p.name)}<div class="vmini">${esc(p.title || '')}</div></td><td>${cell}<br><input list="map-ckuser-dl" data-map-ckuser="${esc(p.id)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${hits.length ? 'type to add another…' : 'type Clockify user…'}"></td></tr>`;
+      pplRows += `<tr><td class="pname">${esc(p.name)}${p.nonBillable ? ' <span class="nh-tag" style="background:#e7eef0;color:#4a5560" title="Marked non-billable — internal time is expected, excluded from burn flags">OVERHEAD</span>' : ''}<div class="vmini">${esc(p.title || '')}</div></td><td>${cell}<br><input list="map-ckuser-dl" data-map-ckuser="${esc(p.id)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${hits.length ? 'type to add another…' : 'type Clockify user…'}"></td><td style="text-align:center"><label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:12px" title="Unchecked = pure overhead (admin, finance, BD…): their internal time is expected, so the Substantial-internal-time insight skips them and availability lists stop offering them as project capacity"><input type="checkbox" data-nb-toggle="${esc(p.id)}" ${p.nonBillable ? '' : 'checked'}>${p.nonBillable ? '<span style="color:#4a5560">overhead</span>' : 'billable'}</label></td></tr>`;
     });
-    const pplSection = `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">People — roster ↔ Clockify <span class="note-txt" style="font-weight:400">(${pplProblems} unmatched · unmatched people's hours are skipped at import — map, then re-pull actuals to backfill)</span></h3>
-      <table class="dt"><thead><tr><th style="width:28%">Roster person (JS sheet)</th><th>③ Clockify user(s)</th></tr></thead><tbody>${pplRows || '<tr><td colspan="2"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
+    const pplSection = `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">People — roster ↔ Clockify <span class="note-txt" style="font-weight:400">(${pplProblems} unmatched · unmatched people's hours are skipped at import — map, then re-pull actuals to backfill · uncheck "billable" for pure-overhead staff so burn insights stop flagging their internal time)</span></h3>
+      <table class="dt"><thead><tr><th style="width:28%">Roster person (JS sheet)</th><th>③ Clockify user(s)</th><th style="width:110px;text-align:center">Billable?</th></tr></thead><tbody>${pplRows || '<tr><td colspan="3"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
       <datalist id="map-ckuser-dl">${ckUsers.map(u => `<option value="${esc(u.name)}"${u.email ? ` label="${esc(u.email)}"` : ''}></option>`).join('')}</datalist>`;
     // ---- job titles ↔ rate grid: every distinct roster title, its resolved
     // rate family + cost rate, and a picker to pin the ones that don't match ----
@@ -1202,6 +1202,12 @@
       if (a.dataset.unmapSaved === '1') S.setUserMapping(ck, null);   // drop the pinned mapping
       S.setUserExclusion(ck, pid, true);                              // and block the fuzzy match
       toast('Removed — ' + ck + ' no longer maps to this person. Re-pull actuals to recompute.');
+      renderMapping();
+    });
+    $$('#p-mapping [data-nb-toggle]').forEach(cb => cb.onchange = () => {
+      const nb = !cb.checked;
+      S.setPersonNonBillable(cb.dataset.nbToggle, nb);
+      toast(nb ? 'Marked overhead — their internal time is expected now; burn flags and availability lists skip them.' : 'Marked billable — back in the burn insights and availability lists.');
       renderMapping();
     });
     $$('#p-mapping [data-map-ckuser]').forEach(inp => inp.onchange = () => {
@@ -1269,7 +1275,7 @@
       return { person, peak: r.peak, avg: r.avg, actH, planH, capH, burnPct: capH ? actH / capH : 0, overMonths: ms.filter(m => (r.byMonth[m] || 0) > 100).length };
     });
     const overext = ppl.filter(p => p.peak > 100 || p.burnPct > 1.05).sort((a, b) => (b.burnPct + b.peak / 100) - (a.burnPct + a.peak / 100)).slice(0, 5);
-    const headroom = ppl.filter(p => p.peak > 0 && p.peak <= 85 && p.burnPct < 0.85).sort((a, b) => a.avg - b.avg).slice(0, 5);
+    const headroom = ppl.filter(p => p.peak > 0 && p.peak <= 85 && p.burnPct < 0.85 && !(p.person && p.person.nonBillable)).sort((a, b) => a.avg - b.avg).slice(0, 5);
 
     // ---- role heat: where over-plan hours concentrate, by title ----
     const roleHeat = {};
@@ -1323,6 +1329,7 @@
     // ---- substantial macro / non-client time (> 40 h in the window) ----
     const macroTime = S.substantialMacroTime(msPast);
     const boh = macroTime.boh;
+    const overheadPpl = macroTime.overhead || [];
     const macro = macroTime.flagged.slice(0, 5);
 
     const fH = (n) => fmtH(Math.round(n * 10) / 10);
@@ -1344,9 +1351,9 @@
       <div class="ins-card"><h3>📈 Burn trend <span>· last 3 months, ±30%+ swings</span></h3>${trendsShown.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Trend</th></tr></thead><tbody>${trendsShown.map(t => `<tr><td class="pname">${esc(t.project)}</td><td class="num ${t.delta > 0 ? 'var-over' : 'var-under'}">${t.delta > 0 ? '▲' : '▼'} ${t.pct > 0 ? '+' : ''}${Math.round(t.pct * 100)}%</td></tr>`).join('')}</tbody></table>${more(5, trends.length)}` : `<div class="empty" style="border:0">${hasAct ? (msPast.length >= 3 ? 'No big swings.' : 'Widen the window to ≥3 past months.') : 'Needs Clockify actuals.'}</div>`}</div>
       <div class="ins-card"><h3>📉 Coming available <span>· next 3 months</span></h3>${freeing.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th>When</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}</td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td>${esc(S.ymLabel(f.m))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No meaningful load drops.</div>'}</div>
       ${(() => { const lv = S.leaveStatus().filter(l => l.status !== 'past'); if (!lv.length) return ''; return `<div class="ins-card"><h3>🌴 Leaves of absence <span>· returns need a plan 1–2 months out</span></h3><table class="dt"><thead><tr><th>Person</th><th>Out</th><th>Back</th><th></th></tr></thead><tbody>${lv.map(l => `<tr><td class="pname">${esc(l.person.name)}</td><td>${esc(S.ymLabel(l.start))} – ${esc(S.ymLabel(l.end))}</td><td>${l.status === 'out' ? esc(S.ymLabel(S.ymAdd(l.end, 1))) : `<span class="vmini">starts ${esc(S.ymLabel(l.start))}</span>`}</td><td>${l.returningSoon ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">🔔 plan their staffing</span>' : (l.startingSoon ? '<span class="mv-chip" style="background:#efe6f7;color:#6b3fa0">reassign their book</span>' : '')}</td></tr>`).join('')}</tbody></table></div>`; })()}
-      <div class="ins-card"><h3>🏢 Substantial internal time <span>· &gt;40h, BOH excluded</span></h3>${boh.length ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="display:flex;flex-wrap:wrap;gap:6px">${boh.map(r => `<span class="mv-chip" style="background:#e7eef0">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th class="num">%</th></tr></thead><tbody>${macro.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="num">${Math.round(r.pct * 100)}%</td></tr>`).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40h.' : 'Needs Clockify actuals.'}</div>`}</div>
+      <div class="ins-card"><h3>🏢 Substantial internal time <span>· &gt;40h · overhead &amp; BOH excluded</span></h3>${(overheadPpl.length || boh.length) ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="display:flex;flex-wrap:wrap;gap:6px">${overheadPpl.map(r => `<span class="mv-chip" style="background:#e7eef0;color:#4a5560" title="Marked non-billable in Mapping — internal time is their job, this is expected">${esc(r.person.name)} · overhead</span>`).join('')}${boh.map(r => `<span class="mv-chip" style="background:#e7eef0" title="≥90% internal — looks like dedicated back-of-house. If that's their actual job, mark them non-billable in Mapping and they'll stop appearing here">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th class="num">%</th></tr></thead><tbody>${macro.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="num">${Math.round(r.pct * 100)}%</td></tr>`).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40h.' : 'Needs Clockify actuals.'}</div>`}<div class="note-txt" style="padding:6px 16px 10px;font-size:11px">Pure-overhead staff (admin, finance, BD…) shouldn't be here at all — <a href="#" data-goto-tab="mapping">mark them non-billable in Mapping</a> and this card skips them.</div></div>
     </div>`;
-
+    $$('#p-insights [data-goto-tab]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = document.querySelector(`#tabs .tab[data-tab="${a.dataset.gotoTab}"]`); if (t) t.click(); });
   }
 
   /* ---------- TIME ENTRY COMPLIANCE — who logs, who's behind ----------
