@@ -464,10 +464,10 @@
       <div class="sub">The single entry point for every fee Savills PPM develops — built once in the calculator, then flowing downstream to projections, billing, accruals, flash reports and P&amp;L. Capture the number where it's born, and stop re-keying it across fifteen spreadsheets.</div>
     </div>
     <div class="meta">
-      <strong>Version</strong> &nbsp; Draft 3<br>
+      <strong>Version</strong> &nbsp; Draft 4<br>
       <strong>Owner</strong> &nbsp; PPM Leadership<br>
-      <strong>Date</strong> &nbsp; July 2026<br>
-      <strong>Status</strong> &nbsp; Capture, reporting &amp; budget-comparison layers live · Box-backed, multi-user
+      <strong>Date</strong> &nbsp; August 2026<br>
+      <strong>Status</strong> &nbsp; Capture, reporting, budget-comparison &amp; staffing-reconciliation layers live · Box-backed, multi-user · forward plan under review with leadership
     </div>
   </header>
 
@@ -500,7 +500,7 @@
 
         <div class="arch-box done">
           <div class="a-label">Universal Fee Calculator</div>
-          <div class="a-desc">Per-project workbench. Role catalog, grid/contracted rates, month-canonical FTE matrix (% or hours), cost-rate floor, reconcile-to-target, Fixed Fee or NTE basis, change orders, broker fee share (off-invoice or on-top), version history, autosave, Excel export.</div>
+          <div class="a-desc">Per-project workbench. Role catalog, grid/contracted rates, month-canonical FTE matrix (% or hours), cost-rate floor, reconcile-to-target, Fixed Fee or NTE basis, change orders, broker fee share (off-invoice or on-top), version history, autosave, Excel export. Imported historicals get an imported-vs-calculated reconciliation panel with pre-calculated contracted rates (solve → preview → confirm).</div>
           <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box done">
@@ -514,8 +514,8 @@
           <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box done">
-          <div class="a-label">Import Revenues</div>
-          <div class="a-desc">Admin-only bulk loader. Reads the monthly-billing workbook and creates one locked-series project per contract row — fee shares, leader initials and ratings mapped on the way in.</div>
+          <div class="a-label">Import Revenues <span style="font-weight:400;font-size:11px;color:var(--sav-steel);">(inside Ingestion Studio)</span></div>
+          <div class="a-desc">Admin-only bulk loader, consolidated into Ingestion Studio. Reads the monthly-billing workbook, diffs it against existing records so re-imports never duplicate, and creates one locked-series project per selected row — fee shares, leader initials and ratings mapped on the way in.</div>
           <span class="a-status">Shipped</span>
         </div>
 
@@ -533,7 +533,7 @@
         </div>
         <div class="arch-box done">
           <div class="a-label">Staffing &amp; Bandwidth</div>
-          <div class="a-desc">Allocation by named resource × project × month, over/under-loaded flagged, planned vs. actual hours from Clockify with title pinning and fee-link mapping, entry-lateness stats.</div>
+          <div class="a-desc">Allocation by named resource × project × month, over/under-loaded flagged, planned vs. actual hours from Clockify with title pinning and fee-link mapping, entry-lateness stats. Contract ↔ staffing bridge both directions: unstaffed contract demand surfaces for confirm-gated allocation (alias-aware, open roles prompt for a name), and empty fee rosters seed from the matrix at $0 rates. Excel snapshot export for version control.</div>
           <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box done">
@@ -595,6 +595,11 @@
         <div class="arch-box done">
           <div class="a-label">Rate Grid Reconciliation</div>
           <div class="a-desc">Adopt a new grid without moving projections — solves a per-month reconciling discount per project so every frozen billing figure holds. Dry-run, exception report, reversible commit.</div>
+          <span class="a-status">Shipped</span>
+        </div>
+        <div class="arch-box done">
+          <div class="a-label">Data Repair &amp; stewardship</div>
+          <div class="a-desc">Admin scan-and-fix for known staffing-data damage — duplicates, stale renames, duplicate people, sparse months — preview-first, tombstone-backed so fixes survive merges. Alongside the Change Log audit trail and Data Entry Status completeness tracker.</div>
           <span class="a-status">Shipped</span>
         </div>
         <div class="arch-box">
@@ -841,7 +846,7 @@
             </div>
           </div>
           <div class="phase-dep">
-            <strong>Remaining:</strong> &nbsp; A forward-looking 90-day capacity view by service line, and an exportable leadership pack.
+            <strong>Since shipped on top:</strong> &nbsp; Compare / By Project / By Person views · contract ↔ staffing bridge (both directions, confirm-gated) · person aliases &amp; canonical project renames · pooled-support resources · Excel snapshot export · Data Repair. <strong>Remaining:</strong> a forward-looking 90-day capacity view by service line, and an exportable leadership pack.
           </div>
         </div>
       </div>
@@ -952,10 +957,42 @@
       </div>
 
       <!-- Phase 8 -->
+      <div class="phase done">
+        <div class="phase-card">
+          <div class="phase-head">
+            <span class="ix">08</span>
+            <h3>Staffing ↔ contract reconciliation &amp; data stewardship.</h3>
+            <span class="when">Done · Aug 2026</span>
+            <span class="status">Shipped</span>
+          </div>
+          <div class="phase-body">
+            <div>
+              <h4>Shipped</h4>
+              <ul>
+                <li><strong>Contract → allocation bridge</strong> — contract demand the matrix hasn't covered surfaces on the Allocations tab; every entry is confirm-gated, named people resolve through saved aliases, open roles prompt for a name, top-ups flag inline on the person's row</li>
+                <li><strong>Reverse bridge</strong> — empty fee rosters seed from existing matrix allocations at $0 contracted rates, month-faithful, so no revenue moves until a leader prices them</li>
+                <li><strong>Pre-calculated rates</strong> — for imported historicals, one click proposes contracted rates that back into the imported monthly totals (rack-rate seniority spread, preview + confirm, imported stays locked)</li>
+                <li><strong>Data Repair</strong> — preview-first scan-and-fix for every known damage signature, with tombstoned deletions and a "needs human review" list it refuses to auto-fix</li>
+                <li>Excel snapshot export (3 static sheets) for staffing version control · Getting Started guide + first-run banner · reorganized navigation with per-tool descriptions</li>
+              </ul>
+            </div>
+            <div>
+              <h4>Outcomes</h4>
+              <ul>
+                <li>The three staffing truths — plan, contract, actuals — now reconcile against each other instead of living in separate tabs</li>
+                <li>The tool <em>flags and proposes</em>; revenue leaders decide. Nothing writes without a confirm</li>
+                <li>Historical data entry for the 8/15 deadline is assisted, not manual</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phase 9 -->
       <div class="phase">
         <div class="phase-card">
           <div class="phase-head">
-            <span class="ix">08+</span>
+            <span class="ix">09+</span>
             <h3>Enterprise integration.</h3>
             <span class="when">Months 4+</span>
             <span class="status">Future</span>
@@ -1032,7 +1069,7 @@
     <div class="cta">
       <div>
         <h2>Where we are, and what's next.</h2>
-        <p>Phases 0–7 are live — author fees (fixed or NTE, with change orders, versions, broker splits and pass-through), ingest historicals, bulk-import the billing book, index and benchmark every project, analyse win/loss and discounting, project revenue firm-wide, compare it against the Budget / RF baselines in the Revenue Studio, track staffing load, and lay Clockify burn against the plan for margin by month — all Box-backed and multi-user, with a regression suite (<code>tests.html</code>) guarding the engine. Remaining: the formal <strong>accrual / flash output</strong>, a <strong>90-day capacity view</strong>, utilization charts, and a <strong>two-way Salesforce sync</strong> so contract numbers write back automatically.</p>
+        <p>Phases 0–8 are live — author fees (fixed or NTE, with change orders, versions, broker splits and pass-through), ingest historicals, bulk-import the billing book with diff-and-select, index and benchmark every project, analyse win/loss and discounting, project revenue firm-wide, compare it against the Budget / RF baselines in the Revenue Studio, track staffing load, reconcile contract vs. plan vs. actuals with confirm-gated bridging and pre-calculated rates, and lay Clockify burn against the plan for margin by month — all Box-backed and multi-user, with a regression suite (<code>tests.html</code>) guarding the engine. Known remaining builds: the formal <strong>accrual / flash output</strong>, a <strong>90-day capacity view</strong>, utilization charts, and a <strong>two-way Salesforce sync</strong>. The next phase of this roadmap — including the integration with the leadership visualization app — is being re-planned with leadership now; this page will be updated when it's agreed.</p>
       </div>
       <div class="actions">
         <a href="Fee Generator.html">Open the Fee &amp; Revenue System</a>

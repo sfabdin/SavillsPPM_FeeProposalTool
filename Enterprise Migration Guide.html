@@ -251,7 +251,7 @@
         <div class="psub">Data stays in Savills' existing Box tenant; app hosted on Vercel.</div>
         <div class="lbl">How it works</div>
         <ul class="pros">
-          <li>The whole database is already one JSON file (that's what <strong>Export DB</strong> produces). It lives as <code>projects.json</code> in a shared Box folder.</li>
+          <li>The whole database is already plain JSON (that's what <strong>Export DB</strong> produces). It lives in a shared Box folder as four files: <code>projects.json</code> (fee records), <code>staff.json</code> (staffing matrix, actuals &amp; mappings), <code>rates.json</code> (the confidential grid), and <code>studio.json</code> (Revenue Studio baselines).</li>
           <li><code>store.js</code> pulls it from Box on load, writes it back on save — via the Box API.</li>
           <li>Reporting (Projections, etc.) stays right here in the app.</li>
         </ul>
@@ -349,7 +349,7 @@
         <h4>Pick your backend &amp; set it up</h4>
         <div class="effort"><span class="tag you">You / IT</span> half a day</div>
         <div class="body">
-          <p><strong>Box (recommended):</strong> create a shared folder (e.g. <em>PPM / Fee &amp; Revenue System</em>) and a Box app/API token so the web app can read &amp; write a <code>projects.json</code> there. Set folder permissions for who can edit.</p>
+          <p><strong>Box (recommended — this is what runs in production today):</strong> create a shared folder (e.g. <em>PPM / Fee &amp; Revenue System</em>) and a Box app/API token so the web app can read &amp; write the data files (<code>projects.json</code>, <code>staff.json</code>, <code>rates.json</code>, <code>studio.json</code>) there. Set folder permissions for who can edit.</p>
           <ul>
             <li><strong>Airtable:</strong> create a base with the four tables from Part 1.</li>
             <li><strong>SharePoint:</strong> create the four Lists with the columns &amp; Lookups from Part 1; turn on versioning.</li>
@@ -369,7 +369,7 @@
         <div class="body">
           <p>Replace the body of <code>store.js</code> — the only file that touches storage — so <code>listProjects / getProject / saveProject / deleteProject</code> read &amp; write your backend instead of <code>localStorage</code>. Everything downstream (calculator, ingestion, projections, reconcile) keeps working because they only ever call those functions.</p>
           <ul>
-            <li><strong>Box:</strong> pull <code>projects.json</code> on load, write it back on save, with a <strong>pull-merge-write + timestamp check</strong> so simultaneous edits warn instead of clobbering.</li>
+            <li><strong>Box:</strong> pull the data files on load, write back on save, with <strong>pull-merge-write</strong> — records merge by id and newest-edit-wins, deletions carry tombstones so a stale tab can't resurrect them, and same-record conflicts surface to the user instead of clobbering. (Live in production today.)</li>
             <li><strong>Airtable / SharePoint:</strong> map a record → rows across the tables on save; reassemble on load. Row-level writes, no clobber risk.</li>
             <li>Auth via your provider's OAuth (Box / Microsoft) for governed, per-user access.</li>
           </ul>

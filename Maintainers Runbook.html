@@ -157,19 +157,21 @@
     <tr><th>Page</th><th>Purpose</th></tr>
     <tr><td class="k">Fee Generator.html</td><td>Home / hub (filename retained from the original build — the product is now the Fee &amp; Revenue System). Links to every other page. One of the two front doors.</td></tr>
     <tr><td class="k">Projects Index.html</td><td>The project database — every saved record, filtered by who you are. Rolls up change orders and totals by client. The other front door.</td></tr>
-    <tr><td class="k">Universal Fee Calculator.html</td><td>The core tool — build and price a proposal (Fixed Fee or NTE); allocation entered as % FTE or hours; broker fee share (off-invoice or on-top); version history; change orders; autosave; Excel export; Salesforce intake.</td></tr>
+    <tr><td class="k">Universal Fee Calculator.html</td><td>The core tool — build and price a proposal (Fixed Fee or NTE); allocation entered as % FTE or hours; broker fee share (off-invoice or on-top); version history; change orders; autosave; Excel export; Salesforce intake. Imported historical projects get an "Imported vs. calculated" reconciliation panel with a <strong>pre-calculate</strong> option that solves contracted rates backing into the imported totals (preview + confirm; never flips the reconciled flag itself).</td></tr>
     <tr><td class="k">Revenue Projections.html</td><td>Pipeline / revenue forecast across projects, by month and quarter, read from the stored billing series. Broker-split toggle, current-month marker, flash snapshots. Exports to Excel exactly as viewed.</td></tr>
     <tr><td class="k">Revenue Studio.html</td><td>Budget vs. trending. 2026 Budget / RF1 baselines, drill-down (bucket → client → project), stacked monthly chart with target + trending lines, pipeline waterfall, exec report tab, per-leader views. Admins + revenue leaders only.</td></tr>
     <tr><td class="k">Proposal Analytics.html</td><td>Win/loss hit rates with lost reasons, discount analytics, proposal funnel, client profiles, health score.</td></tr>
-    <tr><td class="k">Import Revenues.html</td><td><strong>Admin-only.</strong> Bulk-loads the monthly-billing workbook into locked-series project records.</td></tr>
-    <tr><td class="k">Ingestion Studio.html</td><td>Import a historical proposal (PDF/text) via Claude into a structured record.</td></tr>
+    <tr><td class="k">Import Revenues.html</td><td><strong>Moved.</strong> Now a redirect stub into <code>Ingestion Studio.html?mode=bulk</code> — the bulk revenue import lives inside Ingestion Studio, which diffs the workbook against existing records and lets the admin pick exactly which projects land (re-imports no longer duplicate).</td></tr>
+    <tr><td class="k">Ingestion Studio.html</td><td><strong>Admin-only.</strong> Import a historical proposal (PDF/text) via Claude into a structured record. Also hosts the bulk revenue-workbook import (<code>?mode=bulk</code>) with diff-and-select.</td></tr>
     <tr><td class="k">Benchmarking Dashboard.html</td><td>"What have we charged before?" — rate spreads, comparables, and side-by-side project comparison with a scope &amp; assumptions matrix.</td></tr>
-    <tr><td class="k">Staffing Matrix.html</td><td><strong>Admin-only.</strong> Staffing &amp; Bandwidth — allocation by named resource × project × month, over/under-load flags, planned vs. Clockify actual hours, title pinning, fee-link mapping, entry-lateness stats. Writes to <code>staff.json</code>.</td></tr>
+    <tr><td class="k">Staffing Matrix.html</td><td><strong>Admin-only.</strong> Staffing &amp; Bandwidth — allocation by named resource × project × month (Compare / By Project / By Person / Allocations / Insights tabs), over/under-load flags, planned vs. Clockify actual hours, title pinning, fee-link mapping, entry-lateness stats. Carries the <strong>contract ↔ staffing bridge</strong>: contract demand not yet allocated surfaces on the Allocations tab (confirm-gated, alias-aware, open roles prompt for a name), top-ups flag inline on the person's row, and empty fee rosters can be seeded from the matrix at $0 contracted rates. 3-sheet Excel snapshot export for version control. Writes to <code>staff.json</code>.</td></tr>
     <tr><td class="k">Profitability.html</td><td><strong>Admin-only.</strong> The whole revenue projection with Clockify burn (hours × cost rate by title) laid against it by month — margin per project per month. Reads <code>projects.json</code> + <code>staff.json</code> + <code>rates.json</code>.</td></tr>
     <tr><td class="k">Data Entry Status.html</td><td>Completeness tracker — projects by revenue leader with the exact fields still missing (staffing, Salesforce ID, rating, service line, dates).</td></tr>
     <tr><td class="k">Change Log.html</td><td>The audit trail surfaced — every create, edit, status change and deletion, with the fields that moved (old → new) and the net-fee delta. Filter by person / action / project / date; CSV export. Scoped to visible projects; admins see all.</td></tr>
     <tr><td class="k">Rate Grid Reconciliation.html</td><td><strong>Admin-only.</strong> Adopt a new grid without moving projections: solves a per-month reconciling discount per project so every frozen billing figure holds. Dry-run → exception report → reversible commit (pre-reconciliation version snapshot per project).</td></tr>
     <tr><td class="k">Import Small Works.html</td><td><strong>Admin-only.</strong> Loads the small-works book as pass-through-only records — contractor WO billed at cost + markup, managed vendor billed as the fee alone.</td></tr>
+    <tr><td class="k">Data Repair.html</td><td><strong>Admin-only.</strong> Scan-and-fix for known staffing-data damage: straggler renamed rows, exact duplicates, edited twins, stale bridge rows, duplicate person records (merged with tombstones so they can't resurrect on merge), sparse seeded months zero-filled. Preview-first; also surfaces a "needs human review" list it deliberately won't auto-fix.</td></tr>
+    <tr><td class="k">Getting Started.html</td><td>The revenue-leader orientation — flow, expectations, glossary. Linked from the one-time welcome banner (<code>first-run.js</code>) on the pages leaders land on.</td></tr>
     <tr><td class="k">tests.html</td><td>Regression suite — 24 assertions on the pricing engine and data layer, run against an in-memory store (never touches real data). <strong>Run before every deploy.</strong></td></tr>
     <tr><td class="k">Enterprise&nbsp;Migration&nbsp;Guide.html<br>Fee System Roadmap.html<br>Maintainers Runbook.html</td><td>Internal reference docs (this is one of them — not part of the app runtime).</td></tr>
   </table>
@@ -192,6 +194,8 @@
 ├── Change Log.html                <span class="c">← audit trail (who changed what)</span>
 ├── Rate Grid Reconciliation.html  <span class="c">← admin-only · new-grid adoption</span>
 ├── Import Small Works.html        <span class="c">← admin-only</span>
+├── Data Repair.html               <span class="c">← admin-only · staffing-data scan &amp; fix</span>
+├── Getting Started.html           <span class="c">← revenue-leader orientation</span>
 ├── tests.html                    <span class="c">← regression suite · run before deploy</span>
 ├── oauth-callback.html           <span class="c">← Box sign-in lands here (REQUIRED)</span>
 │
@@ -212,7 +216,9 @@
 │   ├── export-excel.js           <span class="c">the Excel export (live formulas)</span>
 │   ├── revenue-studio.js / studio.css  <span class="c">Revenue Studio</span>
 │   ├── proposal-analytics.js     <span class="c">Proposal Analytics</span>
-│   ├── staff.js / staffing-page.js  <span class="c">staffing matrix data layer + page</span>
+│   ├── staff.js / staffing-page.js  <span class="c">staffing matrix data layer + page (bridge, aliases, rename healing)</span>
+│   ├── staffing-export.js        <span class="c">3-sheet static Excel snapshot of the matrix</span>
+│   ├── first-run.js              <span class="c">one-time Getting Started banner</span>
 │   ├── profitability-page.js     <span class="c">Profitability (revenue vs. burn)</span>
 │   ├── rate-reconcile.js         <span class="c">new-grid reconciliation engine</span>
 │   ├── smallworks-data.js        <span class="c">small-works pass-through seed</span>
@@ -545,11 +551,14 @@
     <li><strong>Editing a booked project flags it stale</strong> — by design (&sect;11). Restamp or process a change order. NTE projects restamp automatically.</li>
     <li><strong>Run <code>tests.html</code> before every deploy</strong> — 24 regression assertions on the pricing engine and data layer; all must be green.</li>
     <li><strong>Clockify mapping hygiene</strong> — an unmapped Clockify project shows as unattributed burn on Profitability. Fix the fee-link once and it holds for the whole team (&sect;12).</li>
+    <li><strong>Staffing data looks wrong (duplicates, 200%+ loads, ghost rows)?</strong> Open <strong>Data Repair</strong> first — it previews every known damage signature before touching anything, and its deletions use tombstones so a stale tab can't merge them back. Anything it lists under "needs human review" is a judgment call it will not auto-fix.</li>
+    <li><strong>Project renamed?</strong> Use the canonical-sync rename flow (Mapping tab) rather than editing rows by hand — the saved rename table is what keeps the contract↔staffing bridge, coverage checks and future imports pointing at one name.</li>
     <li><strong>Token refresh</strong> — sign-in survives ~60 days idle; after that the user re-authenticates. Normal.</li>
     <li><strong>Claude model changes can't break Ingestion</strong> — <code>api/extract.js</code> tries a built-in list of model ids in order and uses the first that responds; a deprecated model is skipped automatically.</li>
   </ul>
 
   <h2><span class="n">16</span> Future work, in priority order</h2>
+  <p class="lead">The forward plan is maintained in the <a href="Fee System Roadmap.html">Development Roadmap</a>; the items below are the standing technical debts regardless of which product direction wins.</p>
   <ol>
     <li><strong>Server-side per-user filtering</strong> — the only way to let someone in while truly hiding other projects. Returns just the caller's records from a serverless endpoint.</li>
     <li><strong>Server auth (service account) for the reporting pull</strong> — so Power BI reads the data with no human logged in.</li>
