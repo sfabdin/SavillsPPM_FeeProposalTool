@@ -913,6 +913,75 @@
       if (n) toast(n + ' job title' + (n > 1 ? 's' : '') + ' pulled from Clockify onto the roster.');
     } catch (e) { state.clockifyUsers = []; }
   }
+  /* ---------- REVERSE bridge: seed empty fee-tool rosters FROM the matrix.
+     Lives on Mapping (it's about the relationship between the two systems).
+     Roles are written at a $0 CONTRACTED rate — deliberately, so seeding can
+     never move any project's revenue; pricing happens in reconciliation. ---------- */
+  function seedCandidatesCached() {
+    const key = ((S.readDb().meta || {}).updatedAt || '') + '·' + (state._seedBump || 0);
+    if (state._seedKey !== key) { state._seedCands = S.matrixSeedCandidates(); state._seedKey = key; }
+    return state._seedCands || [];
+  }
+
+  function seedSectionHtml() {
+    const cands = seedCandidatesCached();
+    if (!cands.length) return '';
+    return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid var(--sav-teal);padding:12px 16px;margin:18px 0 4px">
+      <div style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy);margin-bottom:2px">⇄ Seed contract staffing from the matrix <span class="note-txt" style="font-weight:400">· ${cands.length} fee-tool project${cands.length === 1 ? ' has' : 's have'} an empty roster but real matrix allocations. Confirming writes those people into the fee project as month-faithful roles at a <b>$0 placeholder rate</b> — no project's revenue moves until the roster is priced during reconciliation.</span></div>
+      ${cands.map((c, i) => `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
+        <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
+          <b>${esc(c.name)}</b><span class="note-txt">${esc(c.client || '')}</span>
+          <span class="mv-chip" style="background:${c.booked ? '#e7f0ee' : '#fdf3d7'};color:${c.booked ? '#0E7C7B' : '#8a6d00'};font-weight:700">${c.booked ? 'booked' : 'pipeline · ' + esc(c.status || 'draft')}</span>
+          ${c.anyPursuit ? '<span class="mv-chip" style="background:#e7eef0">includes pursuit staffing</span>' : ''}
+          <span class="note-txt">· ${c.roles.length} ${c.roles.length === 1 ? 'person' : 'people'} · ${c.totalFteMo} FTE-mo from ${esc(c.matrixNames.join(' + '))}</span>
+        </summary>
+        <div style="padding:4px 4px 12px">
+          <table class="dt" style="max-width:640px"><thead><tr><th>Person</th><th>Title (matrix)</th><th>Rate-grid match</th><th class="num">Active months</th><th class="num">Avg alloc</th></tr></thead><tbody>
+            ${c.roles.map(r => `<tr><td class="pname">${esc(r.person.name)}${r.pursuit ? ' <span class="status-p">pursuit</span>' : ''}</td><td>${esc(r.person.title || '—')}</td><td>${r.titleMapped ? '<span style="color:#0E7C7B">✓ mapped</span>' : '<span style="color:#8a6d00">⚠ no match — role saved with title text only</span>'}</td><td class="num">${r.activeMonths}</td><td class="num">${r.avgPct}%</td></tr>`).join('')}
+          </tbody></table>
+          ${c.clippedMonths ? `<div class="note-txt" style="color:#8a6d00;margin-top:6px">⚠ ${c.clippedMonths} allocation month${c.clippedMonths === 1 ? '' : 's'} fall outside this fee project's timeline and won't be seeded — if the contract really runs longer, fix the project dates in the calculator first.</div>` : ''}
+          <button class="btn btn-primary" style="margin-top:10px;padding:8px 16px;font-size:12px" data-seed-apply="${i}">Confirm — seed ${c.roles.length} role${c.roles.length === 1 ? '' : 's'} at $0 rate</button>
+        </div>
+      </details>`).join('')}
+    </div>`;
+  }
+
+  function wireSeed() {
+    $$('#p-mapping [data-seed-apply]').forEach(b => b.onclick = () => {
+      const c = seedCandidatesCached()[+b.dataset.seedApply];
+      if (!c) return;
+      const rec = (STORE.listProjects() || []).find(x => x.id === c.feeId);
+      if (!rec) { toast('Could not load that fee project — refresh and try again.'); return; }
+      if (rec.roles && rec.roles.length) { state._seedBump = (state._seedBump || 0) + 1; toast('That project picked up a roster since this list was built — nothing overwritten.'); renderMapping(); return; }
+      if (!rec.groups || !rec.groups.length) rec.groups = [{ id: 'g1', name: 'Core team' }];
+      const gid = rec.groups[0].id;
+      rec.roles = c.roles.map(r => ({
+        id: 'r_' + Math.random().toString(36).slice(2, 9),
+        groupId: gid,
+        titleId: r.titleId, tierId: r.tierId,
+        projectRole: (r.person.title || '').trim() || 'Staff',
+        resource: r.person.name,
+        // $0 contracted rate — guaranteed no revenue impact regardless of the
+        // rate grid (an unknown tier id would silently price at MID).
+        rateSource: 'contracted', contractedRate: 0,
+        fte: {}, fteMonthly: r.fteMonthly,
+        seededFromMatrix: new Date().toISOString(),
+      }));
+      try {
+        STORE.saveProject(rec, { baseUpdatedAt: c.updatedAt });
+      } catch (e) {
+        toast(e && e.code === 'STALE_WRITE' ? 'Someone saved this project while you were looking — refresh and re-check.' : 'Save failed: ' + (e.message || e));
+        return;
+      }
+      // fee records changed → drop staff.js's fee caches + our own gap/seed caches
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      state._seedBump = (state._seedBump || 0) + 1;
+      state._gapsKey = null;
+      toast(`Seeded ${c.roles.length} role${c.roles.length === 1 ? '' : 's'} into ${c.name} at $0 — price them in the calculator when reconciling.`);
+      renderMapping();
+    });
+  }
+
   function renderMapping() {
     if (state.clockifyNames === null) {
       $('#p-mapping').innerHTML = '<div class="empty">Pulling the Clockify project list…</div>';
@@ -1011,8 +1080,10 @@
       <table class="dt"><thead><tr><th style="width:28%">Matrix project (JS sheet)</th><th style="width:32%">② Fee tool</th><th>③ Clockify project(s) landing here</th></tr></thead><tbody>${rows || '<tr><td colspan="3"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
       <datalist id="map-fee-dl"><option value="— unlink —"></option>${feeList.map(p => `<option value="${esc(p.label)}"></option>`).join('')}</datalist>
       <datalist id="map-ck-dl">${ckList.map(c => `<option value="${esc(c.name)}"${c.client ? ` label="${esc(c.client)}"` : ''}></option>`).join('')}</datalist>
+      ${seedSectionHtml()}
       ${pplSection}
       ${titleSection}`;
+    wireSeed();
     $('#map-search').oninput = (e) => { state.mapSearch = e.target.value; renderMapping(); const el = $('#map-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $('#map-problems').onchange = (e) => { state.mapOnlyProblems = e.target.checked; renderMapping(); };
     $('#map-refresh').onclick = () => { state.clockifyNames = null; state.clockifyNamesError = null; renderMapping(); };
