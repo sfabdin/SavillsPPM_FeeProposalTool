@@ -193,6 +193,30 @@
   function setPersonNonBillable(personId, flag) {
     return savePerson({ id: personId, nonBillable: !!flag, updatedAt: new Date().toISOString() });
   }
+  /** Employment type in one control — the Mapping dropdown writes this.
+      'full'     → billable, capacity 100% (the default everyone starts at)
+      'part'     → billable, capacity = the given % of a full month; every
+                   hours bar in the system (expected hours, time-entry
+                   compliance, burn %, freed capacity) already computes
+                   against capacityHours, so a 50% part-timer is judged
+                   against ~86 h/mo instead of the full-time bar.
+      'internal' → pure overhead (nonBillable): internal time expected,
+                   excluded from burn flags and availability lists.
+      Derive the current type with personEmploymentType(). */
+  function setPersonEmployment(personId, opts) {
+    opts = opts || {};
+    const patch = { id: personId, updatedAt: new Date().toISOString() };
+    if (opts.type === 'internal') patch.nonBillable = true;
+    else if (opts.type === 'part' || opts.type === 'full') patch.nonBillable = false;
+    if (opts.type === 'full') patch.capacityPct = 100;
+    else if (opts.capacityPct != null) patch.capacityPct = Math.max(5, Math.min(100, Math.round(+opts.capacityPct) || 100));
+    return savePerson(patch);
+  }
+  function personEmploymentType(person) {
+    if (!person) return 'full';
+    if (person.nonBillable) return 'internal';
+    return (person.capacityPct != null && person.capacityPct < 100) ? 'part' : 'full';
+  }
   function setMonthHours(h) { const db = readDb(); db.meta.monthHours = +h || DEFAULT_MONTH_HOURS; writeDb(db); }
   function monthHours() { return readDb().meta.monthHours || DEFAULT_MONTH_HOURS; }
 
@@ -1690,7 +1714,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable,
+    unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
