@@ -44,7 +44,8 @@
         <span class="stat"><b id="s-twin">–</b><span>edited twins</span></span>
         <span class="stat"><b id="s-ren">–</b><span>rename twins</span></span>
         <span class="stat"><b id="s-bridge">–</b><span>bridge rows</span></span>
-        <span class="stat"><b id="s-roster">–</b><span>seeded rosters</span></span></div>
+        <span class="stat"><b id="s-roster">–</b><span>seeded rosters</span></span>
+        <span class="stat"><b id="s-people">–</b><span>duplicate people</span></span></div>
       <div class="scroll"><table id="preview"></table></div>
     </div>
     <div class="card">
@@ -136,10 +137,28 @@
       if (/From contract staffing|Contract top-up|Open contract role staffed/.test(a.note || '') || a.contractRole !== undefined || a.contractResource !== undefined) mark(a, 'bridge row (built from doubled data)');
     });
 
+    // PASS 5 — duplicate person records: several roster ids sharing one name.
+    // The bridge and mappings then split-brain between them ("fully staffed
+    // person reports unstaffed"). Keep the record holding the most allocation
+    // rows (then the one with a title); the rest merge into it.
+    const dupPeople = [];
+    {
+      const pplByName = {};
+      Object.values(db.people || {}).forEach(p => { const k = (S.cleanName ? S.cleanName(p.name || '') : String(p.name || '')).toLowerCase().replace(/\s+/g, ' ').trim(); if (k) (pplByName[k] = pplByName[k] || []).push(p); });
+      const nAllocs = {};
+      (db.allocations || []).forEach(a => { nAllocs[a.personId] = (nAllocs[a.personId] || 0) + 1; });
+      Object.values(pplByName).forEach(g => {
+        if (g.length < 2) return;
+        g.sort((a, b) => (nAllocs[b.id] || 0) - (nAllocs[a.id] || 0) || ((b.title ? 1 : 0) - (a.title ? 1 : 0)));
+        dupPeople.push({ keep: g[0], drop: g.slice(1), rows: g.map(p => nAllocs[p.id] || 0) });
+      });
+    }
+
     // Fee side — rosters seeded from the doubled matrix.
     const seededProjects = (STORE.listProjects() || []).filter(p => p.roles && p.roles.length && p.roles.every(r => r.seededFromMatrix));
 
-    return { db, removals, renames, seededProjects, counts: {
+    return { db, removals, renames, dupPeople, seededProjects, counts: {
+      people: dupPeople.reduce((n, d) => n + d.drop.length, 0),
       total: allocs.length,
       exact: removals.filter(r => r.why === 'exact duplicate').length,
       twin: removals.filter(r => /stale twin/.test(r.why)).length,
@@ -157,7 +176,11 @@
     $('#s-ren').textContent = plan.counts.ren;
     $('#s-bridge').textContent = plan.counts.bridge;
     $('#s-roster').textContent = plan.seededProjects.length;
+    $('#s-people').textContent = plan.counts.people;
     let rows = '<tr><th>Person</th><th>Project</th><th>%</th><th>Window</th><th>Why removed</th></tr>';
+    plan.dupPeople.forEach(({ keep, drop }) => {
+      drop.forEach(d => { rows += `<tr><td>${esc(d.name)}</td><td colspan="3">duplicate roster record</td><td><span class="tag">merged into the copy holding the allocations</span></td></tr>`; });
+    });
     plan.removals.forEach(({ a, why }) => {
       const p = S.getPerson(a.personId) || { name: a.personId };
       rows += `<tr><td>${esc(p.name)}</td><td>${esc(a.project)}</td><td>${a.pct}%</td><td>${esc(a.start || '')}–${esc(a.end || '')}</td><td><span class="tag">${esc(why)}</span></td></tr>`;
@@ -172,7 +195,7 @@
     $('#preview').innerHTML = rows;
     $('#run-n').textContent = plan.removals.length + (plan.renames.length ? ' (+' + plan.renames.length + ' renamed)' : '');
     $('#run-r').textContent = plan.seededProjects.length;
-    const anything = plan.removals.length || plan.renames.length || plan.seededProjects.length;
+    const anything = plan.removals.length || plan.renames.length || plan.seededProjects.length || plan.counts.people;
     $('#run').disabled = !anything;
     if (!anything) $('#msg').innerHTML = '<div class="msg ok">Nothing to repair — the data is clean.</div>';
   }
@@ -192,6 +215,23 @@
       db.allocations = db.allocations.filter(a => !goneIds.has(a.id));
       db.deleted = db.deleted || {};
       goneIds.forEach(id => { db.deleted[id] = now; });
+      // duplicate people: re-point everything at the kept record, tombstone the rest
+      plan.dupPeople.forEach(({ keep, drop }) => {
+        drop.forEach(d => {
+          db.allocations.forEach(a => { if (a.personId === d.id) { a.personId = keep.id; a.updatedAt = now; } });
+          Object.keys(db.actuals || {}).forEach(k => {
+            if (k.indexOf(d.id + '|') === 0) {
+              const nk = keep.id + k.slice(d.id.length);
+              db.actuals[nk] = Math.round(((db.actuals[nk] || 0) + db.actuals[k]) * 10) / 10;
+              delete db.actuals[k];
+            }
+          });
+          Object.keys((db.mappings || {}).users || {}).forEach(k => { if (db.mappings.users[k] === d.id) db.mappings.users[k] = keep.id; });
+          if (!keep.title && d.title) db.people[keep.id].title = d.title;
+          delete db.people[d.id];
+          db.deleted['person:' + d.id] = now;
+        });
+      });
       db.meta.updatedAt = now;
       S.hydrateFromRemote(db);   // replace local store + cache with the cleaned db
       if (Box && Box.enabled && Box.uploadStaff) await Box.uploadStaff(db);
@@ -205,7 +245,7 @@
         }
       });
 
-      $('#msg').innerHTML = `<div class="msg ok">Done — removed ${goneIds.size} allocation rows (tombstoned), renamed ${plan.renames.length} straggler rows to canonical project names, and reverted ${plan.seededProjects.length} seeded rosters. ${Box && Box.enabled ? 'Pushed to Box.' : 'Local only — sign in to Box and rerun to share.'} Ask everyone to refresh their Staffing tab.</div>`;
+      $('#msg').innerHTML = `<div class="msg ok">Done — removed ${goneIds.size} allocation rows (tombstoned), renamed ${plan.renames.length} straggler rows, merged ${plan.counts.people} duplicate people, and reverted ${plan.seededProjects.length} seeded rosters. ${Box && Box.enabled ? 'Pushed to Box.' : 'Local only — sign in to Box and rerun to share.'} Ask everyone to refresh their Staffing tab.</div>`;
       renderPlan();
     } catch (e) {
       $('#msg').innerHTML = `<div class="msg err">Repair failed: ${esc(e.message || e)} — nothing further was changed. Re-run after fixing the issue.</div>`;
