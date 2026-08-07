@@ -313,6 +313,30 @@
       userX: unionUserX(),
     };
 
+    // Straggler heal: a row arriving from a stale tab may still carry a
+    // project name that was since renamed to its canonical form — the same
+    // real project then exists under TWO names, splitting coverage. Apply
+    // the saved renames here, then re-collapse twins renaming just created.
+    {
+      const ren = out.mappings.renames || {};
+      if (Object.keys(ren).length) {
+        const renLC = {};
+        Object.entries(ren).forEach(([o, n]) => { renLC[o.toLowerCase()] = n; });
+        out.allocations.forEach(a => {
+          const t = ren[a.project] || renLC[(a.project || '').toLowerCase()];
+          if (t && t !== a.project) a.project = t;
+        });
+        const seen = {};
+        out.allocations.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+        out.allocations = out.allocations.filter(a => {
+          const k = [a.personId, a.project, a.start, a.end, a.pct].join('|');
+          if (seen[k]) return false;
+          seen[k] = true;
+          return true;
+        });
+      }
+    }
+
     // Meta: whichever side was written last.
     const rMeta = remote.meta || {}, lMeta = local.meta || {};
     out.meta = ((lMeta.updatedAt || '') >= (rMeta.updatedAt || '')) ? Object.assign({}, rMeta, lMeta) : Object.assign({}, lMeta, rMeta);

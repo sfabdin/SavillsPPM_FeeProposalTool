@@ -74,10 +74,22 @@
   function computePlan() {
     const S = window.UFC_Staff, STORE = window.UFC_Store;
     const db = S.readDb();
-    const allocs = db.allocations || [];
     const removals = [];   // { a, why }
     const gone = new Set();
     const mark = (a, why) => { if (!gone.has(a.id)) { gone.add(a.id); removals.push({ a, why }); } };
+
+    // PASS 0 — straggler renames: rows still carrying a project name that was
+    // since renamed to canonical (they split coverage across two names).
+    // Work on a renamed VIEW so the twin passes below see them as duplicates.
+    const ren = (db.mappings || {}).renames || {};
+    const renLC = {};
+    Object.entries(ren).forEach(([o, n]) => { renLC[o.toLowerCase()] = n; });
+    const renames = [];   // { a, to }
+    const allocs = (db.allocations || []).map(orig => {
+      const t = ren[orig.project] || renLC[(orig.project || '').toLowerCase()];
+      if (t && t !== orig.project) { renames.push({ a: orig, to: t }); return Object.assign({}, orig, { project: t, _orig: orig }); }
+      return orig;
+    });
 
     // PASS 1 — exact duplicates: same person+project+start+end+pct.
     // Keep the newest-edited copy.
@@ -100,8 +112,9 @@
     });
 
     // PASS 3 — rename twins: same person+start+end+pct where one row's project
-    // name was renamed to the other's per the saved renames table.
-    const ren = (db.mappings || {}).renames || {};
+    // name was renamed to the other's per the saved renames table. (With the
+    // renamed view from PASS 0 these mostly collapse in PASS 1 already; this
+    // stays as a belt-and-suspenders check.)
     const renLookup = {};
     Object.entries(ren).forEach(([o, n]) => { renLookup[o] = n; renLookup[o.toLowerCase()] = n; });
     const g3 = {};
@@ -126,11 +139,11 @@
     // Fee side — rosters seeded from the doubled matrix.
     const seededProjects = (STORE.listProjects() || []).filter(p => p.roles && p.roles.length && p.roles.every(r => r.seededFromMatrix));
 
-    return { db, removals, seededProjects, counts: {
+    return { db, removals, renames, seededProjects, counts: {
       total: allocs.length,
       exact: removals.filter(r => r.why === 'exact duplicate').length,
       twin: removals.filter(r => /stale twin/.test(r.why)).length,
-      ren: removals.filter(r => /old-name/.test(r.why)).length,
+      ren: removals.filter(r => /old-name/.test(r.why)).length + renames.length,
       bridge: removals.filter(r => /bridge row/.test(r.why)).length,
     } };
   }
@@ -149,14 +162,19 @@
       const p = S.getPerson(a.personId) || { name: a.personId };
       rows += `<tr><td>${esc(p.name)}</td><td>${esc(a.project)}</td><td>${a.pct}%</td><td>${esc(a.start || '')}–${esc(a.end || '')}</td><td><span class="tag">${esc(why)}</span></td></tr>`;
     });
+    plan.renames.forEach(({ a, to }) => {
+      const p = S.getPerson(a.personId) || { name: a.personId };
+      rows += `<tr><td>${esc(p.name)}</td><td>${esc(a.project)}</td><td>${a.pct}%</td><td>${esc(a.start || '')}–${esc(a.end || '')}</td><td><span class="tag">renamed → ${esc(to)}</span></td></tr>`;
+    });
     plan.seededProjects.forEach(p => {
       rows += `<tr><td>—</td><td>${esc((p.project || {}).name)}</td><td colspan="2">${p.roles.length} seeded roles</td><td><span class="tag">roster reverted to empty</span></td></tr>`;
     });
     $('#preview').innerHTML = rows;
-    $('#run-n').textContent = plan.removals.length;
+    $('#run-n').textContent = plan.removals.length + (plan.renames.length ? ' (+' + plan.renames.length + ' renamed)' : '');
     $('#run-r').textContent = plan.seededProjects.length;
-    $('#run').disabled = !(plan.removals.length || plan.seededProjects.length);
-    if (!plan.removals.length && !plan.seededProjects.length) $('#msg').innerHTML = '<div class="msg ok">Nothing to repair — the data is clean.</div>';
+    const anything = plan.removals.length || plan.renames.length || plan.seededProjects.length;
+    $('#run').disabled = !anything;
+    if (!anything) $('#msg').innerHTML = '<div class="msg ok">Nothing to repair — the data is clean.</div>';
   }
 
   async function runRepair() {
@@ -166,6 +184,10 @@
       // staff.json: remove + tombstone in ONE write, then push explicitly.
       const db = S.readDb();
       const now = new Date().toISOString();
+      // straggler renames first — mutate the real rows to their canonical names
+      const renameById = {};
+      plan.renames.forEach(({ a, to }) => { renameById[a.id] = to; });
+      db.allocations.forEach(a => { if (renameById[a.id]) { a.project = renameById[a.id]; a.updatedAt = now; } });
       const goneIds = new Set(plan.removals.map(r => r.a.id));
       db.allocations = db.allocations.filter(a => !goneIds.has(a.id));
       db.deleted = db.deleted || {};
@@ -183,7 +205,7 @@
         }
       });
 
-      $('#msg').innerHTML = `<div class="msg ok">Done — removed ${goneIds.size} allocation rows (tombstoned) and reverted ${plan.seededProjects.length} seeded rosters. ${Box && Box.enabled ? 'Pushed to Box.' : 'Local only — sign in to Box and rerun to share.'} Ask everyone to refresh their Staffing tab.</div>`;
+      $('#msg').innerHTML = `<div class="msg ok">Done — removed ${goneIds.size} allocation rows (tombstoned), renamed ${plan.renames.length} straggler rows to canonical project names, and reverted ${plan.seededProjects.length} seeded rosters. ${Box && Box.enabled ? 'Pushed to Box.' : 'Local only — sign in to Box and rerun to share.'} Ask everyone to refresh their Staffing tab.</div>`;
       renderPlan();
     } catch (e) {
       $('#msg').innerHTML = `<div class="msg err">Repair failed: ${esc(e.message || e)} — nothing further was changed. Re-run after fixing the issue.</div>`;
