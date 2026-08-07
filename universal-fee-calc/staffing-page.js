@@ -175,15 +175,31 @@
     return state._bridgeGaps || [];
   }
 
+  /** A gap for someone ALREADY staffed on the project is an edit to their
+      existing row, not a headline — flag it inline on the row instead of in
+      the card. Returns { personId|project → gapIndex } for those, keyed only
+      when that person really has a visible allocation row to hang it on. */
+  function inlineTopUpIndex() {
+    const idx = {};
+    const allocs = S.listAllocations();
+    bridgeGapsCached().forEach((g, i) => {
+      if (g.open || !g.topUp || !g.person) return;
+      if (allocs.some(a => a.personId === g.person.id && a.project === g.project)) idx[g.person.id + '|' + g.project] = i;
+    });
+    return idx;
+  }
+
   function bridgeSectionHtml() {
     const gaps = bridgeGapsCached();
     if (!gaps.length) return '';
+    const inline = new Set(Object.values(inlineTopUpIndex()));
+    if (gaps.every((g, i) => inline.has(i))) return '';
     const segRow = (sg) => `<tr><td>${esc(S.ymLabel(sg.start))}${sg.start !== sg.end ? ' → ' + esc(S.ymLabel(sg.end)) : ''}</td><td class="num">${sg.want}%</td><td class="num">${sg.have ? sg.have + '%' : '—'}</td><td class="num" style="font-weight:800;color:var(--sav-teal)">+${sg.need}%</td></tr>`;
     const rosterOptions = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
     return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid var(--sav-teal);padding:12px 16px;margin-bottom:14px">
       <div style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy);margin-bottom:2px">🤝 Contract staffing not yet in the matrix <span class="note-txt" style="font-weight:400">· every under-covered contract role — named people AND open slots. Review the segments, adjust the name if it maps to someone already here (nicknames count — the link is remembered), then confirm. Nothing is created without your OK.</span></div>
       <datalist id="bridge-people">${rosterOptions}</datalist>
-      ${gaps.map((g, i) => `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
+      ${gaps.map((g, i) => inline.has(i) ? '' : `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
         <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
           <b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(g.project)}</span>
           ${g.open
@@ -260,6 +276,27 @@
       toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${personName}`);
       renderCounts(); renderAllocations();
     });
+    // Inline top-up chips — the same confirm-gated create, anchored on the
+    // person's existing allocation row instead of the card.
+    $$('#p-allocations [data-inline-topup]').forEach(el => el.onclick = (e) => {
+      e.preventDefault();
+      const g = bridgeGapsCached()[+el.dataset.inlineTopup];
+      if (!g) return;
+      const segs = g.segments.map(sg => `  +${sg.need}%  ${S.ymLabel(sg.start)} – ${S.ymLabel(sg.end)}  (contract ${sg.want}%, currently ${sg.have}%)`).join('\n');
+      if (!confirm(`The contract staffs ${g.resource} on ${g.project} beyond the current allocation:\n\n${segs}\n\nAdd the difference as ${g.segments.length === 1 ? 'a new allocation row' : g.segments.length + ' new allocation rows'}?`)) return;
+      g.segments.forEach(sg => {
+        S.saveAllocation({
+          personId: g.personId, personName: g.resource,
+          project: g.project, client: g.client,
+          status: 'Active', type: 'Awarded',
+          start: sg.start, end: sg.end, pct: sg.need,
+          contractResource: g.resource,
+          note: `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%) · ${g.roles.join(', ')}`,
+        });
+      });
+      toast(`Added ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${g.resource}`);
+      renderCounts(); renderAllocations();
+    });
   }
 
   function renderAllocations() {
@@ -283,9 +320,22 @@
     </div>`;
 
     let body = '';
+    const inlineIdx = inlineTopUpIndex();
+    const chipShown = new Set();   // one chip per person×project, on their first row
     list.forEach(a => {
       const person = S.getPerson(a.personId) || { name: a.personId };
       const isP = isPursuitAlloc(a);
+      let chip = '';
+      const gi = inlineIdx[a.personId + '|' + a.project];
+      if (gi !== undefined && !chipShown.has(gi)) {
+        chipShown.add(gi);
+        const g = bridgeGapsCached()[gi];
+        const sg0 = g.segments[0];
+        const label = g.segments.length === 1
+          ? `+${sg0.need}% ${S.ymLabel(sg0.start)}${sg0.start !== sg0.end ? '–' + S.ymLabel(sg0.end) : ''}`
+          : `+${g.totalNeedFteMo} FTE-mo across ${g.segments.length} windows`;
+        chip = ` <a href="#" class="mv-chip" data-inline-topup="${gi}" style="background:#fdf3d7;color:#8a6d00;font-weight:700;text-decoration:none;white-space:nowrap" title="The contract staffs ${esc(g.resource)} beyond what's allocated here — click to add the difference as its own row">⚠ contract ${label} — add?</a>`;
+      }
       body += `<tr class="${isP ? 'pursuit-row' : ''}">
         <td class="pname">${esc(a.project)}</td>
         <td>${esc(a.client || '—')}</td>
@@ -293,7 +343,7 @@
         <td><span class="badge ${isP ? 'pursuit' : 'active'}">${esc(a.status)}${a.type === 'Opportunity' ? ' · opp' : ''}</span></td>
         <td>${esc(a.start ? S.ymLabel(a.start) : '—')} – ${esc(a.end ? S.ymLabel(a.end) : '—')}</td>
         <td class="num">${a.pct}%</td>
-        <td class="vmini">${esc(a.note || '')}</td>
+        <td class="vmini">${esc(a.note || '')}${chip}</td>
         <td><span class="row-act"><button data-edit="${a.id}">Edit</button><button class="del" data-del="${a.id}">Del</button></span></td>
       </tr>`;
     });
