@@ -394,6 +394,117 @@
   }
   .risk .mit strong { font-family: var(--font-display); color: var(--sav-navy); font-weight: 700; }
 
+  /* ===== North star / dream ===== */
+  .principle {
+    background: var(--sav-navy);
+    color: #fff;
+    padding: 26px 36px;
+    display: flex;
+    align-items: baseline;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 28px;
+  }
+  .principle .p-big {
+    font-weight: 900;
+    font-size: 24px;
+    color: var(--sav-yellow);
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+  .principle p {
+    font-family: var(--font-body);
+    font-size: 13.5px;
+    line-height: 1.55;
+    margin: 0;
+    color: rgba(255,255,255,0.85);
+    flex: 1;
+    min-width: 320px;
+  }
+  .ladder {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    margin-bottom: 40px;
+  }
+  .ladder .rung {
+    background: #fff;
+    border: 1px solid var(--hair);
+    border-top: 4px solid var(--sav-steel);
+    padding: 20px 22px;
+  }
+  .ladder .rung.now { border-top-color: var(--sav-teal); }
+  .ladder .rung.next { border-top-color: var(--sav-yellow); }
+  .ladder .rung.dream { border-top-color: var(--sav-red); }
+  .ladder .r-stage {
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--sav-steel);
+    margin-bottom: 6px;
+  }
+  .ladder h4 { font-weight: 900; font-size: 17px; margin: 0 0 8px; color: var(--sav-navy); }
+  .ladder p { font-family: var(--font-body); font-size: 13px; line-height: 1.5; color: var(--sav-steel); margin: 0; }
+  .dream-card {
+    background: #fff;
+    border: 1px solid var(--hair);
+    border-left: 5px solid var(--sav-navy);
+    padding: 26px 32px;
+    margin-bottom: 20px;
+  }
+  .dream-card .d-kicker {
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--sav-teal);
+    margin-bottom: 4px;
+  }
+  .dream-card h3 { font-weight: 900; font-size: 21px; margin: 0 0 8px; color: var(--sav-navy); letter-spacing: -0.01em; }
+  .dream-card .d-story {
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--sav-navy);
+    margin: 0 0 16px;
+    max-width: 860px;
+  }
+  .dream-card .d-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .dream-card h5 {
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--sav-steel);
+    margin: 0 0 8px;
+  }
+  .dream-card ul { font-family: var(--font-body); font-size: 13px; line-height: 1.55; color: var(--sav-navy); margin: 0; padding-left: 18px; }
+  .dream-card li { margin-bottom: 6px; }
+  .dream-card li strong { font-family: var(--font-display); font-weight: 700; }
+  .gap-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--hair); }
+  .gap-table th {
+    text-align: left;
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #fff;
+    background: var(--sav-navy);
+    padding: 12px 18px;
+  }
+  .gap-table td {
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--sav-navy);
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--hair);
+    vertical-align: top;
+  }
+  .gap-table td.k { font-family: var(--font-display); font-weight: 700; white-space: nowrap; }
+  .gap-table td.unlock { color: var(--sav-teal); font-weight: 600; }
+
   /* ===== CTA ===== */
   .cta {
     background: var(--sav-navy);
@@ -464,10 +575,10 @@
       <div class="sub">The single entry point for every fee Savills PPM develops — built once in the calculator, then flowing downstream to projections, billing, accruals, flash reports and P&amp;L. Capture the number where it's born, and stop re-keying it across fifteen spreadsheets.</div>
     </div>
     <div class="meta">
-      <strong>Version</strong> &nbsp; Draft 4<br>
+      <strong>Version</strong> &nbsp; Draft 5 · North Star edition<br>
       <strong>Owner</strong> &nbsp; PPM Leadership<br>
       <strong>Date</strong> &nbsp; August 2026<br>
-      <strong>Status</strong> &nbsp; Capture, reporting, budget-comparison &amp; staffing-reconciliation layers live · Box-backed, multi-user · forward plan under review with leadership
+      <strong>Status</strong> &nbsp; Phases 0–8 live · Box-backed, multi-user · the dream defined below — sequencing decided with leadership
     </div>
   </header>
 
@@ -1011,14 +1122,164 @@
             <div>
               <h4>When to invest</h4>
               <ul>
-                <li>Only after Phases 1–7 prove value &amp; the schema is stable</li>
-                <li>Driven by where the firm's pain is — don't pre-build</li>
+                <li>This is the concrete integration menu behind <strong>Pillar 5</strong> of the North Star section below</li>
+                <li>Only after the schema is stable and adoption is proven — driven by where the firm's pain is, don't pre-build</li>
               </ul>
             </div>
           </div>
         </div>
       </div>
 
+    </div>
+  </section>
+
+  <!-- ===== North star — the dream ===== -->
+  <section>
+    <header class="sec-head">
+      <span class="ix">North Star</span>
+      <h2>The dream — what this becomes.</h2>
+      <span class="h-meta">Deliberately ambitious · sequencing decided with leadership, not by this page</span>
+    </header>
+
+    <div class="principle">
+      <div class="p-big">Informs decisions.<br>Never makes them.</div>
+      <p>Every capability below ends at a human choice. The system flags, compares, prices scenarios, and proposes — a revenue leader confirms or ignores. Nothing writes itself, nothing prices itself, nothing staffs itself. That's not a limitation to engineer away; it's the design principle that made everything shipped so far trustworthy, and it holds at every level of ambition on this page.</p>
+    </div>
+
+    <div class="ladder">
+      <div class="rung now">
+        <div class="r-stage">Today · shipped</div>
+        <h4>System of record.</h4>
+        <p>One place where fees, staffing, revenue, and burn agree with each other to the dollar. The number is born once and flows — no re-keying, no forked spreadsheets, an audit trail on everything.</p>
+      </div>
+      <div class="rung next">
+        <div class="r-stage">Next · the record starts talking</div>
+        <h4>System of insight.</h4>
+        <p>The same records answer questions at the moment of decision: what did we charge last time, what happens if we win these three, which month is the trough, who's free in March. Early warnings fire before problems compound.</p>
+      </div>
+      <div class="rung dream">
+        <div class="r-stage">The dream</div>
+        <h4>Operating system for the practice.</h4>
+        <p>Every recurring leadership question answerable in one place. Every new engagement born data-first. New service lines and regions onboard onto the same engine — their grid, their baselines, their book — without a single new spreadsheet.</p>
+      </div>
+    </div>
+
+    <div class="dream-card">
+      <div class="d-kicker">Pillar 1</div>
+      <h3>Price with the whole firm's memory in the room.</h3>
+      <p class="d-story">Today a leader prices a proposal from experience and whatever comparables they remember. The dream: while the fee is being built, the system quietly holds up everything the practice has ever learned — similar projects won and lost, the effective rates that survived procurement, the discounts that were actually needed, the assumptions that historically break and turn into change orders. The leader still picks the number. They just pick it knowing everything we know.</p>
+      <div class="d-cols">
+        <div>
+          <h5>Informs the decision</h5>
+          <ul>
+            <li><strong>Live comparables in the calculator</strong> — "similar scope billed $1.1–$1.4M; your floor risk is on the two Director roles" — while the roster is being shaped, not after.</li>
+            <li><strong>Win-odds context by price point</strong> from win/loss history — "at this effective rate we've won 7 of 9 with this client's industry" — never a suggested price, always the odds around one.</li>
+            <li><strong>Assumption intelligence</strong> — which assumptions in the library historically got broken and what the change orders cost, so contingency is priced knowingly.</li>
+            <li><strong>Escalation &amp; rate-lock outcomes</strong> — what clients actually accepted, by industry and size, so the negotiable terms are negotiated from data.</li>
+          </ul>
+        </div>
+        <div>
+          <h5>Gets ahead of</h5>
+          <ul>
+            <li>Underpricing drift — discounts creeping wider year over year without anyone deciding that.</li>
+            <li>Procurement surprises — floor violations caught while drafting, not in the BAFO round.</li>
+            <li>Margin sold away before the work starts — the post-mortem moved to the pitch.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="dream-card">
+      <div class="d-kicker">Pillar 2</div>
+      <h3>See around corners.</h3>
+      <p class="d-story">The book already projects forward month by month. The dream is tripwires on that projection: the system watches the horizon continuously and raises a hand two quarters before a problem arrives — while there's still time to sell into a trough, hire ahead of a crunch, or renegotiate before an overrun compounds. Every alert is a flag with the evidence attached, never an action taken.</p>
+      <div class="d-cols">
+        <div>
+          <h5>Informs the decision</h5>
+          <ul>
+            <li><strong>Revenue-cliff radar</strong> — coverage ratio vs. budget by month and service line; the trough visible six months out, with the pipeline that could fill it ranked beside it.</li>
+            <li><strong>Bench-crunch forecast</strong> — weighted pipeline × its staffing shapes vs. current capacity: "if half of these land, we're three PMs short in Q2." Hiring lead time is real; start the search before the fire.</li>
+            <li><strong>Margin-leak monitors</strong> — burn running ahead of plan, unmapped hours accumulating, NTE ceilings approaching, scope creep with no change order behind it.</li>
+            <li><strong>Concentration &amp; key-person risk</strong> — one client too big a share of the book; one person silently holding five major accounts.</li>
+          </ul>
+        </div>
+        <div>
+          <h5>Gets ahead of</h5>
+          <ul>
+            <li>Quarter-end revenue surprises that were visible in March.</li>
+            <li>Hiring that starts when the overload arrives instead of when it became inevitable.</li>
+            <li>Silent margin erosion — a hundred small leaks instead of one visible failure.</li>
+            <li>The bus factor — resilience planned before the resignation letter.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="dream-card">
+      <div class="d-kicker">Pillar 3</div>
+      <h3>Plan the business, not just the projects.</h3>
+      <p class="d-story">Everything so far manages one project at a time. The dream adds the level above: the year, the client, the team as first-class objects. Leadership war-games the book instead of debating static spreadsheets — and when the plan is agreed, it freezes as the baseline the year is measured against, in the same system that measures it.</p>
+      <div class="d-cols">
+        <div>
+          <h5>Informs the decision</h5>
+          <ul>
+            <li><strong>Scenario planning</strong> — pick pursuits, drag their probabilities, and watch revenue, staffing, and hiring implications move side by side. "What do we need to be true to hit $XM?" answered in minutes.</li>
+            <li><strong>Annual planning mode</strong> — next year's budget built bottoms-up from the booked runway, weighted pipeline, and hiring plan; frozen as a Revenue Studio baseline when leadership signs it.</li>
+            <li><strong>Client 360</strong> — every client's full story on one page: fee history, margin, payment behavior, relationship owner, renewal dates, open pipeline. Walk into the QBR knowing more than the client does.</li>
+            <li><strong>Capacity-aware selling</strong> — the bench visible while the pursuit team is being promised, so the proposal names people who can actually do the work.</li>
+          </ul>
+        </div>
+        <div>
+          <h5>Gets ahead of</h5>
+          <ul>
+            <li>Budgets negotiated from anecdote instead of built from the book.</li>
+            <li>Renewals discovered at renewal time.</li>
+            <li>Pursuit teams promised twice — the same star named in three live proposals.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="dream-card">
+      <div class="d-kicker">Pillar 4</div>
+      <h3>Capture the data we're not capturing.</h3>
+      <p class="d-story">Most of the dream above needs no new technology — it needs data the practice generates every week and currently lets evaporate. Each row below is a small capture habit (a field at status-change, a Clockify code, a monthly finance export) that unlocks a capability no competitor can buy. The rule stays the rule: capture at the moment the data is born, in the flow of work someone is already doing — never a new form for its own sake.</p>
+      <table class="gap-table">
+        <tr><th>Data we don't capture today</th><th>Where it would come from</th><th>What it unlocks</th></tr>
+        <tr><td class="k">Cost of sale</td><td>Pursuit-phase hours via Clockify pursuit codes</td><td class="unlock">True cost-to-win per client and channel · bid/no-bid discipline with numbers behind it</td></tr>
+        <tr><td class="k">Loss detail</td><td>Two fields when a proposal goes lost: who won, roughly where their price landed</td><td class="unlock">Pricing power by industry and client — where we lose on price vs. relationship</td></tr>
+        <tr><td class="k">Scope size</td><td>RSF, headcount, site count on the intake — three numbers at proposal time</td><td class="unlock">$/RSF and $/head benchmarks — the unit economics clients and procurement quote back at us</td></tr>
+        <tr><td class="k">Cash behavior</td><td>Monthly finance export: invoice-to-cash lag, write-offs per project</td><td class="unlock">True margin after collections · a client-quality score beside the revenue number</td></tr>
+        <tr><td class="k">Change-order genesis</td><td>One dropdown on each CO: which assumption broke</td><td class="unlock">Contingency priced from evidence · the assumptions library that learns</td></tr>
+        <tr><td class="k">People depth</td><td>Skills, certifications, location, language on the staffing roster</td><td class="unlock">Staffing suggestions that respect reality, not just titles · bench visible by capability</td></tr>
+        <tr><td class="k">Lead provenance</td><td>Source on every record: broker, repeat client, RFP portal, referral</td><td class="unlock">Conversion and fee-share ROI by channel — where business development dollars actually work</td></tr>
+        <tr><td class="k">Escalation billed</td><td>Contractual escalation vs. what invoicing actually applied</td><td class="unlock">Money contractually ours but never billed, surfaced instead of forgotten</td></tr>
+      </table>
+    </div>
+
+    <div class="dream-card">
+      <div class="d-kicker">Pillar 5</div>
+      <h3>Scale with the business.</h3>
+      <p class="d-story">The dream has to survive success: more leaders, more service lines, more regions, more consumers of the data. The engine already treats the data as clean, versioned JSON — scaling is opening that up deliberately: real integration surfaces for the tools around us, real authentication for a bigger tenant base, and interfaces that meet people where they are instead of asking them to come to the app.</p>
+      <div class="d-cols">
+        <div>
+          <h5>Informs the decision</h5>
+          <ul>
+            <li><strong>A real API layer</strong> — the leadership visualization app, Power BI, and finance read the same records live. This system becomes the source other tools trust, not another silo to reconcile.</li>
+            <li><strong>Ask-the-data</strong> — plain-English questions ("median PM rate across our last eight pharma wins?") answered read-only from the records, with citations to the projects behind every number.</li>
+            <li><strong>Push, not pull</strong> — a weekly digest per leader: your stale records, your at-risk months, your unreconciled imports. The system does the (gentle) nagging; humans do the entering.</li>
+            <li><strong>Ingestion everywhere</strong> — inbound PSAs, change orders, and RFPs drafted into records for review the day they arrive, extending what already works for historicals to the live pipeline.</li>
+          </ul>
+        </div>
+        <div>
+          <h5>Built to scale</h5>
+          <ul>
+            <li>SSO and server-side permissions — any book size, any team, true project-level isolation.</li>
+            <li>New service lines and regions as tenants on the same engine — their rate grid, their baselines, their book, zero new spreadsheets.</li>
+            <li>The confirm-gated pattern everywhere — ambition grows, the trust model doesn't change.</li>
+          </ul>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1069,7 +1330,7 @@
     <div class="cta">
       <div>
         <h2>Where we are, and what's next.</h2>
-        <p>Phases 0–8 are live — author fees (fixed or NTE, with change orders, versions, broker splits and pass-through), ingest historicals, bulk-import the billing book with diff-and-select, index and benchmark every project, analyse win/loss and discounting, project revenue firm-wide, compare it against the Budget / RF baselines in the Revenue Studio, track staffing load, reconcile contract vs. plan vs. actuals with confirm-gated bridging and pre-calculated rates, and lay Clockify burn against the plan for margin by month — all Box-backed and multi-user, with a regression suite (<code>tests.html</code>) guarding the engine. Known remaining builds: the formal <strong>accrual / flash output</strong>, a <strong>90-day capacity view</strong>, utilization charts, and a <strong>two-way Salesforce sync</strong>. The next phase of this roadmap — including the integration with the leadership visualization app — is being re-planned with leadership now; this page will be updated when it's agreed.</p>
+        <p>Phases 0–8 are live — author fees (fixed or NTE, with change orders, versions, broker splits and pass-through), ingest historicals, bulk-import the billing book with diff-and-select, index and benchmark every project, analyse win/loss and discounting, project revenue firm-wide, compare it against the Budget / RF baselines in the Revenue Studio, track staffing load, reconcile contract vs. plan vs. actuals with confirm-gated bridging and pre-calculated rates, and lay Clockify burn against the plan for margin by month — all Box-backed and multi-user, with a regression suite (<code>tests.html</code>) guarding the engine. Known remaining builds: the formal <strong>accrual / flash output</strong>, a <strong>90-day capacity view</strong>, utilization charts, and a <strong>two-way Salesforce sync</strong>. Beyond those, the <strong>North Star</strong> section above is the dream this system is aimed at — price with the firm's whole memory, see problems two quarters early, plan the business and not just the projects, capture the data we currently let evaporate, and scale to whatever the practice becomes. Which pillar moves first is a leadership call; every one of them ships the way everything here has shipped — in confirm-gated slices that inform decisions without ever making them.</p>
       </div>
       <div class="actions">
         <a href="Fee Generator.html">Open the Fee &amp; Revenue System</a>
