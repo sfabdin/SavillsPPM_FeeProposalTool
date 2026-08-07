@@ -40,12 +40,13 @@
   <div class="card"><div class="step"><div class="n">4</div><div><h3>Reporting reads it all — you don't re-enter anything</h3>
     <p><a href="Revenue Studio.html">Revenue Studio</a> (slice &amp; compare against frozen baselines), <a href="Benchmarking Dashboard.html">Benchmarking</a>, <a href="Proposal Analytics.html">Proposal Analytics</a>, and <a href="Data Entry Status.html">Data Entry Status</a> all read the same records. If a report looks wrong, fix the project — not the report.</p></div></div></div>
   <div class="card"><div class="step"><div class="n">5</div><div><h3>Admin layer <span class="pill">leadership only</span></h3>
-    <p>Staffing &amp; Bandwidth (allocations vs. contract vs. Clockify actuals), Profitability, Ingestion Studio (bulk imports with diff-and-select), and Rate Reconciliation. Gated to the admin allowlist — you may not see these in the menu, and that's expected.</p></div></div></div>
+    <p>Staffing &amp; Bandwidth (allocations vs. contract vs. Clockify actuals), Profitability Analysis, Ingestion Studio (bulk imports with diff-and-select), Rate Reconciliation, and the data-stewardship tools (Change Log, Data Repair). Gated to the admin allowlist — you may not see these in the menu, and that's expected.</p></div></div></div>
 
   <h2>What's expected of you</h2>
   <div class="card"><ul>
     <li><b>Keep your projects current in the calculator</b> — status, dates, roster, and fee should match what's actually signed or proposed.</li>
     <li><b>Keep monthly projections honest in Revenue Projections</b> — override the months that have shifted; leave the rest computed.</li>
+    <li><b>Reconcile your imported (historical) projects.</b> Projects loaded from the old workbook show an "Imported vs. calculated" panel in the calculator. Build the staffing until calculated matches imported — or use <b>⚡ Pre-calculate rates from staffing</b> to get a proposed answer to react to — then mark the project reconciled. Until you do, projections follow the imported sheet, not your fee model.</li>
     <li><b>Don't edit the same project at the same time as someone else.</b> The tool merges most concurrent edits safely, but simultaneous edits to the <i>same project</i> follow "last save wins." Coordinate ownership.</li>
     <li><b>Check <a href="Data Entry Status.html">Data Entry Status</a></b> to see what's still missing on your projects — it's the same list leadership sees.</li>
     <li>Everything is gated through your Box sign-in; the pill in the bottom-right corner tells you when your changes last synced. If it turns red, your edits are local-only — sign back in before closing the tab.</li>
@@ -61,6 +62,7 @@
     <dt>① Plan · ② Contract · ③ Actual <span class="pill">staffing</span></dt><dd>① who we <i>plan</i> to staff (names, from the matrix) · ② what the contract <i>priced</i> (titles, from the fee tool) · ③ what actually got <i>logged</i> (Clockify). Healthy = ③ tracks ① and both stay inside ②.</dd>
     <dt>Pursuit / opportunity</dt><dd>Unsigned work being chased. Staffing views stripe it and let you include/exclude it, so tentative load never masquerades as firm.</dd>
     <dt>Rate lock</dt><dd>Client keeps start-year rates for the whole engagement; the forgone escalation shows once, as a credit line — not by silently lowering the rates.</dd>
+    <dt>Imported (locked) vs. reconciled</dt><dd>A project imported from the legacy workbook keeps its imported monthly figures <i>locked</i> for projections until its owner marks it reconciled — at which point projections switch to the fee model built in the calculator. The pre-calculate button proposes rates that back into the imported totals; it never flips the lock for you.</dd>
   </dl></div>
 
   <h2>If you're stuck</h2>

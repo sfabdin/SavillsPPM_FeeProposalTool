@@ -9,29 +9,55 @@
    ============================================================ */
 (function () {
   'use strict';
-  // Every tool in the system. `admin:true` = only show to admins.
+  // Every tool in the system, in order of importance and daily use.
+  // `admin:true` = only show to admins. `desc` = the mouseover explanation.
+  // `cta:true` = the yellow "start here" action. `sub:'…'` = rendered under
+  // an indented sub-heading inside its group (rarely-used one-time tools).
   const LINKS = [
-    { href: 'Fee Generator.html',            label: 'Home',                group: 'Build' },
-    { href: 'Universal Fee Calculator.html', label: 'Fee Calculator',      group: 'Build' },
-    { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Admin', admin: true },
-    { href: 'Projects Index.html',           label: 'Projects Index',      group: 'Manage' },
-    { href: 'Staffing Matrix.html',          label: 'Staffing & Bandwidth', group: 'Admin', admin: true },
-    { href: 'Profitability.html',            label: 'Profitability',       group: 'Admin', admin: true },
-    { href: 'Revenue Projections.html',      label: 'Revenue Projections', group: 'Manage' },
-    { href: 'Revenue Studio.html',           label: 'Revenue Studio',      group: 'Manage' },
-    { href: 'Benchmarking Dashboard.html',   label: 'Benchmarking',        group: 'Manage' },
-    { href: 'Proposal Analytics.html',        label: 'Proposal Analytics',  group: 'Manage' },
-    { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Manage' },
-    { href: 'Change Log.html',               label: 'Change Log',          group: 'Manage' },
-    { href: 'Ingestion Studio.html?mode=bulk', label: 'Import Revenues',   group: 'Admin', admin: true },
-    { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Admin', admin: true, note: 'one-time' },
-    { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Admin', admin: true },
-    { href: 'Data Repair.html',              label: 'Data Repair',         group: 'Admin', admin: true, note: 'one-time' },
-    { href: 'Getting Started.html',          label: 'Getting Started',     group: 'Docs' },
-    { href: 'Enterprise Migration Guide.html', label: 'Migration Guide',   group: 'Docs' },
-    { href: 'Fee System Roadmap.html',       label: 'Roadmap',             group: 'Docs' },
-    { href: 'Maintainers Runbook.html',      label: 'Maintainer’s Runbook', group: 'Docs' },
+    // ── Projects — the daily loop for every revenue leader ──
+    { href: 'Projects Index.html',           label: 'Projects Index',      group: 'Projects',
+      desc: 'Every proposal and project in one place — search, filter, and open.' },
+    { href: 'Universal Fee Calculator.html', label: '+ New Project',       group: 'Projects', cta: true,
+      desc: 'Start a new fee proposal in the Fee Calculator — team, rates, phases, monthly schedule.' },
+    { href: 'Revenue Projections.html',      label: 'Revenue Projections', group: 'Projects',
+      desc: 'Monthly revenue outlook across the whole portfolio — booked plus probability-weighted pipeline.' },
+    { href: 'Benchmarking Dashboard.html',   label: 'Benchmarking',        group: 'Projects',
+      desc: 'Compare proposals against each other — fee levels, team shapes, and pricing patterns.' },
+    { href: 'Proposal Analytics.html',       label: 'Proposal Analytics',  group: 'Projects',
+      desc: 'Pipeline and win/loss analytics — where proposals come from and why we win or lose.' },
+    // ── Operations — running the business (admin) ──
+    { href: 'Staffing Matrix.html',          label: 'Staffing & Bandwidth', group: 'Operations', admin: true,
+      desc: 'Who is working on what and how loaded they are — allocations, bandwidth, and contract-vs-staffing checks.' },
+    { href: 'Revenue Studio.html',           label: 'Revenue Studio',      group: 'Operations', admin: true,
+      desc: 'Slice, compare, and shape revenue against frozen baselines — without touching project data.' },
+    { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Operations', admin: true,
+      desc: 'Revenue with Clockify burn (hours × cost rate) laid against it — margin per project, per month.' },
+    { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Operations', admin: true,
+      desc: 'Completeness tracker — projects by revenue leader, with the fields still missing.' },
+    // ── Data Admin — keeping the data right (admin) ──
+    { href: 'Change Log.html',               label: 'Change Log',          group: 'Data Admin', admin: true,
+      desc: 'Who changed what, and when — every create, edit, status change, and deletion across the system.' },
+    { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Data Admin', admin: true,
+      desc: 'Paste or upload proposal documents and map them into project records.' },
+    { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
+      desc: 'One-time import of the small-works project book.' },
+    { href: 'Data Repair.html',              label: 'Data Repair',         group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
+      desc: 'Scan-and-fix for known data damage — duplicates, stale renames, sparse months. Preview first, then repair.' },
+    { href: 'Ingestion Studio.html?mode=bulk', label: 'Import Revenues',   group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
+      desc: 'Bulk-import the legacy revenue projection sheet, with a diff to review before anything lands.' },
+    { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
+      desc: 'Dry-run a new rate grid against every project to see what would change before committing it.' },
+    // ── Help ──
+    { href: 'Getting Started.html',          label: 'Getting Started',     group: 'Help',
+      desc: 'The 5-minute orientation — how the tools fit together and what you are expected to keep current.' },
+    { href: 'Maintainers Runbook.html',      label: 'Maintainer’s Runbook', group: 'Help',
+      desc: 'Deep technical reference — architecture, data flow, and the exact fee math.' },
+    { href: 'Enterprise Migration Guide.html', label: 'Migration Guide',   group: 'Help',
+      desc: 'How to move the system from Box + static pages onto enterprise infrastructure.' },
+    { href: 'Fee System Roadmap.html',       label: 'Development Roadmap', group: 'Help',
+      desc: 'Where the tool is going — what has shipped, what is in progress, and what is planned.' },
   ];
+  const ADMIN_GROUPS = ['Operations', 'Data Admin'];
   const NAVY = '#25273A', YEL = '#FFDF00', TEAL = '#0E7C7B';
   const here = (location.pathname.split('/').pop() || '').toLowerCase();
 
@@ -47,21 +73,29 @@
     font-family:"Helvetica Neue",Arial,sans-serif;}
   #ppm-nav-panel.open{transform:translateX(0);}
   #ppm-nav-panel .pn-head{background:${NAVY};color:#fff;padding:20px 22px;display:flex;justify-content:space-between;align-items:center;}
+  #ppm-nav-panel .pn-head a.pn-home{color:inherit;text-decoration:none;display:block;}
+  #ppm-nav-panel .pn-head a.pn-home:hover .pn-t{color:${YEL};}
   #ppm-nav-panel .pn-head .pn-t{font-weight:800;font-size:14px;letter-spacing:.04em;}
   #ppm-nav-panel .pn-head .pn-s{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-top:3px;}
   #ppm-nav-panel .pn-x{background:0;border:0;color:#fff;font-size:22px;cursor:pointer;line-height:1;}
   #ppm-nav-list{overflow-y:auto;padding:8px 0 24px;}
-  #ppm-nav-list .pn-grp{font-size:9.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#9aa0aa;padding:16px 22px 5px;}
+  #ppm-nav-list .pn-grp{font-size:9.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#9aa0aa;padding:16px 22px 5px;display:flex;align-items:center;gap:8px;}
+  #ppm-nav-list .pn-grp .pn-adm{font-size:8px;font-weight:800;letter-spacing:.1em;color:#8a6d00;background:#fdf3d7;padding:2px 6px;}
+  #ppm-nav-list .pn-grp.pn-subgrp{font-size:8.5px;color:#b3b8c2;padding:12px 22px 3px 34px;}
   #ppm-nav-list a{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 22px;color:${NAVY};text-decoration:none;font-size:14px;font-weight:600;border-left:3px solid transparent;}
   #ppm-nav-list a:hover{background:#f4f2ef;}
   #ppm-nav-list a.here{border-left-color:${TEAL};background:#f0efec;color:${TEAL};}
   #ppm-nav-list a.here::after{content:'●';color:${TEAL};font-size:9px;}
+  #ppm-nav-list a.pn-sub{padding-left:34px;font-weight:500;font-size:13px;color:#5a6070;}
+  #ppm-nav-list a.pn-cta{margin:6px 22px 4px;padding:11px 16px;background:${YEL};color:${NAVY};font-weight:800;letter-spacing:.03em;border-left:0;justify-content:center;}
+  #ppm-nav-list a.pn-cta:hover{background:#ffe94d;}
+  #ppm-nav-list a.pn-cta.here{background:${YEL};color:${NAVY};}
+  #ppm-nav-list a.pn-cta.here::after{content:'';}
   #ppm-nav-search{padding:12px 16px 4px;}
   #ppm-nav-search input{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid rgba(37,39,58,.25);font-size:13px;font-family:inherit;outline:none;}
   #ppm-nav-search input:focus{border-color:${TEAL};}
   #ppm-nav-list .pn-grp.pn-docs{border-top:1px solid rgba(37,39,58,.12);margin-top:12px;padding-top:16px;}
   #ppm-nav-list a.pn-doc{font-weight:500;font-size:13px;color:#6a707c;}
-  #ppm-nav-list .pn-note{font-size:8.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6d00;background:#fdf3d7;padding:3px 7px;flex:none;}
   @media print{#ppm-nav-btn,#ppm-nav-ov,#ppm-nav-panel{display:none!important;}}
   `;
 
@@ -76,13 +110,20 @@
     const panel = document.createElement('nav'); panel.id = 'ppm-nav-panel';
 
     const groups = [...new Set(LINKS.map(l => l.group))];
-    let inner = `<div class="pn-head"><div><div class="pn-t">PPM · Fee &amp; Revenue System</div><div class="pn-s">Navigate</div></div><button class="pn-x" aria-label="Close">×</button></div>
+    let inner = `<div class="pn-head"><a class="pn-home" href="Fee Generator.html" title="Home — the Fee &amp; Revenue System landing page"><div class="pn-t">PPM · Fee &amp; Revenue System</div><div class="pn-s">Navigate</div></a><button class="pn-x" aria-label="Close">×</button></div>
       <div id="ppm-nav-search"><input type="search" placeholder="Jump to a tool… (type to filter)" aria-label="Filter tools"></div><div id="ppm-nav-list">`;
     groups.forEach(g => {
-      inner += `<div class="pn-grp${g === 'Docs' ? ' pn-docs' : ''}">${g}</div>`;
+      const adminGrp = ADMIN_GROUPS.includes(g);
+      inner += `<div class="pn-grp${g === 'Help' ? ' pn-docs' : ''}"${adminGrp ? ' data-admin="1"' : ''}>${g}${adminGrp ? '<span class="pn-adm">admin only</span>' : ''}</div>`;
+      let subShown = null;
       LINKS.filter(l => l.group === g).forEach(l => {
+        if (l.sub && l.sub !== subShown) {
+          subShown = l.sub;
+          inner += `<div class="pn-grp pn-subgrp" data-admin="${l.admin ? 1 : 0}">${l.sub}</div>`;
+        }
         const cur = l.href.toLowerCase() === here ? ' here' : '';
-        inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" class="${(g === 'Docs' ? 'pn-doc' : '') + cur}">${l.label}${l.note ? `<span class="pn-note">${l.note}</span>` : ''}</a>`;
+        const cls = (g === 'Help' ? 'pn-doc ' : '') + (l.sub ? 'pn-sub ' : '') + (l.cta ? 'pn-cta ' : '');
+        inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" class="${(cls + cur).trim()}" title="${l.desc || ''}">${l.label}</a>`;
       });
     });
     inner += `</div>`;
@@ -106,8 +147,15 @@
         a.style.display = hidden ? 'none' : '';
       });
       panel.querySelectorAll('.pn-grp').forEach(h => {
+        // A sub-heading owns links until the NEXT heading of any kind; a main
+        // group heading owns everything (incl. sub-headings' links) until the
+        // next MAIN heading — so filtering can't strand either kind of header.
+        const isSub = h.classList.contains('pn-subgrp');
         let el = h.nextElementSibling, any = false;
-        while (el && !el.classList.contains('pn-grp')) { if (el.tagName === 'A' && el.style.display !== 'none') any = true; el = el.nextElementSibling; }
+        while (el && !(el.classList.contains('pn-grp') && (isSub || !el.classList.contains('pn-subgrp')))) {
+          if (el.tagName === 'A' && el.style.display !== 'none') any = true;
+          el = el.nextElementSibling;
+        }
         h.style.display = any ? '' : 'none';
       });
     }
