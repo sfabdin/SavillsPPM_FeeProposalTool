@@ -998,6 +998,15 @@
     const out = [];
     const visitedFee = new Set();
 
+    // Project names must be compared through the saved rename table
+    // (old sheet name → canonical Clockify name). Otherwise a fee record
+    // under the OLD name and allocations under the NEW name never see each
+    // other: the gap card keeps resurfacing, confirming it creates a row
+    // that merge renames away, and the "phantom" loops forever.
+    const ren = (db.mappings || {}).renames || {};
+    const canonProjName = (n) => ren[nkey(n)] || n;
+    const sameProj = (a, b) => nkey(canonProjName(a)) === nkey(canonProjName(b));
+
     // Diff ONE matrix project's contract demand (across its linked fee
     // projects) against existing allocations, pushing gap entries into out.
     const collect = (pn, client, links) => {
@@ -1040,7 +1049,7 @@
           const rf = titleFamily(e.roleLabel);
           const covers = (pt) => { if (!pt) return false; const f = titleFamily(pt); return (f && rf && f.titleId === rf.titleId) || tokenScore(pt, e.roleLabel) >= 0.5; };
           const roleKey = String(e.roleLabel).toLowerCase();
-          existing = db.allocations.filter(a => a.project === pn && (
+          existing = db.allocations.filter(a => sameProj(a.project, pn) && (
             // an allocation created FOR this open role always counts, whatever
             // the assignee's title says — otherwise confirming never clears it
             String(a.contractRole || '').toLowerCase() === roleKey ||
@@ -1057,13 +1066,13 @@
           if (person && !matches.some(m => m.id === person.id)) matches.push(person);
           const matchIds = new Set(matches.map(m => m.id));
           const nameKey = nkey(canonicalName(e.name));
-          existing = db.allocations.filter(a => a.project === pn && (
+          existing = db.allocations.filter(a => sameProj(a.project, pn) && (
             matchIds.has(a.personId) ||
             // allocation created FOR this contract name (leader mapped it to
             // someone else) counts even before/without a saved alias
             nkey(canonicalName(a.contractResource || '')) === nameKey
           ));
-          const onProj = matches.find(m => db.allocations.some(a => a.personId === m.id && a.project === pn));
+          const onProj = matches.find(m => db.allocations.some(a => a.personId === m.id && sameProj(a.project, pn)));
           if (onProj) person = onProj;
         }
         const covAt = (ym) => existing.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
@@ -1096,10 +1105,21 @@
       });
     };
 
-    // 1) Matrix projects with allocations — diff against their linked fee projects.
-    distinctProjects().forEach(pn => {
-      const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
-      const links = matchFeeProjects(pn, client);
+    // 1) Matrix projects with allocations — diff against their linked fee
+    // projects. Grouped by CANONICAL name so a project living under two
+    // names (stale rows + renamed rows) is one project: links from every
+    // spelling are unioned and the gap is anchored on the canonical name.
+    const byCanon = {};
+    distinctProjects().forEach(pn0 => {
+      const pn = canonProjName(pn0);
+      const ck = nkey(pn);
+      (byCanon[ck] = byCanon[ck] || { pn, names: [] }).names.push(pn0);
+    });
+    Object.values(byCanon).forEach(({ pn, names }) => {
+      const client = (db.allocations.find(a => names.includes(a.project)) || {}).client || '';
+      const links = [], seenL = new Set();
+      const lookups = names.includes(pn) ? names : names.concat([pn]);
+      lookups.forEach(n => matchFeeProjects(n, client).forEach(l => { if (!seenL.has(l.id)) { seenL.add(l.id); links.push(l); } }));
       if (links.length) collect(pn, client, links);
     });
 
@@ -1116,12 +1136,17 @@
       const st = (p.project && p.project.status) || '';
       if (st !== 'won' && st !== 'active') return;              // unsigned work doesn't demand staffing
       if (!p.roles || !p.roles.length || !p.timeline) return;
-      const name = (p.project && p.project.name || '').trim();
-      if (!name) return;
+      const rawName = (p.project && p.project.name || '').trim();
+      if (!rawName) return;
+      // The fee record may carry a pre-rename spelling ("EM NALI") of a
+      // project the matrix tracks canonically ("Exxon NALI") — resolve it
+      // through the rename table first so demand lands on the real project.
+      const name = canonProjName(rawName);
       let pn = name, client = (p.project && p.project.client) || '', dupNote = null;
       const mk = projKey(name);
       let best = null, bestScore = 0;
-      distinctProjects().forEach(mp => {
+      distinctProjects().forEach(mp0 => {
+        const mp = canonProjName(mp0);
         const k2 = projKey(mp);
         let s = 0;
         if (k2 && k2 === mk) s = 1;
@@ -1131,8 +1156,10 @@
       });
       if (best && bestScore >= 0.7 && !codesConflict(best, name)) {
         pn = best;
-        client = (db.allocations.find(a => a.project === best) || {}).client || client;
-        dupNote = name;   // matrix already knows this work under `best`
+        client = (db.allocations.find(a => sameProj(a.project, best)) || {}).client || client;
+        // A saved rename is a KNOWN alias, not a suspected duplicate record —
+        // only flag when fuzzy matching (not the rename table) made the leap.
+        if (nkey(name) === nkey(rawName) && nkey(best) !== nkey(rawName)) dupNote = rawName;
       }
       collect(pn, client, [{ id: p.id, via: 'direct' }]);
       if (dupNote) out.forEach(g => { if (g.project === pn && g.via === 'direct' && !g.possibleDupFee) g.possibleDupFee = dupNote; });
