@@ -155,11 +155,13 @@
   .identity-bar .id-note strong { font-family: var(--font-display); color: #fff; }
 
   /* Table */
+  /* Vertical scroll viewport so the header row pins while rows scroll. */
   .projects-wrap {
     background: #fff;
     border: 1px solid rgba(37,39,58,0.10);
     margin-bottom: 36px;
-    overflow-x: auto;
+    overflow: auto;
+    max-height: calc(100vh - 140px);
   }
   .projects-table {
     width: 100%;
@@ -180,6 +182,9 @@
     cursor: pointer;
     user-select: none;
     transition: background 150ms ease;
+    position: sticky;
+    top: 0;
+    z-index: 3;
   }
   .projects-table thead th:hover { background: #14152a; }
   .projects-table thead th.num { text-align: right; }

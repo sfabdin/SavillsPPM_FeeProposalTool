@@ -301,6 +301,34 @@
     });
   }
 
+  /* Leaves-of-absence panel: who's out, until when, and the 1–2 month
+     return heads-up. Leaves are ordinary allocations to the special
+     "Leaves of Absence" project — this just surfaces their timing. */
+  function leaveSectionHtml() {
+    const rows = S.leaveStatus().filter(l => l.status !== 'past');
+    const chip = (l) => {
+      const who = esc(l.person.name);
+      if (l.status === 'out') {
+        const back = `returns ${esc(S.ymLabel(S.ymAdd(l.end, 1)))}`;
+        return l.returningSoon
+          ? `<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Back within ~${l.monthsToReturn} month${l.monthsToReturn === 1 ? '' : 's'} — line up their next assignment now"><b>${who}</b> · 🔔 ${back} — plan their staffing</span>`
+          : `<span class="mv-chip" style="background:#efe6f7;color:#6b3fa0"><b>${who}</b> · out until ${esc(S.ymLabel(l.end))}</span>`;
+      }
+      return `<span class="mv-chip" style="background:#efe6f7;color:#6b3fa0"><b>${who}</b> · leave starts ${esc(S.ymLabel(l.start))}${l.startingSoon ? ' — reassign their book' : ''}</span>`;
+    };
+    const body = rows.length
+      ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${rows.map(chip).join('')}</div>`
+      : `<span class="note-txt">No one is on or headed into a leave. </span>`;
+    return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid #6b3fa0;padding:12px 16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:${rows.length ? '8px' : '0'}">
+        <span style="font-family:var(--font-display);font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#6b3fa0">🌴 Leaves of absence</span>
+        <span class="grow"></span>
+        <button class="btn btn-ghost" id="leave-add" style="padding:4px 10px;font-size:11.5px" title="A leave is an allocation to the special &quot;Leaves of Absence&quot; project at 100% — it blocks the person's capacity for the window">+ Log a leave</button>
+      </div>
+      ${body}
+    </div>`;
+  }
+
   function renderAllocations() {
     let list = S.listAllocations();
     const q = state.allocSearch.toLowerCase();
@@ -327,6 +355,7 @@
     list.forEach(a => {
       const person = S.getPerson(a.personId) || { name: a.personId };
       const isP = isPursuitAlloc(a);
+      const isLeave = S.isLeaveProject(a.project);
       let chip = '';
       const gi = inlineIdx[a.personId + '|' + a.project];
       if (gi !== undefined && !chipShown.has(gi)) {
@@ -338,12 +367,12 @@
           : `+${g.totalNeedFteMo} FTE-mo across ${g.segments.length} windows`;
         chip = ` <a href="#" class="mv-chip" data-inline-topup="${gi}" style="background:#fdf3d7;color:#8a6d00;font-weight:700;text-decoration:none;white-space:nowrap" title="The contract staffs ${esc(g.resource)} beyond what's allocated here — click to add the difference as its own row">⚠ contract ${label} — add?</a>`;
       }
-      body += `<tr class="${isP ? 'pursuit-row' : ''}">
+      body += `<tr class="${isP ? 'pursuit-row' : ''}"${isLeave ? ' style="background:#faf7fd"' : ''}>
         <td class="pname">${esc(a.project)}</td>
         <td>${esc(a.client || '—')}</td>
         <td>${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${person.isPool ? ' <span class="nh-tag" style="background:#dff0ee;color:#0E7C7B" title="Shared contract pool — several people can bill toward this line">POOL</span>' : ''}</td>
-        <td><span class="badge ${isP ? 'pursuit' : 'active'}">${esc(a.status)}${a.type === 'Opportunity' ? ' · opp' : ''}</span></td>
-        <td>${esc(a.start ? S.ymLabel(a.start) : '—')} – ${esc(a.end ? S.ymLabel(a.end) : '—')}</td>
+        <td>${isLeave ? '<span class="badge" style="background:#efe6f7;color:#6b3fa0">🌴 Leave</span>' : `<span class="badge ${isP ? 'pursuit' : 'active'}">${esc(a.status)}${a.type === 'Opportunity' ? ' · opp' : ''}</span>`}</td>
+        <td>${esc(a.start ? S.ymLabel(a.start) : '—')} – ${esc(a.end ? S.ymLabel(a.end) : '—')}${isLeave && a.end ? ` <span class="vmini" style="color:#6b3fa0">back ${esc(S.ymLabel(S.ymAdd(a.end, 1)))}</span>` : ''}</td>
         <td class="num">${a.pct}%</td>
         <td class="vmini">${esc(a.note || '')}${chip}</td>
         <td><span class="row-act"><button data-edit="${a.id}">Edit</button><button class="del" data-del="${a.id}">Del</button></span></td>
@@ -351,8 +380,10 @@
     });
     const table = list.length ? `<table class="dt"><thead><tr><th>Project</th><th>Client</th><th>Person</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note / decision</th><th></th></tr></thead><tbody>${body}</tbody></table>`
       : `<div class="empty">No allocations match. <a href="#" id="al-clear">Clear filters</a></div>`;
-    $('#p-allocations').innerHTML = bridgeSectionHtml() + toolbar + table;
+    $('#p-allocations').innerHTML = bridgeSectionHtml() + leaveSectionHtml() + toolbar + table;
     wireBridge();
+    const la = $('#leave-add');
+    if (la) la.onclick = () => openAllocModal(null, { title: 'Log a leave of absence', project: 'Leaves of Absence', client: 'Internal', pct: 100, note: 'Leave of absence' });
 
     $('#al-search').oninput = (e) => { state.allocSearch = e.target.value; renderAllocations(); const el = $('#al-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $('#al-status').onchange = (e) => { state.allocStatus = e.target.value; renderAllocations(); };
@@ -471,13 +502,18 @@
     const toolbar = `<div class="toolbar"><input type="search" id="ppl-search" placeholder="Filter person…" value="${esc(state.pplSearch)}"><button class="btn btn-ghost" id="ppl-expand-toggle">${allExpanded ? '▾ Collapse all' : '▸ Expand all'}</button><span class="grow"></span><span class="note-txt">${rows.length} people active in this window</span></div>`;
 
     const nowYm = S.currentYM();
+    // leave timing tags beside names — "show timing" on every roster view
+    const leaveByPerson = {};
+    S.leaveStatus().forEach(l => { if (l.status !== 'past' && !leaveByPerson[l.person.id]) leaveByPerson[l.person.id] = l; });
     let head = '<tr><th class="who">Person</th>' + ms.map(m => `<th${m < nowYm ? ' style="opacity:.6"' : ''}>${esc(S.ymLabel(m))}</th>`).join('') + '<th>Projects</th><th class="pk">Peak</th></tr>';
     let body = '';
     rows.forEach(r => {
       const allocs = S.listAllocations().filter(a => a.personId === r.person.id && (state.incPursuit || (a.status !== 'Pursuit' && a.type !== 'Opportunity')));
       const inWin = allocs.filter(a => ms.some(m => S.allocActiveIn(a, m)));
       const projectCount = new Set(inWin.map(a => a.project)).size;
-      const meta = [r.person.isNewHire ? '<span class="nh-tag">New hire</span>' : '', r.person.isPool ? '<span class="nh-tag" style="background:#dff0ee;color:#0E7C7B" title="Shared contract pool — several people can bill toward this line">POOL</span>' : '', r.person.title ? esc(r.person.title) : ''].filter(Boolean).join(' ');
+      const lv = leaveByPerson[r.person.id];
+      const lvTag = lv ? `<span class="nh-tag" style="background:${lv.returningSoon ? '#fdf3d7' : '#efe6f7'};color:${lv.returningSoon ? '#8a6d00' : '#6b3fa0'}" title="${lv.status === 'out' ? `On leave — back ${esc(S.ymLabel(S.ymAdd(lv.end, 1)))}${lv.returningSoon ? ' (soon — plan their staffing)' : ''}` : `Leave starts ${esc(S.ymLabel(lv.start))}`}">🌴 ${lv.status === 'out' ? `until ${esc(S.ymLabel(lv.end))}` : `from ${esc(S.ymLabel(lv.start))}`}</span>` : '';
+      const meta = [r.person.isNewHire ? '<span class="nh-tag">New hire</span>' : '', r.person.isPool ? '<span class="nh-tag" style="background:#dff0ee;color:#0E7C7B" title="Shared contract pool — several people can bill toward this line">POOL</span>' : '', lvTag, r.person.title ? esc(r.person.title) : ''].filter(Boolean).join(' ');
       body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.person.id)}">${esc(r.person.name)}</div>${meta ? `<div class="who-meta">${meta}</div>` : ''}</td>`;
       ms.forEach(m => {
         const v = Math.round(r.byMonth[m] || 0);
@@ -574,6 +610,8 @@
       const showMonths = true;
       const projFilter = state.varProject;
       let rows = S.varianceMatrix(ms, { project: projFilter || undefined, person: state.varPerson || undefined });
+      // Leaves consume capacity but bill nothing — plan-vs-actual noise here.
+      rows = rows.filter(r => !S.isLeaveProject(r.project));
       // Dollars mode: ①③ become hours × the person's internal COST rate (by title)
       if (dollars) rows = rows.map(r => { const k = rateOf(r.person); const bm = {}; ms.forEach(m => { const c = r.byMonth[m]; bm[m] = { e: c.e * k, a: c.a * k }; }); return { ...r, expected: r.expected * k, actual: r.actual * k, variance: r.variance * k, byMonth: bm }; });
       const byPerson = state.varGroup === 'person';
@@ -912,10 +950,10 @@
   }
 
   /* ---------- allocation modal ---------- */
-  function openAllocModal(id) {
+  function openAllocModal(id, preset) {
     const a = id ? S.listAllocations().find(x => x.id === id) : null;
     state.editingAlloc = a ? a.id : null;
-    $('#am-title').textContent = a ? 'Edit allocation' : 'Add allocation';
+    $('#am-title').textContent = a ? 'Edit allocation' : (preset && preset.title) || 'Add allocation';
     $('#am-people').innerHTML = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
     $('#am-projects').innerHTML = S.distinctProjects().map(p => `<option value="${esc(p)}">`).join('');
     $('#am-clients').innerHTML = S.distinctClients().map(c => `<option value="${esc(c)}">`).join('');
@@ -929,6 +967,12 @@
     $('#am-end').value = a && a.end ? a.end : S.ymAdd(months()[0], 11);
     $('#am-pct').value = a ? a.pct : 25;
     $('#am-note').value = a ? (a.note || '') : '';
+    if (!a && preset) {   // prefilled add (e.g. "Log a leave")
+      if (preset.project != null) $('#am-project').value = preset.project;
+      if (preset.client != null) $('#am-client').value = preset.client;
+      if (preset.pct != null) $('#am-pct').value = preset.pct;
+      if (preset.note != null) $('#am-note').value = preset.note;
+    }
     $('#alloc-modal').classList.add('open');
   }
   function closeAllocModal() { $('#alloc-modal').classList.remove('open'); state.editingAlloc = null; }
@@ -1299,6 +1343,7 @@
       <div class="ins-card"><h3>🎯 Pursuit exposure <span>· forward load on unsigned work</span></h3>${pursuitPpl.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Firm</th><th class="num">+ Pursuit</th><th class="num">If landed</th></tr></thead><tbody>${pursuitPpl.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.firm)}%</td><td class="num" style="color:#8a6d00;font-weight:700">+${Math.round(p.pur)}</td><td class="num ${p.all > 100 ? 'var-over' : ''}">${Math.round(p.all)}%</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No pursuit allocations in the forward window.</div>'}</div>
       <div class="ins-card"><h3>📈 Burn trend <span>· last 3 months, ±30%+ swings</span></h3>${trendsShown.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Trend</th></tr></thead><tbody>${trendsShown.map(t => `<tr><td class="pname">${esc(t.project)}</td><td class="num ${t.delta > 0 ? 'var-over' : 'var-under'}">${t.delta > 0 ? '▲' : '▼'} ${t.pct > 0 ? '+' : ''}${Math.round(t.pct * 100)}%</td></tr>`).join('')}</tbody></table>${more(5, trends.length)}` : `<div class="empty" style="border:0">${hasAct ? (msPast.length >= 3 ? 'No big swings.' : 'Widen the window to ≥3 past months.') : 'Needs Clockify actuals.'}</div>`}</div>
       <div class="ins-card"><h3>📉 Coming available <span>· next 3 months</span></h3>${freeing.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th>When</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}</td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td>${esc(S.ymLabel(f.m))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No meaningful load drops.</div>'}</div>
+      ${(() => { const lv = S.leaveStatus().filter(l => l.status !== 'past'); if (!lv.length) return ''; return `<div class="ins-card"><h3>🌴 Leaves of absence <span>· returns need a plan 1–2 months out</span></h3><table class="dt"><thead><tr><th>Person</th><th>Out</th><th>Back</th><th></th></tr></thead><tbody>${lv.map(l => `<tr><td class="pname">${esc(l.person.name)}</td><td>${esc(S.ymLabel(l.start))} – ${esc(S.ymLabel(l.end))}</td><td>${l.status === 'out' ? esc(S.ymLabel(S.ymAdd(l.end, 1))) : `<span class="vmini">starts ${esc(S.ymLabel(l.start))}</span>`}</td><td>${l.returningSoon ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">🔔 plan their staffing</span>' : (l.startingSoon ? '<span class="mv-chip" style="background:#efe6f7;color:#6b3fa0">reassign their book</span>' : '')}</td></tr>`).join('')}</tbody></table></div>`; })()}
       <div class="ins-card"><h3>🏢 Substantial internal time <span>· &gt;40h, BOH excluded</span></h3>${boh.length ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="display:flex;flex-wrap:wrap;gap:6px">${boh.map(r => `<span class="mv-chip" style="background:#e7eef0">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th class="num">%</th></tr></thead><tbody>${macro.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="num">${Math.round(r.pct * 100)}%</td></tr>`).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40h.' : 'Needs Clockify actuals.'}</div>`}</div>
     </div>`;
 

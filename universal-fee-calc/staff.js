@@ -963,6 +963,7 @@
   function unassignedRoles(months) {
     const out = [];
     distinctProjects().forEach(pn => {
+      if (isLeaveProject(pn)) return;
       const client = (listAllocations().find(a => a.project === pn) || {}).client || '';
       const cp = contractPlan(pn, months, client); if (!cp || !cp.roles.length) return;
       const staffedTitles = [...new Set(listAllocations().filter(a => a.project === pn).map(a => ((getPerson(a.personId) || {}).title || '').trim()))].filter(Boolean);
@@ -1112,6 +1113,7 @@
     const byCanon = {};
     distinctProjects().forEach(pn0 => {
       const pn = canonProjName(pn0);
+      if (isLeaveProject(pn)) return;             // leaves aren't contract demand
       const ck = nkey(pn);
       (byCanon[ck] = byCanon[ck] || { pn, names: [] }).names.push(pn0);
     });
@@ -1147,6 +1149,7 @@
       let best = null, bestScore = 0;
       distinctProjects().forEach(mp0 => {
         const mp = canonProjName(mp0);
+        if (isLeaveProject(mp)) return;           // never near-match a fee record onto the leave bucket
         const k2 = projKey(mp);
         let s = 0;
         if (k2 && k2 === mk) s = 1;
@@ -1184,6 +1187,7 @@
     const revLinks = {};
     const linkCount = {};   // matrix project → how many fee projects it links to
     distinctProjects().forEach(pn => {
+      if (isLeaveProject(pn)) return;             // the leave bucket never seeds a fee roster
       const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
       const links = matchFeeProjects(pn, client);
       linkCount[pn] = links.length;
@@ -1335,6 +1339,41 @@
       general non-billable/overhead time. */
   const TIMEOFF_RX = /time\s*-?\s*off|\bpto\b|\bvacation\b|\bholiday\b/i;
   function isTimeOffProject(name) { return TIMEOFF_RX.test(String(name || '')); }
+
+  /* ---------- leaves of absence ----------
+     A leave is logged as an ordinary allocation to a special "Leaves of
+     Absence" project (typically 100%), so it consumes capacity like any
+     commitment: load charts show the person as unavailable, and other
+     rows on them correctly flag over-allocation. These helpers recognize
+     the special project and report timing so the pages can style leave
+     rows distinctly and flag returns 1–2 months out. */
+  function isLeaveProject(name) {
+    const k = nkey(name);
+    return k === 'loa' || (k.includes('leave') && k.includes('absence'));
+  }
+  /** Every leave row, classified against the current month:
+      out (on leave now) · upcoming (starts later) · past (already back).
+      monthsToReturn/monthsToStart are whole months, 0 = this month. */
+  function leaveStatus() {
+    const db = readDb();
+    const now = currentYM();
+    const diff = (a, b) => { const [ay, am] = a.split('-').map(Number), [by, bm] = b.split('-').map(Number); return (ay - by) * 12 + (am - bm); };
+    const out = [];
+    db.allocations.forEach(a => {
+      if (!isLeaveProject(a.project)) return;
+      const person = db.people[a.personId] || { id: a.personId, name: a.personId };
+      const start = a.start || now, end = a.end || start;
+      const status = now < start ? 'upcoming' : (now > end ? 'past' : 'out');
+      out.push({
+        alloc: a, person, start, end, status,
+        monthsToStart: status === 'upcoming' ? diff(start, now) : 0,
+        monthsToReturn: status === 'past' ? 0 : Math.max(0, diff(end, now) + 1),
+        returningSoon: status === 'out' && diff(end, now) <= 2,   // Jeff: heads-up 1–2 months before return
+        startingSoon: status === 'upcoming' && diff(start, now) <= 2,
+      });
+    });
+    return out.sort((a, b) => a.end.localeCompare(b.end) || a.person.name.localeCompare(b.person.name));
+  }
   function macroHours(monthsList) {
     const db = readDb(); const inWin = new Set(monthsList); const per = {};
     Object.entries(db.actuals || {}).forEach(([k, h]) => {
@@ -1643,7 +1682,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
-    titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject, isTimeOffProject, profitability,
+    titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers
