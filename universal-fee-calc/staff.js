@@ -1105,8 +1105,12 @@
 
     // 2) SIGNED fee projects no matrix project links to — the most
     // under-staffed case of all: the contract exists and nobody is on it.
-    // Surfaced under the fee project's own name, so confirming seeds the
-    // matrix project with a name that auto-links back to the fee record.
+    // BUT: if the fee record's name closely matches an EXISTING matrix
+    // project, this is most likely a DUPLICATE fee record for work the
+    // matrix already tracks (hand-built copy + imported copy). Diff its
+    // demand against THAT matrix project's real allocations instead of
+    // inventing a parallel project name — fully-covered entries vanish,
+    // under-covered ones surface flagged as a possible duplicate record.
     feeRecords().forEach(p => {
       if (visitedFee.has(p.id)) return;
       const st = (p.project && p.project.status) || '';
@@ -1114,7 +1118,24 @@
       if (!p.roles || !p.roles.length || !p.timeline) return;
       const name = (p.project && p.project.name || '').trim();
       if (!name) return;
-      collect(name, (p.project && p.project.client) || '', [{ id: p.id, via: 'direct' }]);
+      let pn = name, client = (p.project && p.project.client) || '', dupNote = null;
+      const mk = projKey(name);
+      let best = null, bestScore = 0;
+      distinctProjects().forEach(mp => {
+        const k2 = projKey(mp);
+        let s = 0;
+        if (k2 && k2 === mk) s = 1;
+        else if (k2 && (k2.includes(mk) || mk.includes(k2))) s = 0.9;
+        else s = tokenScore(mp, name);
+        if (s > bestScore) { bestScore = s; best = mp; }
+      });
+      if (best && bestScore >= 0.7 && !codesConflict(best, name)) {
+        pn = best;
+        client = (db.allocations.find(a => a.project === best) || {}).client || client;
+        dupNote = name;   // matrix already knows this work under `best`
+      }
+      collect(pn, client, [{ id: p.id, via: 'direct' }]);
+      if (dupNote) out.forEach(g => { if (g.project === pn && g.via === 'direct' && !g.possibleDupFee) g.possibleDupFee = dupNote; });
     });
 
     return out.sort((a, b) => b.totalNeedFteMo - a.totalNeedFteMo);

@@ -184,6 +184,7 @@
     const allocs = S.listAllocations();
     bridgeGapsCached().forEach((g, i) => {
       if (g.open || !g.topUp || !g.person) return;
+      if (g.possibleDupFee) return;   // demand from a suspect duplicate record — keep it in the card WITH its warning
       if (allocs.some(a => a.personId === g.person.id && a.project === g.project)) idx[g.person.id + '|' + g.project] = i;
     });
     return idx;
@@ -208,7 +209,8 @@
               ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">not on the roster — map or create below</span>'
               : `<span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700">links to existing: ${esc(g.person.name)}</span>`)}
           ${g.topUp ? `<span class="mv-chip" style="background:#e7eef0">${g.open ? 'partially covered by matching titles' : 'top-up — partial allocation exists'}</span>` : ''}
-          ${g.via === 'direct' ? '<span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">signed project — nobody staffed yet</span>' : ''}
+          ${g.via === 'direct' && !g.possibleDupFee ? '<span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">signed project — nobody staffed yet</span>' : ''}
+          ${g.possibleDupFee ? `<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Two fee-tool records appear to describe this same work — check Projects Index and archive or merge the spare before staffing against it (its revenue may also double-count).">⚠ from fee record “${esc(g.possibleDupFee)}” — possible duplicate of the linked one</span>` : ''}
           <span class="note-txt">· ${esc(g.roles.join(', '))} · ${g.totalNeedFteMo} FTE-mo missing</span>
         </summary>
         <div style="padding:4px 4px 12px">
