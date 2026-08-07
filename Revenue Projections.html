@@ -57,7 +57,9 @@
   .filt-count { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); align-self: center; }
 
   /* Matrix */
-  .matrix-scroll { overflow-x: auto; border: 1px solid var(--hair-strong); background: #fff; }
+  /* Vertical scroll viewport so the sticky month header (and sticky totals
+     row) actually pin — overflow-x alone never engages sticky-top. */
+  .matrix-scroll { overflow: auto; max-height: calc(100vh - 150px); border: 1px solid var(--hair-strong); background: #fff; }
   table.proj { border-collapse: collapse; width: 100%; font-family: var(--font-display); }
   table.proj th, table.proj td { border-bottom: 1px solid var(--hair); border-right: 1px solid var(--hair); white-space: nowrap; }
   table.proj thead th { background: var(--sav-navy); color: #fff; font-weight: 700; font-size: 11px; letter-spacing: 0.04em; padding: 8px 10px; text-align: right; position: sticky; top: 0; z-index: 3; }
