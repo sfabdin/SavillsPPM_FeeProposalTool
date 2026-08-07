@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Savills PPM · Fee System Roadmap</title>
+<title>Savills PPM · Development Roadmap</title>
 <link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
 <link rel="stylesheet" href="design-system/colors_and_type.css">
 <style>
@@ -84,317 +84,32 @@
     color: var(--sav-steel);
   }
 
-  /* ===== Executive summary ===== */
-  .exec {
-    background: var(--sav-yellow);
-    padding: 32px 40px;
-    border: 0;
+  /* ===== Milestone infographic (everything shipped, compact) ===== */
+  .mile-track {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 40px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
   }
-  .exec h3 {
-    font-weight: 900;
-    font-size: 20px;
-    margin: 0 0 12px;
-    color: var(--sav-navy);
-  }
-  .exec p {
-    font-family: var(--font-body);
-    font-size: 14px;
-    line-height: 1.55;
-    margin: 0;
-    color: var(--sav-navy);
-  }
-  .exec .pillar-num {
-    font-weight: 900;
-    font-size: 56px;
-    line-height: 1;
-    color: var(--sav-red);
-    margin-bottom: 4px;
-    letter-spacing: -0.02em;
-  }
-
-  /* ===== Architecture diagram ===== */
-  .arch {
+  .mile {
     background: #fff;
     border: 1px solid var(--hair);
-    padding: 36px 40px;
+    border-top: 3px solid var(--sav-teal);
+    padding: 13px 16px 14px;
   }
-  .arch-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 20px;
-    margin-bottom: 24px;
-  }
-  .arch-tier-label {
-    grid-column: 1 / -1;
-    font-weight: 700;
-    font-size: 10px;
-    letter-spacing: 0.18em;
+  .mile.next { border-top-color: var(--sav-yellow); background: #fffbe8; }
+  .mile .m-tag {
+    font-weight: 800;
+    font-size: 8.5px;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--sav-steel);
-    margin-top: 12px;
-    margin-bottom: 4px;
+    color: var(--sav-teal);
   }
-  .arch-tier-label:first-child { margin-top: 0; }
-  .arch-box {
-    background: var(--sav-cream);
-    padding: 18px 20px;
-    border-left: 4px solid var(--sav-navy);
-    min-height: 80px;
-  }
-  .arch-box.done { border-left-color: var(--sav-teal); background: #d8f0f3; }
-  .arch-box.next { border-left-color: var(--sav-yellow); background: #fff6b8; }
-  .arch-box .a-label {
-    font-weight: 700;
-    font-size: 14px;
-    color: var(--sav-navy);
-    margin-bottom: 4px;
-  }
-  .arch-box .a-desc {
-    font-family: var(--font-body);
-    font-size: 12px;
-    line-height: 1.45;
-    color: var(--sav-steel);
-  }
-  .arch-box .a-status {
-    display: inline-block;
-    margin-top: 8px;
-    font-weight: 700;
-    font-size: 9px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    padding: 2px 6px;
-    background: var(--sav-navy);
-    color: var(--sav-yellow);
-  }
-  .arch-box.done .a-status { background: var(--sav-teal); color: #fff; }
-  .arch-box.next .a-status { background: var(--sav-red); color: #fff; }
+  .mile.next .m-tag { color: #8a6d00; }
+  .mile h5 { margin: 3px 0 4px; font-size: 13.5px; font-weight: 800; color: var(--sav-navy); }
+  .mile p { margin: 0; font-family: var(--font-body); font-size: 11.5px; line-height: 1.45; color: var(--sav-steel); }
+  @media (max-width: 900px) { .mile-track { grid-template-columns: repeat(2, 1fr); } }
 
-  /* ===== Storage rec ===== */
-  .storage {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 18px;
-  }
-  .storage-card {
-    background: #fff;
-    border: 1px solid var(--hair);
-    padding: 24px 26px;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    min-height: 320px;
-  }
-  .storage-card.rec { background: var(--sav-navy); color: #fff; }
-  .storage-card .badge {
-    position: absolute;
-    top: -10px; left: 22px;
-    font-weight: 700;
-    font-size: 9px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    padding: 4px 10px;
-    background: var(--sav-yellow);
-    color: var(--sav-navy);
-  }
-  .storage-card h4 {
-    font-weight: 900;
-    font-size: 18px;
-    margin: 0 0 4px;
-    letter-spacing: -0.005em;
-  }
-  .storage-card .when {
-    font-family: var(--font-body);
-    font-size: 11px;
-    color: var(--sav-steel);
-    margin-bottom: 18px;
-    letter-spacing: 0.04em;
-  }
-  .storage-card.rec h4 { color: var(--sav-yellow); }
-  .storage-card.rec .when { color: rgba(255,255,255,0.6); }
-  .storage-card .pros, .storage-card .cons {
-    font-family: var(--font-body);
-    font-size: 13px;
-    line-height: 1.55;
-    margin: 0 0 12px;
-    padding: 0;
-    list-style: none;
-  }
-  .storage-card .pros li { padding-left: 18px; position: relative; margin-bottom: 4px; color: var(--sav-navy); }
-  .storage-card .pros li::before { content: '+'; position: absolute; left: 0; color: var(--sav-teal); font-weight: 700; font-family: var(--font-display); }
-  .storage-card .cons li { padding-left: 18px; position: relative; margin-bottom: 4px; color: var(--sav-steel); }
-  .storage-card .cons li::before { content: '−'; position: absolute; left: 0; color: var(--sav-red); font-weight: 700; font-family: var(--font-display); }
-  .storage-card.rec .pros li, .storage-card.rec .cons li { color: rgba(255,255,255,0.85); }
-  .storage-card .div {
-    height: 1px; background: var(--hair); margin: 4px 0 12px;
-  }
-  .storage-card.rec .div { background: rgba(255,255,255,0.18); }
-
-  /* ===== Phase timeline ===== */
-  .timeline {
-    position: relative;
-    padding-left: 36px;
-  }
-  .timeline::before {
-    content: '';
-    position: absolute;
-    left: 16px;
-    top: 12px;
-    bottom: 0;
-    width: 2px;
-    background: var(--sav-navy);
-  }
-  .phase {
-    position: relative;
-    margin-bottom: 28px;
-  }
-  .phase::before {
-    content: '';
-    position: absolute;
-    left: -28px;
-    top: 16px;
-    width: 18px; height: 18px;
-    background: var(--sav-yellow);
-    border: 3px solid var(--sav-navy);
-  }
-  .phase.done::before { background: var(--sav-teal); }
-  .phase.next::before { background: var(--sav-red); }
-  .phase-card {
-    background: #fff;
-    border: 1px solid var(--hair);
-    padding: 22px 28px 26px;
-  }
-  .phase.done .phase-card { background: #fafaf7; }
-  .phase.next .phase-card { background: #fff; box-shadow: inset 4px 0 0 0 var(--sav-yellow); }
-  .phase-head {
-    display: grid;
-    grid-template-columns: auto 1fr auto auto;
-    gap: 18px;
-    align-items: baseline;
-    margin-bottom: 14px;
-    padding-bottom: 10px;
-    border-bottom: 1px dashed var(--hair-strong);
-  }
-  .phase-head .ix {
-    font-weight: 900;
-    font-size: 32px;
-    color: var(--sav-yellow);
-    line-height: 1;
-    letter-spacing: -0.02em;
-    -webkit-text-stroke: 1px var(--sav-navy);
-  }
-  .phase.done .phase-head .ix { color: var(--sav-cream); -webkit-text-stroke-color: var(--sav-steel); }
-  .phase-head h3 {
-    font-weight: 900;
-    font-size: 20px;
-    margin: 0;
-    color: var(--sav-navy);
-    letter-spacing: -0.005em;
-  }
-  .phase-head .when {
-    font-family: var(--font-body);
-    font-size: 12px;
-    color: var(--sav-steel);
-    letter-spacing: 0.02em;
-  }
-  .phase-head .status {
-    font-weight: 700;
-    font-size: 10px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    padding: 4px 10px;
-    background: var(--sav-cream);
-    color: var(--sav-navy);
-  }
-  .phase.done .status { background: var(--sav-teal); color: #fff; }
-  .phase.next .status { background: var(--sav-red); color: #fff; }
-
-  .phase-body {
-    display: grid;
-    grid-template-columns: 1.4fr 1fr;
-    gap: 32px;
-  }
-  .phase-body h4 {
-    font-weight: 700;
-    font-size: 10px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--sav-steel);
-    margin: 0 0 10px;
-  }
-  .phase-body ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    font-family: var(--font-body);
-    font-size: 13px;
-    line-height: 1.55;
-    color: var(--sav-navy);
-  }
-  .phase-body ul li {
-    padding-left: 18px;
-    position: relative;
-    margin-bottom: 6px;
-  }
-  .phase-body ul li::before {
-    content: '';
-    position: absolute;
-    left: 0; top: 8px;
-    width: 8px; height: 2px;
-    background: var(--sav-navy);
-  }
-  .phase-dep {
-    font-family: var(--font-body);
-    font-size: 12px;
-    color: var(--sav-steel);
-    line-height: 1.5;
-    margin-top: 16px;
-    padding-top: 12px;
-    border-top: 1px solid var(--hair);
-  }
-  .phase-dep strong {
-    font-family: var(--font-display);
-    color: var(--sav-navy);
-    font-weight: 700;
-    letter-spacing: 0.04em;
-  }
-
-  /* ===== Risks ===== */
-  .risks {
-    background: #fff;
-    border: 1px solid var(--hair);
-    padding: 28px 32px;
-  }
-  .risks-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 28px;
-  }
-  .risk h4 {
-    font-weight: 900;
-    font-size: 14px;
-    color: var(--sav-red);
-    margin: 0 0 6px;
-    letter-spacing: 0.02em;
-  }
-  .risk p {
-    font-family: var(--font-body);
-    font-size: 13px;
-    line-height: 1.55;
-    color: var(--sav-navy);
-    margin: 0 0 6px;
-  }
-  .risk .mit {
-    font-family: var(--font-body);
-    font-size: 12px;
-    color: var(--sav-steel);
-    line-height: 1.5;
-  }
-  .risk .mit strong { font-family: var(--font-display); color: var(--sav-navy); font-weight: 700; }
-
-  /* ===== North star / dream ===== */
+  /* ===== The dream ===== */
   .principle {
     background: var(--sav-navy);
     color: #fff;
@@ -558,7 +273,7 @@
   @media print {
     body { background: #fff; }
     .wrap { max-width: none; padding: 14mm; }
-    .phase, section { break-inside: avoid; }
+    .dream-card, section { break-inside: avoid; }
     @page { size: A4; margin: 12mm; }
   }
 </style>
@@ -571,611 +286,83 @@
     <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
     <div>
       <div class="lbl"><a href="Fee Generator.html" style="color: var(--sav-steel); text-decoration: none;">← Home</a> &nbsp;·&nbsp; Savills PPM · Internal Strategy</div>
-      <h1>Fee &amp; Revenue System.<br>Phased roadmap.</h1>
-      <div class="sub">The single entry point for every fee Savills PPM develops — built once in the calculator, then flowing downstream to projections, billing, accruals, flash reports and P&amp;L. Capture the number where it's born, and stop re-keying it across fifteen spreadsheets.</div>
+      <h1>Fee &amp; Revenue System.<br>The road ahead.</h1>
+      <div class="sub">Every fee is born once — in the calculator — and flows to every downstream number without being re-keyed. That part is built. This page is about the dream: what the system becomes next, and how far we choose to take it.</div>
     </div>
     <div class="meta">
-      <strong>Version</strong> &nbsp; Draft 5 · North Star edition<br>
+      <strong>Version</strong> &nbsp; Draft 6<br>
       <strong>Owner</strong> &nbsp; PPM Leadership<br>
       <strong>Date</strong> &nbsp; August 2026<br>
-      <strong>Status</strong> &nbsp; Phases 0–8 live · Box-backed, multi-user · the dream defined below — sequencing decided with leadership
+      <strong>Status</strong> &nbsp; Live in production · sequencing decided with leadership
     </div>
   </header>
 
-  <!-- ===== Executive summary ===== -->
-  <section>
-    <div class="exec">
-      <div>
-        <div class="pillar-num">01</div>
-        <h3>Capture the fee where it's born.</h3>
-        <p>Every fee starts as a matrix someone builds in the calculator. That's the source of truth — roles, rates, discount, phase split, monthly schedule. Authored once, saved to the database, and never typed into a spreadsheet again. You can't send a fee without it, so the data is captured by definition.</p>
-      </div>
-      <div>
-        <div class="pillar-num">02</div>
-        <h3>Let one number flow downstream.</h3>
-        <p>That same record drives everything that comes after — monthly billing projections, accruals, the flash report, the P&amp;L, fee-share splits, and the Salesforce intake. One number, entered once, reconciled everywhere. The output isn't just reporting to leadership; it's easing the burden on every leg of the process.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== Architecture ===== -->
+  <!-- ===== Milestones — compact record of what shipped ===== -->
   <section>
     <header class="sec-head">
-      <span class="ix">Architecture</span>
-      <h2>The system at a glance.</h2>
-      <span class="h-meta">v1.0 in production · Box-backed · Clockify connected</span>
+      <span class="ix">Where we are</span>
+      <h2>Milestones.</h2>
+      <span class="h-meta">All live in production · Box-backed · multi-user · audit-trailed</span>
     </header>
-    <div class="arch">
-      <div class="arch-grid">
-        <div class="arch-tier-label">User-facing tools</div>
-
-        <div class="arch-box done">
-          <div class="a-label">Universal Fee Calculator</div>
-          <div class="a-desc">Per-project workbench. Role catalog, grid/contracted rates, month-canonical FTE matrix (% or hours), cost-rate floor, reconcile-to-target, Fixed Fee or NTE basis, change orders, broker fee share (off-invoice or on-top), version history, autosave, Excel export. Imported historicals get an imported-vs-calculated reconciliation panel with pre-calculated contracted rates (solve → preview → confirm).</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Projects Index</div>
-          <div class="a-desc">Landing page. Every project with search, filter by status / client / industry / lead, portfolio KPIs. Opens the calculator for any project.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Ingestion Studio</div>
-          <div class="a-desc">Upload PDF / Excel or paste → extracts roles, rates, phases, fees → validates against the grid → you confirm → saves as a project.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Import Revenues <span style="font-weight:400;font-size:11px;color:var(--sav-steel);">(inside Ingestion Studio)</span></div>
-          <div class="a-desc">Admin-only bulk loader, consolidated into Ingestion Studio. Reads the monthly-billing workbook, diffs it against existing records so re-imports never duplicate, and creates one locked-series project per selected row — fee shares, leader initials and ratings mapped on the way in.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-
-        <div class="arch-tier-label">Analytics &amp; intelligence</div>
-
-        <div class="arch-box done">
-          <div class="a-label">Benchmarking Dashboard</div>
-          <div class="a-desc">Comparables finder, rate spread (min/median/max) by title, below-floor frequency, side-by-side project comparison with scope &amp; assumptions matrix. Quoted vs. effective rates.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Proposal Analytics</div>
-          <div class="a-desc">Win/loss hit rates with lost-reason capture, discount analytics by client / leader / industry / size, proposal funnel metrics, client profiles, proposal health score.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Staffing &amp; Bandwidth</div>
-          <div class="a-desc">Allocation by named resource × project × month, over/under-loaded flagged, planned vs. actual hours from Clockify with title pinning and fee-link mapping, entry-lateness stats. Contract ↔ staffing bridge both directions: unstaffed contract demand surfaces for confirm-gated allocation (alias-aware, open roles prompt for a name), and empty fee rosters seed from the matrix at $0 rates. Excel snapshot export for version control.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Profitability</div>
-          <div class="a-desc">The whole revenue projection with Clockify burn (hours × cost rate by title) laid against it by month — margin per project, per month, per leader. Mapping toggles saved for the team.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Data Entry Status</div>
-          <div class="a-desc">Completeness tracker — projects by revenue leader with the exact fields still missing (staffing, Salesforce ID, rating, service line, dates).</div>
-          <span class="a-status">Shipped</span>
-        </div>
-
-        <div class="arch-tier-label">Reporting &amp; finance outputs <span style="font-weight:400; color:var(--sav-steel); font-size:11px;">— the new horizon</span></div>
-
-        <div class="arch-box done">
-          <div class="a-label">Projections Engine</div>
-          <div class="a-desc">Rolls every project's monthly schedule into a firm-wide forecast — billings by month, rated 1–7, filterable by client / leader / service line / industry / project type / period. Rolls up change orders, marks the current month, optional broker fee-split view, Excel export.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Fee-Share &amp; Allocation</div>
-          <div class="a-desc">Per-project fee-share % flows through the calculator, snapshot, and projections. A toggle in Projections breaks out the monthly broker reduction (total → less broker → net) per project and firm-wide.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Revenue Studio</div>
-          <div class="a-desc">Budget vs. actual-trending command center. 2026 Budget / RF1 baselines, drill-down tree (bucket → client → project), monthly stacked chart with target + trending lines, pipeline waterfall, new-business reserve drawdown, exec report tab, leader view (each PE sees only their book), Excel export.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box">
-          <div class="a-label">Flash &amp; Accrual Reports</div>
-          <div class="a-desc">Formal monthly flash / accrual output generated from the same records — first cut exists as flash snapshots inside Revenue Projections; a standalone re-runnable report is the remaining build.</div>
-          <span class="a-status">Phase 5</span>
-        </div>
-
-        <div class="arch-tier-label">Data &amp; integration layer</div>
-
-        <div class="arch-box done">
-          <div class="a-label">Project Records</div>
-          <div class="a-desc">Schema-versioned JSON record per project: metadata, roles, month-canonical FTE, phases, rates, fee basis, materialized monthly billing series (net / broker / invoice), version history, soft-delete tombstones, audit log. Migrations run automatically on load.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Rates Catalog</div>
-          <div class="a-desc">PPM 2024 rate grid — titles, High/Mid/Low tiers, hourly rates and Col E/G cost-rate floors. Versioned by year.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Project Intake handoff</div>
-          <div class="a-desc">On Won / Active, builds the standard intake table pre-filled from the record and copies it as rich HTML to paste into the intake email. Fields the submitter must complete are highlighted; re-flags if the fee or schedule changes.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Clockify Sync</div>
-          <div class="a-desc">Server-side proxy aggregates time by user × project × month (key never in the browser) and feeds Staffing and Profitability against cost-rate floors.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Rate Grid Reconciliation</div>
-          <div class="a-desc">Adopt a new grid without moving projections — solves a per-month reconciling discount per project so every frozen billing figure holds. Dry-run, exception report, reversible commit.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box done">
-          <div class="a-label">Data Repair &amp; stewardship</div>
-          <div class="a-desc">Admin scan-and-fix for known staffing-data damage — duplicates, stale renames, duplicate people, sparse months — preview-first, tombstone-backed so fixes survive merges. Alongside the Change Log audit trail and Data Entry Status completeness tracker.</div>
-          <span class="a-status">Shipped</span>
-        </div>
-        <div class="arch-box">
-          <div class="a-label">Salesforce API sync</div>
-          <div class="a-desc">Two-way: the contract number written back onto the record automatically instead of pasted from the intake reply.</div>
-          <span class="a-status">Next</span>
-        </div>
-      </div>
+    <div class="mile-track">
+      <div class="mile"><span class="m-tag">✓ Shipped</span><h5>Universal Fee Calculator</h5><p>Every proposal priced in one tool — fixed fee or NTE, versions, change orders, Excel export.</p></div>
+      <div class="mile"><span class="m-tag">✓ Shipped</span><h5>Projects Index</h5><p>The whole book — searchable, filtered by who you are, portfolio KPIs.</p></div>
+      <div class="mile"><span class="m-tag">✓ Shipped</span><h5>AI Ingestion</h5><p>Historical proposals and the billing workbook imported in minutes, human-approved, diff-checked.</p></div>
+      <div class="mile"><span class="m-tag">✓ Shipped</span><h5>Benchmarking &amp; Win/Loss</h5><p>What we charged, how it compares, why we win and lose.</p></div>
+      <div class="mile"><span class="m-tag">✓ Shipped</span><h5>Shared Box Backend</h5><p>Multi-user, permissioned, merge-safe. Confidential data never ships in the app.</p></div>
+      <div class="mile"><span class="m-tag">✓ Shipped</span><h5>Projections &amp; Revenue Studio</h5><p>Firm-wide monthly forecast, rated 1–7, against Budget / RF baselines.</p></div>
+      <div class="mile"><span class="m-tag">✓ Shipped</span><h5>Clockify &amp; Profitability</h5><p>Actual burn laid against the plan — margin per project, per month.</p></div>
+      <div class="mile"><span class="m-tag">✓ Aug 2026</span><h5>Staffing ↔ Contract Bridge</h5><p>Plan, contract and actuals reconcile — confirm-gated, with pre-calculated rates for historicals and data-repair stewardship.</p></div>
+      <div class="mile next"><span class="m-tag">Next</span><h5>Accrual / Flash Report</h5><p>The formal monthly finance output, re-runnable from the same records.</p></div>
+      <div class="mile next"><span class="m-tag">Next</span><h5>90-Day Capacity View</h5><p>Forward bench by service line — who's free, when, at what title.</p></div>
+      <div class="mile next"><span class="m-tag">Next</span><h5>Leadership Dashboard Feed</h5><p>The visualization app and Power BI reading the same records live.</p></div>
+      <div class="mile next"><span class="m-tag">Next</span><h5>Salesforce Write-Back</h5><p>Contract numbers land on the record automatically.</p></div>
     </div>
   </section>
 
-  <!-- ===== Storage recommendation ===== -->
+  <!-- ===== The dream ===== -->
   <section>
     <header class="sec-head">
-      <span class="ix">Decision · Storage</span>
-      <h2>Where the data lives.</h2>
-      <span class="h-meta">Honest tradeoffs · don't over-engineer Phase 1</span>
-    </header>
-    <div class="storage">
-      <div class="storage-card">
-        <span class="badge">Superseded</span>
-        <h4>Browser localStorage + JSON file</h4>
-        <div class="when">Original single-user prototype</div>
-        <ul class="pros">
-          <li>Shipped immediately, zero IT involvement</li>
-          <li>Worked offline, no API keys</li>
-          <li>JSON export = portable backup</li>
-        </ul>
-        <div class="div"></div>
-        <ul class="cons">
-          <li>Single browser, single user — no concurrent access</li>
-          <li>Cache clear destroyed data unless backed up</li>
-          <li>No permissions — replaced by Box (see right)</li>
-        </ul>
-      </div>
-
-      <div class="storage-card rec">
-        <span class="badge">Today · Live</span>
-        <h4>Box + OAuth (in production)</h4>
-        <div class="when">Multi-user, shared, permissioned</div>
-        <ul class="pros">
-          <li>Sign in with Box — the app pulls data from a shared Box folder</li>
-          <li>Auto-sync: edits save locally, push to Box in the background</li>
-          <li>Fail-closed access: admins see all, others see only their own / granted projects</li>
-          <li>Confidential rate grid stays in Box, never in the deployed app</li>
-          <li>Booked records carry frozen $ snapshots Power BI reads directly</li>
-        </ul>
-        <div class="div"></div>
-        <ul class="cons">
-          <li>Per-person isolation is client-side — Box folder permission is the true wall</li>
-          <li>Server-side per-user filtering is the next hardening step</li>
-        </ul>
-      </div>
-
-      <div class="storage-card">
-        <span class="badge">Future</span>
-        <h4>Server auth for reporting</h4>
-        <div class="when">Unattended Power BI / Clockify pulls</div>
-        <ul class="pros">
-          <li>Box service account reads the data with no human logged in</li>
-          <li>Server-side per-user filtering for true project-level isolation</li>
-          <li>Scheduled, hands-off reporting refresh</li>
-        </ul>
-        <div class="div"></div>
-        <ul class="cons">
-          <li>Needs a Box admin to provision the service account</li>
-        </ul>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== Phases ===== -->
-  <section>
-    <header class="sec-head">
-      <span class="ix">Plan</span>
-      <h2>Phased rollout.</h2>
-      <span class="h-meta">v1.0 shipped · remaining work is finance outputs &amp; integrations</span>
-    </header>
-
-    <div class="timeline">
-
-      <!-- Phase 0 -->
-      <div class="phase done">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">00</span>
-            <h3>Foundation. <span style="font-weight: 400; color: var(--sav-steel); font-size: 14px;">Universal Fee Calculator + rates catalog.</span></h3>
-            <span class="when">Done</span>
-            <span class="status">Shipped</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Delivered</h4>
-              <ul>
-                <li>Production <strong>PPM 2024 rate grid</strong> — 11 title families, High/Mid/Low tiers, Col E/G cost-rate floors</li>
-                <li>Grid vs. contracted rates per role · industry-standard adjustment · escalation + Rate Lock</li>
-                <li>Cost-rate floor advisory · reconcile-to-target back-solve · by-phase or flatlined monthly schedule</li>
-                <li>Excel export with live formulas (3 sheets), mirroring the on-screen billing mode</li>
-              </ul>
-            </div>
-            <div>
-              <h4>Unlocks</h4>
-              <ul>
-                <li>Every new proposal authored in the same tool</li>
-                <li>JSON-shaped output ready for Phase 1 database</li>
-                <li>Standardized rates &amp; escalation across the practice</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Phase 1 -->
-      <div class="phase done">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">01</span>
-            <h3>Projects Index + local database.</h3>
-            <span class="when">Done</span>
-            <span class="status">Shipped</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Build</h4>
-              <ul>
-                <li>Projects Index landing page — table of all projects, KPI strip (pipeline $, win-rate, etc.)</li>
-                <li>Calculator persists to localStorage by project id; auto-save</li>
-                <li>JSON export / import (whole DB or per-project)</li>
-                <li>Extend metadata: status, industry, first-proposal date, signed-contract date, client contact, client relationship owner</li>
-                <li>Filter / sort / search by status, client, industry, lead</li>
-                <li>Backtrack: PEs hand-enter 10 historical projects as a pilot</li>
-              </ul>
-            </div>
-            <div>
-              <h4>Outcomes</h4>
-              <ul>
-                <li>Single place to see every active &amp; historical proposal</li>
-                <li>Calculator opens to any project, edits flow back to index</li>
-                <li>Proven JSON schema before migrating to Airtable</li>
-              </ul>
-            </div>
-          </div>
-          <div class="phase-dep">
-            <strong>Delivered:</strong> &nbsp; Searchable/filterable index · portfolio KPIs · autosave per project · JSON export/import · net fee computed by the shared rate engine. <strong>Still open:</strong> backtracking the bulk of historicals.
-          </div>
-        </div>
-      </div>
-
-      <!-- Phase 2 -->
-      <div class="phase done">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">02</span>
-            <h3>LLM-powered ingestion studio.</h3>
-            <span class="when">Done</span>
-            <span class="status">Shipped</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Build</h4>
-              <ul>
-                <li>Upload PDF (signed PSA, pitch deck) or PPTX</li>
-                <li>Claude extracts: project metadata, roles + tiers, FTE allocations, phase boundaries, rates, total fee</li>
-                <li>Side-by-side review UI — extracted on left, source preview on right; correct &amp; confirm field by field</li>
-                <li>Save → creates project record · re-running ingest re-fills the calculator</li>
-                <li>Confidence flags on extracted fields so reviewer knows what to double-check</li>
-              </ul>
-            </div>
-            <div>
-              <h4>Outcomes</h4>
-              <ul>
-                <li>Backtracking the remaining 40–90 historicals becomes a 5-minute-per-project workflow instead of 30</li>
-                <li>Reviewer stays in the loop — Claude proposes, human approves</li>
-                <li>Source doc archived alongside the record for audit</li>
-              </ul>
-            </div>
-          </div>
-          <div class="phase-dep">
-            <strong>Delivered:</strong> &nbsp; PDF / Excel / paste ingestion · extraction of roles, rates, phases &amp; fees · rate validation against the grid band with back-mapping to title/tier · phase schedule + one-time discount capture · review &amp; save to a project.
-          </div>
-        </div>
-      </div>
-
-      <!-- Phase 3 -->
-      <div class="phase done">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">03</span>
-            <h3>Benchmarking dashboard.</h3>
-            <span class="when">Done</span>
-            <span class="status">Shipped</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Built</h4>
-              <ul>
-                <li>Comparables finder — filter by client, industry, staff title, project size or project role to matching historical rates</li>
-                <li>Rates explorer — min / median / max quoted &amp; effective rate by staff title; below-floor frequency</li>
-                <li>Project comparison — two or three past projects side by side</li>
-                <li>Quoted vs. effective (post-discount) rates throughout</li>
-              </ul>
-            </div>
-            <div>
-              <h4>Outcomes</h4>
-              <ul>
-                <li>"What did we charge last time" answered without asking 4 people</li>
-                <li>Pricing discipline — outliers caught in the proposal phase, not by procurement</li>
-                <li>Staffing decisions backed by data, not gut</li>
-              </ul>
-            </div>
-          </div>
-          <div class="phase-dep">
-            <strong>Delivered:</strong> &nbsp; Comparables finder · rate spread (min/median/max) by staff title · below-floor frequency · quoted vs. effective rates · side-by-side project comparison. <strong>Gets sharper</strong> as more historicals are ingested.
-          </div>
-        </div>
-      </div>
-
-      <!-- Phase 4 -->
-      <div class="phase done">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">04</span>
-            <h3>Staffing &amp; bandwidth.</h3>
-            <span class="when">Done</span>
-            <span class="status">Shipped</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Shipped</h4>
-              <ul>
-                <li>Every project's FTE matrix rolled into a <strong>headcount &amp; load view by month</strong></li>
-                <li>By named resource, by project, by leader — who's committed where</li>
-                <li><strong>Over- and under-allocation flagged</strong> before it becomes a staffing fire</li>
-                <li>Planned hours against <strong>Clockify actuals</strong> per person, with title pinning and fee-link mapping saved for the team</li>
-                <li>Entry-lateness stats so time gets booked in the week the work happened</li>
-              </ul>
-            </div>
-            <div>
-              <h4>Outcomes</h4>
-              <ul>
-                <li>Staffing decisions backed by the committed book, not gut</li>
-                <li>The bridge between "sold" plans and who actually has capacity</li>
-              </ul>
-            </div>
-          </div>
-          <div class="phase-dep">
-            <strong>Since shipped on top:</strong> &nbsp; Compare / By Project / By Person views · contract ↔ staffing bridge (both directions, confirm-gated) · person aliases &amp; canonical project renames · pooled-support resources · Excel snapshot export · Data Repair. <strong>Remaining:</strong> a forward-looking 90-day capacity view by service line, and an exportable leadership pack.
-          </div>
-        </div>
-      </div>
-
-      <!-- Phase 5 -->
-      <div class="phase next">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">05</span>
-            <h3>Projections, accruals &amp; reporting engine. <span style="font-weight: 400; color: var(--sav-steel); font-size: 14px;">The reason this matters.</span></h3>
-            <span class="when">In progress</span>
-            <span class="status">Mostly live</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Shipped</h4>
-              <ul>
-                <li><strong>Revenue Projections matrix</strong> — every project's monthly invoice by month across years, read from the materialized billing series stamped on save (net / broker / invoice per month)</li>
-                <li><strong>1–7 projection rating</strong> drives the roll-up; ratings 5–7 greyed &amp; excluded · change orders fold into their parent · broker fee-split toggle · current-month marker · Excel export</li>
-                <li><strong>Revenue Studio</strong> — 2026 Budget / RF1 baselines, drill-down (bucket → client → project), stacked monthly chart with target + trending lines and variance, pipeline waterfall, new-business reserve, exec report, per-leader views</li>
-                <li>Flash snapshots captured per month inside Projections · filters: client, revenue leader, service line, industry, project type, period · probability-weighted total</li>
-              </ul>
-            </div>
-            <div>
-              <h4>Still to build</h4>
-              <ul>
-                <li><strong>Accruals</strong> as a formal, re-runnable monthly output (flash snapshots exist; the standalone report doesn't)</li>
-                <li><strong>London summary</strong> format reproduced from the same records</li>
-                <li>External <strong>dashboard layer</strong> — leadership visuals fed by the same data (see Enterprise integration)</li>
-              </ul>
-            </div>
-          </div>
-          <div class="phase-dep">
-            <strong>Depends on:</strong> &nbsp; All active projects loaded as records · agreed mapping of project → revenue leader / service line · the current flash-report &amp; projection formats to reproduce · stakeholder alignment (Emily, Jeff, finance).
-          </div>
-        </div>
-      </div>
-
-      <!-- Phase 6 -->
-      <div class="phase done">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">06</span>
-            <h3>Profitability · planned vs. actual hours.</h3>
-            <span class="when">Done</span>
-            <span class="status">Shipped</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Shipped</h4>
-              <ul>
-                <li><strong>Clockify integration</strong> — a server-side proxy aggregates hours by user × project × month (the API key never reaches the browser)</li>
-                <li><strong>Profitability page</strong> — the whole revenue projection with burn (hours × cost rate by title) laid against it, margin per project per month</li>
-                <li>Planned hours from the calculator vs. actual hours by role and phase, with variance surfaced</li>
-                <li>Fee-link mapping and title pinning inline, saved to the shared staff file for everyone</li>
-                <li><strong>Project intake handoff</strong> — the standard intake table pre-filled from the record and copied as rich HTML on Won / Active</li>
-              </ul>
-            </div>
-            <div>
-              <h4>Outcomes</h4>
-              <ul>
-                <li>Margin visibility per active project, from the record that priced it</li>
-                <li>Early warning on over-runs — re-staff or re-negotiate before the variance compounds</li>
-                <li>Post-mortem data feeds back into benchmarks ("we sold this at $1.2M, delivered for $1.4M — adjust the next pitch")</li>
-              </ul>
-            </div>
-          </div>
-          <div class="phase-dep">
-            <strong>Remaining:</strong> &nbsp; Utilization / burn-down charts per resource, and a two-way Salesforce sync so the contract number writes back automatically.
-          </div>
-        </div>
-      </div>
-
-      <!-- Phase 7 -->
-      <div class="phase done">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">07</span>
-            <h3>Shared backend · Box-backed · multi-user.</h3>
-            <span class="when">Done</span>
-            <span class="status">Shipped</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Build</h4>
-              <ul>
-                <li>Box folder as the shared store; the app pulls/pushes <code>projects.json</code> on sign-in</li>
-                <li>OAuth sign-in; access resolved from an admin allowlist + per-project grants</li>
-                <li>App reads/writes Box instead of localStorage (transparent swap)</li>
-                <li>Per-PE visibility (PE sees own book + granted, leadership sees all)</li>
-                <li>Confidential rate grid kept in Box, never in the deployed app</li>
-                <li>Per-project shareable link + downloadable HTML + PDF export</li>
-              </ul>
-            </div>
-            <div>
-              <h4>Outcomes</h4>
-              <ul>
-                <li>Every PE has the system; the data is firm-wide</li>
-                <li>Concurrent editing, no version conflicts</li>
-                <li>Foundation for future enterprise backend (Phase 6+)</li>
-              </ul>
-            </div>
-          </div>
-          <div class="phase-dep">
-            <strong>Depends on:</strong> &nbsp; Box app (OAuth) provisioned · redirect URI registered · client secret in Vercel · agreed admin allowlist.
-          </div>
-        </div>
-      </div>
-
-      <!-- Phase 8 -->
-      <div class="phase done">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">08</span>
-            <h3>Staffing ↔ contract reconciliation &amp; data stewardship.</h3>
-            <span class="when">Done · Aug 2026</span>
-            <span class="status">Shipped</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Shipped</h4>
-              <ul>
-                <li><strong>Contract → allocation bridge</strong> — contract demand the matrix hasn't covered surfaces on the Allocations tab; every entry is confirm-gated, named people resolve through saved aliases, open roles prompt for a name, top-ups flag inline on the person's row</li>
-                <li><strong>Reverse bridge</strong> — empty fee rosters seed from existing matrix allocations at $0 contracted rates, month-faithful, so no revenue moves until a leader prices them</li>
-                <li><strong>Pre-calculated rates</strong> — for imported historicals, one click proposes contracted rates that back into the imported monthly totals (rack-rate seniority spread, preview + confirm, imported stays locked)</li>
-                <li><strong>Data Repair</strong> — preview-first scan-and-fix for every known damage signature, with tombstoned deletions and a "needs human review" list it refuses to auto-fix</li>
-                <li>Excel snapshot export (3 static sheets) for staffing version control · Getting Started guide + first-run banner · reorganized navigation with per-tool descriptions</li>
-              </ul>
-            </div>
-            <div>
-              <h4>Outcomes</h4>
-              <ul>
-                <li>The three staffing truths — plan, contract, actuals — now reconcile against each other instead of living in separate tabs</li>
-                <li>The tool <em>flags and proposes</em>; revenue leaders decide. Nothing writes without a confirm</li>
-                <li>Historical data entry for the 8/15 deadline is assisted, not manual</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Phase 9 -->
-      <div class="phase">
-        <div class="phase-card">
-          <div class="phase-head">
-            <span class="ix">09+</span>
-            <h3>Enterprise integration.</h3>
-            <span class="when">Months 4+</span>
-            <span class="status">Future</span>
-          </div>
-          <div class="phase-body">
-            <div>
-              <h4>Possibilities</h4>
-              <ul>
-                <li>Salesforce custom object — proposals sync both ways with CRM</li>
-                <li>Outlook calendar — resource availability cross-check</li>
-                <li>Power BI / Tableau connector — leadership dashboards in the existing BI tool</li>
-                <li>SharePoint / SSO — firm authentication, document retention compliance</li>
-                <li>Procurement portal handoff — generate the procurement disclosure pack on demand</li>
-              </ul>
-            </div>
-            <div>
-              <h4>When to invest</h4>
-              <ul>
-                <li>This is the concrete integration menu behind <strong>Pillar 5</strong> of the North Star section below</li>
-                <li>Only after the schema is stable and adoption is proven — driven by where the firm's pain is, don't pre-build</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-
-    </div>
-  </section>
-
-  <!-- ===== North star — the dream ===== -->
-  <section>
-    <header class="sec-head">
-      <span class="ix">North Star</span>
-      <h2>The dream — what this becomes.</h2>
+      <span class="ix">The Dream</span>
+      <h2>What this becomes.</h2>
       <span class="h-meta">Deliberately ambitious · sequencing decided with leadership, not by this page</span>
     </header>
 
     <div class="principle">
       <div class="p-big">Informs decisions.<br>Never makes them.</div>
-      <p>Every capability below ends at a human choice. The system flags, compares, prices scenarios, and proposes — a revenue leader confirms or ignores. Nothing writes itself, nothing prices itself, nothing staffs itself. That's not a limitation to engineer away; it's the design principle that made everything shipped so far trustworthy, and it holds at every level of ambition on this page.</p>
+      <p>Every capability below ends at a human choice. The system flags, compares, prices scenarios, and proposes — a revenue leader confirms or ignores. Nothing writes itself, nothing prices itself, nothing staffs itself. That's the design principle that made everything shipped so far trustworthy, and it holds at every level of ambition on this page.</p>
     </div>
 
     <div class="ladder">
       <div class="rung now">
         <div class="r-stage">Today · shipped</div>
         <h4>System of record.</h4>
-        <p>One place where fees, staffing, revenue, and burn agree with each other to the dollar. The number is born once and flows — no re-keying, no forked spreadsheets, an audit trail on everything.</p>
+        <p>One place where fees, staffing, revenue, and burn agree with each other to the dollar. The number is born once and flows — no re-keying, no forked spreadsheets.</p>
       </div>
       <div class="rung next">
         <div class="r-stage">Next · the record starts talking</div>
         <h4>System of insight.</h4>
-        <p>The same records answer questions at the moment of decision: what did we charge last time, what happens if we win these three, which month is the trough, who's free in March. Early warnings fire before problems compound.</p>
+        <p>The same records answer questions at the moment of decision: what did we charge last time, what happens if we win these three, which month is the trough, who's free in March.</p>
       </div>
       <div class="rung dream">
         <div class="r-stage">The dream</div>
         <h4>Operating system for the practice.</h4>
-        <p>Every recurring leadership question answerable in one place. Every new engagement born data-first. New service lines and regions onboard onto the same engine — their grid, their baselines, their book — without a single new spreadsheet.</p>
+        <p>Every recurring leadership question answerable in one place. Every new engagement born data-first. New service lines and regions onboard onto the same engine — without a single new spreadsheet.</p>
       </div>
     </div>
 
     <div class="dream-card">
       <div class="d-kicker">Pillar 1</div>
       <h3>Price with the whole firm's memory in the room.</h3>
-      <p class="d-story">Today a leader prices a proposal from experience and whatever comparables they remember. The dream: while the fee is being built, the system quietly holds up everything the practice has ever learned — similar projects won and lost, the effective rates that survived procurement, the discounts that were actually needed, the assumptions that historically break and turn into change orders. The leader still picks the number. They just pick it knowing everything we know.</p>
+      <p class="d-story">Today a leader prices a proposal from experience and whatever comparables they remember. The dream: while the fee is being built, the system quietly holds up everything the practice has ever learned. The leader still picks the number — they just pick it knowing everything we know.</p>
       <div class="d-cols">
         <div>
           <h5>Informs the decision</h5>
           <ul>
             <li><strong>Live comparables in the calculator</strong> — "similar scope billed $1.1–$1.4M; your floor risk is on the two Director roles" — while the roster is being shaped, not after.</li>
-            <li><strong>Win-odds context by price point</strong> from win/loss history — "at this effective rate we've won 7 of 9 with this client's industry" — never a suggested price, always the odds around one.</li>
-            <li><strong>Assumption intelligence</strong> — which assumptions in the library historically got broken and what the change orders cost, so contingency is priced knowingly.</li>
-            <li><strong>Escalation &amp; rate-lock outcomes</strong> — what clients actually accepted, by industry and size, so the negotiable terms are negotiated from data.</li>
+            <li><strong>Win-odds context by price point</strong> from win/loss history — never a suggested price, always the odds around one.</li>
+            <li><strong>Assumption intelligence</strong> — which assumptions historically break and what the change orders cost, so contingency is priced knowingly.</li>
+            <li><strong>Escalation &amp; rate-lock outcomes</strong> — what clients actually accepted, by industry and size.</li>
           </ul>
         </div>
         <div>
@@ -1183,7 +370,7 @@
           <ul>
             <li>Underpricing drift — discounts creeping wider year over year without anyone deciding that.</li>
             <li>Procurement surprises — floor violations caught while drafting, not in the BAFO round.</li>
-            <li>Margin sold away before the work starts — the post-mortem moved to the pitch.</li>
+            <li>Margin sold away before the work starts.</li>
           </ul>
         </div>
       </div>
@@ -1192,15 +379,15 @@
     <div class="dream-card">
       <div class="d-kicker">Pillar 2</div>
       <h3>See around corners.</h3>
-      <p class="d-story">The book already projects forward month by month. The dream is tripwires on that projection: the system watches the horizon continuously and raises a hand two quarters before a problem arrives — while there's still time to sell into a trough, hire ahead of a crunch, or renegotiate before an overrun compounds. Every alert is a flag with the evidence attached, never an action taken.</p>
+      <p class="d-story">The book already projects forward month by month. The dream is tripwires on that projection — the system raises a hand two quarters before a problem arrives, while there's still time to sell into a trough, hire ahead of a crunch, or renegotiate before an overrun compounds.</p>
       <div class="d-cols">
         <div>
           <h5>Informs the decision</h5>
           <ul>
-            <li><strong>Revenue-cliff radar</strong> — coverage ratio vs. budget by month and service line; the trough visible six months out, with the pipeline that could fill it ranked beside it.</li>
-            <li><strong>Bench-crunch forecast</strong> — weighted pipeline × its staffing shapes vs. current capacity: "if half of these land, we're three PMs short in Q2." Hiring lead time is real; start the search before the fire.</li>
-            <li><strong>Margin-leak monitors</strong> — burn running ahead of plan, unmapped hours accumulating, NTE ceilings approaching, scope creep with no change order behind it.</li>
-            <li><strong>Concentration &amp; key-person risk</strong> — one client too big a share of the book; one person silently holding five major accounts.</li>
+            <li><strong>Revenue-cliff radar</strong> — coverage vs. budget by month and service line; the trough visible six months out, with the pipeline that could fill it ranked beside it.</li>
+            <li><strong>Bench-crunch forecast</strong> — weighted pipeline × staffing shapes vs. capacity: "if half of these land, we're three PMs short in Q2."</li>
+            <li><strong>Margin-leak monitors</strong> — burn ahead of plan, unmapped hours, NTE ceilings approaching, scope creep with no change order behind it.</li>
+            <li><strong>Concentration &amp; key-person risk</strong> — one client too big a share; one person silently holding five major accounts.</li>
           </ul>
         </div>
         <div>
@@ -1209,7 +396,6 @@
             <li>Quarter-end revenue surprises that were visible in March.</li>
             <li>Hiring that starts when the overload arrives instead of when it became inevitable.</li>
             <li>Silent margin erosion — a hundred small leaks instead of one visible failure.</li>
-            <li>The bus factor — resilience planned before the resignation letter.</li>
           </ul>
         </div>
       </div>
@@ -1218,15 +404,15 @@
     <div class="dream-card">
       <div class="d-kicker">Pillar 3</div>
       <h3>Plan the business, not just the projects.</h3>
-      <p class="d-story">Everything so far manages one project at a time. The dream adds the level above: the year, the client, the team as first-class objects. Leadership war-games the book instead of debating static spreadsheets — and when the plan is agreed, it freezes as the baseline the year is measured against, in the same system that measures it.</p>
+      <p class="d-story">Everything so far manages one project at a time. The dream adds the level above: the year, the client, and the team as first-class objects — leadership war-games the book instead of debating static spreadsheets, and the agreed plan freezes as the baseline the year is measured against.</p>
       <div class="d-cols">
         <div>
           <h5>Informs the decision</h5>
           <ul>
-            <li><strong>Scenario planning</strong> — pick pursuits, drag their probabilities, and watch revenue, staffing, and hiring implications move side by side. "What do we need to be true to hit $XM?" answered in minutes.</li>
+            <li><strong>Scenario planning</strong> — pick pursuits, drag their probabilities, and watch revenue, staffing, and hiring implications move side by side.</li>
             <li><strong>Annual planning mode</strong> — next year's budget built bottoms-up from the booked runway, weighted pipeline, and hiring plan; frozen as a Revenue Studio baseline when leadership signs it.</li>
-            <li><strong>Client 360</strong> — every client's full story on one page: fee history, margin, payment behavior, relationship owner, renewal dates, open pipeline. Walk into the QBR knowing more than the client does.</li>
-            <li><strong>Capacity-aware selling</strong> — the bench visible while the pursuit team is being promised, so the proposal names people who can actually do the work.</li>
+            <li><strong>Client 360</strong> — fee history, margin, payment behavior, relationship owner, renewals, open pipeline — the whole story on one page before the QBR.</li>
+            <li><strong>Capacity-aware selling</strong> — the bench visible while the pursuit team is being promised.</li>
           </ul>
         </div>
         <div>
@@ -1243,16 +429,16 @@
     <div class="dream-card">
       <div class="d-kicker">Pillar 4</div>
       <h3>Capture the data we're not capturing.</h3>
-      <p class="d-story">Most of the dream above needs no new technology — it needs data the practice generates every week and currently lets evaporate. Each row below is a small capture habit (a field at status-change, a Clockify code, a monthly finance export) that unlocks a capability no competitor can buy. The rule stays the rule: capture at the moment the data is born, in the flow of work someone is already doing — never a new form for its own sake.</p>
+      <p class="d-story">Most of the dream needs no new technology — it needs data the practice generates every week and currently lets evaporate. Each row is a small capture habit, in the flow of work someone is already doing — never a new form for its own sake.</p>
       <table class="gap-table">
         <tr><th>Data we don't capture today</th><th>Where it would come from</th><th>What it unlocks</th></tr>
         <tr><td class="k">Cost of sale</td><td>Pursuit-phase hours via Clockify pursuit codes</td><td class="unlock">True cost-to-win per client and channel · bid/no-bid discipline with numbers behind it</td></tr>
         <tr><td class="k">Loss detail</td><td>Two fields when a proposal goes lost: who won, roughly where their price landed</td><td class="unlock">Pricing power by industry and client — where we lose on price vs. relationship</td></tr>
-        <tr><td class="k">Scope size</td><td>RSF, headcount, site count on the intake — three numbers at proposal time</td><td class="unlock">$/RSF and $/head benchmarks — the unit economics clients and procurement quote back at us</td></tr>
+        <tr><td class="k">Scope size</td><td>RSF, headcount, site count — three numbers at proposal time</td><td class="unlock">$/RSF and $/head benchmarks — the unit economics clients quote back at us</td></tr>
         <tr><td class="k">Cash behavior</td><td>Monthly finance export: invoice-to-cash lag, write-offs per project</td><td class="unlock">True margin after collections · a client-quality score beside the revenue number</td></tr>
         <tr><td class="k">Change-order genesis</td><td>One dropdown on each CO: which assumption broke</td><td class="unlock">Contingency priced from evidence · the assumptions library that learns</td></tr>
-        <tr><td class="k">People depth</td><td>Skills, certifications, location, language on the staffing roster</td><td class="unlock">Staffing suggestions that respect reality, not just titles · bench visible by capability</td></tr>
-        <tr><td class="k">Lead provenance</td><td>Source on every record: broker, repeat client, RFP portal, referral</td><td class="unlock">Conversion and fee-share ROI by channel — where business development dollars actually work</td></tr>
+        <tr><td class="k">People depth</td><td>Skills, certifications, location, language on the staffing roster</td><td class="unlock">Staffing suggestions that respect reality, not just titles</td></tr>
+        <tr><td class="k">Lead provenance</td><td>Source on every record: broker, repeat client, RFP portal, referral</td><td class="unlock">Conversion and fee-share ROI by channel</td></tr>
         <tr><td class="k">Escalation billed</td><td>Contractual escalation vs. what invoicing actually applied</td><td class="unlock">Money contractually ours but never billed, surfaced instead of forgotten</td></tr>
       </table>
     </div>
@@ -1260,15 +446,15 @@
     <div class="dream-card">
       <div class="d-kicker">Pillar 5</div>
       <h3>Scale with the business.</h3>
-      <p class="d-story">The dream has to survive success: more leaders, more service lines, more regions, more consumers of the data. The engine already treats the data as clean, versioned JSON — scaling is opening that up deliberately: real integration surfaces for the tools around us, real authentication for a bigger tenant base, and interfaces that meet people where they are instead of asking them to come to the app.</p>
+      <p class="d-story">The dream has to survive success: more leaders, more service lines, more regions, more consumers of the data. The engine already treats the data as clean, versioned JSON — scaling is opening that up deliberately, and meeting people where they are instead of asking them to come to the app.</p>
       <div class="d-cols">
         <div>
           <h5>Informs the decision</h5>
           <ul>
             <li><strong>A real API layer</strong> — the leadership visualization app, Power BI, and finance read the same records live. This system becomes the source other tools trust, not another silo to reconcile.</li>
-            <li><strong>Ask-the-data</strong> — plain-English questions ("median PM rate across our last eight pharma wins?") answered read-only from the records, with citations to the projects behind every number.</li>
-            <li><strong>Push, not pull</strong> — a weekly digest per leader: your stale records, your at-risk months, your unreconciled imports. The system does the (gentle) nagging; humans do the entering.</li>
-            <li><strong>Ingestion everywhere</strong> — inbound PSAs, change orders, and RFPs drafted into records for review the day they arrive, extending what already works for historicals to the live pipeline.</li>
+            <li><strong>Ask-the-data</strong> — plain-English questions ("median PM rate across our last eight pharma wins?") answered read-only, with citations to the projects behind every number.</li>
+            <li><strong>Push, not pull</strong> — a weekly digest per leader: your stale records, your at-risk months, your unreconciled imports. The system does the (gentle) nagging.</li>
+            <li><strong>Ingestion everywhere</strong> — inbound PSAs, change orders, and RFPs drafted into records for review the day they arrive.</li>
           </ul>
         </div>
         <div>
@@ -1283,54 +469,12 @@
     </div>
   </section>
 
-  <!-- ===== Risks ===== -->
-  <section>
-    <header class="sec-head">
-      <span class="ix">Watch-outs</span>
-      <h2>Risks &amp; how we mitigate.</h2>
-    </header>
-    <div class="risks">
-      <div class="risks-grid">
-        <div class="risk">
-          <h4>Backtracking is a slog.</h4>
-          <p>50–100 historical projects, each with roles + rates + phases + FTE matrices, is a real chunk of work — even with LLM extraction.</p>
-          <div class="mit"><strong>Mitigation:</strong> &nbsp; Pilot with 10 manual entries to prove the schema, then unlock the ingestion studio for the rest. Two PEs × 1 hr/week × 8 weeks gets us to 50+.</div>
-        </div>
-        <div class="risk">
-          <h4>LLM extraction will hallucinate.</h4>
-          <p>Claude will get rates wrong, miscount FTE %, or fabricate roles on edge-case docs.</p>
-          <div class="mit"><strong>Mitigation:</strong> &nbsp; Every extraction is reviewed in side-by-side UI before save. Confidence flags surface low-confidence fields. Tuning on 5 reps gets accuracy where it needs to be.</div>
-        </div>
-        <div class="risk">
-          <h4>Rates &amp; resource taxonomies drift.</h4>
-          <p>If "Project Manager" means something different in the 2024 catalog vs 2027, benchmarks compare apples to oranges.</p>
-          <div class="mit"><strong>Mitigation:</strong> &nbsp; Catalog is versioned by year. Each project stores the catalog version it used. Benchmarks normalize before comparing.</div>
-        </div>
-        <div class="risk">
-          <h4>Clockify mapping is messier than it looks.</h4>
-          <p>One resource often books to multiple roles across multiple projects; project codes drift; non-billable categories pollute totals.</p>
-          <div class="mit"><strong>Mitigation:</strong> &nbsp; Map-once-then-cache: Clockify project → fee record links and title pins are saved to the shared staff file, so a mapping fixed once holds for everyone. Unmapped entries surface as unattributed burn on the Profitability page for review.</div>
-        </div>
-        <div class="risk">
-          <h4>Adoption — PEs may not use it.</h4>
-          <p>A great tool that nobody opens is worth nothing. Especially if it duplicates effort.</p>
-          <div class="mit"><strong>Mitigation:</strong> &nbsp; Make the calculator the path of least resistance for new proposals (better than Excel templates). Excel export keeps procurement happy. Make ingestion handle the historical pain so PEs aren't double-entering.</div>
-        </div>
-        <div class="risk">
-          <h4>Confidential data &amp; access.</h4>
-          <p>Fee data and the rate grid are sensitive. The deployed app ships with neither — it pulls them from Box only after OAuth sign-in. Per-person filtering is currently client-side, so Box folder permission is the real boundary.</p>
-          <div class="mit"><strong>Mitigation:</strong> &nbsp; Lock the Box folder to the trusted group; admin allowlist + per-project grants for everyone else. Server-side per-user filtering is the next hardening step for true project-level isolation.</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <!-- ===== CTA ===== -->
   <section>
     <div class="cta">
       <div>
-        <h2>Where we are, and what's next.</h2>
-        <p>Phases 0–8 are live — author fees (fixed or NTE, with change orders, versions, broker splits and pass-through), ingest historicals, bulk-import the billing book with diff-and-select, index and benchmark every project, analyse win/loss and discounting, project revenue firm-wide, compare it against the Budget / RF baselines in the Revenue Studio, track staffing load, reconcile contract vs. plan vs. actuals with confirm-gated bridging and pre-calculated rates, and lay Clockify burn against the plan for margin by month — all Box-backed and multi-user, with a regression suite (<code>tests.html</code>) guarding the engine. Known remaining builds: the formal <strong>accrual / flash output</strong>, a <strong>90-day capacity view</strong>, utilization charts, and a <strong>two-way Salesforce sync</strong>. Beyond those, the <strong>North Star</strong> section above is the dream this system is aimed at — price with the firm's whole memory, see problems two quarters early, plan the business and not just the projects, capture the data we currently let evaporate, and scale to whatever the practice becomes. Which pillar moves first is a leadership call; every one of them ships the way everything here has shipped — in confirm-gated slices that inform decisions without ever making them.</p>
+        <h2>How we choose.</h2>
+        <p>Which pillar moves first is a leadership call — this page presents ambition, not a schedule. Every pillar ships the way everything here has shipped: in small, confirm-gated slices that inform decisions without ever making them.</p>
       </div>
       <div class="actions">
         <a href="Fee Generator.html">Open the Fee &amp; Revenue System</a>
@@ -1340,5 +484,8 @@
   </section>
 
 </div>
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
 </body>
 </html>
