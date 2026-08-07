@@ -278,6 +278,9 @@
       if (!rp) { out.people[id] = lp; return; }
       if ((lp.updatedAt || '') >= (rp.updatedAt || '')) out.people[id] = lp;
     });
+    // Person tombstones ('person:<id>' keys in deleted) — a duplicate person
+    // record merged away by Data Repair must not resurrect from a stale tab.
+    Object.keys(out.people).forEach(id => { if (tombs['person:' + id]) delete out.people[id]; });
 
     // Actuals + mappings: key-wise union, local wins on a clash. Every
     // mappings sub-key the app writes to (staff.js:setUserMapping,
@@ -1045,13 +1048,23 @@
           ));
         } else {
           person = personForContractName(e.name);   // saved alias first, then tolerant match
+          // The name may match SEVERAL roster records (duplicate people are a
+          // real condition) — coverage must count rows from ALL of them, or a
+          // fully-staffed person "reports unstaffed" because the lookup picked
+          // the duplicate that holds no rows. Anchor the entry on whichever
+          // record actually has allocations on this project.
+          const matches = Object.values(db.people).filter(pp => namesMatch(pp.name, e.name));
+          if (person && !matches.some(m => m.id === person.id)) matches.push(person);
+          const matchIds = new Set(matches.map(m => m.id));
           const nameKey = nkey(canonicalName(e.name));
           existing = db.allocations.filter(a => a.project === pn && (
-            (person && a.personId === person.id) ||
+            matchIds.has(a.personId) ||
             // allocation created FOR this contract name (leader mapped it to
             // someone else) counts even before/without a saved alias
             nkey(canonicalName(a.contractResource || '')) === nameKey
           ));
+          const onProj = matches.find(m => db.allocations.some(a => a.personId === m.id && a.project === pn));
+          if (onProj) person = onProj;
         }
         const covAt = (ym) => existing.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
         // Month-by-month shortfall (contract minus what's already allocated),
