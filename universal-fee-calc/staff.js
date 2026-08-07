@@ -91,8 +91,11 @@
           title: '', homeTeam: '', capacityPct: 100, active: true,
         };
       }
+      // DETERMINISTIC id — two browsers seeding independently mint IDENTICAL
+      // ids, so a merge collides them into one row instead of duplicating
+      // every allocation (the random ids here caused exactly that in prod).
       db.allocations.push({
-        id: 'al_' + Math.random().toString(36).slice(2, 9),
+        id: 'al_s_' + slug(r.person + ' ' + r.proj + ' ' + r.start + ' ' + r.pct) + '_' + db.allocations.length,
         personId: pid, project: r.proj, client: r.client,
         status: r.status || 'Active', type: r.type || 'Awarded',
         start: r.start, end: r.end, pct: +r.pct || 0, note: r.note || '',
@@ -245,6 +248,21 @@
       return !t || (a.updatedAt || '') > t;
     });
 
+    // Seed-dupe guard: identical person+project+window+pct rows under
+    // DIFFERENT ids are two copies of the same auto-seeded allocation (per-
+    // browser seed ids used to be random). Keep the newest-edited copy —
+    // there is no legitimate reason for byte-identical twins.
+    {
+      const seen = {};
+      out.allocations.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+      out.allocations = out.allocations.filter(a => {
+        const k = [a.personId, a.project, a.start, a.end, a.pct].join('|');
+        if (seen[k]) return false;
+        seen[k] = true;
+        return true;
+      });
+    }
+
     // Drop tombstones older than the TTL, and any the winning record overrode.
     const cutoff = new Date(Date.now() - TOMB_TTL_DAYS * 86400000).toISOString();
     out.deleted = {};
@@ -304,8 +322,22 @@
 
   /** Merge a remote snapshot into the local db and persist WITHOUT pushing
       (the caller is mid-push and will upload the result itself). */
+  /** A local db that is nothing but an untouched auto-seed (fresh browser,
+      incognito, cleared cache) contributes NOTHING worth merging — and merging
+      it into real Box data duplicates every seeded allocation, because seed
+      row ids are minted per-browser. Detect and REPLACE instead. */
+  function isPristineSeed(db) {
+    return !!(db.meta && db.meta.matrixImportedAt)
+      && (db.allocations || []).every(a => !a.updatedAt)
+      && !Object.keys(db.actuals || {}).length
+      && !Object.keys((db.mappings || {}).fee || {}).length
+      && !Object.keys((db.mappings || {}).users || {}).length
+      && !Object.keys(db.deleted || {}).length;
+  }
+
   function mergeFromRemote(remote) {
-    const merged = mergeStaffDb(remote, readDb());
+    const local = readDb();
+    const merged = isPristineSeed(local) ? remote : mergeStaffDb(remote, local);
     localStorage.setItem(KEY, JSON.stringify(merged));
     _dbCache = merged;
     _feeIndex = null; _feeRecords = null;   // fee-tool project list may have changed too
@@ -1065,9 +1097,12 @@
     const db = readDb();
     // reverse index: fee project id → matrix project names linked to it
     const revLinks = {};
+    const linkCount = {};   // matrix project → how many fee projects it links to
     distinctProjects().forEach(pn => {
       const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
-      matchFeeProjects(pn, client).forEach(l => { (revLinks[l.id] = revLinks[l.id] || []).push(pn); });
+      const links = matchFeeProjects(pn, client);
+      linkCount[pn] = links.length;
+      links.forEach(l => { (revLinks[l.id] = revLinks[l.id] || []).push(pn); });
     });
     const out = [];
     feeRecords().forEach(p => {
@@ -1077,6 +1112,10 @@
       if (!p.timeline) return;
       const matrixNames = revLinks[p.id] || [];
       if (!matrixNames.length) return;
+      // A matrix project pinned to SEVERAL fee projects would seed the SAME
+      // allocations into each one, multiplying apparent contract demand.
+      // Skip — splitting that roster across contracts is a human decision.
+      if (matrixNames.some(n => (linkCount[n] || 0) > 1)) return;
       const allocs = db.allocations.filter(a => matrixNames.includes(a.project));
       if (!allocs.length) return;
       let months;

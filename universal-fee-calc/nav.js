@@ -26,6 +26,7 @@
     { href: 'Ingestion Studio.html?mode=bulk', label: 'Import Revenues',   group: 'Admin', admin: true },
     { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Admin', admin: true, note: 'one-time' },
     { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Admin', admin: true },
+    { href: 'Data Repair.html',              label: 'Data Repair',         group: 'Admin', admin: true, note: 'one-time' },
     { href: 'Getting Started.html',          label: 'Getting Started',     group: 'Docs' },
     { href: 'Enterprise Migration Guide.html', label: 'Migration Guide',   group: 'Docs' },
     { href: 'Fee System Roadmap.html',       label: 'Roadmap',             group: 'Docs' },

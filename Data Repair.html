@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Data Repair</title>
+<link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  body { margin:0; font-family:var(--font-body,Arial,sans-serif); color:var(--sav-navy,#25273A); background:#f3f3f0; }
+  .wrap { max-width:980px; margin:0 auto; padding:36px 28px 90px; }
+  h1 { font-family:var(--font-display); font-weight:800; font-size:26px; margin:0 0 6px; }
+  .sub { color:#79828C; font-size:13.5px; line-height:1.6; margin-bottom:24px; max-width:760px; }
+  .card { background:#fff; border:1px solid rgba(37,39,58,0.12); padding:20px 24px; margin-bottom:16px; }
+  .card h2 { font-family:var(--font-display); font-size:13px; letter-spacing:0.08em; text-transform:uppercase; margin:0 0 12px; }
+  .btn { font-family:var(--font-display); font-weight:700; font-size:13px; letter-spacing:0.04em; padding:12px 22px; border:0; cursor:pointer; background:var(--sav-navy); color:#fff; }
+  .btn.go { background:var(--sav-red,#CE181E); }
+  .btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .stat { display:inline-block; margin-right:26px; }
+  .stat b { font-family:var(--font-display); font-size:26px; display:block; }
+  .stat span { font-size:11px; color:#79828C; text-transform:uppercase; letter-spacing:0.08em; }
+  table { width:100%; border-collapse:collapse; margin-top:12px; font-size:12px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid rgba(37,39,58,0.08); }
+  th { font-family:var(--font-display); font-size:9.5px; letter-spacing:0.07em; text-transform:uppercase; color:#79828C; }
+  .tag { font-size:9.5px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:2px 7px; background:#EEE8E3; }
+  .msg { font-size:13px; padding:10px 14px; margin-top:12px; }
+  .msg.ok { background:#e8f3ec; color:#1f7a44; }
+  .msg.err { background:#fbe9ea; color:#b3151b; }
+  #gate { display:none; padding:60px 30px; text-align:center; font-size:14px; color:#79828C; }
+  .scroll { max-height:340px; overflow:auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Data repair — de-duplicate the staffing matrix.</h1>
+  <div class="sub">A sync bug duplicated seeded allocations (fresh browsers re-seeded the starter matrix and the merge kept both copies), and the canonical-name sync then renamed only one copy of each pair — which is why the same allocation shows under two project names and people look 200–300% allocated. This page finds every duplicate by exact signature, shows you the list, and removes them with tombstones so they cannot come back from anyone's open tab. It also reverts the contract rosters that were seeded from the doubled data. <b>Box keeps prior file versions, so this is recoverable.</b> Run it once.</div>
+
+  <div id="gate">Admin only. Sign in with an admin Box account.</div>
+
+  <div id="app" style="display:none">
+    <div class="card">
+      <h2>1 · Scan</h2>
+      <div id="stats"><span class="stat"><b id="s-total">–</b><span>allocations now</span></span>
+        <span class="stat"><b id="s-exact">–</b><span>exact duplicates</span></span>
+        <span class="stat"><b id="s-twin">–</b><span>edited twins</span></span>
+        <span class="stat"><b id="s-ren">–</b><span>rename twins</span></span>
+        <span class="stat"><b id="s-bridge">–</b><span>bridge rows</span></span>
+        <span class="stat"><b id="s-roster">–</b><span>seeded rosters</span></span></div>
+      <div class="scroll"><table id="preview"></table></div>
+    </div>
+    <div class="card">
+      <h2>2 · Repair</h2>
+      <div class="sub" style="margin-bottom:12px">Removes every row listed above (tombstoned), reverts the seeded contract rosters to empty, and pushes both files to Box. Ask everyone to refresh their Staffing tab afterward — the tombstones clean their local copies on the next sync.</div>
+      <button class="btn go" id="run" disabled>Remove <span id="run-n">0</span> rows &amp; revert <span id="run-r">0</span> rosters</button>
+      <div id="msg"></div>
+    </div>
+  </div>
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/staff-seed.js"></script>
+<script src="universal-fee-calc/staff.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+<script>
+(function () {
+  'use strict';
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let plan = null;
+
+  function computePlan() {
+    const S = window.UFC_Staff, STORE = window.UFC_Store;
+    const db = S.readDb();
+    const allocs = db.allocations || [];
+    const removals = [];   // { a, why }
+    const gone = new Set();
+    const mark = (a, why) => { if (!gone.has(a.id)) { gone.add(a.id); removals.push({ a, why }); } };
+
+    // PASS 1 — exact duplicates: same person+project+start+end+pct.
+    // Keep the newest-edited copy.
+    const g1 = {};
+    allocs.forEach(a => { const k = [a.personId, a.project, a.start, a.end, a.pct].join('|'); (g1[k] = g1[k] || []).push(a); });
+    Object.values(g1).forEach(g => {
+      if (g.length < 2) return;
+      g.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+      g.slice(1).forEach(a => mark(a, 'exact duplicate'));
+    });
+
+    // PASS 2 — edited twins: same person+project+pct+start; exactly one copy
+    // was edited (has updatedAt), the other is the stale seed copy.
+    const g2 = {};
+    allocs.filter(a => !gone.has(a.id)).forEach(a => { const k = [a.personId, a.project, a.pct, a.start].join('|'); (g2[k] = g2[k] || []).push(a); });
+    Object.values(g2).forEach(g => {
+      if (g.length !== 2) return;
+      const dated = g.filter(a => a.updatedAt), undated = g.filter(a => !a.updatedAt);
+      if (dated.length === 1 && undated.length === 1) mark(undated[0], 'stale twin of edited row');
+    });
+
+    // PASS 3 — rename twins: same person+start+end+pct where one row's project
+    // name was renamed to the other's per the saved renames table.
+    const ren = (db.mappings || {}).renames || {};
+    const renLookup = {};
+    Object.entries(ren).forEach(([o, n]) => { renLookup[o] = n; renLookup[o.toLowerCase()] = n; });
+    const g3 = {};
+    allocs.filter(a => !gone.has(a.id)).forEach(a => { const k = [a.personId, a.start, a.end, a.pct].join('|'); (g3[k] = g3[k] || []).push(a); });
+    Object.values(g3).forEach(g => {
+      if (g.length < 2) return;
+      g.forEach(oldRow => {
+        if (gone.has(oldRow.id)) return;
+        const target = renLookup[oldRow.project] || renLookup[(oldRow.project || '').toLowerCase()];
+        if (!target) return;
+        if (g.some(x => x !== oldRow && x.project === target && !gone.has(x.id))) mark(oldRow, 'old-name copy (renamed to ' + target + ')');
+      });
+    });
+
+    // PASS 4 — bridge-created rows: computed against the doubled data, so all
+    // invalid regardless of intent. Precise signature.
+    allocs.forEach(a => {
+      if (gone.has(a.id)) return;
+      if (/From contract staffing|Contract top-up|Open contract role staffed/.test(a.note || '') || a.contractRole !== undefined || a.contractResource !== undefined) mark(a, 'bridge row (built from doubled data)');
+    });
+
+    // Fee side — rosters seeded from the doubled matrix.
+    const seededProjects = (STORE.listProjects() || []).filter(p => p.roles && p.roles.length && p.roles.every(r => r.seededFromMatrix));
+
+    return { db, removals, seededProjects, counts: {
+      total: allocs.length,
+      exact: removals.filter(r => r.why === 'exact duplicate').length,
+      twin: removals.filter(r => /stale twin/.test(r.why)).length,
+      ren: removals.filter(r => /old-name/.test(r.why)).length,
+      bridge: removals.filter(r => /bridge row/.test(r.why)).length,
+    } };
+  }
+
+  function renderPlan() {
+    plan = computePlan();
+    const S = window.UFC_Staff;
+    $('#s-total').textContent = plan.counts.total;
+    $('#s-exact').textContent = plan.counts.exact;
+    $('#s-twin').textContent = plan.counts.twin;
+    $('#s-ren').textContent = plan.counts.ren;
+    $('#s-bridge').textContent = plan.counts.bridge;
+    $('#s-roster').textContent = plan.seededProjects.length;
+    let rows = '<tr><th>Person</th><th>Project</th><th>%</th><th>Window</th><th>Why removed</th></tr>';
+    plan.removals.forEach(({ a, why }) => {
+      const p = S.getPerson(a.personId) || { name: a.personId };
+      rows += `<tr><td>${esc(p.name)}</td><td>${esc(a.project)}</td><td>${a.pct}%</td><td>${esc(a.start || '')}–${esc(a.end || '')}</td><td><span class="tag">${esc(why)}</span></td></tr>`;
+    });
+    plan.seededProjects.forEach(p => {
+      rows += `<tr><td>—</td><td>${esc((p.project || {}).name)}</td><td colspan="2">${p.roles.length} seeded roles</td><td><span class="tag">roster reverted to empty</span></td></tr>`;
+    });
+    $('#preview').innerHTML = rows;
+    $('#run-n').textContent = plan.removals.length;
+    $('#run-r').textContent = plan.seededProjects.length;
+    $('#run').disabled = !(plan.removals.length || plan.seededProjects.length);
+    if (!plan.removals.length && !plan.seededProjects.length) $('#msg').innerHTML = '<div class="msg ok">Nothing to repair — the data is clean.</div>';
+  }
+
+  async function runRepair() {
+    const S = window.UFC_Staff, STORE = window.UFC_Store, Box = window.UFC_Box;
+    $('#run').disabled = true;
+    try {
+      // staff.json: remove + tombstone in ONE write, then push explicitly.
+      const db = S.readDb();
+      const now = new Date().toISOString();
+      const goneIds = new Set(plan.removals.map(r => r.a.id));
+      db.allocations = db.allocations.filter(a => !goneIds.has(a.id));
+      db.deleted = db.deleted || {};
+      goneIds.forEach(id => { db.deleted[id] = now; });
+      db.meta.updatedAt = now;
+      S.hydrateFromRemote(db);   // replace local store + cache with the cleaned db
+      if (Box && Box.enabled && Box.uploadStaff) await Box.uploadStaff(db);
+
+      // projects.json: revert seeded rosters (force — this IS the correction).
+      plan.seededProjects.forEach(p => {
+        const rec = (STORE.listProjects() || []).find(x => x.id === p.id);
+        if (rec && rec.roles.every(r => r.seededFromMatrix)) {
+          rec.roles = [];
+          STORE.saveProject(rec, { force: true });
+        }
+      });
+
+      $('#msg').innerHTML = `<div class="msg ok">Done — removed ${goneIds.size} allocation rows (tombstoned) and reverted ${plan.seededProjects.length} seeded rosters. ${Box && Box.enabled ? 'Pushed to Box.' : 'Local only — sign in to Box and rerun to share.'} Ask everyone to refresh their Staffing tab.</div>`;
+      renderPlan();
+    } catch (e) {
+      $('#msg').innerHTML = `<div class="msg err">Repair failed: ${esc(e.message || e)} — nothing further was changed. Re-run after fixing the issue.</div>`;
+      $('#run').disabled = false;
+    }
+  }
+
+  (window.ufcReady && window.ufcReady.then ? window.ufcReady
+    : new Promise(r => { if (document.readyState !== 'loading') r(); else document.addEventListener('DOMContentLoaded', r); })
+  ).then(() => {
+    const STORE = window.UFC_Store;
+    if (!(STORE && STORE.isAdmin && STORE.isAdmin())) { $('#gate').style.display = 'block'; return; }
+    $('#app').style.display = 'block';
+    renderPlan();
+    $('#run').onclick = runRepair;
+  });
+})();
+</script>
+</body>
+</html>
