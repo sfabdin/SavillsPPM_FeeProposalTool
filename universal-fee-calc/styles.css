@@ -1071,8 +1071,11 @@ html, body {
   padding: 1px 0;
   margin: -4px -6px 2px;
 }
-.matrix-table th.mcol.past,
 .matrix-table td.mcol.past { background: rgba(37,39,58,0.025); }
+/* past-month HEADERS keep a dark ground — the light tint above turned them
+   yellow-on-white and unreadable; grey text marks them as past instead */
+.matrix-table th.mcol.past { background: #3a3c50; }
+.matrix-table thead tr.month-subhead th.mcol.past { color: #c9ccd6; }
 .matrix-table td.mcol.actual-locked { background: rgba(14,124,123,0.06); }
 .matrix-table td.mcol.actual-locked input { color: var(--sav-teal); font-weight: 700; }
 

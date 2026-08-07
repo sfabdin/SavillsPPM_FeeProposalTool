@@ -1193,7 +1193,11 @@
         let tot = 0, activeMonths = 0;
         months.forEach(({ ym, mk }) => {
           const pct = e.allocs.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
-          if (pct) { fteMonthly[mk] = pct; tot += pct; activeMonths++; }
+          // EXPLICIT zero for inactive months — a missing key falls back to
+          // the phase-average in the calculator, painting phantom % into
+          // months the person was never allocated.
+          fteMonthly[mk] = pct;
+          if (pct) { tot += pct; activeMonths++; }
         });
         e.allocs.forEach(a => { if (a.start && a.end) monthsBetween(a.start, a.end).forEach(ym => { if (!inWin.has(ym)) clippedMonths++; }); });
         if (!activeMonths) return null;
