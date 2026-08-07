@@ -1051,6 +1051,76 @@
     return out.sort((a, b) => b.totalNeedFteMo - a.totalNeedFteMo);
   }
 
+  /** REVERSE bridge: fee projects with an EMPTY roster whose linked matrix
+      project already carries allocations — propose seeding the fee-tool
+      roster FROM the matrix. Booked (won/active) and pipeline statuses both
+      qualify ("if we have it"); only lost/closed are excluded. Proposed
+      roles are month-faithful (fteMonthly), clipped to the fee timeline,
+      and meant to be written at a $0 contracted rate so no project's
+      revenue moves until a leader prices the roster in reconciliation.
+      Read-only — the page previews and the leader confirms per project. */
+  function matrixSeedCandidates() {
+    const S2 = window.UFC_Store;
+    if (!S2 || !S2.enumerateMonths) return [];
+    const db = readDb();
+    // reverse index: fee project id → matrix project names linked to it
+    const revLinks = {};
+    distinctProjects().forEach(pn => {
+      const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
+      matchFeeProjects(pn, client).forEach(l => { (revLinks[l.id] = revLinks[l.id] || []).push(pn); });
+    });
+    const out = [];
+    feeRecords().forEach(p => {
+      if (p.roles && p.roles.length) return;                 // never touch an existing roster
+      const st = (p.project && p.project.status) || '';
+      if (st === 'lost' || st === 'closed') return;
+      if (!p.timeline) return;
+      const matrixNames = revLinks[p.id] || [];
+      if (!matrixNames.length) return;
+      const allocs = db.allocations.filter(a => matrixNames.includes(a.project));
+      if (!allocs.length) return;
+      let months;
+      try { months = S2.enumerateMonths(p.timeline).map(m => ({ ym: m.year + '-' + String(m.month).padStart(2, '0'), mk: m.year + '-' + m.month })); } catch (e) { return; }
+      if (!months.length) return;
+      const inWin = new Set(months.map(m => m.ym));
+      const byPerson = {};
+      allocs.forEach(a => {
+        const per = db.people[a.personId] || { id: a.personId, name: a.personId, title: '' };
+        const e = byPerson[per.id] || (byPerson[per.id] = { person: per, allocs: [], pursuit: false });
+        e.allocs.push(a);
+        if (a.status === 'Pursuit' || a.type === 'Opportunity') e.pursuit = true;
+      });
+      let clippedMonths = 0;
+      const roles = Object.values(byPerson).map(e => {
+        const fteMonthly = {};                               // fee-tool keys are non-padded
+        let tot = 0, activeMonths = 0;
+        months.forEach(({ ym, mk }) => {
+          const pct = e.allocs.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
+          if (pct) { fteMonthly[mk] = pct; tot += pct; activeMonths++; }
+        });
+        e.allocs.forEach(a => { if (a.start && a.end) monthsBetween(a.start, a.end).forEach(ym => { if (!inWin.has(ym)) clippedMonths++; }); });
+        if (!activeMonths) return null;
+        const fam = titleFamily((e.person.title || '').trim());
+        return {
+          person: e.person, pursuit: e.pursuit,
+          fteMonthly, avgPct: Math.round(tot / activeMonths), activeMonths,
+          titleId: fam ? fam.titleId : '', tierId: fam ? fam.tierId : 'mid',
+          titleMapped: !!fam,
+        };
+      }).filter(Boolean);
+      if (!roles.length) return;
+      out.push({
+        feeId: p.id, name: (p.project && p.project.name) || '', client: (p.project && p.project.client) || '',
+        status: st, booked: st === 'won' || st === 'active',
+        updatedAt: p.updatedAt || '',
+        matrixNames, roles, clippedMonths,
+        totalFteMo: Math.round(roles.reduce((s, r) => s + Object.values(r.fteMonthly).reduce((x, v) => x + v, 0), 0)) / 100,
+        anyPursuit: roles.some(r => r.pursuit),
+      });
+    });
+    return out.sort((a, b) => (b.booked ? 1 : 0) - (a.booked ? 1 : 0) || b.totalFteMo - a.totalFteMo);
+  }
+
   /** Bandwidth freeing up over the next 3 months, per person — the biggest
       drop below the 100% line and when it lands. Always looks forward from
       "now", independent of whatever window the page happens to be showing. */
@@ -1441,7 +1511,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, comingAvailable, substantialMacroTime,
+    unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
