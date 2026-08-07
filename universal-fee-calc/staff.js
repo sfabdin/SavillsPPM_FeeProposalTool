@@ -167,7 +167,7 @@
   function reseedMatrix() {
     const db = readDb();
     const keepActuals = db.actuals || {};
-    const keepCaps = {}; Object.values(db.people).forEach(p => { keepCaps[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam }; });
+    const keepCaps = {}; Object.values(db.people).forEach(p => { keepCaps[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam, nonBillable: p.nonBillable }; });
     const fresh = seedFromMatrix(defaultDb());
     fresh.actuals = keepActuals;
     Object.values(fresh.people).forEach(p => { if (keepCaps[p.id]) Object.assign(p, keepCaps[p.id]); });
@@ -185,6 +185,13 @@
     if (!person.id) person.id = 'p_' + Math.random().toString(36).slice(2, 9);
     db.people[person.id] = Object.assign(db.people[person.id] || {}, person);
     writeDb(db); return db.people[person.id];
+  }
+  /** Mark a person as pure overhead (non-billable): their internal time is
+      EXPECTED, so burn insights stop flagging it, and staffing-availability
+      lists stop offering them as project capacity. Stamped with updatedAt so
+      the newest-wins people merge carries the flag across browsers. */
+  function setPersonNonBillable(personId, flag) {
+    return savePerson({ id: personId, nonBillable: !!flag, updatedAt: new Date().toISOString() });
   }
   function setMonthHours(h) { const db = readDb(); db.meta.monthHours = +h || DEFAULT_MONTH_HOURS; writeDb(db); }
   function monthHours() { return readDb().meta.monthHours || DEFAULT_MONTH_HOURS; }
@@ -1259,7 +1266,7 @@
   function comingAvailable(opts) {
     const nowYm = currentYM();
     const nextMs = []; { let [fy, fm] = nowYm.split('-').map(Number); for (let i = 0; i < 4; i++) { nextMs.push(fy + '-' + String(fm).padStart(2, '0')); fm++; if (fm > 12) { fm = 1; fy++; } } }
-    return bandwidthGrid(nextMs, opts).map(r => {
+    return bandwidthGrid(nextMs, opts).filter(r => !(r.person && r.person.nonBillable)).map(r => {
       const cur = r.byMonth[nextMs[0]] || 0;
       let best = null;
       nextMs.slice(1).forEach(m => { const v = r.byMonth[m] || 0; if (v < 100 && cur - v >= 25 && (!best || v < best.v)) best = { m, v }; });
@@ -1275,9 +1282,14 @@
       split out separately since that's expected, not a flag. */
   function substantialMacroTime(months) {
     const all = (hasActuals() && macroHours) ? macroHours(months) : [];
+    // People explicitly MARKED non-billable (Mapping tab) are pure overhead:
+    // heavy internal time is their job, not a flag. They surface in their own
+    // strip instead of the table — visible, never alarming.
+    const isNB = (r) => !!(r.person && r.person.nonBillable);
     return {
-      boh: all.filter(r => r.pct >= 0.9 && r.hours > 40),
-      flagged: all.filter(r => r.pct < 0.9 && r.hours > 40),
+      overhead: all.filter(r => isNB(r) && r.hours > 40),
+      boh: all.filter(r => !isNB(r) && r.pct >= 0.9 && r.hours > 40),
+      flagged: all.filter(r => !isNB(r) && r.pct < 0.9 && r.hours > 40),
     };
   }
 
@@ -1644,7 +1656,7 @@
     const renames = ((db.mappings || {}).renames) || {};
     rows.forEach(r => { const c = renames[nkey(r.proj)]; if (c) r.proj = c; });   // auto-canonicalize on the way in
     const keepActuals = db.actuals || {};
-    const keep = {}; Object.values(db.people).forEach(p => { keep[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam }; });
+    const keep = {}; Object.values(db.people).forEach(p => { keep[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam, nonBillable: p.nonBillable }; });
     const fresh = defaultDb();
     fresh.actuals = keepActuals; fresh.meta = db.meta || fresh.meta;
     rows.forEach(r => {
@@ -1678,7 +1690,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime,
+    unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
