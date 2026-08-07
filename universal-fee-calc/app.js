@@ -590,6 +590,7 @@
       </div>
       <div class="ir-actions">
         <button type="button" class="ir-btn" id="ir-toggle">${reconciled ? '↺ Re-lock to imported' : '✓ Mark reconciled (use fee model)'}</button>
+        ${!reconciled && state.roles.length ? `<button type="button" class="ir-btn" id="ir-precalc" title="Preview contracted rates that back into the imported totals using the current staffing shape — nothing is locked in until you confirm">⚡ Pre-calculate rates from staffing</button>` : ''}
         <span class="ir-flag ${reconciled ? 'on' : ''}">${reconciled ? 'Reconciled — projections follow the fee model' : 'Locked — projections follow the imported sheet'}</span>
       </div>
       <details class="ir-detail"><summary>Month-by-month (${rec.byMonth.filter(m=>m.imported||m.calculated).length})</summary>
@@ -601,10 +602,167 @@
       markDirty();
       renderImportReconcile();
     });
+    const pc = $('#ir-precalc');
+    if (pc) pc.addEventListener('click', openPrecalcModal);
   }
   function monthLabelFromYM(ym) {
     const [y, m] = ym.split('-').map(Number);
     return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m - 1] + ' ' + y;
+  }
+
+  /* ----- Pre-calculate contracted rates from the imported sheet -----
+     For historical/imported projects the leader has the fees per month and
+     the staffing shape, but no rates. This backs INTO the imported total:
+     weight each active role by its rack rate (so the seniority spread stays
+     sensible), scale every weight by one factor so calculated ≈ imported,
+     and preview the result month by month. Discussion aid only — Confirm
+     writes contracted rates onto the roles and NOTHING else; the imported
+     projection stays locked until the leader marks it reconciled, and the
+     leader is expected to sanity-check the staffing shape first. */
+  function precalcRates() {
+    const cat = window.RATES_CATALOG;
+    const rec0 = stateAsRecord();
+    if (!rec0.source || !rec0.source.importedByMonth) return null;
+    const hasFte = (r) => (r.fteMonthly && Object.values(r.fteMonthly).some(v => +v > 0)) ||
+                          Object.values(r.fte || {}).some(v => +v > 0);
+    // Solve every role that actually works months. Deliberately-free roles
+    // (grid source on a no-charge tier) stay free.
+    const solve = {};
+    state.roles.forEach(r => {
+      if (!hasFte(r)) return;
+      const tier = getTier(r.titleId, r.tierId);
+      if (r.rateSource !== 'contracted' && tier && tier.isNoCharge) return;
+      const cr = parseFloat(r.contractedRate);
+      solve[r.id] = (tier && !tier.isNoCharge && tier.rate) ? tier.rate : (cr > 0 ? cr : 100);
+    });
+    if (!Object.keys(solve).length) return { empty: 'nofte' };
+    const runWith = (rates) => {
+      const clone = JSON.parse(JSON.stringify(rec0));
+      clone.roles.forEach(r => {
+        if (rates[r.id] != null) { r.rateSource = 'contracted'; r.contractedRate = rates[r.id]; }
+      });
+      return STORE.reconcileImport(clone, cat);
+    };
+    let rates = solve, rec = runWith(rates);
+    if (!rec || !rec.importedTotal) return { empty: 'noimport' };
+    if (!rec.calculatedTotal) return { empty: 'nofte' };
+    // One scale is exact when fee is proportional to the rates (the usual
+    // case); the extra passes absorb fixed pieces (rate-lock credits) and
+    // the rounding of each rate to cents.
+    for (let i = 0; i < 4; i++) {
+      const k = rec.importedTotal / rec.calculatedTotal;
+      const next = {};
+      Object.keys(rates).forEach(id => { next[id] = Math.round(rates[id] * k * 100) / 100; });
+      rates = next;
+      rec = runWith(rates);
+      if (!rec.calculatedTotal || Math.abs(rec.variance) < 1) break;
+    }
+    return { rates, rec };
+  }
+
+  function openPrecalcModal() {
+    if (document.getElementById('precalc-modal')) return;
+    const res = precalcRates();
+    if (!res) return;
+    const ov = document.createElement('div');
+    ov.id = 'precalc-modal';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99000;background:rgba(37,39,58,.55);display:flex;align-items:center;justify-content:center;padding:20px;';
+    const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+
+    let body;
+    if (res.empty) {
+      body = `<div class="pcm-note">${res.empty === 'noimport'
+        ? 'This project has no imported monthly fees to back into.'
+        : 'The roster has no billable FTE yet — the pre-calculation needs a staffing shape to price. Add FTE (or seed the roster from the staffing matrix) first.'}</div>
+        <div class="pcm-foot"><button type="button" class="pcm-btn" data-close>Close</button></div>`;
+    } else {
+      const { rates, rec } = res;
+      const roleRows = state.roles.filter(r => rates[r.id] != null).map(r => {
+        const title = getTitle(r.titleId);
+        const tier = getTier(r.titleId, r.tierId);
+        const label = (r.projectRole || '').trim() || (title ? title.name : 'Role');
+        const cur = r.rateSource === 'contracted'
+          ? (r.contractedRate != null && r.contractedRate !== '' ? '$' + r.contractedRate + '/hr contracted' : 'contracted · no rate')
+          : (tier ? 'grid $' + shownRate(tier) + '/hr' : 'grid');
+        return `<tr>
+          <td>${escapeHtml(label)}${r.resource ? `<span class="pcm-res">${escapeHtml(r.resource)}</span>` : ''}</td>
+          <td>${escapeHtml(tier ? tier.label : '')}</td>
+          <td class="num muted">${escapeHtml(cur)}</td>
+          <td class="num"><b>${fmtMoneyDecimal(rates[r.id])}</b>/hr</td>
+        </tr>`;
+      }).join('');
+      const monthRows = rec.byMonth.filter(m => m.imported || m.calculated).map(m => {
+        const v = m.variance;
+        return `<tr>
+          <td>${monthLabelFromYM(m.ym)}</td>
+          <td class="num">${m.imported ? fmtMoney(m.imported) : '·'}</td>
+          <td class="num">${m.calculated ? fmtMoney(m.calculated) : '·'}</td>
+          <td class="num ${Math.abs(v) < 1 ? 'ok' : (v > 0 ? 'over' : 'under')}">${Math.abs(v) < 1 ? '✓' : (v > 0 ? '+' : '−') + fmtMoney(Math.abs(v))}</td>
+        </tr>`;
+      }).join('');
+      const vAbs = Math.abs(rec.variance);
+      body = `
+        <div class="pcm-note">These contracted rates <b>back into the imported total</b> using the staffing shape already on this project — the seniority spread follows the rate grid, scaled as one block. <b>For discussion only:</b> nothing locks in. Confirm the staffing below matches what was originally worked before applying, and the imported projection stays locked either way until you mark the project reconciled.</div>
+        <div class="pcm-tot">
+          <span>Imported <b>${fmtMoney(rec.importedTotal)}</b></span>
+          <span>Pre-calculated <b>${fmtMoney(rec.calculatedTotal)}</b></span>
+          <span>Residual <b>${vAbs < 1 ? '✓ to the dollar' : (rec.variance > 0 ? '+' : '−') + fmtMoney(vAbs) + (vAbs < 50 ? ' (rate rounding)' : '')}</b></span>
+        </div>
+        <div class="pcm-sec">Proposed rates (${Object.keys(rates).length} role${Object.keys(rates).length === 1 ? '' : 's'})</div>
+        <table class="pcm-table"><thead><tr><th>Role</th><th>Tier</th><th class="num">Current</th><th class="num">Proposed</th></tr></thead><tbody>${roleRows}</tbody></table>
+        <div class="pcm-sec">Month by month</div>
+        <div class="pcm-scroll"><table class="pcm-table"><thead><tr><th>Month</th><th class="num">Imported</th><th class="num">Pre-calculated</th><th class="num">Δ</th></tr></thead><tbody>${monthRows}</tbody></table></div>
+        <div class="pcm-foot">
+          <button type="button" class="pcm-btn" data-close>Cancel — keep as is</button>
+          <button type="button" class="pcm-btn primary" data-apply>Apply these rates to the roster</button>
+        </div>`;
+    }
+
+    ov.innerHTML = `
+      <style>
+        #precalc-modal .pcm-panel{background:#fff;max-width:680px;width:100%;max-height:86vh;overflow-y:auto;box-shadow:0 18px 60px rgba(37,39,58,.45);font-size:13px;}
+        #precalc-modal .pcm-head{background:#25273A;color:#fff;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;}
+        #precalc-modal .pcm-head b{font-size:14px;letter-spacing:.02em;}
+        #precalc-modal .pcm-x{background:none;border:0;color:#fff;font-size:20px;cursor:pointer;line-height:1;}
+        #precalc-modal .pcm-note{padding:14px 20px;background:#fdf3d7;color:#5a4a00;line-height:1.5;}
+        #precalc-modal .pcm-tot{display:flex;gap:22px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid rgba(37,39,58,.12);color:#4a4f5c;}
+        #precalc-modal .pcm-tot b{color:#25273A;margin-left:5px;}
+        #precalc-modal .pcm-sec{padding:14px 20px 6px;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8a8f9a;}
+        #precalc-modal .pcm-table{width:100%;border-collapse:collapse;}
+        #precalc-modal .pcm-table th,#precalc-modal .pcm-table td{padding:7px 20px;text-align:left;border-bottom:1px solid rgba(37,39,58,.07);}
+        #precalc-modal .pcm-table th{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8a8f9a;}
+        #precalc-modal .pcm-table .num{text-align:right;}
+        #precalc-modal .pcm-table .muted{color:#8a8f9a;}
+        #precalc-modal .pcm-table .over{color:#0E7C7B;}
+        #precalc-modal .pcm-table .under{color:#B3413B;}
+        #precalc-modal .pcm-table .ok{color:#0E7C7B;}
+        #precalc-modal .pcm-res{display:block;font-size:11px;color:#8a8f9a;}
+        #precalc-modal .pcm-scroll{max-height:240px;overflow-y:auto;}
+        #precalc-modal .pcm-foot{display:flex;justify-content:flex-end;gap:10px;padding:16px 20px;border-top:1px solid rgba(37,39,58,.12);position:sticky;bottom:0;background:#fff;}
+        #precalc-modal .pcm-btn{border:1px solid rgba(37,39,58,.3);background:#fff;color:#25273A;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;}
+        #precalc-modal .pcm-btn.primary{background:#0E7C7B;border-color:#0E7C7B;color:#fff;}
+        #precalc-modal .pcm-btn:hover{filter:brightness(.96);}
+      </style>
+      <div class="pcm-panel" role="dialog" aria-modal="true" aria-label="Pre-calculated rates">
+        <div class="pcm-head"><b>⚡ Pre-calculated option — back into the imported fees</b><button type="button" class="pcm-x" data-close aria-label="Close">×</button></div>
+        ${body}
+      </div>`;
+    document.body.appendChild(ov);
+    ov.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', close));
+    const ap = ov.querySelector('[data-apply]');
+    if (ap) ap.addEventListener('click', () => {
+      state.roles.forEach(r => {
+        if (res.rates[r.id] != null) { r.rateSource = 'contracted'; r.contractedRate = res.rates[r.id]; }
+      });
+      // The imported lock and reconciled flag are deliberately untouched —
+      // this only prices the roster; the leader still reconciles themselves.
+      markDirty();
+      renderAll();
+      close();
+    });
   }
 
   /* Logical staffing SHAPE by seniority — relative weights, not absolute FTE.
