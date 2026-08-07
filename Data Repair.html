@@ -47,6 +47,7 @@
         <span class="stat"><b id="s-roster">–</b><span>seeded rosters</span></span>
         <span class="stat"><b id="s-people">–</b><span>duplicate people</span></span></div>
       <div class="scroll"><table id="preview"></table></div>
+      <div id="review-box"></div>
     </div>
     <div class="card">
       <h2>2 · Repair</h2>
@@ -154,10 +155,25 @@
       });
     }
 
+    // REVIEW (info only) — several overlapping rows for the same person on
+    // the same project, each carrying real edits: the twin-era residue no
+    // machine can safely pick between. Listed for human Del/Edit, never
+    // auto-removed.
+    const review = [];
+    {
+      const gRev = {};
+      allocs.filter(a => !gone.has(a.id)).forEach(a => { const k = a.personId + '|' + a.project; (gRev[k] = gRev[k] || []).push(a); });
+      const overlap = (x, y) => (x.start || '') <= (y.end || '9999') && (y.start || '') <= (x.end || '9999');
+      Object.values(gRev).forEach(g => {
+        if (g.length < 2) return;
+        if (g.some(x => g.some(y => x !== y && overlap(x, y)))) review.push(g);
+      });
+    }
+
     // Fee side — rosters seeded from the doubled matrix.
     const seededProjects = (STORE.listProjects() || []).filter(p => p.roles && p.roles.length && p.roles.every(r => r.seededFromMatrix));
 
-    return { db, removals, renames, dupPeople, seededProjects, counts: {
+    return { db, removals, renames, dupPeople, review, seededProjects, counts: {
       people: dupPeople.reduce((n, d) => n + d.drop.length, 0),
       total: allocs.length,
       exact: removals.filter(r => r.why === 'exact duplicate').length,
@@ -193,6 +209,15 @@
       rows += `<tr><td>—</td><td>${esc((p.project || {}).name)}</td><td colspan="2">${p.roles.length} seeded roles</td><td><span class="tag">roster reverted to empty</span></td></tr>`;
     });
     $('#preview').innerHTML = rows;
+    let rev = '';
+    if (plan.review.length) {
+      rev = '<div style="margin-top:16px;padding:10px 14px;background:#fdf6e3;border-left:3px solid #e8b563;font-size:12.5px"><b>Needs human review — not auto-fixed:</b> the same person has overlapping rows on the same project, each carrying real edits. Use Edit/Del on the Allocations tab to keep the right one.<table>' +
+        plan.review.map(g => {
+          const p = S.getPerson(g[0].personId) || { name: g[0].personId };
+          return `<tr><td>${esc(p.name)}</td><td>${esc(g[0].project)}</td><td>${g.map(a => a.pct + '% ' + esc(S.ymLabel(a.start)) + '–' + esc(S.ymLabel(a.end))).join(' · ')}</td></tr>`;
+        }).join('') + '</table></div>';
+    }
+    document.getElementById('review-box').innerHTML = rev;
     $('#run-n').textContent = plan.removals.length + (plan.renames.length ? ' (+' + plan.renames.length + ' renamed)' : '');
     $('#run-r').textContent = plan.seededProjects.length;
     const anything = plan.removals.length || plan.renames.length || plan.seededProjects.length || plan.counts.people;
