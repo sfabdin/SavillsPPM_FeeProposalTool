@@ -1409,16 +1409,47 @@
     // make a May joiner look like four months behind.
     const firstEver = {};
     Object.keys(db.actuals).forEach(k => { const [pid, , ym] = k.split('|'); if (!firstEver[pid] || ym < firstEver[pid]) firstEver[pid] = ym; });
+    // Months a person is on a leave of absence aren't expected — nobody logs
+    // hours while they're out, and a red 0% row for someone on parental leave
+    // is exactly the noise this tab shouldn't produce.
+    const onLeave = {};
+    S.leaveStatus().forEach(l => {
+      const set = onLeave[l.person.id] || (onLeave[l.person.id] = new Set());
+      let m = l.start; let guard = 0;
+      while (m <= l.end && guard++ < 240) { set.add(m); m = S.ymAdd(m, 1); }
+    });
+    // People Clockify can't report on can't be measured: no hours have EVER
+    // arrived for them (unmapped, or they haven't started). They're listed
+    // separately as "not tracked yet" instead of sitting at a red 0%.
+    const ckUsers = state.clockifyUsers || [];
+    const userMaps = (db.mappings || {}).users || {};
+    const hasCkMapping = (person) => !ckUsers.length ? true : ckUsers.some(u => {
+      const m = userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()];
+      if (m) return m === person.id;
+      return S.namesMatch(person.name, u.name) && !S.userExcluded(u.name, person.id);
+    });
     // who SHOULD log: anyone with an active allocation in a month, or anyone with hours
     const rows = [];
+    const untracked = [];
     S.listPeople().forEach(person => {
       if (person.isNewHire) return;
       const logged = perPM[person.id] || {};
+      const everLogged = !!firstEver[person.id];
+      if (!everLogged) {
+        // Only claim "mapped" when the Clockify user list is actually loaded
+        // and confirms it — otherwise we genuinely don't know which it is.
+        const reason = !ckUsers.length ? 'no hours on record — not started, or not mapped to Clockify'
+          : (hasCkMapping(person) ? 'mapped to Clockify, but no hours have arrived yet' : 'no Clockify user mapped');
+        untracked.push({ person, reason });
+        return;
+      }
       const cap = S.capacityHours(person);
       const joined = firstEver[person.id] || null;
-      const byMonth = {}; let expectedMonths = 0, okMonths = 0, totLogged = 0, totCap = 0;
+      const leaveMs = onLeave[person.id];
+      const byMonth = {}; let expectedMonths = 0, okMonths = 0, totLogged = 0, totCap = 0, leaveMonths = 0;
       ms.forEach(ym => {
         if (joined && ym < joined) { byMonth[ym] = null; return; }   // pre-arrival
+        if (leaveMs && leaveMs.has(ym)) { byMonth[ym] = 'leave'; leaveMonths++; return; }
         const active = S.personAllocationsIn(person.id, ym).length > 0;
         const h = logged[ym] || 0;
         if (!active && !h) { byMonth[ym] = null; return; }
@@ -1428,11 +1459,11 @@
         expectedMonths++; totLogged += h; totCap += capM;
         if (pct >= 0.8) okMonths++;
       });
-      if (!expectedMonths) return;
+      if (!expectedMonths) { if (leaveMonths) untracked.push({ person, reason: 'on leave for this whole window' }); return; }
       // behind = latest expected month under 80%
-      const lastMs = ms.filter(m => byMonth[m]).slice(-1)[0];
+      const lastMs = ms.filter(m => byMonth[m] && byMonth[m] !== 'leave').slice(-1)[0];
       const lastPct = lastMs ? byMonth[lastMs].pct : 0;
-      rows.push({ person, byMonth, expectedMonths, okMonths, totLogged, totCap, compliance: expectedMonths ? okMonths / expectedMonths : 0, lastMs, lastPct, behindHrs: Math.max(0, totCap - totLogged), joinedMid: !!(joined && joined > ms[0]), joined });
+      rows.push({ person, byMonth, expectedMonths, okMonths, totLogged, totCap, compliance: expectedMonths ? okMonths / expectedMonths : 0, lastMs, lastPct, behindHrs: Math.max(0, totCap - totLogged), joinedMid: !!(joined && joined > ms[0]), joined, leaveMonths });
     });
     // The question this table answers is "who is behind and by how much" —
     // so it sorts by missing hours, worst first.
@@ -1472,6 +1503,7 @@
     const worstDisc = disc.filter(d => d.score < 0.6).slice(0, 8);
 
     const cellFor = (c, ym) => {
+      if (c === 'leave') return '<td title="On leave of absence — no hours expected"><span class="cell" style="background:#efe6f7;color:#6b3fa0">🌴</span></td>';
       if (!c) return '<td><span class="cell u0">·</span></td>';
       const p = Math.round(c.pct * 100);
       const cls = p >= 100 ? 'u2' : p >= 80 ? 'u1' : p > 0 ? 'u3' : 'u5';
@@ -1495,7 +1527,8 @@
         ? ` <span class="nh-tag" style="background:#e3ecf7;color:#2f5d8f" title="Part time — every month here is judged against ${r.person.capacityPct}% of a full month (≈${Math.round(S.monthHours() * r.person.capacityPct / 100)} h)">PT · ${r.person.capacityPct}%</span>` : '';
       const intTag = r.person.nonBillable ? ' <span class="nh-tag" style="background:#e7eef0;color:#4a5560" title="Internal / overhead — still expected to log their hours, internal projects count">INT</span>' : '';
       const joinTag = r.joinedMid ? ` <span class="nh-tag" title="First logged hour ${esc(S.ymLabel(r.joined))} — earlier months aren't expected of them">joined ${esc(S.ymLabel(r.joined))}</span>` : '';
-      body += `<tr><td class="who"><div class="who-name" style="cursor:default">${esc(r.person.name)}${ptTag}${intTag}${joinTag}</div><div class="who-meta">${esc(r.person.title || '')}</div></td>`;
+      const lvTag2 = r.leaveMonths ? ` <span class="nh-tag" style="background:#efe6f7;color:#6b3fa0" title="On a leave of absence for ${r.leaveMonths} month${r.leaveMonths === 1 ? '' : 's'} of this window — those months aren't counted">🌴 ${r.leaveMonths} mo leave</span>` : '';
+      body += `<tr><td class="who"><div class="who-name" style="cursor:default">${esc(r.person.name)}${ptTag}${intTag}${joinTag}${lvTag2}</div><div class="who-meta">${esc(r.person.title || '')}</div></td>`;
       ms.forEach(ym => body += cellFor(r.byMonth[ym], ym));
       body += `<td class="pk ${r.behindHrs > 8 ? 'over' : ''}">${r.behindHrs > 1 ? fmtH(r.behindHrs) + 'h' : '—'}</td>`;
       body += `<td class="pk ${r.compliance < 0.5 ? 'over' : ''}">${Math.round(r.compliance * 100)}%</td></tr>`;
@@ -1521,9 +1554,10 @@
           <div class="vmini" style="margin-top:6px;color:var(--sav-steel)">"On target" = ≥80% of <b>that person's own bar</b> logged for the month (current month pro-rata). The bar is ${S.monthHours()} h × their capacity %, so a part-timer at 50% is judged against ≈${Math.round(S.monthHours() * 0.5)} h — never the full-time number. Months before someone's first-ever logged hour are excluded (new joiners aren't "behind" for months they weren't here). Internal staff are still expected to log; their internal projects count. PTO/internal projects count if mapped rather than ignored.</div>
         </div></div>
       </div>
+      ${untracked.length ? `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#f4f2ef;border-left:3px solid #b0b5bc"><b>${untracked.length} ${untracked.length === 1 ? 'person is' : 'people are'} not tracked here</b> — no hours can arrive for them, so a 0% row would be meaningless: ${untracked.slice(0, 8).map(u => `${esc(u.person.name)} <span class="vmini">(${esc(u.reason)})</span>`).join(' · ')}${untracked.length > 8 ? ` · +${untracked.length - 8} more` : ''}. <a href="#" data-goto-tab="mapping">Map them in Mapping →</a></div>` : ''}
       <div class="toolbar" style="margin-bottom:10px"><input type="search" id="comp-search" placeholder="Filter person or title…" value="${esc(state.compSearch || '')}"><span class="grow"></span><span class="note-txt">${shown.length} of ${rows.length} people · sorted by ${sort.key === 'behind' ? 'hours behind' : sort.key === 'name' ? 'name' : sort.key === 'target' ? 'months on target' : 'month ' + S.ymLabel(sort.key.slice(3))} — click any column header to re-sort</span></div>
       <div class="hm-wrap"><table class="hm"><thead><tr>${sortTh('name', 'Person', 'class="who"')}${ms.map(m => sortTh('ym:' + m, esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">pro-rata</div>' : ''))).join('')}${sortTh('behind', 'Behind', 'class="pk"')}${sortTh('target', 'Months on target', 'class="pk"')}</tr></thead><tbody>${body || `<tr><td colspan="${ms.length + 3}"><div class="empty" style="border:0">Nobody matches the filter.</div></td></tr>`}</tbody></table></div>
-      <div class="legend"><span><span class="sw" style="background:#cfe6e4"></span>≥100%</span><span><span class="sw" style="background:#eef4f4"></span>80–99% on target</span><span><span class="sw" style="background:#fce7c2"></span>1–79% behind</span><span><span class="sw" style="background:#e4453a"></span>0% nothing logged</span><span>· = not allocated / not here yet</span><span>Months before someone's first-ever logged hour aren't expected of them ("joined" tag)</span></div>`;
+      <div class="legend"><span><span class="sw" style="background:#cfe6e4"></span>≥100%</span><span><span class="sw" style="background:#eef4f4"></span>80–99% on target</span><span><span class="sw" style="background:#fce7c2"></span>1–79% behind</span><span><span class="sw" style="background:#e4453a"></span>0% nothing logged</span><span><span class="sw" style="background:#efe6f7"></span>🌴 on leave — not expected</span><span>· = not allocated / not here yet</span><span>Months before someone's first-ever logged hour aren't expected of them ("joined" tag)</span></div>`;
     const cs = $('#comp-search');
     if (cs) cs.oninput = () => { state.compSearch = cs.value; renderCompliance(); const el = $('#comp-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $$('#p-compliance [data-csort]').forEach(th => th.onclick = () => {
