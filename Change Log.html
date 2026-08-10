@@ -125,7 +125,7 @@
      everything, including entries for projects that were since deleted. */
   function scopedEntries() {
     const all = STORE.listActivity ? STORE.listActivity(null) : [];
-    const admin = STORE.isAdmin(STORE.getCurrentUser());
+    const admin = STORE.seesAllProjects(STORE.getCurrentUser());
     if (admin) return all;
     const visible = new Set(STORE.visibleProjects(STORE.listProjects()).map(p => p.id));
     return all.filter(e => e.projectId && visible.has(e.projectId));
@@ -256,7 +256,7 @@
       { n: new Set(week.filter(e => e.projectId).map(e => e.projectId)).size, l: 'Projects touched', c: 'accent' }
     ].map(k => '<div class="kpi-card ' + k.c + '"><div class="k-num">' + k.n + '</div><div class="k-lbl">' + k.l + '</div></div>').join('');
 
-    const admin = STORE.isAdmin(STORE.getCurrentUser());
+    const admin = STORE.seesAllProjects(STORE.getCurrentUser());
     $('#scope-note').innerHTML = admin
       ? 'Showing <b>all activity</b> across the system. The log holds the most recent 1,500 entries and syncs to Box with the project data.'
       : 'Showing activity on <b>the projects you can see</b>. Admins see the full system log.';

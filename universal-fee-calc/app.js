@@ -2828,7 +2828,7 @@
       const rec = STORE.getProject(id);
       if (rec) {
         // Access wall: a restricted member may only open projects they own.
-        if (!STORE.isAdmin() && !STORE.userOwnsProject(rec)) {
+        if (!STORE.seesAllProjects() && !STORE.userOwnsProject(rec)) {
           document.body.innerHTML = `<div style="max-width:560px;margin:18vh auto;text-align:center;font-family:var(--font-display),sans-serif;color:#25273a;padding:0 24px;">
             <div style="font-size:13px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:#ce181e;margin-bottom:14px;">Access restricted</div>
             <div style="font-size:26px;font-weight:900;letter-spacing:-0.01em;margin-bottom:12px;">This project isn't assigned to you.</div>
