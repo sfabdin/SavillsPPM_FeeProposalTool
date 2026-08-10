@@ -52,16 +52,43 @@
     });
     return hit / small.length;
   }
+  /** Does anyone's work depend on this project's roster? A project with real
+      staffing is a project a revenue leader has spent time on — its numbers
+      are never auto-changed by an import. */
+  function hasStaffing(p) {
+    return !!(p && (p.roles || []).some(r =>
+      Object.values(r.fte || {}).some(v => +v > 0) || Object.values(r.fteMonthly || {}).some(v => +v > 0)));
+  }
+  /** Sticky match memory. A confirmed sheet-row → project link is written onto
+      the project (source.sheetKeys) so the NEXT revision of the workbook
+      matches instantly instead of re-running the whole guessing exercise.
+      Record-level, so it survives the Box merge like everything else. */
+  function sheetKeysOf(p) { return ((p.source && p.source.sheetKeys) || []).map(k => String(k).toLowerCase()); }
+  function rememberMatch(projectId, groupKey) {
+    const p = STORE.getProject(projectId);
+    if (!p) return;
+    const keys = sheetKeysOf(p);
+    if (keys.includes(String(groupKey).toLowerCase())) return;
+    const next = { ...p, source: { ...(p.source || {}), sheetKeys: keys.concat([String(groupKey).toLowerCase()]) } };
+    try { STORE.saveProject(next, { baseUpdatedAt: p.updatedAt }); } catch (e) { /* non-fatal: matching still works this session */ }
+  }
+
   function buildProjectIndex() {
     return STORE.listProjects().map(p => ({
       id: p.id,
       name: (p.project && p.project.name) || '',
       client: (p.project && p.project.client) || '',
       sf: String((p.project && p.project.salesforceId) || '').trim().toLowerCase(),
+      keys: sheetKeysOf(p),
+      staffed: hasStaffing(p),
       label: ((p.project && p.project.client) || '') + ' — ' + ((p.project && p.project.name) || ''),
     }));
   }
   function matchGroup(idx, g) {
+    // 1) a link a human already confirmed on a previous revision — trusted absolutely
+    const gk = String(g.key).toLowerCase();
+    const remembered = idx.find(p => p.keys.includes(gk));
+    if (remembered) return { id: remembered.id, label: remembered.label, via: 'confirmed' };
     if (g.projectId) {
       const key = g.projectId.trim().toLowerCase();
       const hit = idx.find(p => p.sf && p.sf === key);
@@ -104,7 +131,14 @@
       contractType: findCol(header, /^contract\s*type$/i),
       rating: findCol(header, /rating.*likeli/i),
       leader: findCol(header, /revenue\s*leader/i),
+      originator: findCol(header, /revenue\s*originator/i),
+      support: findCol(header, /revenue\s*support/i),
     };
+    // Finance's own rationale lives in a "Comments" column after each year
+    // block. Carrying it through is the whole point of the review report —
+    // "why did this move?" is answered by the person who moved it.
+    const commentCols = [];
+    header.forEach((v, i) => { if (/^comments?$/i.test(String(v == null ? '' : v).trim())) commentCols.push(i); });
     // Month columns are literal Date values in the header row; group by year.
     // "Total YYYY" columns are labeled text, found the same way.
     const monthCols = {}, totalCols = {};
@@ -143,6 +177,9 @@
         contractType: col.contractType >= 0 ? String(row[col.contractType] || '') : '',
         rating: col.rating >= 0 ? String(row[col.rating] || '') : '',
         leader: col.leader >= 0 ? String(row[col.leader] || '') : '',
+        originator: col.originator >= 0 ? String(row[col.originator] || '') : '',
+        support: col.support >= 0 ? String(row[col.support] || '') : '',
+        comments: commentCols.map(c => String(row[c] == null ? '' : row[c]).trim()).filter(Boolean).join(' · '),
         byYear, totalsByYear,
       });
     }
@@ -177,6 +214,7 @@
         g = groups[key] = {
           key, client: r.client, project: r.project, projectId: r.projectId,
           rating: r.rating, revenueType: r.revenueType, leader: r.leader, newOrEdit: r.newOrEdit,
+          originator: r.originator, support: r.support, comments: '',
           startDate: r.startDate, endDate: r.endDate,
           byYear: zeroByYear(), totalsByYear: zeroTotals(),
           brokerByYear: zeroByYear(), brokerTotalsByYear: zeroTotals(),
@@ -187,6 +225,9 @@
       // widen the date range across amendments
       if (r.startDate && (!g.startDate || r.startDate < g.startDate)) g.startDate = r.startDate;
       if (r.endDate && (!g.endDate || r.endDate > g.endDate)) g.endDate = r.endDate;
+      // any row flagged New/Edit flags the whole group; comments concatenate
+      if (r.newOrEdit && !g.newOrEdit) g.newOrEdit = r.newOrEdit;
+      if (r.comments && g.comments.indexOf(r.comments) < 0) g.comments = (g.comments ? g.comments + ' · ' : '') + r.comments;
       const isFee = isFeeShareOutRow(r);
       years.forEach(y => {
         Object.keys(r.byYear[y] || {}).forEach(m => {
@@ -236,7 +277,30 @@
         if (Math.abs(sheetV - curV) >= 0.5) { changedMonths++; totalDelta += (sheetV - curV); }
       }
     });
-    return { isNew: false, changedMonths, totalDelta, current, locked: lockedByOriginalImport(matchedProject) };
+    return { isNew: false, changedMonths, totalDelta, current, locked: lockedByOriginalImport(matchedProject), staffed: hasStaffing(matchedProject) };
+  }
+
+  /* ---------- classification: what KIND of decision is each row? ----------
+     Drives both the default selection and the review report. The rule that
+     matters: nothing auto-applies to a project someone has already staffed,
+     and nothing auto-creates from a row we couldn't match. */
+  const CLASS = {
+    unchanged:  { label: 'No change',            tone: '',     auto: false },
+    safe:       { label: 'Money moved · safe',   tone: 'ok',   auto: true  },
+    review:     { label: 'Money moved · STAFFED — review', tone: 'warn', auto: false },
+    newProj:    { label: 'New project',          tone: 'warn', auto: false },
+    unmatched:  { label: 'No match — needs a human', tone: 'bad', auto: false },
+  };
+  function classify(g, matchedId) {
+    if (!matchedId) {
+      // finance flagged it New → it genuinely is one; otherwise it's a row we
+      // failed to match, and creating it blind is how duplicates are born.
+      return /new/i.test(String(g.newOrEdit || '')) ? 'newProj' : 'unmatched';
+    }
+    const p = STORE.getProject(matchedId);
+    const d = diffGroup(g, p, state.years);
+    if (!d.changedMonths) return 'unchanged';
+    return d.staffed ? 'review' : 'safe';
   }
 
   /* ---------- new lightweight project (override-driven, no roster) ---------- */
@@ -248,9 +312,21 @@
     const y0 = Math.min(...years), y1 = Math.max(...years);
     return { startMonth: 1, startYear: y0, endMonth: 12, endYear: y1 };
   }
-  function buildOverrides(g, years) {
+  /** Months already closed out. Finance's rule: an import may move the
+      FORWARD look, but must not rewrite what was already accrued/booked —
+      late-billed work and one-off accrual timing are deliberate history. */
+  function currentYM() { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1 }; }
+  function isPastMonth(y, m) { const c = currentYM(); return y < c.y || (y === c.y && m < c.m); }
+  function buildOverrides(g, years, opts) {
+    const futureOnly = !opts || opts.futureOnly !== false;
     const ov = {};
-    years.forEach(y => { for (let m = 1; m <= 12; m++) { const v = g.byYear[y][m] || 0; if (v) ov[y + '-' + m] = Math.round(v * 100) / 100; } });
+    years.forEach(y => {
+      for (let m = 1; m <= 12; m++) {
+        if (futureOnly && isPastMonth(y, m)) continue;      // never rewrite the past
+        const v = g.byYear[y][m] || 0;
+        if (v) ov[y + '-' + m] = Math.round(v * 100) / 100;
+      }
+    });
     return ov;
   }
   function buildBrokerByMonth(g, years) {
@@ -279,53 +355,157 @@
         catalogBaseYear: (window.RATES_CATALOG && window.RATES_CATALOG.baseYear) || 2024,
         feeShare: { enabled: hasFeeShare, pct: hasFeeShare ? g.feeSharePct : 0, mode: 'offtop' },
       },
-      monthlyOverrides: buildOverrides(g, years),
+      // a brand-new project has no history to protect — take every month
+      monthlyOverrides: buildOverrides(g, years, { futureOnly: false }),
       source: {
         type: 'revenue-import', name: state.fileName || 'revenue projections', ingestedAt: new Date().toISOString(),
         sheetProjectId: g.projectId || null, sheetRating: g.rating || null,
+        sheetKeys: [String(g.key).toLowerCase()],
         brokerByMonth: hasFeeShare ? buildBrokerByMonth(g, years) : undefined,
       },
     };
     return STORE.saveProject(record);
   }
-  function applyOverridesToProject(projectId, g, years) {
+  function applyOverridesToProject(projectId, g, years, opts) {
     const p = STORE.getProject(projectId);
     if (!p) throw new Error('Matched project no longer exists — it may have been deleted.');
-    const ov = Object.assign({}, p.monthlyOverrides || {}, buildOverrides(g, years));
-    const next = { ...p, monthlyOverrides: ov };
+    // ONLY monthlyOverrides move. The roster, rates, phases and every other
+    // field a revenue leader has been working on are left exactly as they are.
+    const ov = Object.assign({}, p.monthlyOverrides || {}, buildOverrides(g, years, opts));
+    const keys = sheetKeysOf(p);
+    const gk = String(g.key).toLowerCase();
+    const next = {
+      ...p,
+      monthlyOverrides: ov,
+      source: { ...(p.source || {}), sheetKeys: keys.includes(gk) ? keys : keys.concat([gk]) },
+    };
     return STORE.saveProject(next, { baseUpdatedAt: p.updatedAt });
   }
 
   /* ---------- state + render ---------- */
-  const state = { fileName: '', years: [], groups: [], projectIndex: [], overrides: {}, included: new Set() };
+  const state = { fileName: '', years: [], groups: [], projectIndex: [], overrides: {}, included: new Set(), futureOnly: true };
 
   function setStatus(msg, cls) {
     const el = $('#ri-status'); if (!el) return;
     el.textContent = msg || ''; el.className = 'src-status' + (cls ? ' ' + cls : '');
   }
 
+  function matchedIdFor(g) {
+    return state.overrides[g.key] !== undefined ? state.overrides[g.key] : ((g.match && g.match.id) || null);
+  }
   function summarize() {
-    const total = state.groups.length;
-    let matched = 0, changed = 0, unchanged = 0, unmatched = 0;
-    const feeShare = state.groups.filter(g => g.feeSharePct > 0).length;
-    state.groups.forEach(g => {
-      const pid = state.overrides[g.key] !== undefined ? state.overrides[g.key] : (g.match && g.match.id);
-      if (pid) { matched++; const d = diffGroup(g, STORE.getProject(pid), state.years); if (d.changedMonths) changed++; else unchanged++; }
-      else unmatched++;
-    });
-    return { total, matched, changed, unchanged, unmatched, feeShare, selected: state.included.size };
+    const counts = { unchanged: 0, safe: 0, review: 0, newProj: 0, unmatched: 0 };
+    state.groups.forEach(g => { counts[classify(g, matchedIdFor(g))]++; });
+    return { total: state.groups.length, ...counts, feeShare: state.groups.filter(g => g.feeSharePct > 0).length, selected: state.included.size };
   }
 
   function renderSummary() {
     const s = summarize();
     $('#ri-sum').innerHTML = `
       <div class="sumcard"><div class="lbl">Projects in sheet</div><div class="val">${s.total}</div></div>
-      <div class="sumcard ok"><div class="lbl">Matched · changed</div><div class="val">${s.changed}</div></div>
-      <div class="sumcard"><div class="lbl">Matched · unchanged</div><div class="val">${s.unchanged}</div></div>
-      <div class="sumcard warn"><div class="lbl">New / unmatched</div><div class="val">${s.unmatched}</div></div>
-      <div class="sumcard"><div class="lbl">With fee share</div><div class="val">${s.feeShare}</div></div>`;
+      <div class="sumcard ok"><div class="lbl">Safe to apply</div><div class="val">${s.safe}</div></div>
+      <div class="sumcard warn"><div class="lbl">Staffed · needs review</div><div class="val">${s.review}</div></div>
+      <div class="sumcard warn"><div class="lbl">New projects</div><div class="val">${s.newProj}</div></div>
+      <div class="sumcard bad"><div class="lbl">No match — human needed</div><div class="val">${s.unmatched}</div></div>
+      <div class="sumcard"><div class="lbl">No change</div><div class="val">${s.unchanged}</div></div>`;
     $('#ri-apply-btn').textContent = `Import selected (${s.selected}) →`;
     $('#ri-apply-btn').disabled = s.selected === 0;
+    const rb = $('#ri-report-btn'); if (rb) rb.disabled = !state.groups.length;
+    const fo = $('#ri-future-only'); if (fo) fo.checked = state.futureOnly !== false;
+  }
+
+  /* ---------- the review report: what WOULD change, before anything does ----------
+     This is the artifact finance asked for — every proposed move, by revenue
+     leader, carrying the sheet's own comment explaining why. */
+  async function buildReviewReport() {
+    if (typeof ExcelJS === 'undefined') throw new Error('Excel library not loaded on this page.');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Savills PPM'; wb.created = new Date();
+    const NAVY = 'FF25273A', WHITE = 'FFFFFFFF', YEL = 'FFFFDF00';
+    const tone = { safe: 'FFE7F0EE', review: 'FFFDF3D7', newProj: 'FFE7EEF0', unmatched: 'FFF7DEDC', unchanged: 'FFF7F7F5' };
+    const ws = wb.addWorksheet('Proposed changes', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const cols = [
+      { h: 'Decision', w: 26 }, { h: 'Revenue leader', w: 14 }, { h: 'Client', w: 24 }, { h: 'Project (sheet)', w: 40 },
+      { h: 'Matched to', w: 40 }, { h: 'Match via', w: 13 }, { h: 'Sheet flag', w: 10 }, { h: 'Rating', w: 14 },
+      { h: '2026 (sheet)', w: 14 }, { h: '2027 (sheet)', w: 14 }, { h: 'Change vs tool', w: 15 },
+      { h: 'Months affected', w: 14 }, { h: 'Has staffing?', w: 12 }, { h: 'Finance comment', w: 60 },
+    ];
+    ws.columns = cols.map(c => ({ width: c.w }));
+    cols.forEach((c, i) => {
+      const cell = ws.getRow(1).getCell(i + 1);
+      cell.value = c.h;
+      cell.font = { name: 'Calibri', bold: true, color: { argb: WHITE }, size: 10 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+      cell.alignment = { vertical: 'middle', wrapText: true };
+    });
+    ws.getRow(1).height = 22;
+    const order = { review: 0, unmatched: 1, newProj: 2, safe: 3, unchanged: 4 };
+    const rows = state.groups.slice().sort((a, b) => {
+      const ca = classify(a, matchedIdFor(a)), cb = classify(b, matchedIdFor(b));
+      return order[ca] - order[cb] || (a.leader || '').localeCompare(b.leader || '') || a.client.localeCompare(b.client);
+    });
+    let r = 2;
+    rows.forEach(g => {
+      const mid = matchedIdFor(g);
+      const p = mid ? STORE.getProject(mid) : null;
+      const cls = classify(g, mid);
+      const d = diffGroup(g, p, state.years);
+      const vals = [
+        CLASS[cls].label, g.leader || '', g.client, g.project,
+        p ? (((p.project || {}).client || '') + ' — ' + ((p.project || {}).name || '')) : '(would be created)',
+        mid ? (g.match ? g.match.via : 'manual') : '—',
+        g.newOrEdit || '', g.rating || '',
+        Math.round(g.totalsByYear[2026] || 0), Math.round(g.totalsByYear[2027] || 0),
+        cls === 'unchanged' ? 0 : Math.round(d.totalDelta || 0),
+        d.isNew ? '' : d.changedMonths, p ? (hasStaffing(p) ? 'YES' : 'no') : '—',
+        g.comments || '',
+      ];
+      vals.forEach((v, i) => {
+        const cell = ws.getRow(r).getCell(i + 1);
+        cell.value = v;
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tone[cls] } };
+        if (i >= 8 && i <= 11 && typeof v === 'number') { cell.numFmt = i === 11 ? '#,##0' : '#,##0;[Red]-#,##0'; cell.alignment = { horizontal: 'right' }; }
+        if (i === 13) cell.alignment = { wrapText: true, vertical: 'top' };
+        if (i === 12 && v === 'YES') cell.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
+      });
+      r++;
+    });
+    ws.autoFilter = { from: 'A1', to: `N${Math.max(2, r - 1)}` };
+
+    // A short cover so the file is self-explanatory when it's forwarded on.
+    const s = summarize();
+    const cv = wb.addWorksheet('Read me', { views: [{ showGridLines: false }] });
+    cv.columns = [{ width: 34 }, { width: 86 }];
+    cv.getCell('A1').value = 'Revenue projections — proposed changes for review';
+    cv.getCell('A1').font = { name: 'Calibri', bold: true, size: 15, color: { argb: NAVY } };
+    cv.getCell('A2').value = `Source: ${state.fileName || 'workbook'} · prepared ${new Date().toISOString().slice(0, 10)} · NOTHING HAS BEEN APPLIED`;
+    cv.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: 'FF79828C' } };
+    let cr = 4;
+    [
+      ['Safe to apply', `${s.safe} — confident match, money moved, nobody has staffed it yet. These are pre-selected.`],
+      ['Staffed · needs review', `${s.review} — a revenue leader has already built staffing here. NOT selected; each one is a conversation.`],
+      ['New projects', `${s.newProj} — flagged "New" by finance and not found in the tool. Opt-in to create.`],
+      ['No match — human needed', `${s.unmatched} — the tool could not find these and finance did not flag them new. Link them by hand; importing blind would create duplicates.`],
+      ['No change', `${s.unchanged} — sheet agrees with the tool already.`],
+      ['Past months', state.futureOnly !== false ? 'PROTECTED — only current and future months will be written. Closed months keep their accrued history.' : 'INCLUDED — past months will be overwritten (explicitly enabled).'],
+      ['What an import touches', 'Only the monthly revenue figures (monthlyOverrides). Rosters, rates, phases and every other field are never touched.'],
+    ].forEach(([k, v]) => {
+      cv.getCell(`A${cr}`).value = k;
+      cv.getCell(`A${cr}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+      cv.getCell(`A${cr}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
+      cv.getCell(`B${cr}`).value = v;
+      cv.getCell(`B${cr}`).alignment = { wrapText: true, vertical: 'top' };
+      cr++;
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `Revenue-Import-Review_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { rows: rows.length };
   }
 
   function projectOptionsHtml(selectedId) {
@@ -355,9 +535,15 @@
       const matchedProject = matchedId ? STORE.getProject(matchedId) : null;
       const d = diffGroup(g, matchedProject, state.years);
       const checked = state.included.has(g.key);
+      const cls = classify(g, matchedId);
+      const via = g.match && g.match.via;
       const matchBadge = !matchedId
-        ? `<span class="ri-badge ri-new">New</span>`
-        : (g.match && g.match.via === 'id' ? `<span class="ri-badge ri-id">ID match</span>` : `<span class="ri-badge ri-name">Name match${g.match && g.match.score ? ' · ' + g.match.score + '%' : ''}</span>`);
+        ? (cls === 'newProj' ? `<span class="ri-badge ri-new">New</span>` : `<span class="ri-badge" style="background:#f7dedc;color:#a3352d">No match</span>`)
+        : (via === 'confirmed' ? `<span class="ri-badge ri-id" title="You linked this on a previous revision — remembered">✓ Confirmed</span>`
+          : via === 'id' ? `<span class="ri-badge ri-id">ID match</span>`
+          : `<span class="ri-badge ri-name" title="Fuzzy name match — check it">Name match${g.match && g.match.score ? ' · ' + g.match.score + '%' : ''}</span>`);
+      const clsBadge = `<div class="ri-cls ${CLASS[cls].tone}" title="${cls === 'review' ? 'A revenue leader has staffing on this project — importing changes their numbers underneath them' : ''}">${CLASS[cls].label}</div>`;
+      const comment = g.comments ? `<div class="raw" style="color:#4a4f5e"><b>Finance:</b> ${esc(g.comments.slice(0, 160))}${g.comments.length > 160 ? '…' : ''}</div>` : '';
       const deltaTxt = d.isNew ? `${money(d.totalDelta)} (new)` : (d.changedMonths ? `${d.totalDelta >= 0 ? '+' : ''}${money(d.totalDelta)} across ${d.changedMonths} mo` : 'no change');
       const lockWarn = d.locked ? `<div class="ri-warn">⚠ locked to its original import — a new override won't show until this project is reconciled</div>` : '';
       const feeShareNote = g.feeSharePct > 0
@@ -366,8 +552,8 @@
       return `<tr class="ri-row" data-key="${esc(g.key)}">
         <td><input type="checkbox" class="ri-check" data-key="${esc(g.key)}" ${checked ? 'checked' : ''}></td>
         <td>${esc(g.client)}</td>
-        <td>${esc(g.project)}${g.rows.length > 1 ? `<span class="raw">${g.rows.length} sheet rows summed</span>` : ''}${feeShareNote}</td>
-        <td>${esc(g.rating || '—')}</td>
+        <td>${esc(g.project)}${g.rows.length > 1 ? `<span class="raw">${g.rows.length} sheet rows summed</span>` : ''}${g.newOrEdit ? `<span class="raw" style="color:#8a6d00">sheet: ${esc(String(g.newOrEdit))}</span>` : ''}${feeShareNote}${comment}</td>
+        <td>${esc(g.rating || '—')}${clsBadge}</td>
         <td>${matchBadge}<div class="ri-match-pick"><input list="ri-projects-${i}" class="ri-match-input" data-key="${esc(g.key)}" value="${matchedProject ? esc(((matchedProject.project||{}).client||'') + ' — ' + ((matchedProject.project||{}).name||'')) : ''}" placeholder="type to link… or leave blank = new"><datalist id="ri-projects-${i}">${projectOptionsDatalist()}</datalist></div></td>
         <td class="num">${money(g.totalsByYear[2026] || 0)}</td>
         <td class="num">${money(g.totalsByYear[2027] || 0)}</td>
@@ -390,7 +576,13 @@
       const label = inp.value.trim();
       if (!label) { state.overrides[k] = null; renderTable(); renderSummary(); return; }
       const hit = state.projectIndex.find(p => p.label.toLowerCase() === label.toLowerCase());
-      if (hit) { state.overrides[k] = hit.id; renderTable(); renderSummary(); }
+      if (hit) {
+        state.overrides[k] = hit.id;
+        // Remember it: the next revision of this workbook matches instantly.
+        rememberMatch(hit.id, k);
+        state.projectIndex = buildProjectIndex();
+        renderTable(); renderSummary();
+      }
     });
   }
   function projectOptionsDatalist() {
@@ -405,7 +597,7 @@
       if (!state.included.has(g.key)) continue;
       const matchedId = state.overrides[g.key] !== undefined ? state.overrides[g.key] : (g.match && g.match.id);
       try {
-        if (matchedId) { applyOverridesToProject(matchedId, g, state.years); updated++; }
+        if (matchedId) { applyOverridesToProject(matchedId, g, state.years, { futureOnly: state.futureOnly !== false }); updated++; }
         else { createLightweightProject(g, state.years); created++; }
       } catch (e) { failed.push(`${g.client} — ${g.project}: ${e.message}`); }
     }
@@ -429,12 +621,12 @@
     groups.forEach(g => { g.match = matchGroup(state.projectIndex, g); });
     groups.sort((a, b) => a.client.localeCompare(b.client) || a.project.localeCompare(b.project));
     state.groups = groups;
-    // default selection: matched-with-changes are pre-checked; new/unmatched and
-    // unchanged are opt-in, so a bulk import never silently creates or no-ops
+    // Default selection = ONLY the safe class: a confident match, money moved,
+    // and nobody has staffed it yet. Staffed projects, new projects and
+    // unmatched rows are all opt-in — a human decides those, every time.
     groups.forEach(g => {
-      if (!g.match) return;                 // new project — opt-in only
-      const d = diffGroup(g, STORE.getProject(g.match.id), years);
-      if (d.changedMonths) state.included.add(g.key);
+      const matchedId = g.match && g.match.id;
+      if (classify(g, matchedId) === 'safe') state.included.add(g.key);
     });
     renderTable(); renderSummary();
     return { dataRows, groups, years };
@@ -462,6 +654,21 @@
     ['dragleave', 'dragend', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
     dz.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) handleFile(f); });
     $('#ri-apply-btn').addEventListener('click', applySelected);
+    const rb = $('#ri-report-btn');
+    if (rb) rb.addEventListener('click', async () => {
+      const orig = rb.textContent; rb.disabled = true; rb.textContent = 'Building…';
+      try { const r = await buildReviewReport(); setStatus(`Review report downloaded — ${r.rows} rows. Nothing has been applied.`, ''); }
+      catch (e) { setStatus('Could not build the report: ' + e.message, 'bad'); }
+      finally { rb.textContent = orig; rb.disabled = false; }
+    });
+    const fo = $('#ri-future-only');
+    if (fo) fo.addEventListener('change', () => {
+      state.futureOnly = fo.checked;
+      if (!fo.checked && !confirm('Include PAST months?\n\nClosed months hold accrued history — late-billed work and deliberate accrual timing. Overwriting them rewrites what finance already booked.\n\nOnly do this if finance has asked for it.')) {
+        fo.checked = true; state.futureOnly = true;
+      }
+      renderTable(); renderSummary();
+    });
     renderTable(); renderSummary();
   }
 
