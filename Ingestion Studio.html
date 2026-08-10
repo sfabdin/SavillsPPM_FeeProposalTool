@@ -125,6 +125,10 @@
   .ri-badge.ri-new { background: #fff0c2; color: #7a5b00; }
   .ri-badge.ri-id { background: #d8f0f3; color: var(--sav-navy); }
   .ri-badge.ri-name { background: var(--sav-cream); color: var(--sav-steel); }
+  .ri-cls { display: inline-block; margin-top: 5px; font-weight: 700; font-size: 9.5px; letter-spacing: 0.05em; padding: 3px 7px; background: #f1f0ee; color: var(--sav-steel); }
+  .ri-cls.ok { background: #e7f0ee; color: #0E7C7B; }
+  .ri-cls.warn { background: #fdf3d7; color: #8a6d00; }
+  .ri-cls.bad { background: #f7dedc; color: #a3352d; }
   .ri-match-pick input { font-family: var(--font-body); font-size: 11px; padding: 4px 6px; border: 1px solid var(--hair-strong); background: var(--sav-cream); width: 190px; }
   .ri-delta { font-weight: 700; }
   .ri-warn { font-family: var(--font-body); font-size: 10px; color: #b8860b; margin-top: 3px; white-space: normal; max-width: 220px; }
@@ -311,13 +315,20 @@
   </section>
 
   <div class="createbar">
-    <div class="note" id="ri-note">Import writes into <strong>monthlyOverrides</strong> — the same field Revenue Projections' manual edit already uses.</div>
+    <div class="note" id="ri-note">
+      Import writes <strong>only</strong> the monthly revenue figures (<strong>monthlyOverrides</strong>) — rosters, rates and phases are never touched.
+      <label style="display:inline-flex;align-items:center;gap:6px;margin-left:14px;cursor:pointer">
+        <input type="checkbox" id="ri-future-only" checked> <span>Protect past months (recommended)</span>
+      </label>
+    </div>
+    <button class="btn" id="ri-report-btn" disabled title="Download every proposed change for review — by revenue leader, with finance's own comments. Nothing is applied.">⭳ Review report (nothing applied)</button>
     <button class="btn btn-yellow" id="ri-apply-btn" disabled>Import selected (0) →</button>
   </div>
   </div>
 
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
