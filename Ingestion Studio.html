@@ -317,8 +317,8 @@
   <div class="createbar">
     <div class="note" id="ri-note">
       Import writes <strong>only</strong> the monthly revenue figures (<strong>monthlyOverrides</strong>) — rosters, rates and phases are never touched.
-      <label style="display:inline-flex;align-items:center;gap:6px;margin-left:14px;cursor:pointer">
-        <input type="checkbox" id="ri-future-only" checked> <span>Protect past months (recommended)</span>
+      <label style="display:inline-flex;align-items:center;gap:6px;margin-left:14px;cursor:pointer" title="The workbook is the record of what was actually billed, so its closed months are imported as-is and become the history here. Uncheck only if finance wants forward-only movement.">
+        <input type="checkbox" id="ri-future-only" checked> <span>Reconcile past months to this file (recommended)</span>
       </label>
     </div>
     <button class="btn" id="ri-report-btn" disabled title="Download every proposed change for review — by revenue leader, with finance's own comments. Nothing is applied.">⭳ Review report (nothing applied)</button>

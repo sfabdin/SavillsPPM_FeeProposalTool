@@ -312,22 +312,47 @@
     const y0 = Math.min(...years), y1 = Math.max(...years);
     return { startMonth: 1, startYear: y0, endMonth: 12, endYear: y1 };
   }
-  /** Months already closed out. Finance's rule: an import may move the
-      FORWARD look, but must not rewrite what was already accrued/booked —
-      late-billed work and one-off accrual timing are deliberate history. */
+  /** THE WORKBOOK IS THE RECORD OF WHAT WAS BILLED. Its past months are
+      actuals — late-billed work, deliberate accrual timing, GL adjustments —
+      so they are imported as-is and BECOME the history in the tool. The
+      history that must never be rewritten is the sheet's, not the tool's:
+      a past month is preserved by taking the sheet's number, not by keeping
+      whatever the fee model happened to compute.
+      (Landing in monthlyOverrides is what makes that stick — an override
+      always wins over the roster-derived figure, so a later staffing edit
+      can't retroactively restate a billed month.)
+      `futureOnly` exists for the rare case where finance wants forward-only
+      movement; it is OFF by default. */
   function currentYM() { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1 }; }
   function isPastMonth(y, m) { const c = currentYM(); return y < c.y || (y === c.y && m < c.m); }
   function buildOverrides(g, years, opts) {
-    const futureOnly = !opts || opts.futureOnly !== false;
+    const futureOnly = !!(opts && opts.futureOnly);
     const ov = {};
     years.forEach(y => {
       for (let m = 1; m <= 12; m++) {
-        if (futureOnly && isPastMonth(y, m)) continue;      // never rewrite the past
+        if (futureOnly && isPastMonth(y, m)) continue;
         const v = g.byYear[y][m] || 0;
         if (v) ov[y + '-' + m] = Math.round(v * 100) / 100;
       }
     });
     return ov;
+  }
+  /** How much of a proposed change lands on already-closed months — worth
+      seeing in the report, because restating a billed month is a fact
+      finance should notice even when it's the right thing to do. */
+  function pastImpact(g, matchedProject, years) {
+    if (!matchedProject) return { months: 0, delta: 0 };
+    const current = currentSeriesByYear(matchedProject, years);
+    let months = 0, delta = 0;
+    years.forEach(y => {
+      for (let m = 1; m <= 12; m++) {
+        if (!isPastMonth(y, m)) continue;
+        const sheetV = Math.round((g.byYear[y][m] || 0) * 100) / 100;
+        const curV = Math.round((current[y][m] || 0) * 100) / 100;
+        if (Math.abs(sheetV - curV) >= 0.5) { months++; delta += sheetV - curV; }
+      }
+    });
+    return { months, delta };
   }
   function buildBrokerByMonth(g, years) {
     const ov = {};
@@ -383,7 +408,7 @@
   }
 
   /* ---------- state + render ---------- */
-  const state = { fileName: '', years: [], groups: [], projectIndex: [], overrides: {}, included: new Set(), futureOnly: true };
+  const state = { fileName: '', years: [], groups: [], projectIndex: [], overrides: {}, included: new Set(), futureOnly: false };
 
   function setStatus(msg, cls) {
     const el = $('#ri-status'); if (!el) return;
@@ -411,7 +436,7 @@
     $('#ri-apply-btn').textContent = `Import selected (${s.selected}) →`;
     $('#ri-apply-btn').disabled = s.selected === 0;
     const rb = $('#ri-report-btn'); if (rb) rb.disabled = !state.groups.length;
-    const fo = $('#ri-future-only'); if (fo) fo.checked = state.futureOnly !== false;
+    const fo = $('#ri-future-only'); if (fo) fo.checked = !state.futureOnly;   // checked = reconcile past months too
   }
 
   /* ---------- the review report: what WOULD change, before anything does ----------
@@ -428,7 +453,7 @@
       { h: 'Decision', w: 26 }, { h: 'Revenue leader', w: 14 }, { h: 'Client', w: 24 }, { h: 'Project (sheet)', w: 40 },
       { h: 'Matched to', w: 40 }, { h: 'Match via', w: 13 }, { h: 'Sheet flag', w: 10 }, { h: 'Rating', w: 14 },
       { h: '2026 (sheet)', w: 14 }, { h: '2027 (sheet)', w: 14 }, { h: 'Change vs tool', w: 15 },
-      { h: 'Months affected', w: 14 }, { h: 'Has staffing?', w: 12 }, { h: 'Finance comment', w: 60 },
+      { h: 'Months affected', w: 14 }, { h: 'Closed months restated', w: 18 }, { h: 'Has staffing?', w: 12 }, { h: 'Finance comment', w: 60 },
     ];
     ws.columns = cols.map(c => ({ width: c.w }));
     cols.forEach((c, i) => {
@@ -450,6 +475,7 @@
       const p = mid ? STORE.getProject(mid) : null;
       const cls = classify(g, mid);
       const d = diffGroup(g, p, state.years);
+      const past = pastImpact(g, p, state.years);
       const vals = [
         CLASS[cls].label, g.leader || '', g.client, g.project,
         p ? (((p.project || {}).client || '') + ' — ' + ((p.project || {}).name || '')) : '(would be created)',
@@ -457,7 +483,9 @@
         g.newOrEdit || '', g.rating || '',
         Math.round(g.totalsByYear[2026] || 0), Math.round(g.totalsByYear[2027] || 0),
         cls === 'unchanged' ? 0 : Math.round(d.totalDelta || 0),
-        d.isNew ? '' : d.changedMonths, p ? (hasStaffing(p) ? 'YES' : 'no') : '—',
+        d.isNew ? '' : d.changedMonths,
+        state.futureOnly ? 'skipped' : (past.months ? `${past.months} mo · ${past.delta >= 0 ? '+' : '−'}$${Math.abs(Math.round(past.delta)).toLocaleString()}` : ''),
+        p ? (hasStaffing(p) ? 'YES' : 'no') : '—',
         g.comments || '',
       ];
       vals.forEach((v, i) => {
@@ -465,12 +493,12 @@
         cell.value = v;
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tone[cls] } };
         if (i >= 8 && i <= 11 && typeof v === 'number') { cell.numFmt = i === 11 ? '#,##0' : '#,##0;[Red]-#,##0'; cell.alignment = { horizontal: 'right' }; }
-        if (i === 13) cell.alignment = { wrapText: true, vertical: 'top' };
-        if (i === 12 && v === 'YES') cell.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
+        if (i === 14) cell.alignment = { wrapText: true, vertical: 'top' };
+        if (i === 13 && v === 'YES') cell.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
       });
       r++;
     });
-    ws.autoFilter = { from: 'A1', to: `N${Math.max(2, r - 1)}` };
+    ws.autoFilter = { from: 'A1', to: `O${Math.max(2, r - 1)}` };
 
     // A short cover so the file is self-explanatory when it's forwarded on.
     const s = summarize();
@@ -487,8 +515,10 @@
       ['New projects', `${s.newProj} — flagged "New" by finance and not found in the tool. Opt-in to create.`],
       ['No match — human needed', `${s.unmatched} — the tool could not find these and finance did not flag them new. Link them by hand; importing blind would create duplicates.`],
       ['No change', `${s.unchanged} — sheet agrees with the tool already.`],
-      ['Past months', state.futureOnly !== false ? 'PROTECTED — only current and future months will be written. Closed months keep their accrued history.' : 'INCLUDED — past months will be overwritten (explicitly enabled).'],
-      ['What an import touches', 'Only the monthly revenue figures (monthlyOverrides). Rosters, rates, phases and every other field are never touched.'],
+      ['Past months', state.futureOnly
+        ? 'SKIPPED — forward-only movement was explicitly selected. The tool keeps whatever history it holds today.'
+        : 'RECONCILED to this workbook — its closed months are the record of what was actually billed, so they are imported as-is. The "Closed months restated" column shows where that changes a figure the tool held.'],
+      ['What an import touches', 'Only the monthly revenue figures (monthlyOverrides). Rosters, rates, phases and every other field are never touched. Because the figures land as overrides, a later staffing edit cannot retroactively restate a billed month.'],
     ].forEach(([k, v]) => {
       cv.getCell(`A${cr}`).value = k;
       cv.getCell(`A${cr}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
@@ -597,7 +627,7 @@
       if (!state.included.has(g.key)) continue;
       const matchedId = state.overrides[g.key] !== undefined ? state.overrides[g.key] : (g.match && g.match.id);
       try {
-        if (matchedId) { applyOverridesToProject(matchedId, g, state.years, { futureOnly: state.futureOnly !== false }); updated++; }
+        if (matchedId) { applyOverridesToProject(matchedId, g, state.years, { futureOnly: !!state.futureOnly }); updated++; }
         else { createLightweightProject(g, state.years); created++; }
       } catch (e) { failed.push(`${g.client} — ${g.project}: ${e.message}`); }
     }
@@ -663,9 +693,11 @@
     });
     const fo = $('#ri-future-only');
     if (fo) fo.addEventListener('change', () => {
-      state.futureOnly = fo.checked;
-      if (!fo.checked && !confirm('Include PAST months?\n\nClosed months hold accrued history — late-billed work and deliberate accrual timing. Overwriting them rewrites what finance already booked.\n\nOnly do this if finance has asked for it.')) {
-        fo.checked = true; state.futureOnly = true;
+      // checked = reconcile past months to the workbook (the default and the
+      // normal case: the workbook is the record of what was billed)
+      state.futureOnly = !fo.checked;
+      if (state.futureOnly && !confirm('Skip PAST months?\n\nThe workbook is the record of what was actually billed, so its closed months are normally imported as-is.\n\nSkipping them leaves whatever is in the tool today as the history. Only do this if finance asked for forward-only movement.')) {
+        fo.checked = true; state.futureOnly = false;
       }
       renderTable(); renderSummary();
     });
