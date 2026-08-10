@@ -55,6 +55,14 @@
       <button class="btn go" id="run" disabled>Repair — remove <span id="run-n">0</span> rows · fix <span id="run-r">0</span> rosters</button>
       <div id="msg"></div>
     </div>
+
+    <div class="card">
+      <h2>3 · Assign Convene / Sentry ownership</h2>
+      <div class="sub" style="margin-bottom:12px">One-time: set <strong>Eric Merkelson</strong> as the revenue lead on every Convene / Sentry Holdings project, with <strong>Fred Buscaglia</strong> as the client relationship owner. Eric submits this book; Fred keeps visibility and approval. Nothing else on these records changes.</div>
+      <div class="scroll"><table id="cv-preview"></table></div>
+      <button class="btn go" id="cv-run" disabled>Assign ownership on <span id="cv-n">0</span> projects</button>
+      <div id="cv-msg"></div>
+    </div>
   </div>
 </div>
 
@@ -291,6 +299,66 @@
     }
   }
 
+  /* ---------- 3 · Convene / Sentry ownership ----------
+     Eric Merkelson submits the Convene book; Fred Buscaglia stays the
+     relationship owner. Only the two ownership fields move. */
+  const CONVENE_RX = /convene|sentry/i;
+  const LEAD_ID = 'emerkelson', OWNER_ID = 'fbuscaglia';
+  function convenePlan() {
+    const STORE = window.UFC_Store;
+    const lead = STORE.leaderById(LEAD_ID), owner = STORE.leaderById(OWNER_ID);
+    if (!lead || !owner) return { rows: [], lead, owner };
+    const rows = (STORE.listProjects() || []).filter(p => {
+      const pj = p.project || {};
+      return CONVENE_RX.test((pj.client || '') + ' ' + (pj.name || ''));
+    }).map(p => {
+      const pj = p.project || {};
+      const curLead = STORE.leaderDisplay(pj.leadId || pj.lead) || '—';
+      const curOwner = STORE.leaderDisplay(pj.clientRelOwner) || '—';
+      const already = (pj.leadId === LEAD_ID) && (pj.clientRelOwner === OWNER_ID);
+      return { p, client: pj.client || '', name: pj.name || '', curLead, curOwner, already };
+    }).sort((a, b) => a.client.localeCompare(b.client) || a.name.localeCompare(b.name));
+    return { rows, lead, owner };
+  }
+  function renderConvene() {
+    const STORE = window.UFC_Store;
+    const { rows, lead, owner } = convenePlan();
+    const todo = rows.filter(r => !r.already);
+    $('#cv-n').textContent = todo.length;
+    $('#cv-run').disabled = todo.length === 0;
+    if (!lead || !owner) {
+      $('#cv-preview').innerHTML = '<tr><td>Revenue-leader directory is missing Eric Merkelson or Fred Buscaglia — deploy the latest store.js first.</td></tr>';
+      $('#cv-run').disabled = true; return;
+    }
+    $('#cv-preview').innerHTML = '<tr><th>Client</th><th>Project</th><th>Lead now</th><th>Owner now</th><th>Change</th></tr>' +
+      (rows.length ? rows.map(r => `<tr${r.already ? ' style="opacity:.55"' : ''}>
+        <td>${esc(r.client)}</td><td>${esc(r.name)}</td><td>${esc(r.curLead)}</td><td>${esc(r.curOwner)}</td>
+        <td>${r.already ? 'already set' : `→ lead <b>${esc(lead.displayName)}</b> · owner <b>${esc(owner.displayName)}</b>`}</td></tr>`).join('')
+        : '<tr><td colspan="5">No Convene / Sentry projects found.</td></tr>');
+  }
+  async function runConvene() {
+    const STORE = window.UFC_Store, Box = window.UFC_Box;
+    const btn = $('#cv-run'); btn.disabled = true;
+    const { rows, lead, owner } = convenePlan();
+    const todo = rows.filter(r => !r.already);
+    let done = 0; const failed = [];
+    for (const r of todo) {
+      try {
+        const p = STORE.getProject(r.p.id);
+        if (!p) continue;
+        const next = { ...p, project: { ...(p.project || {}), leadId: lead.id, lead: lead.displayName, clientRelOwner: owner.id } };
+        STORE.saveProject(next, { baseUpdatedAt: p.updatedAt });
+        done++;
+      } catch (e) { failed.push(`${r.client} — ${r.name}: ${e.message}`); }
+    }
+    // saveProject already mirrors to Box; pushNow just flushes the debounce.
+    try { if (Box && Box.pushNow) await Box.pushNow(); } catch (e) { /* the debounced push still lands */ }
+    $('#cv-msg').innerHTML = `<div style="margin-top:10px">Assigned ownership on <b>${done}</b> project${done === 1 ? '' : 's'}.` +
+      (failed.length ? ` <span style="color:#B3413B">${failed.length} failed: ${esc(failed.join(' · '))}</span>` : '') +
+      ` Eric now sees this book as his own; Fred keeps it as relationship owner.</div>`;
+    renderConvene();
+  }
+
   (window.ufcReady && window.ufcReady.then ? window.ufcReady
     : new Promise(r => { if (document.readyState !== 'loading') r(); else document.addEventListener('DOMContentLoaded', r); })
   ).then(() => {
@@ -298,7 +366,9 @@
     if (!(STORE && STORE.isAdmin && STORE.isAdmin())) { $('#gate').style.display = 'block'; return; }
     $('#app').style.display = 'block';
     renderPlan();
+    renderConvene();
     $('#run').onclick = runRepair;
+    $('#cv-run').onclick = runConvene;
   });
 })();
 </script>
