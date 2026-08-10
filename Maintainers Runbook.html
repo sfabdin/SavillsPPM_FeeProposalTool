@@ -275,11 +275,17 @@
   <h2><span class="n">6</span> Access &amp; permissions</h2>
   <p>Sign-in is Box OAuth — no Box login, no app. The deployed page is a shell until a valid Box token loads the data. Once in, visibility is <strong>fail-closed</strong>:</p>
   <ul>
-    <li><strong>Admins</strong> (allowlist in <code>store.js</code>) see every project.</li>
+    <li><strong>Admins</strong> (<code>ADMINS</code> in <code>store.js</code>) get the admin tools <em>and</em> see every project.</li>
+    <li><strong>Tool admins</strong> (<code>TOOL_ADMINS</code>) get the admin tools but keep <em>member</em> project access — they still see only what they lead / own / are granted. For people who run an operational function without needing the whole firm's fee book.</li>
     <li><strong>Everyone else</strong> sees only the projects they lead or own.</li>
     <li><strong>An unrecognized login sees nothing</strong> until explicitly added.</li>
   </ul>
-  <p>To grant or revoke all-access, edit the <code>ADMINS</code> set at the top of <code>store.js</code>. A single super-user (set by <code>SUPERUSER</code>) gets a hidden "Viewing as" switch on the Projects Index to preview anyone's restricted view — no one else can.</p>
+  <p>Two functions, two jobs — mixing them up is the easy way to leak data:</p>
+  <ul>
+    <li><code>isAdmin(user)</code> → <strong>may they open this TOOL?</strong> True for admins and tool admins. Use it for page gates and nav links.</li>
+    <li><code>seesAllProjects(user)</code> → <strong>may they see EVERY project's data?</strong> True for <code>ADMINS</code> only. Every data-visibility decision must use this — <code>visibleProjects</code>, the calculator's access wall, Change Log scope, Revenue Studio's full view, Proposal Analytics.</li>
+  </ul>
+  <p>To grant or revoke access, edit <code>ADMINS</code> / <code>TOOL_ADMINS</code> near the identity block in <code>store.js</code>. Per-user extra visibility (e.g. every project carrying a "Change Management" group) lives in <code>GROUP_ACCESS</code>. Super-users (<code>SUPERUSERS</code>) get a hidden "Viewing as" switch to preview anyone's restricted view — no one else can.</p>
   <div class="box warn">
     <span class="tag">Honest limit</span>
     The per-person wall is enforced in the browser, and the Box <em>folder</em> permission is the real boundary: anyone with folder access can read <code>projects.json</code> directly. Fine for a trusted leadership group. Restricting a person who should see <em>some but not all</em> projects requires server-side filtering — listed in future work, not yet built.

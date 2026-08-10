@@ -254,7 +254,7 @@
       return;
     }
     $('#body').hidden = false;
-    if (!STORE.isAdmin()) {
+    if (!STORE.seesAllProjects()) {
       $('#scope-sub').textContent = 'Your proposals only — funnel, win/loss, and discounting. Change orders excluded.';
     }
     $('#disc-slice').addEventListener('click', e => {

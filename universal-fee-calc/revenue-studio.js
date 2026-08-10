@@ -39,7 +39,9 @@
 
   function ready() {
     const me = STORE.getCurrentUser();
-    isAdminUser = STORE.isAdmin(me);
+    // Full view = sees ALL projects. A tool admin (admin tools, member project
+    // access) gets the leader slice here — the Studio is project data.
+    isAdminUser = STORE.seesAllProjects(me);
     // Both admins and revenue leaders may enter; leaders get a read-only slice.
     const leader = isAdminUser ? null : (STORE.resolveLeader(me.username) || STORE.resolveLeader(me.name));
     if (!isAdminUser && !leader) {

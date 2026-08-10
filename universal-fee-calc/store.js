@@ -1744,8 +1744,20 @@
     'jsantoro@savills.us',   // Jeff Santoro
     'mglatt@savills.us',     // Michael Glatt
     'mhadim@savills.us',     // Maria Hadim
-    'kspiegel@savills.us',   // Kathy Spiegel
     'eglatt@savills.us',     // Emily Glatt
+  ].map(s => s.toLowerCase()));
+
+  /* ------------------------------------------------------------
+     TOOL ADMINS — admin TOOLS, member PROJECT ACCESS.
+     These logins get the admin-only tools (Staffing & Bandwidth,
+     Revenue Studio, Profitability, Ingestion, Data Repair, …) but
+     their project visibility is unchanged: they still see only the
+     projects they lead / own / are granted, exactly like a member.
+     Use this for people who run an operational function without
+     needing the whole firm's fee book.
+     ------------------------------------------------------------ */
+  const TOOL_ADMINS = new Set([
+    'bjosselson@savills.us', // Benay Josselson — admin tools; project list stays her own
   ].map(s => s.toLowerCase()));
 
   /* Per-user EXTRA visibility: a member ALSO sees any project carrying a group
@@ -1766,7 +1778,16 @@
   ]);
 
   function roleFor(login) {
-    return ADMINS.has(String(login || '').trim().toLowerCase()) ? 'admin' : 'member';
+    const k = String(login || '').trim().toLowerCase();
+    return (ADMINS.has(k) || TOOL_ADMINS.has(k)) ? 'admin' : 'member';
+  }
+  /** TRUE only for people who may see EVERY project. Tool admins are role
+      'admin' (so the admin tools open for them) but are NOT here — their
+      project list stays member-scoped. Every data-visibility decision must
+      use this, never isAdmin(). */
+  function seesAllProjects(user) {
+    const u = user || getCurrentUser();
+    return ADMINS.has(String(u.username || '').trim().toLowerCase());
   }
 
   /* ============================================================
@@ -1942,7 +1963,7 @@
   /** The access wall: admins get everything; members get only their own. */
   function visibleProjects(projects, user) {
     const u = user || getCurrentUser();
-    if (isAdmin(u)) return projects;
+    if (seesAllProjects(u)) return projects;   // NOT isAdmin — tool admins stay scoped
     return projects.filter(p => userOwnsProject(p, u));
   }
 
@@ -1964,7 +1985,7 @@
     importedBrokerSeries, reconcileImport,
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, setCurrentUser, isAdmin, userOwnsProject, visibleProjects,
+    getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, getRealIdentity, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
     REVENUE_LEADERS, leaderById, resolveLeader, leaderDisplay,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
