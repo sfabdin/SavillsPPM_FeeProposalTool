@@ -1745,6 +1745,7 @@
     'mglatt@savills.us',     // Michael Glatt
     'mhadim@savills.us',     // Maria Hadim
     'eglatt@savills.us',     // Emily Glatt
+    'cglatt@savills.us',     // Cara Glatt
   ].map(s => s.toLowerCase()));
 
   /* ------------------------------------------------------------
