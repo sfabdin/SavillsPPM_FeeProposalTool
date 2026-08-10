@@ -689,7 +689,9 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
       const cell = ws.getCell(`${colLetter(2 + i)}${r}`);
       const spec = complianceCell(row.byMonth[ym]);
       cell.value = spec.value;
-      if (typeof spec.value === 'number') cell.numFmt = '0"%"';
+      // 0% multiplies by 100 (0.99 -> "99%"). 0"%" would only append the sign
+      // to the raw fraction and render 0.99 as "1%".
+      if (typeof spec.value === 'number') cell.numFmt = '0%';
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: spec.fill } };
       cell.font = { name: 'Calibri', bold: !!spec.font.bold, color: { argb: spec.font.argb } };
       cell.alignment = { horizontal: 'right' };
@@ -701,7 +703,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
     behind.numFmt = '#,##0.0'; behind.alignment = { horizontal: 'right' };
     if (row.behindHrs > 8) behind.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
     const tgt = ws.getCell(`${colLetter(base + 1)}${r}`);
-    tgt.value = row.compliance; tgt.numFmt = '0"%"'; tgt.alignment = { horizontal: 'right' };
+    tgt.value = row.compliance; tgt.numFmt = '0%'; tgt.alignment = { horizontal: 'right' };
     if (row.compliance < 0.5) tgt.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
     ws.getCell(`${colLetter(base + 2)}${r}`).value = round1(row.totLogged);
     ws.getCell(`${colLetter(base + 3)}${r}`).value = round1(row.totCap);
@@ -766,7 +768,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
         d.getCell(`E${dr}`).value = c && c !== 'leave' ? round1(c.h) : null;
         d.getCell(`F${dr}`).value = c && c !== 'leave' ? round1(c.capM) : null;
         const pc = d.getCell(`G${dr}`);
-        pc.value = c && c !== 'leave' ? c.pct : null; pc.numFmt = '0"%"';
+        pc.value = c && c !== 'leave' ? c.pct : null; pc.numFmt = '0%';
         d.getCell(`H${dr}`).value = state;
         if (c && c !== 'leave') {
           const spec = complianceCell(c);
