@@ -988,6 +988,85 @@
 
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
 
+  /** TIME-ENTRY COMPLIANCE — who logged how much of the bar that applies to
+      THEM, month by month. Shared by the Time Entry tab and its Excel export
+      so the two can never diverge.
+
+      Fairness rules baked in (all of them deliberate):
+        • the bar is the person's own capacity (part-timers judged against
+          their %, never the full-time number); current month is pro-rata
+        • months before someone's first-ever logged hour aren't expected
+          (new joiners) → cell = null, excluded from the score
+        • months on a leave of absence aren't expected → cell = 'leave'
+        • people with no hours on record at all can't be measured → they
+          come back in `untracked`, not as a 0% row
+      opts.clockifyUsers (optional) sharpens the untracked reason text.
+      Returns { months, rows, untracked, prorata, nowYm }. */
+  function complianceRows(monthsList, opts) {
+    opts = opts || {};
+    const nowYm = currentYM();
+    const ms = (monthsList || []).filter(m => m <= nowYm);
+    const now = new Date();
+    const prorata = Math.min(1, now.getUTCDate() / 30);
+    const db = readDb();
+    const perPM = {};
+    Object.entries(db.actuals).forEach(([k, h]) => { const [pid, , ym] = k.split('|'); (perPM[pid] = perPM[pid] || {})[ym] = (perPM[pid][ym] || 0) + h; });
+    const firstEver = {};
+    Object.keys(db.actuals).forEach(k => { const [pid, , ym] = k.split('|'); if (!firstEver[pid] || ym < firstEver[pid]) firstEver[pid] = ym; });
+    const onLeave = {};
+    leaveStatus().forEach(l => {
+      const set = onLeave[l.person.id] || (onLeave[l.person.id] = new Set());
+      let m = l.start, guard = 0;
+      while (m <= l.end && guard++ < 240) { set.add(m); m = ymAdd(m, 1); }
+    });
+    const ckUsers = opts.clockifyUsers || [];
+    const userMaps = (db.mappings || {}).users || {};
+    const hasCkMapping = (person) => !ckUsers.length ? true : ckUsers.some(u => {
+      const m = userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()];
+      if (m) return m === person.id;
+      return namesMatch(person.name, u.name) && !userExcluded(u.name, person.id);
+    });
+
+    const rows = [], untracked = [];
+    listPeople().forEach(person => {
+      if (person.isNewHire) return;
+      const logged = perPM[person.id] || {};
+      const joined = firstEver[person.id] || null;
+      if (!joined) {
+        const reason = !ckUsers.length ? 'no hours on record — not started, or not mapped to Clockify'
+          : (hasCkMapping(person) ? 'mapped to Clockify, but no hours have arrived yet' : 'no Clockify user mapped');
+        untracked.push({ person, reason });
+        return;
+      }
+      const cap = capacityHours(person);
+      const leaveMs = onLeave[person.id];
+      const byMonth = {}; let expectedMonths = 0, okMonths = 0, totLogged = 0, totCap = 0, leaveMonths = 0;
+      ms.forEach(ym => {
+        if (ym < joined) { byMonth[ym] = null; return; }
+        if (leaveMs && leaveMs.has(ym)) { byMonth[ym] = 'leave'; leaveMonths++; return; }
+        const active = personAllocationsIn(person.id, ym).length > 0;
+        const h = logged[ym] || 0;
+        if (!active && !h) { byMonth[ym] = null; return; }
+        const capM = cap * (ym === nowYm ? prorata : 1);
+        const pct = capM ? h / capM : 0;
+        byMonth[ym] = { h, capM, pct };
+        expectedMonths++; totLogged += h; totCap += capM;
+        if (pct >= 0.8) okMonths++;
+      });
+      if (!expectedMonths) { if (leaveMonths) untracked.push({ person, reason: 'on leave for this whole window' }); return; }
+      const lastMs = ms.filter(m => byMonth[m] && byMonth[m] !== 'leave').slice(-1)[0];
+      const lastPct = lastMs ? byMonth[lastMs].pct : 0;
+      rows.push({
+        person, byMonth, expectedMonths, okMonths, totLogged, totCap,
+        compliance: expectedMonths ? okMonths / expectedMonths : 0,
+        lastMs, lastPct, behindHrs: Math.max(0, totCap - totLogged),
+        joinedMid: joined > ms[0], joined, leaveMonths,
+      });
+    });
+    rows.sort((a, b) => b.behindHrs - a.behindHrs || a.lastPct - b.lastPct);
+    return { months: ms, rows, untracked, prorata, nowYm };
+  }
+
   /** Contract role titles with no allocated person whose title plausibly
       covers them — "who's this project's contract-priced role, unstaffed?"
       Shared by the Insights tab and the By Project view badge. */
@@ -1714,7 +1793,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType,
+    unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,

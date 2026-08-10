@@ -1391,83 +1391,15 @@
       <button class="btn btn-secondary" id="pull-lateness">⟳ Pull entry lateness (API)</button>
       <span class="note-txt" id="late-note">${late.at ? 'Lateness last pulled ' + new Date(late.at).toLocaleString() : 'Lateness = when an entry was CREATED vs the day the work happened (decoded from Clockify entry IDs). One aggregated call — fast.'}</span>
       <span class="grow"></span>
+      <button class="btn btn-primary" id="export-timeentry" title="Download this tab as Excel — same month grid, same colour coding, plus per-person detail and the not-tracked list">⭳ Export Time Entry</button>
     </div>`;
     if (!S.hasActuals()) { $('#p-compliance').innerHTML = lateBar + '<div class="empty">No Clockify actuals loaded — pull them on the Compare tab first. Compliance is computed from logged hours by month.</div>'; wireLateness(); return; }
-    const nowYm = S.currentYM();
-    const ms = months().filter(m => m <= nowYm);
+    // Engine does the work (staff.js complianceRows) so this tab and its
+    // Excel export are guaranteed to show identical numbers and states.
+    const comp = S.complianceRows(months(), { clockifyUsers: state.clockifyUsers || [] });
+    const ms = comp.months, rows = comp.rows, untracked = comp.untracked;
+    const nowYm = comp.nowYm, prorata = comp.prorata;
     if (!ms.length) { $('#p-compliance').innerHTML = lateBar + '<div class="empty">Window is entirely in the future — step back to see logged months.</div>'; wireLateness(); return; }
-    // pro-rata factor for the current month (day-of-month / ~30)
-    const now = new Date();
-    const prorata = Math.min(1, now.getUTCDate() / 30);
-    const db = S.readDb();
-    // actual hours per person per month (all projects, incl. internal/PTO maps)
-    const perPM = {};
-    Object.entries(db.actuals).forEach(([k, h]) => { const [pid, , ym] = k.split('|'); (perPM[pid] = perPM[pid] || {})[ym] = (perPM[pid][ym] || 0) + h; });
-    // Joiner detection: a person's first-ever logged month (across ALL
-    // history, not just the window). Months before it aren't expected —
-    // they weren't here yet, and an inherited Jan–Dec allocation shouldn't
-    // make a May joiner look like four months behind.
-    const firstEver = {};
-    Object.keys(db.actuals).forEach(k => { const [pid, , ym] = k.split('|'); if (!firstEver[pid] || ym < firstEver[pid]) firstEver[pid] = ym; });
-    // Months a person is on a leave of absence aren't expected — nobody logs
-    // hours while they're out, and a red 0% row for someone on parental leave
-    // is exactly the noise this tab shouldn't produce.
-    const onLeave = {};
-    S.leaveStatus().forEach(l => {
-      const set = onLeave[l.person.id] || (onLeave[l.person.id] = new Set());
-      let m = l.start; let guard = 0;
-      while (m <= l.end && guard++ < 240) { set.add(m); m = S.ymAdd(m, 1); }
-    });
-    // People Clockify can't report on can't be measured: no hours have EVER
-    // arrived for them (unmapped, or they haven't started). They're listed
-    // separately as "not tracked yet" instead of sitting at a red 0%.
-    const ckUsers = state.clockifyUsers || [];
-    const userMaps = (db.mappings || {}).users || {};
-    const hasCkMapping = (person) => !ckUsers.length ? true : ckUsers.some(u => {
-      const m = userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()];
-      if (m) return m === person.id;
-      return S.namesMatch(person.name, u.name) && !S.userExcluded(u.name, person.id);
-    });
-    // who SHOULD log: anyone with an active allocation in a month, or anyone with hours
-    const rows = [];
-    const untracked = [];
-    S.listPeople().forEach(person => {
-      if (person.isNewHire) return;
-      const logged = perPM[person.id] || {};
-      const everLogged = !!firstEver[person.id];
-      if (!everLogged) {
-        // Only claim "mapped" when the Clockify user list is actually loaded
-        // and confirms it — otherwise we genuinely don't know which it is.
-        const reason = !ckUsers.length ? 'no hours on record — not started, or not mapped to Clockify'
-          : (hasCkMapping(person) ? 'mapped to Clockify, but no hours have arrived yet' : 'no Clockify user mapped');
-        untracked.push({ person, reason });
-        return;
-      }
-      const cap = S.capacityHours(person);
-      const joined = firstEver[person.id] || null;
-      const leaveMs = onLeave[person.id];
-      const byMonth = {}; let expectedMonths = 0, okMonths = 0, totLogged = 0, totCap = 0, leaveMonths = 0;
-      ms.forEach(ym => {
-        if (joined && ym < joined) { byMonth[ym] = null; return; }   // pre-arrival
-        if (leaveMs && leaveMs.has(ym)) { byMonth[ym] = 'leave'; leaveMonths++; return; }
-        const active = S.personAllocationsIn(person.id, ym).length > 0;
-        const h = logged[ym] || 0;
-        if (!active && !h) { byMonth[ym] = null; return; }
-        const capM = cap * (ym === nowYm ? prorata : 1);
-        const pct = capM ? h / capM : 0;
-        byMonth[ym] = { h, capM, pct };
-        expectedMonths++; totLogged += h; totCap += capM;
-        if (pct >= 0.8) okMonths++;
-      });
-      if (!expectedMonths) { if (leaveMonths) untracked.push({ person, reason: 'on leave for this whole window' }); return; }
-      // behind = latest expected month under 80%
-      const lastMs = ms.filter(m => byMonth[m] && byMonth[m] !== 'leave').slice(-1)[0];
-      const lastPct = lastMs ? byMonth[lastMs].pct : 0;
-      rows.push({ person, byMonth, expectedMonths, okMonths, totLogged, totCap, compliance: expectedMonths ? okMonths / expectedMonths : 0, lastMs, lastPct, behindHrs: Math.max(0, totCap - totLogged), joinedMid: !!(joined && joined > ms[0]), joined, leaveMonths });
-    });
-    // The question this table answers is "who is behind and by how much" —
-    // so it sorts by missing hours, worst first.
-    rows.sort((a, b) => b.behindHrs - a.behindHrs || a.lastPct - b.lastPct);
     const behindNow = rows.filter(r => r.lastMs === nowYm ? r.lastPct < 0.8 * 1 : r.lastPct < 0.8);
     const zeroNow = rows.filter(r => r.byMonth[nowYm] && r.byMonth[nowYm].h === 0);
     const teamPct = rows.length ? rows.reduce((s, r) => s + r.compliance, 0) / rows.length : 0;
@@ -1573,6 +1505,14 @@
   }
 
   function wireLateness() {
+    const ex = $('#export-timeentry');
+    if (ex) ex.onclick = async () => {
+      const orig = ex.textContent;
+      ex.disabled = true; ex.textContent = 'Building…';
+      try { await window.UFC_buildAndDownloadTimeEntryExport(months(), { clockifyUsers: state.clockifyUsers || [] }); toast('Time Entry exported.'); }
+      catch (e) { console.error(e); alert('Export failed: ' + (e && e.message ? e.message : e)); }
+      finally { ex.disabled = false; ex.textContent = orig; }
+    };
     const b = $('#pull-lateness'); if (!b) return;
     b.onclick = async () => {
       const ms = months().filter(m => m <= S.currentYM());
