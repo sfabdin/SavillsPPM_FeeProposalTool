@@ -34,24 +34,19 @@
   }
 
   /* ============================================================
-     ACCESS WALL — this tool is allowlist-only (fail-CLOSED).
-     Bandwidth, pursuit staffing and utilization are leadership-
-     sensitive; only these Box logins may load the page. Match is
-     case-insensitive on the signed-in (or impersonated) identity —
-     an unrecognized/blank login sees the denial panel, never data.
+     ACCESS WALL — fail-CLOSED. Bandwidth, pursuit staffing and
+     utilization are leadership-sensitive.
+
+     This used to be its OWN hardcoded allowlist, which silently
+     drifted from store.js every time someone was added or removed
+     (people granted admin elsewhere were denied here, with no
+     obvious reason why). There is now ONE list, in the identity
+     layer: isAdmin() covers full admins and tool admins — the
+     latter being people who get the admin TOOLS while their
+     project-data visibility stays member-scoped.
      ============================================================ */
-  const STAFF_ADMINS = new Set([
-    'sabdin@savills.us',     // Sarah Abdin — owner
-    'salim@savills.us',      // Sarah — legacy login
-    'mglatt@savills.us',     // Michael Glatt
-    'jsantoro@savills.us',   // Jeff Santoro
-    'esobel@savills.us',     // Emily Sobel
-    'eglatt@savills.us',     // Emily Glatt
-    'kyriacos.yerou@savills.com', // developer (note .com)
-  ]);
   function staffAccessOk() {
-    const u = STORE.getCurrentUser();
-    return !!(u && u.username) && STAFF_ADMINS.has(String(u.username).trim().toLowerCase());
+    try { return !!(STORE && STORE.isAdmin && STORE.isAdmin()); } catch (e) { return false; }
   }
   function renderDenied() {
     const u = STORE.getCurrentUser();

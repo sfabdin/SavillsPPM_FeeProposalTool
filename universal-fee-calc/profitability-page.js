@@ -14,8 +14,14 @@
   const STORE = window.UFC_Store;
   const S = window.UFC_Staff;
 
-  const ADMINS = new Set(['sabdin@savills.us', 'salim@savills.us', 'mglatt@savills.us', 'jsantoro@savills.us', 'esobel@savills.us', 'eglatt@savills.us', 'kyriacos.yerou@savills.com']);
-  function accessOk() { const u = STORE.getCurrentUser(); return !!(u && u.username) && ADMINS.has(String(u.username).trim().toLowerCase()); }
+  /* ACCESS WALL — fail-CLOSED, and deliberately NOT a second copy of the
+     admin list. This page used to keep its own hardcoded set, which drifted
+     out of step with store.js the moment anyone was added or removed. One
+     list, in the identity layer: isAdmin() covers full admins and tool
+     admins (admin tools, member-scoped project data). */
+  function accessOk() {
+    try { return !!(STORE && STORE.isAdmin && STORE.isAdmin()); } catch (e) { return false; }
+  }
 
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
