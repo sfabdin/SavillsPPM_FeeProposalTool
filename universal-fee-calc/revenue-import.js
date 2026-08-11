@@ -483,7 +483,21 @@
     if (!p) throw new Error('Matched project no longer exists — it may have been deleted.');
     // ONLY monthlyOverrides move. The roster, rates, phases and every other
     // field a revenue leader has been working on are left exactly as they are.
+    const futureOnly = !!(opts && opts.futureOnly);
     const ov = Object.assign({}, p.monthlyOverrides || {}, buildOverrides(g, years, opts));
+    // Reconciling to the file also means CLEARING: a month the sheet holds at
+    // $0 while the tool shows money gets an explicit $0 override — otherwise
+    // the old figure would survive the import and the diff you approved on
+    // screen would never fully land.
+    const current = currentSeriesByYear(p, years);
+    years.forEach(y => {
+      for (let m = 1; m <= 12; m++) {
+        if (futureOnly && isPastMonth(y, m)) continue;
+        const sheetV = Math.round((g.byYear[y][m] || 0) * 100) / 100;
+        const curV = Math.round((current[y][m] || 0) * 100) / 100;
+        if (!sheetV && Math.abs(curV) >= 0.5) ov[y + '-' + m] = 0;
+      }
+    });
     const keys = sheetKeysOf(p);
     const gk = String(g.key).toLowerCase();
     const next = {
