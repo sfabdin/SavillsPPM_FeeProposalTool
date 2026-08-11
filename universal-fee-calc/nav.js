@@ -38,13 +38,13 @@
     { href: 'Change Log.html',               label: 'Change Log',          group: 'Data Admin', admin: true,
       desc: 'Who changed what, and when — every create, edit, status change, and deletion across the system.' },
     { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Data Admin', admin: true,
-      desc: 'Paste or upload proposal documents and map them into project records.' },
+      desc: 'Two ingestion modes: paste or upload a single proposal document, or bulk-import the projections workbook.' },
+    { href: 'Ingestion Studio.html?mode=bulk', label: 'Import Projections (172)', group: 'Data Admin', admin: true,
+      desc: 'Ingest the latest 172 projections workbook ("3. Detailed Revenues" tab) — matches every row to a project, classifies what’s safe vs needs review, and builds the Excel review report before anything lands. Re-run for each new Rev.' },
     { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
       desc: 'One-time import of the small-works project book.' },
     { href: 'Data Repair.html',              label: 'Data Repair',         group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
       desc: 'Scan-and-fix for known data damage — duplicates, stale renames, sparse months. Preview first, then repair.' },
-    { href: 'Ingestion Studio.html?mode=bulk', label: 'Import Revenues',   group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
-      desc: 'Bulk-import the legacy revenue projection sheet, with a diff to review before anything lands.' },
     { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
       desc: 'Dry-run a new rate grid against every project to see what would change before committing it.' },
     // ── Help ──
@@ -121,7 +121,7 @@
           subShown = l.sub;
           inner += `<div class="pn-grp pn-subgrp" data-admin="${l.admin ? 1 : 0}">${l.sub}</div>`;
         }
-        const cur = l.href.toLowerCase() === here ? ' here' : '';
+        const cur = l.href.split('?')[0].toLowerCase() === here ? ' here' : '';   // ?mode=… entries still highlight on their page
         const cls = (g === 'Help' ? 'pn-doc ' : '') + (l.sub ? 'pn-sub ' : '') + (l.cta ? 'pn-cta ' : '');
         inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" class="${(cls + cur).trim()}" title="${l.desc || ''}">${l.label}</a>`;
       });
