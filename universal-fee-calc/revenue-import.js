@@ -410,6 +410,14 @@
       can't retroactively restate a billed month.)
       `futureOnly` exists for the rare case where finance wants forward-only
       movement; it is OFF by default. */
+  /** The sheet writes names as "Client-Project" while the tool stores client
+      separately — strip the prefix so we compare (and write) the real name. */
+  function sheetName(g) {
+    let n = String(g.project || '').trim();
+    const c = String(g.client || '').trim();
+    if (c && n.toLowerCase().startsWith((c + '-').toLowerCase())) n = n.slice(c.length + 1).trim();
+    return n;
+  }
   function currentYM() { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1 }; }
   function isPastMonth(y, m) { const c = currentYM(); return y < c.y || (y === c.y && m < c.m); }
   function buildOverrides(g, years, opts) {
@@ -453,7 +461,7 @@
     const hasFeeShare = g.feeSharePct > 0;
     const record = {
       project: {
-        name: g.project || 'Untitled', client: g.client || '', lead: '', proposalDate: new Date().toISOString().slice(0, 10),
+        name: sheetName(g) || 'Untitled', client: g.client || '', lead: '', proposalDate: new Date().toISOString().slice(0, 10),
         location: '', status: booked ? 'won' : 'negotiation', industry: '',
         firstProposalDate: '', signedContractDate: '', clientContact: '', clientRelOwner: '',
         salesforceId: g.projectId || '',
@@ -498,14 +506,26 @@
         if (!sheetV && Math.abs(curV) >= 0.5) ov[y + '-' + m] = 0;
       }
     });
+    // The sheet is also the source of truth for what the engagement is CALLED.
+    // Rename to the sheet's name (client prefix stripped), keep the old names
+    // on the record for traceability, and pick up a missing Salesforce ID.
+    const proj = { ...(p.project || {}) };
+    const priorNames = (((p.source || {}).priorNames) || []).slice();
+    const newName = sheetName(g);
+    let renamed = false;
+    if (newName && (proj.name || '') !== newName) { priorNames.push(proj.name || ''); proj.name = newName; renamed = true; }
+    if (g.client && (proj.client || '') !== g.client) { proj.client = g.client; renamed = true; }
+    if (g.projectId && !proj.salesforceId) proj.salesforceId = g.projectId;
     const keys = sheetKeysOf(p);
     const gk = String(g.key).toLowerCase();
     const next = {
       ...p,
+      project: proj,
       monthlyOverrides: ov,
-      source: { ...(p.source || {}), sheetKeys: keys.includes(gk) ? keys : keys.concat([gk]) },
+      source: { ...(p.source || {}), sheetKeys: keys.includes(gk) ? keys : keys.concat([gk]), ...(renamed ? { priorNames: priorNames.filter(Boolean) } : {}) },
     };
-    return STORE.saveProject(next, { baseUpdatedAt: p.updatedAt });
+    STORE.saveProject(next, { baseUpdatedAt: p.updatedAt });
+    return { renamed };
   }
 
   /* ---------- state + render ---------- */
@@ -541,12 +561,17 @@
   /** Of the ticked rows, which would UPDATE an existing project (a match
       exists — only its monthly $ move) vs CREATE a brand-new one (no match). */
   function selectionSplit() {
-    let updates = 0; const creates = [];
+    let updates = 0; const creates = []; const renames = [];
     state.groups.forEach(g => {
       if (!state.included.has(g.key)) return;
-      if (matchedIdFor(g)) updates++; else creates.push((g.client ? g.client + ' — ' : '') + g.project);
+      const id = matchedIdFor(g);
+      if (!id) { creates.push((g.client ? g.client + ' — ' : '') + g.project); return; }
+      updates++;
+      const p = STORE.getProject(id);
+      const nn = sheetName(g);
+      if (p && nn && ((p.project || {}).name || '') !== nn) renames.push(`${(p.project || {}).name || '(unnamed)'} → ${nn}`);
     });
-    return { updates, creates };
+    return { updates, creates, renames };
   }
 
   function summarize() {
@@ -677,7 +702,7 @@
       ['Past months', state.futureOnly
         ? 'SKIPPED — forward-only movement was explicitly selected. The tool keeps whatever history it holds today.'
         : 'RECONCILED to this workbook — its closed months are the record of what was actually billed, so they are imported as-is. The "Closed months restated" column shows where that changes a figure the tool held.'],
-      ['What an import touches', 'Only the monthly revenue figures (monthlyOverrides). Rosters, rates, phases and every other field are never touched. Because the figures land as overrides, a later staffing edit cannot retroactively restate a billed month.'],
+      ['What an import touches', 'The monthly revenue figures (monthlyOverrides) and the project NAME, which syncs to the sheet (client prefix stripped; old names kept on the record). Rosters, rates, phases and every other field are never touched. Because the figures land as overrides, a later staffing edit cannot retroactively restate a billed month.'],
     ].forEach(([k, v]) => {
       cv.getCell(`A${cr}`).value = k;
       cv.getCell(`A${cr}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
@@ -770,7 +795,7 @@
         <td><input type="checkbox" class="ri-check" data-key="${esc(g.key)}" ${checked ? 'checked' : ''}></td>
         <td>${esc(g.client)}</td>
         <td>${esc(g.project)}${g.engIdx ? `<span class="raw" style="color:#2f5d8f;font-weight:700" title="This Project ID appears on ${g.engCount} sheet rows — each is a separate contract/engagement and maps to its own project record">engagement ${g.engIdx} of ${g.engCount} · sheet row ${g.rows[0].rowNum}</span>` : ''}${g.rows.length > 1 ? `<span class="raw">fee-share deduction row attached</span>` : ''}${g.rating ? `<span class="raw">${esc(g.rating)}</span>` : ''}${g.newOrEdit ? `<span class="raw" style="color:#8a6d00">sheet: ${esc(String(g.newOrEdit))}</span>` : ''}${clsBadge}${feeShareNote}${comment}</td>
-        <td>${matchBadge}${matchCtl}${matchedId && linkCounts[matchedId] > 1 ? `<div class="ri-warn">⚠ another sheet row links to this same project — engagements must stay separate; relink one of them or clear it to create new</div>` : ''}${!matchedId && g.claimLostTo ? `<div class="raw" style="color:#a3352d">Project ID already claimed by “${esc(g.claimLostTo)}” — link this one by hand, or leave blank to create its own record</div>` : ''}<div class="ri-match-pick"><input list="ri-projects-${i}" class="ri-match-input" data-key="${esc(g.key)}" value="${matchedProject ? esc(((matchedProject.project||{}).client||'') + ' — ' + ((matchedProject.project||{}).name||'')) : ''}" placeholder="type any part of the name, Enter to link"><datalist id="ri-projects-${i}">${projectOptionsDatalist()}</datalist></div></td>
+        <td>${matchBadge}${matchCtl}${matchedProject && sheetName(g) && ((matchedProject.project || {}).name || '') !== sheetName(g) ? `<div class="raw" style="color:#8a6d00" title="The sheet is the source of truth for what the engagement is called — importing renames the tool record (old name kept on the record for traceability)">renames to “${esc(sheetName(g))}” on import</div>` : ''}${matchedId && linkCounts[matchedId] > 1 ? `<div class="ri-warn">⚠ another sheet row links to this same project — engagements must stay separate; relink one of them or clear it to create new</div>` : ''}${!matchedId && g.claimLostTo ? `<div class="raw" style="color:#a3352d">Project ID already claimed by “${esc(g.claimLostTo)}” — link this one by hand, or leave blank to create its own record</div>` : ''}<div class="ri-match-pick"><input list="ri-projects-${i}" class="ri-match-input" data-key="${esc(g.key)}" value="${matchedProject ? esc(((matchedProject.project||{}).client||'') + ' — ' + ((matchedProject.project||{}).name||'')) : ''}" placeholder="type any part of the name, Enter to link"><datalist id="ri-projects-${i}">${projectOptionsDatalist()}</datalist></div></td>
         <td>${revCell}</td>
         <td>${tfCell}</td>
         <td>${stCell}</td>
@@ -862,20 +887,23 @@
     // Say exactly what is about to happen — update vs create — before it does.
     const split = selectionSplit();
     const lines = [
-      `${split.updates} UPDATE existing projects — only their monthly revenue figures move; rosters, rates and phases are untouched.`,
+      `${split.updates} UPDATE existing projects — monthly revenue figures and the project name sync to the sheet; rosters, rates and phases are untouched.`,
+      split.renames.length
+        ? `${split.renames.length} of those get RENAMED to the sheet's name:\n   • ${split.renames.slice(0, 8).join('\n   • ')}${split.renames.length > 8 ? `\n   • …and ${split.renames.length - 8} more` : ''}`
+        : null,
       split.creates.length
         ? `${split.creates.length} CREATE brand-new projects:\n   • ${split.creates.slice(0, 12).join('\n   • ')}${split.creates.length > 12 ? `\n   • …and ${split.creates.length - 12} more` : ''}`
         : 'Nothing new is created.',
-    ];
+    ].filter(Boolean);
     if (!confirm(`Import ${split.updates + split.creates.length} selected rows?\n\n` + lines.join('\n\n'))) return;
     const btn = $('#ri-apply-btn'); const orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Importing…';
-    let created = 0, updated = 0, failed = [];
+    let created = 0, updated = 0, renamed = 0, failed = [];
     for (const g of state.groups) {
       if (!state.included.has(g.key)) continue;
       const matchedId = state.overrides[g.key] !== undefined ? state.overrides[g.key] : (g.match && g.match.id);
       try {
-        if (matchedId) { applyOverridesToProject(matchedId, g, state.years, { futureOnly: !!state.futureOnly }); updated++; }
+        if (matchedId) { const r = applyOverridesToProject(matchedId, g, state.years, { futureOnly: !!state.futureOnly }); updated++; if (r && r.renamed) renamed++; }
         else { createLightweightProject(g, state.years); created++; }
       } catch (e) { failed.push(`${g.client} — ${g.project}: ${e.message}`); }
     }
@@ -883,7 +911,7 @@
     state.projectIndex = buildProjectIndex();   // new projects now exist — refresh matching pool
     renderTable(); renderSummary();
     btn.textContent = orig; btn.disabled = false;
-    setStatus(`Imported: ${updated} updated, ${created} created` + (failed.length ? ` — ${failed.length} failed (${failed.join(' · ')})` : ''), failed.length ? 'bad' : '');
+    setStatus(`Imported: ${updated} updated${renamed ? ` (${renamed} renamed to the sheet's name)` : ''}, ${created} created` + (failed.length ? ` — ${failed.length} failed (${failed.join(' · ')})` : ''), failed.length ? 'bad' : '');
   }
 
   /** Everything after the raw sheet_to_json rows are in hand — shared by the
