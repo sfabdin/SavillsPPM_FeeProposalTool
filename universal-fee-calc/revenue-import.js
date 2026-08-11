@@ -196,48 +196,67 @@
     return Object.values(r.totalsByYear).some(v => v < 0);
   }
 
-  /** Multiple sheet rows can share a Project ID (Base Contract + amendments,
-      or a gross-revenue row + its fee-share-out deduction) — sum them into
-      one group. No ID → group by client+project name instead. Gross revenue
-      and the fee-share-out deduction are tracked SEPARATELY (byYear stays
-      gross-only, matching what "revenue" means everywhere else in the app)
-      so a blended feeSharePct can be computed without silently netting them
-      into one number and losing the fact that a broker split exists at all. */
+  /** EVERY sheet row is its own contract/engagement — rows are NEVER summed,
+      even when they share a Project ID (Base Contract + amendment are two
+      engagements that must map to two separate project records). The single
+      exception is a fee-share-out row: the sheet books the broker deduction
+      as its own negative row against the same Project ID, and that is an
+      adjustment to an engagement, not an engagement — it attaches to the
+      sibling row whose revenue months it overlaps. Gross revenue and the
+      deduction stay tracked separately (byYear is gross-only, matching what
+      "revenue" means everywhere else in the app) so feeSharePct can be
+      computed without silently netting.
+      Keys: a lone row keeps the historical key (id:… / nc:…) so remembered
+      matches survive; siblings sharing a base key get #e1, #e2… in sheet
+      order. */
   function groupRows(dataRows, years) {
-    const groups = {};
     const zeroByYear = () => { const o = {}; years.forEach(y => { o[y] = {}; for (let m = 1; m <= 12; m++) o[y][m] = 0; }); return o; };
     const zeroTotals = () => { const o = {}; years.forEach(y => { o[y] = 0; }); return o; };
-    dataRows.forEach(r => {
-      const key = r.projectId ? 'id:' + r.projectId.toLowerCase() : 'nc:' + r.client.toLowerCase() + '|' + r.project.toLowerCase();
-      let g = groups[key];
-      if (!g) {
-        g = groups[key] = {
-          key, client: r.client, project: r.project, projectId: r.projectId,
-          rating: r.rating, revenueType: r.revenueType, leader: r.leader, newOrEdit: r.newOrEdit,
-          originator: r.originator, support: r.support, comments: '',
+    const baseOf = (r) => r.projectId ? 'id:' + r.projectId.toLowerCase() : 'nc:' + r.client.toLowerCase() + '|' + r.project.toLowerCase();
+    const engRows = dataRows.filter(r => !isFeeShareOutRow(r));
+    const feeRows = dataRows.filter(isFeeShareOutRow);
+    const byBase = {};
+    engRows.forEach(r => { (byBase[baseOf(r)] = byBase[baseOf(r)] || []).push(r); });
+    const out = []; const groupsByBase = {};
+    Object.entries(byBase).forEach(([base, rs]) => {
+      rs.forEach((r, i) => {
+        const g = {
+          key: rs.length === 1 ? base : base + '#e' + (i + 1),
+          client: r.client, project: r.project, projectId: r.projectId,
+          rating: r.rating, revenueType: r.revenueType, contractType: r.contractType, leader: r.leader,
+          newOrEdit: r.newOrEdit, originator: r.originator, support: r.support,
+          comments: r.comments || '',
           startDate: r.startDate, endDate: r.endDate,
           byYear: zeroByYear(), totalsByYear: zeroTotals(),
           brokerByYear: zeroByYear(), brokerTotalsByYear: zeroTotals(),
-          rows: [],
+          rows: [r],
+          engIdx: rs.length > 1 ? i + 1 : 0, engCount: rs.length,
         };
-      }
-      g.rows.push(r);
-      // widen the date range across amendments
-      if (r.startDate && (!g.startDate || r.startDate < g.startDate)) g.startDate = r.startDate;
-      if (r.endDate && (!g.endDate || r.endDate > g.endDate)) g.endDate = r.endDate;
-      // any row flagged New/Edit flags the whole group; comments concatenate
-      if (r.newOrEdit && !g.newOrEdit) g.newOrEdit = r.newOrEdit;
-      if (r.comments && g.comments.indexOf(r.comments) < 0) g.comments = (g.comments ? g.comments + ' · ' : '') + r.comments;
-      const isFee = isFeeShareOutRow(r);
-      years.forEach(y => {
-        Object.keys(r.byYear[y] || {}).forEach(m => {
-          const v = r.byYear[y][m] || 0;
-          if (isFee) g.brokerByYear[y][m] += Math.abs(v); else g.byYear[y][m] += v;
+        years.forEach(y => {
+          Object.keys(r.byYear[y] || {}).forEach(m => { g.byYear[y][m] += r.byYear[y][m] || 0; });
+          g.totalsByYear[y] += r.totalsByYear[y] || 0;
         });
-        if (isFee) g.brokerTotalsByYear[y] += Math.abs(r.totalsByYear[y] || 0); else g.totalsByYear[y] += r.totalsByYear[y] || 0;
+        out.push(g); (groupsByBase[base] = groupsByBase[base] || []).push(g);
       });
     });
-    const out = Object.values(groups);
+    // attach each fee-share-out row to the sibling engagement its months overlap
+    feeRows.forEach(r => {
+      const sibs = groupsByBase[baseOf(r)] || [];
+      let target = null, best = -1;
+      sibs.forEach(g => {
+        let ov = 0;
+        years.forEach(y => { for (let m = 1; m <= 12; m++) if (Math.abs(r.byYear[y][m] || 0) >= 0.5 && Math.abs(g.byYear[y][m] || 0) >= 0.5) ov++; });
+        const score = ov * 1e9 + Object.values(g.totalsByYear).reduce((s, v) => s + v, 0);
+        if (score > best) { best = score; target = g; }
+      });
+      if (!target) return;   // orphan deduction with no gross sibling — nothing to net against, and a $0-gross group would be filtered anyway
+      target.rows.push(r);
+      if (r.comments && target.comments.indexOf(r.comments) < 0) target.comments = (target.comments ? target.comments + ' · ' : '') + r.comments;
+      years.forEach(y => {
+        Object.keys(r.byYear[y] || {}).forEach(m => { target.brokerByYear[y][m] += Math.abs(r.byYear[y][m] || 0); });
+        target.brokerTotalsByYear[y] += Math.abs(r.totalsByYear[y] || 0);
+      });
+    });
     out.forEach(g => {
       const gross = Object.values(g.totalsByYear).reduce((s, v) => s + v, 0);
       const broker = Object.values(g.brokerTotalsByYear).reduce((s, v) => s + v, 0);
@@ -513,7 +532,7 @@
   function renderSummary() {
     const s = summarize();
     $('#ri-sum').innerHTML = `
-      <div class="sumcard"><div class="lbl">Projects in sheet</div><div class="val">${s.total}</div></div>
+      <div class="sumcard"><div class="lbl">Engagements (sheet rows)</div><div class="val">${s.total}</div></div>
       <div class="sumcard ok"><div class="lbl">Safe to apply</div><div class="val">${s.safe}</div></div>
       <div class="sumcard warn"><div class="lbl">Priced staffing · review</div><div class="val">${s.review}</div></div>
       <div class="sumcard bad"><div class="lbl">Reconciled · changed</div><div class="val">${s.reconciledChanged}</div></div>
@@ -570,7 +589,7 @@
       const d = diffGroup(g, p, state.years);
       const past = pastImpact(g, p, state.years);
       const vals = [
-        CLASS[cls].label, g.leader || '', g.client, g.project,
+        CLASS[cls].label, g.leader || '', g.client, g.project + (g.engIdx ? ` · engagement ${g.engIdx}/${g.engCount} (sheet row ${g.rows[0].rowNum})` : ''),
         p ? (((p.project || {}).client || '') + ' — ' + ((p.project || {}).name || '')) : '(would be created)',
         mid ? (g.match ? g.match.via : 'manual') : '—',
         g.newOrEdit || '', g.rating || '',
@@ -674,6 +693,9 @@
   function renderTable() {
     const tb = $('#ri-tbody');
     if (!state.groups.length) { tb.innerHTML = `<tr><td colspan="8" class="empty">Drop a revenue projections workbook above.</td></tr>`; renderMissing(); return; }
+    // how many rows point at each tool project — engagements must stay 1:1
+    const linkCounts = {};
+    state.groups.forEach(g => { const id = matchedIdFor(g); if (id) linkCounts[id] = (linkCounts[id] || 0) + 1; });
     tb.innerHTML = state.groups.map((g, i) => {
       const matchedId = state.overrides[g.key] !== undefined ? state.overrides[g.key] : (g.match && g.match.id) || '';
       const matchedProject = matchedId ? STORE.getProject(matchedId) : null;
@@ -713,8 +735,8 @@
       return `<tr class="ri-row" data-key="${esc(g.key)}">
         <td><input type="checkbox" class="ri-check" data-key="${esc(g.key)}" ${checked ? 'checked' : ''}></td>
         <td>${esc(g.client)}</td>
-        <td>${esc(g.project)}${g.rows.length > 1 ? `<span class="raw">${g.rows.length} sheet rows summed</span>` : ''}${g.rating ? `<span class="raw">${esc(g.rating)}</span>` : ''}${g.newOrEdit ? `<span class="raw" style="color:#8a6d00">sheet: ${esc(String(g.newOrEdit))}</span>` : ''}${clsBadge}${feeShareNote}${comment}</td>
-        <td>${matchBadge}<div class="ri-match-pick"><input list="ri-projects-${i}" class="ri-match-input" data-key="${esc(g.key)}" value="${matchedProject ? esc(((matchedProject.project||{}).client||'') + ' — ' + ((matchedProject.project||{}).name||'')) : ''}" placeholder="type to link… or leave blank = new"><datalist id="ri-projects-${i}">${projectOptionsDatalist()}</datalist></div></td>
+        <td>${esc(g.project)}${g.engIdx ? `<span class="raw" style="color:#2f5d8f;font-weight:700" title="This Project ID appears on ${g.engCount} sheet rows — each is a separate contract/engagement and maps to its own project record">engagement ${g.engIdx} of ${g.engCount} · sheet row ${g.rows[0].rowNum}</span>` : ''}${g.rows.length > 1 ? `<span class="raw">fee-share deduction row attached</span>` : ''}${g.rating ? `<span class="raw">${esc(g.rating)}</span>` : ''}${g.newOrEdit ? `<span class="raw" style="color:#8a6d00">sheet: ${esc(String(g.newOrEdit))}</span>` : ''}${clsBadge}${feeShareNote}${comment}</td>
+        <td>${matchBadge}${matchedId && linkCounts[matchedId] > 1 ? `<div class="ri-warn">⚠ another sheet row links to this same project — engagements must stay separate; relink one of them or clear it to create new</div>` : ''}${!matchedId && g.claimLostTo ? `<div class="raw" style="color:#a3352d">Project ID already claimed by “${esc(g.claimLostTo)}” — link this one by hand, or leave blank to create its own record</div>` : ''}<div class="ri-match-pick"><input list="ri-projects-${i}" class="ri-match-input" data-key="${esc(g.key)}" value="${matchedProject ? esc(((matchedProject.project||{}).client||'') + ' — ' + ((matchedProject.project||{}).name||'')) : ''}" placeholder="type to link… or leave blank = new"><datalist id="ri-projects-${i}">${projectOptionsDatalist()}</datalist></div></td>
         <td>${revCell}</td>
         <td>${tfCell}</td>
         <td>${stCell}</td>
@@ -812,7 +834,23 @@
     state.overrides = {};
     state.included = new Set();
     groups.forEach(g => { g.match = matchGroup(state.projectIndex, g); });
-    groups.sort((a, b) => a.client.localeCompare(b.client) || a.project.localeCompare(b.project));
+    // ONE tool project per sheet row: sibling engagements sharing a Project ID
+    // all ID-match the same record, but only one of them can BE that record.
+    // Best claim wins (confirmed > ID > name, then largest $); the losers drop
+    // to unmatched with a note, so each engagement gets its own project.
+    {
+      const prio = (g) => !g.match ? 9 : g.match.via === 'confirmed' ? 0 : g.match.via === 'id' ? 1 : 2;
+      const totalOf = (g) => Object.values(g.totalsByYear).reduce((s, v) => s + Math.abs(v), 0);
+      const claimed = {};
+      groups.slice().sort((a, b) => prio(a) - prio(b) || totalOf(b) - totalOf(a)).forEach(g => {
+        if (!g.match || !g.match.id) return;
+        const winner = claimed[g.match.id];
+        if (!winner) { claimed[g.match.id] = g; return; }
+        g.claimLostTo = winner.project + (winner.engIdx ? ` (engagement ${winner.engIdx})` : '');
+        g.match = null;
+      });
+    }
+    groups.sort((a, b) => a.client.localeCompare(b.client) || a.project.localeCompare(b.project) || (a.engIdx || 0) - (b.engIdx || 0));
     state.groups = groups;
     // Default selection = ONLY the safe class: a confident match, money moved,
     // and nobody has staffed it yet. Staffed projects, new projects and
