@@ -493,6 +493,17 @@
       .sort((a, b) => Math.abs(b.tot) - Math.abs(a.tot));
   }
 
+  /** Of the ticked rows, which would UPDATE an existing project (a match
+      exists — only its monthly $ move) vs CREATE a brand-new one (no match). */
+  function selectionSplit() {
+    let updates = 0; const creates = [];
+    state.groups.forEach(g => {
+      if (!state.included.has(g.key)) return;
+      if (matchedIdFor(g)) updates++; else creates.push((g.client ? g.client + ' — ' : '') + g.project);
+    });
+    return { updates, creates };
+  }
+
   function summarize() {
     const counts = { unchanged: 0, safe: 0, review: 0, reconciledChanged: 0, newProj: 0, unmatched: 0 };
     state.groups.forEach(g => { counts[classify(g, matchedIdFor(g))]++; });
@@ -510,7 +521,12 @@
       <div class="sumcard bad"><div class="lbl">No match — human needed</div><div class="val">${s.unmatched}</div></div>
       <div class="sumcard"><div class="lbl">No change</div><div class="val">${s.unchanged}</div></div>
       <div class="sumcard ${s.missing ? 'warn' : ''}"><div class="lbl">In tool, not in sheet</div><div class="val">${s.missing}</div></div>`;
-    $('#ri-apply-btn').textContent = `Import selected (${s.selected}) →`;
+    const split = selectionSplit();
+    $('#ri-apply-btn').textContent = s.selected === 0 ? 'Import selected (0) →'
+      : `Import — ${split.updates} update${split.updates === 1 ? '' : 's'} · ${split.creates.length} new →`;
+    $('#ri-apply-btn').title = s.selected === 0 ? ''
+      : `${split.updates} ticked row${split.updates === 1 ? '' : 's'} UPDATE existing projects (monthly revenue only)` +
+        (split.creates.length ? ` · ${split.creates.length} CREATE new: ${split.creates.slice(0, 6).join(', ')}${split.creates.length > 6 ? '…' : ''}` : ' · nothing new is created');
     $('#ri-apply-btn').disabled = s.selected === 0;
     const rb = $('#ri-report-btn'); if (rb) rb.disabled = !state.groups.length;
     const fo = $('#ri-future-only'); if (fo) fo.checked = !state.futureOnly;   // checked = reconcile past months too
@@ -758,6 +774,15 @@
   }
 
   async function applySelected() {
+    // Say exactly what is about to happen — update vs create — before it does.
+    const split = selectionSplit();
+    const lines = [
+      `${split.updates} UPDATE existing projects — only their monthly revenue figures move; rosters, rates and phases are untouched.`,
+      split.creates.length
+        ? `${split.creates.length} CREATE brand-new projects:\n   • ${split.creates.slice(0, 12).join('\n   • ')}${split.creates.length > 12 ? `\n   • …and ${split.creates.length - 12} more` : ''}`
+        : 'Nothing new is created.',
+    ];
+    if (!confirm(`Import ${split.updates + split.creates.length} selected rows?\n\n` + lines.join('\n\n'))) return;
     const btn = $('#ri-apply-btn'); const orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Importing…';
     let created = 0, updated = 0, failed = [];
