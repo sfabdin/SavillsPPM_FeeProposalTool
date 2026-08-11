@@ -88,6 +88,7 @@
     mapSearch: '', mapOnlyProblems: false, clockifyNames: null,
     compSearch: '', compSort: { key: 'behind', dir: -1 },   // Clockify Reporting table: filter + column sort
     compView: 'summary',                                    // 'summary' (grouped + sparklines) | 'grid' (month detail)
+    bridgeOpen: false,                                      // "contract staffing" card starts rolled up — it can dwarf the page
   };
 
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
@@ -205,10 +206,34 @@
     if (!gaps.length) return '';
     const inline = new Set(Object.values(inlineTopUpIndex()));
     if (gaps.every((g, i) => inline.has(i))) return '';
+    // ---- roll-up stats: the whole story while the card is collapsed ----
+    const shown = gaps.filter((g, i) => !inline.has(i));
+    const nOpen = shown.filter(g => g.open).length;
+    const nNew = shown.filter(g => !g.open && g.isNew).length;
+    const nLinked = shown.filter(g => !g.open && !g.isNew).length;
+    const nSigned = shown.filter(g => g.via === 'direct' && !g.possibleDupFee).length;
+    const nDup = shown.filter(g => g.possibleDupFee).length;
+    const fteMo = Math.round(shown.reduce((s2, g) => s2 + (parseFloat(g.totalNeedFteMo) || 0), 0) * 10) / 10;
+    const nProj = new Set(shown.map(g => g.project)).size;
+    const stat = (n, label, bg, fg, title) => n ? `<span class="mv-chip" style="background:${bg};color:${fg};font-weight:700" title="${esc(title || '')}">${n} ${label}</span>` : '';
     const segRow = (sg) => `<tr><td>${esc(S.ymLabel(sg.start))}${sg.start !== sg.end ? ' → ' + esc(S.ymLabel(sg.end)) : ''}</td><td class="num">${sg.want}%</td><td class="num">${sg.have ? sg.have + '%' : '—'}</td><td class="num" style="font-weight:800;color:var(--sav-teal)">+${sg.need}%</td></tr>`;
     const rosterOptions = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
-    return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid var(--sav-teal);padding:12px 16px;margin-bottom:14px">
-      <div style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy);margin-bottom:2px">🤝 Contract staffing not yet in the matrix <span class="note-txt" style="font-weight:400">· every under-covered contract role — named people AND open slots. Review the segments, adjust the name if it maps to someone already here (nicknames count — the link is remembered), then confirm. Nothing is created without your OK.</span></div>
+    return `<details id="bridge-roll" ${state.bridgeOpen ? 'open' : ''} style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid var(--sav-teal);margin-bottom:14px">
+      <summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:11px 16px">
+        <span id="bridge-caret" style="font-size:10px;color:var(--sav-steel);transition:transform .15s;display:inline-block;${state.bridgeOpen ? 'transform:rotate(90deg)' : ''}">▶</span>
+        <span style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy)">🤝 Contract staffing to be allocated</span>
+        <span class="mv-chip" style="background:var(--sav-navy);color:#fff;font-weight:800">${shown.length} item${shown.length === 1 ? '' : 's'} · ${nProj} project${nProj === 1 ? '' : 's'}</span>
+        <span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700" title="Total contract staffing not yet reflected in the matrix, in full-time-equivalent months">${fteMo} FTE-mo missing</span>
+        ${stat(nOpen, 'open role' + (nOpen === 1 ? '' : 's'), '#fdf3d7', '#8a6d00', 'Unstaffed contract slots that need a name')}
+        ${stat(nNew, 'not on roster', '#fdf3d7', '#8a6d00', 'Contract names that don’t match anyone here — map the nickname or create them')}
+        ${stat(nLinked, 'ready to confirm', '#e7f0ee', '#0E7C7B', 'Contract names that already resolve to a roster person — one click each')}
+        ${stat(nSigned, 'signed · nobody staffed', '#fbe9ea', '#b3151b', 'Won projects with zero matrix staffing — the most urgent kind')}
+        ${stat(nDup, 'possible dup ⚠', '#fdf3d7', '#8a6d00', 'Demand from a fee record that may duplicate another — check before staffing')}
+        <span class="grow"></span>
+        <span class="note-txt" id="bridge-roll-hint">${state.bridgeOpen ? 'click to roll up' : 'click to review'}</span>
+      </summary>
+      <div style="padding:0 16px 12px">
+      <div class="note-txt" style="margin:0 0 6px">Every under-covered contract role — named people AND open slots. Review the segments, adjust the name if it maps to someone already here (nicknames count — the link is remembered), then confirm. Nothing is created without your OK.</div>
       <datalist id="bridge-people">${rosterOptions}</datalist>
       ${gaps.map((g, i) => inline.has(i) ? '' : `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
         <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
@@ -235,12 +260,20 @@
           <button class="btn btn-primary" style="margin-top:10px;padding:8px 16px;font-size:12px" data-bridge-apply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}</button>
         </div>
       </details>`).join('')}
-    </div>`;
+      </div>
+    </details>`;
   }
 
   function wireBridge() {
     const root = $('#p-allocations');
     if (!root) return;
+    // Roll-up state survives re-renders (every allocation edit re-renders the tab).
+    const roll = $('#bridge-roll');
+    if (roll) roll.ontoggle = () => {
+      state.bridgeOpen = roll.open;
+      const c = $('#bridge-caret'); if (c) c.style.transform = roll.open ? 'rotate(90deg)' : '';
+      const h = $('#bridge-roll-hint'); if (h) h.textContent = roll.open ? 'click to roll up' : 'click to review';
+    };
     $$('#p-allocations [data-bridge-name]').forEach(inp => inp.oninput = () => {
       const hint = $(`#p-allocations [data-bridge-hint="${inp.dataset.bridgeName}"]`);
       if (!hint) return;
