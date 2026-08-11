@@ -264,9 +264,49 @@
     return !!(project && project.source && project.source.importedByMonth && !project.source.reconciled);
   }
 
+  /** What KIND of staffing sits on a project. 'zeroSeed' = every role was
+      written by OUR matrix seeding at a $0 contracted placeholder — the
+      revenue is override-driven regardless of the roster, so moving the
+      dollars can't fight anyone's fee model. 'priced' = someone has real
+      rates on it. */
+  function staffingKind(p) {
+    if (!hasStaffing(p)) return 'none';
+    const roles = p.roles || [];
+    return roles.every(r => r.rateSource === 'contracted' && !(+r.contractedRate || 0)) ? 'zeroSeed' : 'priced';
+  }
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const ymLbl = (y, m) => MON[m - 1] + ' ’' + String(y).slice(2);
+  /** First and last month the sheet actually carries revenue for this group. */
+  function sheetSpan(g, years) {
+    let first = null, last = null;
+    years.slice().sort((a, b) => a - b).forEach(y => {
+      for (let m = 1; m <= 12; m++) if (Math.abs(g.byYear[y][m] || 0) >= 0.5) { if (!first) first = { y, m }; last = { y, m }; }
+    });
+    return first ? { first, last, label: ymLbl(first.y, first.m) + ' – ' + ymLbl(last.y, last.m) } : null;
+  }
+  function toolSpan(p) {
+    const t = p && p.timeline;
+    if (!t || !t.startYear) return null;
+    return { first: { y: t.startYear, m: t.startMonth }, last: { y: t.endYear, m: t.endMonth }, label: ymLbl(t.startYear, t.startMonth) + ' – ' + ymLbl(t.endYear, t.endMonth) };
+  }
+  /** Timeframes "match" when the sheet's revenue months fall inside the tool's
+      project timeline — the sheet only shows 2026/27, so demanding equality
+      would flag every multi-year project. */
+  function spanFits(sheet, tool) {
+    if (!sheet || !tool) return false;
+    const k = (x) => x.y * 12 + x.m;
+    return k(sheet.first) >= k(tool.first) && k(sheet.last) <= k(tool.last);
+  }
+  function toolTotalFor(p, years) {
+    const cur = currentSeriesByYear(p, years);
+    let t = 0; years.forEach(y => { for (let m = 1; m <= 12; m++) t += cur[y][m] || 0; });
+    return t;
+  }
+
   function diffGroup(g, matchedProject, years) {
+    const sheetTotal = years.reduce((s, y) => s + (g.totalsByYear[y] || 0), 0);
     if (!matchedProject) {
-      return { isNew: true, changedMonths: 0, totalDelta: g.totalsByYear[2026] + (g.totalsByYear[2027] || 0), current: null };
+      return { isNew: true, changedMonths: 0, totalDelta: sheetTotal, sheetTotal, toolTotal: 0, current: null, sheetSpan: sheetSpan(g, years), toolSpan: null, spanOk: false };
     }
     const current = currentSeriesByYear(matchedProject, years);
     let changedMonths = 0, totalDelta = 0;
@@ -277,7 +317,16 @@
         if (Math.abs(sheetV - curV) >= 0.5) { changedMonths++; totalDelta += (sheetV - curV); }
       }
     });
-    return { isNew: false, changedMonths, totalDelta, current, locked: lockedByOriginalImport(matchedProject), staffed: hasStaffing(matchedProject) };
+    const sSpan = sheetSpan(g, years), tSpan = toolSpan(matchedProject);
+    return {
+      isNew: false, changedMonths, totalDelta, current,
+      sheetTotal, toolTotal: toolTotalFor(matchedProject, years),
+      sheetSpan: sSpan, toolSpan: tSpan, spanOk: spanFits(sSpan, tSpan),
+      locked: lockedByOriginalImport(matchedProject),
+      staffed: hasStaffing(matchedProject),
+      staffKind: staffingKind(matchedProject),
+      reconciled: !!(matchedProject.source && matchedProject.source.reconciled),
+    };
   }
 
   /* ---------- classification: what KIND of decision is each row? ----------
@@ -287,7 +336,8 @@
   const CLASS = {
     unchanged:  { label: 'No change',            tone: '',     auto: false },
     safe:       { label: 'Money moved · safe',   tone: 'ok',   auto: true  },
-    review:     { label: 'Money moved · STAFFED — review', tone: 'warn', auto: false },
+    review:     { label: 'Money moved · PRICED STAFFING — review', tone: 'warn', auto: false },
+    reconciledChanged: { label: 'RECONCILED — number changed', tone: 'bad', auto: false },
     newProj:    { label: 'New project',          tone: 'warn', auto: false },
     unmatched:  { label: 'No match — needs a human', tone: 'bad', auto: false },
   };
@@ -300,7 +350,13 @@
     const p = STORE.getProject(matchedId);
     const d = diffGroup(g, p, state.years);
     if (!d.changedMonths) return 'unchanged';
-    return d.staffed ? 'review' : 'safe';
+    // A project someone MARKED RECONCILED runs on its fee model now — the
+    // sheet moving its number is a conversation, never an auto-apply.
+    if (d.reconciled) return 'reconciledChanged';
+    // Staffing WE seeded at $0 placeholder rates doesn't price anything —
+    // the dollars are override-driven either way, so moving them is safe.
+    if (d.staffKind === 'priced') return 'review';
+    return 'safe';
   }
 
   /* ---------- new lightweight project (override-driven, no roster) ---------- */
@@ -418,10 +474,29 @@
   function matchedIdFor(g) {
     return state.overrides[g.key] !== undefined ? state.overrides[g.key] : ((g.match && g.match.id) || null);
   }
+  /** The other direction of a full-book comparison: projects in the tool
+      that no sheet row matched. Only projects that actually carry revenue in
+      the sheet's years — a dormant record absent from the sheet is no news. */
+  function missingFromSheet() {
+    const matched = new Set();
+    state.groups.forEach(g => { const id = matchedIdFor(g); if (id) matched.add(id); });
+    return state.projectIndex
+      .filter(p => !matched.has(p.id))
+      .map(p => {
+        const rec = STORE.getProject(p.id);
+        if (!rec) return null;
+        const tot = toolTotalFor(rec, state.years);
+        if (Math.abs(tot) < 1) return null;
+        return { id: p.id, label: p.label, rec, tot, span: toolSpan(rec), kind: staffingKind(rec), reconciled: !!(rec.source && rec.source.reconciled) };
+      })
+      .filter(Boolean)
+      .sort((a, b) => Math.abs(b.tot) - Math.abs(a.tot));
+  }
+
   function summarize() {
-    const counts = { unchanged: 0, safe: 0, review: 0, newProj: 0, unmatched: 0 };
+    const counts = { unchanged: 0, safe: 0, review: 0, reconciledChanged: 0, newProj: 0, unmatched: 0 };
     state.groups.forEach(g => { counts[classify(g, matchedIdFor(g))]++; });
-    return { total: state.groups.length, ...counts, feeShare: state.groups.filter(g => g.feeSharePct > 0).length, selected: state.included.size };
+    return { total: state.groups.length, ...counts, feeShare: state.groups.filter(g => g.feeSharePct > 0).length, selected: state.included.size, missing: state.groups.length ? missingFromSheet().length : 0 };
   }
 
   function renderSummary() {
@@ -429,10 +504,12 @@
     $('#ri-sum').innerHTML = `
       <div class="sumcard"><div class="lbl">Projects in sheet</div><div class="val">${s.total}</div></div>
       <div class="sumcard ok"><div class="lbl">Safe to apply</div><div class="val">${s.safe}</div></div>
-      <div class="sumcard warn"><div class="lbl">Staffed · needs review</div><div class="val">${s.review}</div></div>
+      <div class="sumcard warn"><div class="lbl">Priced staffing · review</div><div class="val">${s.review}</div></div>
+      <div class="sumcard bad"><div class="lbl">Reconciled · changed</div><div class="val">${s.reconciledChanged}</div></div>
       <div class="sumcard warn"><div class="lbl">New projects</div><div class="val">${s.newProj}</div></div>
       <div class="sumcard bad"><div class="lbl">No match — human needed</div><div class="val">${s.unmatched}</div></div>
-      <div class="sumcard"><div class="lbl">No change</div><div class="val">${s.unchanged}</div></div>`;
+      <div class="sumcard"><div class="lbl">No change</div><div class="val">${s.unchanged}</div></div>
+      <div class="sumcard ${s.missing ? 'warn' : ''}"><div class="lbl">In tool, not in sheet</div><div class="val">${s.missing}</div></div>`;
     $('#ri-apply-btn').textContent = `Import selected (${s.selected}) →`;
     $('#ri-apply-btn').disabled = s.selected === 0;
     const rb = $('#ri-report-btn'); if (rb) rb.disabled = !state.groups.length;
@@ -447,7 +524,7 @@
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Savills PPM'; wb.created = new Date();
     const NAVY = 'FF25273A', WHITE = 'FFFFFFFF', YEL = 'FFFFDF00';
-    const tone = { safe: 'FFE7F0EE', review: 'FFFDF3D7', newProj: 'FFE7EEF0', unmatched: 'FFF7DEDC', unchanged: 'FFF7F7F5' };
+    const tone = { safe: 'FFE7F0EE', review: 'FFFDF3D7', reconciledChanged: 'FFFBE9EA', newProj: 'FFE7EEF0', unmatched: 'FFF7DEDC', unchanged: 'FFF7F7F5' };
     const ws = wb.addWorksheet('Proposed changes', { views: [{ state: 'frozen', ySplit: 1 }] });
     const cols = [
       { h: 'Decision', w: 26 }, { h: 'Revenue leader', w: 14 }, { h: 'Client', w: 24 }, { h: 'Project (sheet)', w: 40 },
@@ -464,7 +541,7 @@
       cell.alignment = { vertical: 'middle', wrapText: true };
     });
     ws.getRow(1).height = 22;
-    const order = { review: 0, unmatched: 1, newProj: 2, safe: 3, unchanged: 4 };
+    const order = { reconciledChanged: 0, review: 1, unmatched: 2, newProj: 3, safe: 4, unchanged: 5 };
     const rows = state.groups.slice().sort((a, b) => {
       const ca = classify(a, matchedIdFor(a)), cb = classify(b, matchedIdFor(b));
       return order[ca] - order[cb] || (a.leader || '').localeCompare(b.leader || '') || a.client.localeCompare(b.client);
@@ -485,7 +562,7 @@
         cls === 'unchanged' ? 0 : Math.round(d.totalDelta || 0),
         d.isNew ? '' : d.changedMonths,
         state.futureOnly ? 'skipped' : (past.months ? `${past.months} mo · ${past.delta >= 0 ? '+' : '−'}$${Math.abs(Math.round(past.delta)).toLocaleString()}` : ''),
-        p ? (hasStaffing(p) ? 'YES' : 'no') : '—',
+        p ? (d.reconciled ? 'RECONCILED' : d.staffKind === 'priced' ? 'PRICED' : d.staffKind === 'zeroSeed' ? '$0 seed (ours)' : 'no') : '—',
         g.comments || '',
       ];
       vals.forEach((v, i) => {
@@ -494,11 +571,31 @@
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tone[cls] } };
         if (i >= 8 && i <= 11 && typeof v === 'number') { cell.numFmt = i === 11 ? '#,##0' : '#,##0;[Red]-#,##0'; cell.alignment = { horizontal: 'right' }; }
         if (i === 14) cell.alignment = { wrapText: true, vertical: 'top' };
-        if (i === 13 && v === 'YES') cell.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
+        if (i === 13 && (v === 'PRICED' || v === 'RECONCILED')) cell.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
       });
       r++;
     });
     ws.autoFilter = { from: 'A1', to: `O${Math.max(2, r - 1)}` };
+
+    // The reverse half of the full-book comparison: in the tool, not in the sheet.
+    const missing = missingFromSheet();
+    const mw = wb.addWorksheet('In tool, not in sheet', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const mcols = [{ h: 'Project (tool)', w: 46 }, { h: 'Status', w: 14 }, { h: 'Timeframe', w: 20 }, { h: 'Staffing', w: 16 }, { h: `Tool revenue ${state.years.join('+')}`, w: 18 }];
+    mw.columns = mcols.map(c => ({ width: c.w }));
+    mcols.forEach((c, i) => {
+      const cell = mw.getRow(1).getCell(i + 1);
+      cell.value = c.h;
+      cell.font = { name: 'Calibri', bold: true, color: { argb: WHITE }, size: 10 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+    });
+    missing.forEach((x, i) => {
+      const row = mw.getRow(i + 2);
+      row.getCell(1).value = x.label;
+      row.getCell(2).value = ((x.rec.project || {}).status) || '';
+      row.getCell(3).value = x.span ? x.span.label : '';
+      row.getCell(4).value = x.reconciled ? 'RECONCILED' : x.kind === 'priced' ? 'PRICED' : x.kind === 'zeroSeed' ? '$0 seed (ours)' : 'no';
+      row.getCell(5).value = Math.round(x.tot); row.getCell(5).numFmt = '#,##0'; row.getCell(5).alignment = { horizontal: 'right' };
+    });
 
     // A short cover so the file is self-explanatory when it's forwarded on.
     const s = summarize();
@@ -510,8 +607,9 @@
     cv.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: 'FF79828C' } };
     let cr = 4;
     [
-      ['Safe to apply', `${s.safe} — confident match, money moved, nobody has staffed it yet. These are pre-selected.`],
-      ['Staffed · needs review', `${s.review} — a revenue leader has already built staffing here. NOT selected; each one is a conversation.`],
+      ['Safe to apply', `${s.safe} — confident match, money moved, and either unstaffed or staffed only by OUR $0-rate matrix seed (revenue stays override-driven, so the update can't fight anyone's fee model). These are pre-selected.`],
+      ['Priced staffing · needs review', `${s.review} — a revenue leader has real rates on this roster. NOT selected; each one is a conversation.`],
+      ['Reconciled · number changed', `${s.reconciledChanged} — the project was marked reconciled (projections follow its fee model) and the sheet now disagrees. NEVER auto-applied; see the "In tool, not in sheet" tab for the reverse gaps too.`],
       ['New projects', `${s.newProj} — flagged "New" by finance and not found in the tool. Opt-in to create.`],
       ['No match — human needed', `${s.unmatched} — the tool could not find these and finance did not flag them new. Link them by hand; importing blind would create duplicates.`],
       ['No change', `${s.unchanged} — sheet agrees with the tool already.`],
@@ -559,7 +657,7 @@
 
   function renderTable() {
     const tb = $('#ri-tbody');
-    if (!state.groups.length) { tb.innerHTML = `<tr><td colspan="9" class="empty">Drop a revenue projections workbook above.</td></tr>`; return; }
+    if (!state.groups.length) { tb.innerHTML = `<tr><td colspan="8" class="empty">Drop a revenue projections workbook above.</td></tr>`; renderMissing(); return; }
     tb.innerHTML = state.groups.map((g, i) => {
       const matchedId = state.overrides[g.key] !== undefined ? state.overrides[g.key] : (g.match && g.match.id) || '';
       const matchedProject = matchedId ? STORE.getProject(matchedId) : null;
@@ -572,29 +670,46 @@
         : (via === 'confirmed' ? `<span class="ri-badge ri-id" title="You linked this on a previous revision — remembered">✓ Confirmed</span>`
           : via === 'id' ? `<span class="ri-badge ri-id">ID match</span>`
           : `<span class="ri-badge ri-name" title="Fuzzy name match — check it">Name match${g.match && g.match.score ? ' · ' + g.match.score + '%' : ''}</span>`);
-      const clsBadge = `<div class="ri-cls ${CLASS[cls].tone}" title="${cls === 'review' ? 'A revenue leader has staffing on this project — importing changes their numbers underneath them' : ''}">${CLASS[cls].label}</div>`;
+      const clsBadge = `<div class="ri-cls ${CLASS[cls].tone}" title="${cls === 'review' ? 'A revenue leader has priced staffing on this project — importing changes their numbers underneath them' : cls === 'reconciledChanged' ? 'This project was marked reconciled — its projections follow the fee model now, so a sheet change here is a conversation, not an auto-apply' : ''}">${CLASS[cls].label}</div>`;
       const comment = g.comments ? `<div class="raw" style="color:#4a4f5e"><b>Finance:</b> ${esc(g.comments.slice(0, 160))}${g.comments.length > 160 ? '…' : ''}</div>` : '';
-      const deltaTxt = d.isNew ? `${money(d.totalDelta)} (new)` : (d.changedMonths ? `${d.totalDelta >= 0 ? '+' : ''}${money(d.totalDelta)} across ${d.changedMonths} mo` : 'no change');
       const lockWarn = d.locked ? `<div class="ri-warn">⚠ locked to its original import — a new override won't show until this project is reconciled</div>` : '';
       const feeShareNote = g.feeSharePct > 0
         ? `<div class="raw" style="color:#8a6d00">− broker ${g.feeSharePct}%${matchedId ? ' (existing project — set feeShare manually if needed, not auto-applied)' : ' — applied on create'}</div>`
         : '';
+      // revenue cell: both sides + the delta, so "matches or different" reads at a glance
+      const revCell = d.isNew
+        ? `<div class="num">sheet <b>${money(d.sheetTotal)}</b></div><div class="raw">no tool side — would be created</div>`
+        : d.changedMonths
+          ? `<div class="num">sheet <b>${money(d.sheetTotal)}</b> · tool ${money(d.toolTotal)}</div><div class="num ri-delta">${d.totalDelta >= 0 ? '+' : ''}${money(d.totalDelta)} across ${d.changedMonths} mo</div>${lockWarn}`
+          : `<div class="num">✓ matches · ${money(d.sheetTotal)}</div>`;
+      // timeframe cell: sheet revenue months vs the tool's project timeline
+      const tfCell = !d.sheetSpan ? '<span class="raw">—</span>'
+        : d.isNew ? `<div>${esc(d.sheetSpan.label)}</div><div class="raw">sheet only</div>`
+        : d.spanOk
+          ? `<div>✓ fits · ${esc(d.sheetSpan.label)}</div><div class="raw">tool runs ${esc(d.toolSpan ? d.toolSpan.label : '—')}</div>`
+          : `<div style="color:#a3352d;font-weight:700">≠ sheet ${esc(d.sheetSpan.label)}</div><div class="raw">tool runs ${esc(d.toolSpan ? d.toolSpan.label : 'no timeline')} — revenue would land outside the project window</div>`;
+      // staffing cell: whose staffing is it, and does it block a $ change?
+      const stCell = d.isNew ? '<span class="raw">—</span>'
+        : d.reconciled ? `<span class="ri-badge" style="background:#fbe9ea;color:#b3151b" title="Marked reconciled in the calculator — projections follow its fee model">✓ reconciled</span>`
+        : d.staffKind === 'priced' ? `<span class="ri-badge" style="background:#fdf3d7;color:#8a6d00" title="Real rates on the roster — a revenue leader owns these numbers">priced staffing</span>`
+        : d.staffKind === 'zeroSeed' ? `<span class="ri-badge" style="background:#e7f0ee;color:#0E7C7B" title="Staffing WE seeded from the matrix at a $0 placeholder rate — revenue stays override-driven, safe to update">$0 seed (ours)</span>`
+        : `<span class="raw">not staffed</span>`;
       return `<tr class="ri-row" data-key="${esc(g.key)}">
         <td><input type="checkbox" class="ri-check" data-key="${esc(g.key)}" ${checked ? 'checked' : ''}></td>
         <td>${esc(g.client)}</td>
-        <td>${esc(g.project)}${g.rows.length > 1 ? `<span class="raw">${g.rows.length} sheet rows summed</span>` : ''}${g.newOrEdit ? `<span class="raw" style="color:#8a6d00">sheet: ${esc(String(g.newOrEdit))}</span>` : ''}${feeShareNote}${comment}</td>
-        <td>${esc(g.rating || '—')}${clsBadge}</td>
+        <td>${esc(g.project)}${g.rows.length > 1 ? `<span class="raw">${g.rows.length} sheet rows summed</span>` : ''}${g.rating ? `<span class="raw">${esc(g.rating)}</span>` : ''}${g.newOrEdit ? `<span class="raw" style="color:#8a6d00">sheet: ${esc(String(g.newOrEdit))}</span>` : ''}${clsBadge}${feeShareNote}${comment}</td>
         <td>${matchBadge}<div class="ri-match-pick"><input list="ri-projects-${i}" class="ri-match-input" data-key="${esc(g.key)}" value="${matchedProject ? esc(((matchedProject.project||{}).client||'') + ' — ' + ((matchedProject.project||{}).name||'')) : ''}" placeholder="type to link… or leave blank = new"><datalist id="ri-projects-${i}">${projectOptionsDatalist()}</datalist></div></td>
-        <td class="num">${money(g.totalsByYear[2026] || 0)}</td>
-        <td class="num">${money(g.totalsByYear[2027] || 0)}</td>
-        <td class="num ${d.changedMonths || d.isNew ? 'ri-delta' : ''}">${deltaTxt}${lockWarn}</td>
+        <td>${revCell}</td>
+        <td>${tfCell}</td>
+        <td>${stCell}</td>
         <td><button class="ri-expand" data-key="${esc(g.key)}" title="Month-by-month detail">▸</button></td>
       </tr>
-      <tr class="ri-detail-row" data-detail="${esc(g.key)}" hidden><td colspan="9">
+      <tr class="ri-detail-row" data-detail="${esc(g.key)}" hidden><td colspan="8">
         <table class="ri-detail"><thead><tr><th>Yr</th>${Array.from({length:12},(_,i)=>`<th>${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</th>`).join('')}<th>Total</th></tr></thead>
         <tbody>${monthDiffTable(g, matchedId)}</tbody></table>
       </td></tr>`;
     }).join('');
+    renderMissing();
 
     $$('.ri-check').forEach(cb => cb.onchange = () => { const k = cb.dataset.key; if (cb.checked) state.included.add(k); else state.included.delete(k); renderSummary(); });
     $$('.ri-expand').forEach(b => b.onclick = () => {
@@ -617,6 +732,29 @@
   }
   function projectOptionsDatalist() {
     return state.projectIndex.map(p => `<option value="${esc(p.label)}">`).join('');
+  }
+
+  /* The reverse half of the comparison: tool projects the sheet never
+     mentions. Read-only — the fix is either "sheet is incomplete, tell
+     finance" or "it's a rename, link it on a sheet row above". */
+  function renderMissing() {
+    const card = document.getElementById('ri-missing-card');
+    const host = document.getElementById('ri-missing');
+    if (!card || !host) return;
+    if (!state.groups.length) { card.hidden = true; host.innerHTML = ''; return; }
+    const list = missingFromSheet();
+    card.hidden = false;
+    if (!list.length) { host.innerHTML = '<p class="hint" style="margin:6px 0 2px">Every tool project with revenue in these years appears in the sheet — full book accounted for. ✓</p>'; return; }
+    host.innerHTML = `<p class="hint" style="margin:6px 0 10px">${list.length} project${list.length === 1 ? '' : 's'} carr${list.length === 1 ? 'ies' : 'y'} ${money(list.reduce((s, x) => s + x.tot, 0))} of ${state.years.join('/')} revenue in the tool but never appear${list.length === 1 ? 's' : ''} in this workbook.</p>
+      <table class="ri"><thead><tr><th>Project (tool)</th><th>Status</th><th>Timeframe</th><th>Staffing</th><th class="num">Tool revenue · ${state.years.join('+')}</th></tr></thead><tbody>
+      ${list.map(x => `<tr>
+        <td>${esc(x.label)}</td>
+        <td>${esc(((x.rec.project || {}).status) || '—')}</td>
+        <td>${esc(x.span ? x.span.label : '—')}</td>
+        <td>${x.reconciled ? '<span class="ri-badge" style="background:#fbe9ea;color:#b3151b">✓ reconciled</span>' : x.kind === 'priced' ? '<span class="ri-badge" style="background:#fdf3d7;color:#8a6d00">priced staffing</span>' : x.kind === 'zeroSeed' ? '<span class="ri-badge" style="background:#e7f0ee;color:#0E7C7B">$0 seed (ours)</span>' : '<span class="raw">not staffed</span>'}</td>
+        <td class="num">${money(x.tot)}</td>
+      </tr>`).join('')}
+      </tbody></table>`;
   }
 
   async function applySelected() {

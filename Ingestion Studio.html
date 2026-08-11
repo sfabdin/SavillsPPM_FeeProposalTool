@@ -266,11 +266,13 @@
 
   <div id="mode-bulk" hidden>
   <p class="intro">
-    Drop a revenue leader's <strong>"3. Detailed Revenues"</strong> workbook. Projects with no 2026 or 2027 revenue are dropped
-    automatically. Everything else is matched against what's already in the system — by Project ID first, then by name &amp;
-    client — and diffed against whatever's <strong>currently in effect</strong> on that project (a manual override if one's
-    set, otherwise the computed figure). Nothing imports until you tick it — matched-and-unchanged and brand-new projects
-    start unchecked on purpose, so a bulk import can never silently duplicate or create something you didn't mean to.
+    Drop a revenue leader's <strong>"3. Detailed Revenues"</strong> workbook. This is a <strong>full book vs full book</strong>
+    comparison: every sheet row is matched against the system — by Project ID first, then by name &amp; client — and each row
+    shows the name on both sides, total revenue, timeframe and staffing state, with the differences flagged; projects in the
+    tool that the sheet never mentions are listed separately below. Staffing that WE seeded at a $0 placeholder rate doesn't
+    block a revenue update (the dollars are override-driven either way), but a project someone has <strong>marked
+    reconciled</strong> is never auto-changed. Nothing imports until you tick it — matched-and-unchanged and brand-new
+    projects start unchecked on purpose, so a bulk import can never silently duplicate or create something you didn't mean to.
   </p>
 
   <section class="card">
@@ -306,12 +308,21 @@
     <table class="ri">
       <thead>
         <tr>
-          <th></th><th>Client</th><th>Project</th><th>Rating</th><th>Match</th>
-          <th class="num">2026</th><th class="num">2027</th><th>Δ vs current</th><th></th>
+          <th></th><th>Client</th><th>Project (sheet)</th><th>Match → in the tool</th>
+          <th>Revenue · sheet vs tool</th><th>Timeframe</th><th>Staffing</th><th></th>
         </tr>
       </thead>
       <tbody id="ri-tbody"></tbody>
     </table>
+  </section>
+
+  <section class="card" id="ri-missing-card" hidden>
+    <div class="card-head">
+      <span class="ix">03 · In the tool, not in the sheet</span>
+      <h2>Projects this workbook doesn't mention.</h2>
+      <span class="hint">The other half of a full-book comparison. Either genuinely absent from the sheet, or living there under a different name — link those by typing in the match column above and the row leaves this list.</span>
+    </div>
+    <div id="ri-missing"></div>
   </section>
 
   <div class="createbar">
