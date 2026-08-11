@@ -10,8 +10,8 @@
       there:
         Cover · Compare (Plan/Contract/Actual) · By Project · By Person
         · Allocations · Contract vs Staffing (the bridge) · Leaves
-        · Insights · Time Entry · Mapping · Actuals (raw)
-   2) UFC_buildAndDownloadTimeEntryExport() — the Time Entry tab on its
+        · Insights · Clockify Reporting · Mapping · Actuals (raw)
+   2) UFC_buildAndDownloadTimeEntryExport() — the Clockify Reporting tab on its
       own, reproducing the on-screen colour coding cell for cell.
 
    Both share the palette + helpers below.
@@ -122,7 +122,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
       ['Contract vs Staffing', 'The bridge: contract demand the matrix has not staffed, by segment.'],
       ['Leaves', 'Leaves of absence — who is out, when, and when they return.'],
       ['Insights', 'Every Insights card as a table: overextended, coverage gaps, headroom, pursuit exposure, coming available, internal time.'],
-      ['Time Entry', 'Compliance grid with the same colour coding as the tab (also available as its own download).'],
+      ['Clockify Reporting', 'Compliance grid with the same colour coding as the tab (also available as its own download).'],
       ['Mapping', 'Roster ↔ Clockify users, employment type, titles, and project ↔ fee-tool links.'],
       ['Actuals', 'Raw logged hours — person × project × month.'],
     ];
@@ -667,7 +667,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
   const comp = S.complianceRows(monthsList, opts || {});
   const ms = comp.months, rows = comp.rows;
 
-  const ws = wb.addWorksheet('Time Entry', { views: [{ state: 'frozen', ySplit: 1, xSplit: 1 }] });
+  const ws = wb.addWorksheet('Clockify Reporting', { views: [{ state: 'frozen', ySplit: 1, xSplit: 1 }] });
   headerRow(ws, [
     { h: 'Person', w: 26 },
     ...ms.map(m => ({ h: S.ymLabel(m) + (m === comp.nowYm ? ' (pro-rata)' : ''), w: 11, align: 'right' })),
@@ -749,7 +749,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
 
   /* Optional per-person × month detail sheet (standalone export only) */
   if (cfg.includeDetail) {
-    const d = wb.addWorksheet('Time Entry detail', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const d = wb.addWorksheet('Clockify Reporting detail', { views: [{ state: 'frozen', ySplit: 1 }] });
     headerRow(d, [
       { h: 'Person', w: 26 }, { h: 'Title', w: 24 }, { h: 'Employment', w: 14 }, { h: 'Month', w: 11 },
       { h: 'Logged hrs', w: 12, align: 'right' }, { h: 'Their bar hrs', w: 13, align: 'right' },
@@ -786,26 +786,26 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
   return comp;
 }
 
-/** Standalone Time Entry download — the tab plus a flat detail sheet. */
+/** Standalone Clockify Reporting download — the tab plus a flat detail sheet. */
 window.UFC_buildAndDownloadTimeEntryExport = async function (monthsList, opts) {
   const S = window.UFC_Staff;
   const STORE = window.UFC_Store;
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Savills PPM';
   wb.created = new Date();
-  wb.title = 'Time Entry Compliance';
+  wb.title = 'Clockify Reporting';
   const dateStr = new Date().toISOString().slice(0, 10);
   const who = (STORE.getCurrentUser() || {}).username || 'unknown';
 
   writeTimeEntrySheets(wb, S, monthsList || [], opts || {}, { includeDetail: true });
 
   // stamp provenance on the grid sheet
-  const ws = wb.getWorksheet('Time Entry');
+  const ws = wb.getWorksheet('Clockify Reporting');
   const lastRow = ws.lastRow ? ws.lastRow.number + 2 : 2;
   ws.getCell(`A${lastRow}`).value = `Exported ${dateStr} by ${who} · static values, not live formulas`;
   ws.getCell(`A${lastRow}`).font = { name: 'Calibri', italic: true, size: 9, color: { argb: STEEL } };
 
-  await download(wb, `Time-Entry-Compliance_${dateStr}.xlsx`);
+  await download(wb, `Clockify-Reporting_${dateStr}.xlsx`);
 };
 
 })();

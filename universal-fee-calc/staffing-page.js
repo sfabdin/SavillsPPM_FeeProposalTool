@@ -86,7 +86,8 @@
     editingAlloc: null,
     canonProposals: null,
     mapSearch: '', mapOnlyProblems: false, clockifyNames: null,
-    compSearch: '', compSort: { key: 'behind', dir: -1 },   // Time Entry table: filter + column sort
+    compSearch: '', compSort: { key: 'behind', dir: -1 },   // Clockify Reporting table: filter + column sort
+    compView: 'summary',                                    // 'summary' (grouped + sparklines) | 'grid' (month detail)
   };
 
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
@@ -103,6 +104,19 @@
     return hits.length === 1 ? hits[0] : null;
   }
   function isPursuitAlloc(a) { return a.status === 'Pursuit' || a.type === 'Opportunity'; }
+  /** Switch to a named tab (button highlight + panel + render). */
+  function setTab(name) {
+    const t = document.querySelector(`#tabs .tab[data-tab="${name}"]`);
+    if (!t) return;
+    state.tab = name;
+    $$('#tabs .tab').forEach(x => x.classList.toggle('active', x === t));
+    $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
+    renderActive();
+  }
+  /** Wire every data-goto-tab link inside a container. */
+  function wireGoto(sel) {
+    $$(sel + ' [data-goto-tab]').forEach(a => a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); setTab(a.dataset.gotoTab); });
+  }
 
   /* ---------- identity bar (shared pattern) ---------- */
   function buildIdentityBar() {
@@ -339,9 +353,7 @@
       <select id="al-status"><option value="">All statuses</option><option ${state.allocStatus === 'Active' ? 'selected' : ''}>Active</option><option ${state.allocStatus === 'Pursuit' ? 'selected' : ''}>Pursuit</option></select>
       <select id="al-project">${projOpts}</select>
       <span class="grow"></span>
-      <span class="note-txt" id="matrix-meta"></span>
-      <button class="btn btn-ghost" id="canon-sync" title="Pull Clockify's project list and rename matrix projects to the canonical names — one-time mapping, remembered for future sheet imports">⇄ Sync names from Clockify</button>
-      <button class="btn btn-ghost" id="matrix-reimport" title="Replace all allocations from a fresh export of the staffing sheet (Data tab or CSV). Actuals and roster edits are kept.">⇪ Re-import JS sheet</button>
+      <span class="note-txt">Sheet re-import &amp; name sync live in <a href="#" data-goto-tab="sources" style="font-weight:700">Data Sources</a></span>
       <button class="btn btn-primary" id="al-add">+ Add allocation</button>
     </div>`;
 
@@ -385,11 +397,7 @@
     $('#al-status').onchange = (e) => { state.allocStatus = e.target.value; renderAllocations(); };
     $('#al-project').onchange = (e) => { state.allocProject = e.target.value; renderAllocations(); };
     $('#al-add').onclick = () => openAllocModal(null);
-    const mm = $('#matrix-meta');
-    if (mm) { const meta = S.readDb().meta || {}; mm.textContent = meta.matrixImportedAt ? `Matrix: ${meta.matrixSource || 'seed v43'} · ${new Date(meta.matrixImportedAt).toLocaleDateString()}` : ''; }
-    const mr = $('#matrix-reimport'); if (mr) mr.onclick = () => $('#matrix-file').click();
-    const cs = $('#canon-sync'); if (cs) cs.onclick = startCanonSync;
-    if (state.canonProposals) renderCanonReview();
+    wireGoto('#p-allocations');
     const clr = $('#al-clear'); if (clr) clr.onclick = (e) => { e.preventDefault(); state.allocSearch = state.allocStatus = state.allocProject = ''; renderAllocations(); };
     $$('#p-allocations [data-edit]').forEach(b => b.onclick = () => openAllocModal(b.dataset.edit));
     $$('#p-allocations [data-del]').forEach(b => b.onclick = () => { const a = S.listAllocations().find(x => x.id === b.dataset.del); if (a && confirm(`Delete ${(S.getPerson(a.personId) || {}).name} on ${a.project}?`)) { S.deleteAllocation(b.dataset.del); renderAll(); } });
@@ -552,37 +560,18 @@
     $$('#p-people [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
   }
 
-  /* ---------- ACTUALS vs EXPECTED ---------- */
+  /* ---------- ACTUALS vs EXPECTED ----------
+     Just the comparison now. The Clockify import card, the ①②③ glossary and
+     the data-health notices that used to stack above it live on Data Sources
+     (import + health) and in the header glossary button — this tab opens on
+     the thing it's named after. */
   function renderActuals() {
     const has = S.hasActuals();
-    const meta = S.actualsMeta();
-    let html = importCard(has, meta);
-
-    // Always-available explainer for the ①②③ vocabulary this whole tab runs on.
-    html += `<details style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px" ${state.glossaryOpen ? 'open' : ''} id="cmp-glossary">
-      <summary style="padding:9px 14px;cursor:pointer;font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">❓ What do ① ② ③ mean?</summary>
-      <div style="padding:2px 16px 12px;font-size:12.5px;line-height:1.7;color:var(--sav-steel)">
-        <div><b style="color:#0E7C7B">① Plan (matrix)</b> — who we <b>plan</b> to staff: names and allocation % entered in this tool. Expected hours = ${S.monthHours()} hrs/mo × capacity% × allocation%.</div>
-        <div><b style="color:#79828C">② Contract (fee tool)</b> — what the signed fee matrix <b>priced</b>: titles and hours, no names. Flows in from the linked fee-tool project — the <b>Mapping</b> tab controls that link.</div>
-        <div><b style="color:#b39b00">③ Actual (Clockify)</b> — what actually got <b>logged</b>, split into billable / macro / Time Off in the chart.</div>
-        <div style="margin-top:4px">Healthy = ③ tracks ①, and both stay inside ②. ▲ over plan · ▼ under · ● on plan (±10%).</div>
-      </div>
-    </details>`;
-
-    // Data health — surface entry gaps here, where people actually look,
-    // instead of only on the separate Data Entry Status page.
-    {
-      const missEnd = S.listAllocations().filter(a => !a.end).length;
-      const noTitle = S.listPeople().filter(p => p.active !== false && !(p.title || '').trim()).length;
-      const unlinked = S.distinctProjects().filter(pn => !S.isMacroProject(pn) && !S.isTimeOffProject(pn) && !S.matchFeeProjects(pn, '').length).length;
-      const bits = [];
-      if (missEnd) bits.push(`<a href="#" data-goto-tab="allocations"><b>${missEnd}</b> allocation${missEnd === 1 ? '' : 's'} missing an end date</a>`);
-      if (noTitle) bits.push(`<a href="#" data-goto-tab="mapping"><b>${noTitle}</b> ${noTitle === 1 ? 'person' : 'people'} without a title</a> (their cost rate reads $0)`);
-      if (unlinked) bits.push(`<a href="#" data-goto-tab="mapping"><b>${unlinked}</b> project${unlinked === 1 ? '' : 's'} not linked to the fee tool</a> (no ② Contract line)`);
-      if (bits.length) html += `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#fdf6e3;border-left:3px solid #e8b563">🩺 Data health: ${bits.join(' · ')}</div>`;
+    let html = '';
+    if (!has) {
+      const meta = S.actualsMeta();
+      html += `<div class="note-txt" style="margin:0 0 12px;padding:10px 14px;background:#fdf6e3;border-left:3px solid #e8b563">③ Actuals aren't loaded${meta.importedAt ? '' : ' yet'} — the comparison below shows ① Plan vs ② Contract only. <a href="#" data-goto-tab="sources" style="font-weight:700">Load them in Data Sources →</a></div>`;
     }
-
-    if (state.clockifyReport) html += reportBlock(state.clockifyReport);
 
     const cat = window.RATES_CATALOG;
     const canDollars = !!(cat && cat.hydrated);
@@ -888,14 +877,14 @@
       drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) readClockify(e.dataTransfer.files[0]); };
     }
     if (fileInput) fileInput.onchange = () => { if (fileInput.files[0]) readClockify(fileInput.files[0]); fileInput.value = ''; };
-    const ca = $('#clear-actuals'); if (ca) ca.onclick = (e) => { e.preventDefault(); if (confirm('Clear all imported actual hours?')) { S.clearActuals(); state.clockifyReport = null; renderActuals(); } };
-    const cm = $('#commit-merge'); if (cm) cm.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'replace'); state.clockifyReport = null; state.clockifyRaw = null; renderActuals(); toast(`Imported ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped (unmatched)` : ''}.`); };
-    const cadd = $('#commit-add'); if (cadd) cadd.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'merge'); state.clockifyReport = null; state.clockifyRaw = null; renderActuals(); toast(`Added ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped` : ''}.`); };
-    const cc = $('#commit-cancel'); if (cc) cc.onclick = () => { state.clockifyReport = null; state.clockifyRaw = null; renderActuals(); };
+    const ca = $('#clear-actuals'); if (ca) ca.onclick = (e) => { e.preventDefault(); if (confirm('Clear all imported actual hours?')) { S.clearActuals(); state.clockifyReport = null; renderSources(); renderFreshness(); } };
+    const cm = $('#commit-merge'); if (cm) cm.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'replace'); state.clockifyReport = null; state.clockifyRaw = null; renderSources(); renderFreshness(); toast(`Imported ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped (unmatched)` : ''}.`); };
+    const cadd = $('#commit-add'); if (cadd) cadd.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'merge'); state.clockifyReport = null; state.clockifyRaw = null; renderSources(); renderFreshness(); toast(`Added ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped` : ''}.`); };
+    const cc = $('#commit-cancel'); if (cc) cc.onclick = () => { state.clockifyReport = null; state.clockifyRaw = null; renderSources(); };
     // mapping selects — save + instantly re-analyze the same file
-    const reanalyze = () => { if (state.clockifyRaw) { state.clockifyReport = S.analyzeClockify(state.clockifyRaw, months()[0]); renderActuals(); } };
-    $$('#p-actuals [data-map-user]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setUserMapping(sel.dataset.mapUser, sel.value); toast('Mapping saved — re-checked.'); reanalyze(); });
-    $$('#p-actuals [data-map-proj]').forEach(inp => inp.onchange = () => {
+    const reanalyze = () => { if (state.clockifyRaw) { state.clockifyReport = S.analyzeClockify(state.clockifyRaw, months()[0]); renderSources(); } };
+    $$('#p-sources [data-map-user]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setUserMapping(sel.dataset.mapUser, sel.value); toast('Mapping saved — re-checked.'); reanalyze(); });
+    $$('#p-sources [data-map-proj]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;
       const isIgnore = v.toLowerCase() === 'ignore';
       const hit = isIgnore ? '__ignore__' : S.distinctProjects().find(p => p.toLowerCase() === v.toLowerCase());
@@ -916,7 +905,7 @@
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
         state.clockifyRaw = await res.text();
         state.clockifyReport = S.analyzeClockify(state.clockifyRaw, ms[0]);
-        renderActuals();
+        renderSources();
       } catch (e) { setNote('Clockify pull failed: ' + e.message + (String(e.message).includes('configured') || String(e.message).includes('501') ? ' — set CLOCKIFY_API_KEY + CLOCKIFY_WORKSPACE_ID in Vercel.' : ''), true); pa.disabled = false; }
     };
     const pb = $('#pull-box');
@@ -926,7 +915,7 @@
         if (!window.UFC_Box || !window.UFC_Box.pullActuals) throw new Error('Box layer not loaded');
         state.clockifyRaw = await window.UFC_Box.pullActuals();
         state.clockifyReport = S.analyzeClockify(state.clockifyRaw, months()[0]);
-        renderActuals();
+        renderSources();
       } catch (e) { setNote('Box pull failed: ' + e.message, true); pb.disabled = false; }
     };
   }
@@ -937,7 +926,7 @@
       const defMonth = months()[0];
       state.clockifyRaw = String(rd.result);
       state.clockifyReport = S.analyzeClockify(state.clockifyRaw, defMonth);
-      renderActuals();
+      renderSources();
     };
     rd.readAsText(file);
   }
@@ -1380,26 +1369,24 @@
      counts as "logged" against capacity (monthHours × cap%); people with
      allocations in a month but no hours are behind. Current month is judged
      pro-rata by working days elapsed. ---------- */
+  /* ---------- CLOCKIFY REPORTING (was "Time Entry") ----------
+     Rebuilt to answer one question first — who do I need to chase, and by
+     how much — instead of opening on a wall of percentages. The month grid
+     survives one click away under "Month detail". Same engine
+     (staff.js complianceRows) drives this tab AND the Excel export, so the
+     two can never disagree. */
   function renderCompliance() {
     const late = S.getLateness();
-    const lateBar = `<div class="toolbar">
-      <button class="btn btn-secondary" id="pull-lateness">⟳ Pull entry lateness (API)</button>
-      <span class="note-txt" id="late-note">${late.at ? 'Lateness last pulled ' + new Date(late.at).toLocaleString() : 'Lateness = when an entry was CREATED vs the day the work happened (decoded from Clockify entry IDs). One aggregated call — fast.'}</span>
+    const topBar = `<div class="toolbar">
+      <span class="note-txt">${late.at ? 'Entry lateness pulled ' + new Date(late.at).toLocaleString() + ' — refresh it in <a href="#" data-goto-tab="sources" style="font-weight:700">Data Sources</a>.' : 'Lag numbers are empty until entry lateness is pulled — <a href="#" data-goto-tab="sources" style="font-weight:700">pull it in Data Sources →</a>'}</span>
       <span class="grow"></span>
-      <button class="btn btn-primary" id="export-timeentry" title="Download this tab as Excel — same month grid, same colour coding, plus per-person detail and the not-tracked list">⭳ Export Time Entry</button>
+      <button class="btn btn-primary" id="export-timeentry" title="Download this report as Excel — same month grid, same colour coding, plus per-person detail and the not-tracked list">⭳ Export Clockify Reporting</button>
     </div>`;
-    if (!S.hasActuals()) { $('#p-compliance').innerHTML = lateBar + '<div class="empty">No Clockify actuals loaded — pull them on the Compare tab first. Compliance is computed from logged hours by month.</div>'; wireLateness(); return; }
-    // Engine does the work (staff.js complianceRows) so this tab and its
-    // Excel export are guaranteed to show identical numbers and states.
+    if (!S.hasActuals()) { $('#p-compliance').innerHTML = topBar + '<div class="empty">No Clockify actuals loaded — <a href="#" data-goto-tab="sources" style="font-weight:700">load them in Data Sources →</a>. This report is computed from logged hours by month.</div>'; wireLateness(); wireGoto('#p-compliance'); return; }
     const comp = S.complianceRows(months(), { clockifyUsers: state.clockifyUsers || [] });
     const ms = comp.months, rows = comp.rows, untracked = comp.untracked;
     const nowYm = comp.nowYm, prorata = comp.prorata;
-    if (!ms.length) { $('#p-compliance').innerHTML = lateBar + '<div class="empty">Window is entirely in the future — step back to see logged months.</div>'; wireLateness(); return; }
-    const behindNow = rows.filter(r => r.lastMs === nowYm ? r.lastPct < 0.8 * 1 : r.lastPct < 0.8);
-    const zeroNow = rows.filter(r => r.byMonth[nowYm] && r.byMonth[nowYm].h === 0);
-    const teamPct = rows.length ? rows.reduce((s, r) => s + r.compliance, 0) / rows.length : 0;
-    const chronic = rows.filter(r => r.expectedMonths >= 3 && r.compliance < 0.5);
-    const stars = rows.filter(r => r.expectedMonths >= 3 && r.compliance >= 0.95).sort((a, b) => b.expectedMonths - a.expectedMonths);
+    if (!ms.length) { $('#p-compliance').innerHTML = topBar + '<div class="empty">Window is entirely in the future — step back to see logged months.</div>'; wireLateness(); wireGoto('#p-compliance'); return; }
 
     // ---- lateness join: rows from the API, per person over the window ----
     const lateRows = late.rows.filter(r => ms.includes(r.ym));
@@ -1411,80 +1398,154 @@
       a.entries += r.entries; a.lagW += r.avgLag * r.entries; a.maxLag = Math.max(a.maxLag, r.maxLag);
       a.w3 += r.pctWithin3 * r.entries / 100; a.w7 += r.pctWithin7 * r.entries / 100;
     });
-    const lateList = Object.values(latePP).map(a => ({ ...a, avgLag: a.entries ? a.lagW / a.entries : 0, p3: a.entries ? a.w3 / a.entries * 100 : 0, p7: a.entries ? a.w7 / a.entries * 100 : 0 })).filter(a => a.entries >= 5);
-    const worstLag = lateList.slice().sort((x, y) => y.avgLag - x.avgLag).slice(0, 12);
-    const teamLag = lateList.length ? lateList.reduce((s, a) => s + a.lagW, 0) / lateList.reduce((s, a) => s + a.entries, 0) : null;
-    const teamP7 = lateList.length ? lateList.reduce((s, a) => s + a.w7, 0) / lateList.reduce((s, a) => s + a.entries, 0) * 100 : null;
-    const latenessCard = late.rows.length ? `
-        <div class="ins-card"><h3>🐌 Latest loggers <span>· days between doing the work and entering it · team avg <b>${teamLag != null ? teamLag.toFixed(1) : '—'}d</b> · ${teamP7 != null ? Math.round(teamP7) : '—'}% within a week</span></h3><table class="dt"><thead><tr><th>Person</th><th class="num">Avg lag</th><th class="num">Worst</th><th class="num">≤3 days</th><th class="num">≤7 days</th></tr></thead><tbody>${worstLag.map(a => `<tr><td class="pname">${esc(a.name)}</td><td class="num ${a.avgLag > 7 ? 'var-over' : a.avgLag > 3 ? 'var-under' : 'var-ok'}">${a.avgLag.toFixed(1)}d</td><td class="num">${Math.round(a.maxLag)}d</td><td class="num">${Math.round(a.p3)}%</td><td class="num">${Math.round(a.p7)}%</td></tr>`).join('')}</tbody></table></div>` : `
-        <div class="ins-card"><h3>🐌 Entry lateness</h3><div class="empty" style="border:0">Not pulled yet — click “⟳ Pull entry lateness” above. It answers “who logs late and by how many days”, decoded from entry creation timestamps.</div></div>`;
+    const lagOf = (pid) => { const a = latePP[pid]; return a && a.entries ? a.lagW / a.entries : null; };
+    const teamLag = (() => { const as = Object.values(latePP); const e = as.reduce((s, a) => s + a.entries, 0); return e ? as.reduce((s, a) => s + a.lagW, 0) / e : null; })();
 
-    // ---- discipline score: completeness (compliance) × timeliness (≤7-day share) ----
-    const lagByPid = {}; Object.entries(latePP).forEach(([pid, a]) => lagByPid[pid] = a);
-    const disc = rows.filter(r => r.expectedMonths >= 2).map(r => {
-      const la = lagByPid[r.person.id];
-      const p7 = la && la.entries ? la.w7 / la.entries : null;
-      const score = p7 == null ? r.compliance : (r.compliance * 0.6 + p7 * 0.4);
-      return { person: r.person, compliance: r.compliance, p7, score };
-    }).sort((a, b) => a.score - b.score);
-    const worstDisc = disc.filter(d => d.score < 0.6).slice(0, 8);
+    // ---- headline numbers ----
+    const totMissing = rows.reduce((s, r) => s + r.behindHrs, 0);
+    const behindRows = rows.filter(r => r.behindHrs > 8);   // engine sorts behind-desc already
+    let nowH = 0, nowEff = 0;
+    // capM is ALREADY pro-rated for the current month by the engine — don't re-apply.
+    rows.forEach(r => { const c = r.byMonth[nowYm]; if (c && c !== 'leave') { nowH += c.h; nowEff += c.capM; } });
+    const nowPct = nowEff ? Math.round(nowH / nowEff * 100) : null;
 
-    const cellFor = (c, ym) => {
-      if (c === 'leave') return '<td title="On leave of absence — no hours expected"><span class="cell" style="background:#efe6f7;color:#6b3fa0">🌴</span></td>';
-      if (!c) return '<td><span class="cell u0">·</span></td>';
-      const p = Math.round(c.pct * 100);
-      const cls = p >= 100 ? 'u2' : p >= 80 ? 'u1' : p > 0 ? 'u3' : 'u5';
-      return `<td title="${fmtH(c.h)} / ${fmtH(c.capM)} h"><span class="cell ${cls}" style="${p === 0 ? 'color:#fff' : ''}">${p}%</span></td>`;
+    // ---- chase list: the shortest path from this tab to fixed data ----
+    const reasonFor = (r) => {
+      const nowCell = r.byMonth[nowYm];
+      const lag = lagOf(r.person.id);
+      if (nowCell && nowCell !== 'leave' && nowCell.h === 0) return `Nothing at all logged for ${S.ymLabel(nowYm)} — the month is ${Math.round(prorata * 100)}% gone.`;
+      const expMs = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave');
+      const under = expMs.filter(m => r.byMonth[m].pct < 0.8).length;
+      if (r.compliance < 0.5 && r.expectedMonths >= 3) return `Under target ${under} of ${expMs.length} months — their projects read as under-served in Compare even if the work happened.`;
+      const recent = expMs.slice(-3);
+      if (recent.length === 3 && recent.every(m => r.byMonth[m].pct < 0.8)) return `Slipping — 3 months in a row under target.`;
+      if (lag != null && lag > 7) return `Logs late rather than not at all — ${lag.toFixed(1)}-day average lag.`;
+      return `${fmtH(r.behindHrs)} h short of their own bar across the window.`;
     };
-    // ---- main table: searchable + sortable on every column ----
+    const chaseTop = behindRows.slice(0, 4);
+    const chaseSum = chaseTop.reduce((s, r) => s + r.behindHrs, 0);
+    const chaseHtml = chaseTop.length ? `
+      <div class="chase"><b>Chase ${chaseTop.length === 1 ? 'this person' : 'these ' + ['', '', 'two', 'three', 'four'][chaseTop.length] + ' first'}</b> — ${chaseTop.length === 1 ? 'they account' : 'together they account'} for <b>${fmtH(chaseSum)} h</b> of the ${fmtH(totMissing)} h missing.</div>
+      <table class="dt" style="margin-bottom:18px"><thead><tr><th>Person</th><th class="num">Missing</th><th>Why it matters</th></tr></thead><tbody>
+        ${chaseTop.map(r => `<tr>
+          <td class="pname">${esc(r.person.name)}${personTags(r)}<div class="vmini">${esc(r.person.title || '')}</div></td>
+          <td class="num" style="color:#8f2418;font-weight:800">${fmtH(r.behindHrs)} h</td>
+          <td style="font-size:12.5px">${esc(reasonFor(r))}</td>
+        </tr>`).join('')}
+      </tbody></table>` : `<div class="note-txt" style="margin:0 0 14px;padding:8px 12px;background:#e7f0ee;border-left:3px solid var(--sav-teal)">✓ Nobody is meaningfully behind their own bar this window.</div>`;
+
+    // ---- shared bits ----
     const q2 = (state.compSearch || '').toLowerCase();
-    const sort = state.compSort || { key: 'behind', dir: -1 };
-    let shown = q2 ? rows.filter(r => (r.person.name + ' ' + (r.person.title || '')).toLowerCase().includes(q2)) : rows.slice();
-    const sortVal = (r) => {
-      if (sort.key === 'name') return r.person.name.toLowerCase();
-      if (sort.key === 'behind') return r.behindHrs;
-      if (sort.key === 'target') return r.compliance;
-      if (sort.key.startsWith('ym:')) { const c = r.byMonth[sort.key.slice(3)]; return c ? c.pct : -1; }
-      return 0;
-    };
-    shown.sort((a, b) => { const va = sortVal(a), vb = sortVal(b); return (typeof va === 'string' ? va.localeCompare(vb) : va - vb) * sort.dir; });
-    let body = '';
-    shown.forEach(r => {
-      const ptTag = (r.person.capacityPct != null && r.person.capacityPct < 100 && !r.person.nonBillable)
-        ? ` <span class="nh-tag" style="background:#e3ecf7;color:#2f5d8f" title="Part time — every month here is judged against ${r.person.capacityPct}% of a full month (≈${Math.round(S.monthHours() * r.person.capacityPct / 100)} h)">PT · ${r.person.capacityPct}%</span>` : '';
-      const intTag = r.person.nonBillable ? ' <span class="nh-tag" style="background:#e7eef0;color:#4a5560" title="Internal / overhead — still expected to log their hours, internal projects count">INT</span>' : '';
-      const joinTag = r.joinedMid ? ` <span class="nh-tag" title="First logged hour ${esc(S.ymLabel(r.joined))} — earlier months aren't expected of them">joined ${esc(S.ymLabel(r.joined))}</span>` : '';
-      const lvTag2 = r.leaveMonths ? ` <span class="nh-tag" style="background:#efe6f7;color:#6b3fa0" title="On a leave of absence for ${r.leaveMonths} month${r.leaveMonths === 1 ? '' : 's'} of this window — those months aren't counted">🌴 ${r.leaveMonths} mo leave</span>` : '';
-      body += `<tr><td class="who"><div class="who-name" style="cursor:default">${esc(r.person.name)}${ptTag}${intTag}${joinTag}${lvTag2}</div><div class="who-meta">${esc(r.person.title || '')}</div></td>`;
-      ms.forEach(ym => body += cellFor(r.byMonth[ym], ym));
-      body += `<td class="pk ${r.behindHrs > 8 ? 'over' : ''}">${r.behindHrs > 1 ? fmtH(r.behindHrs) + 'h' : '—'}</td>`;
-      body += `<td class="pk ${r.compliance < 0.5 ? 'over' : ''}">${Math.round(r.compliance * 100)}%</td></tr>`;
-    });
-    const arrow = (key) => sort.key === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : '';
-    const sortTh = (key, label, extra) => `<th ${extra || ''} data-csort="${key}" style="cursor:pointer" title="Click to sort">${label}${arrow(key)}</th>`;
-    $('#p-compliance').innerHTML = lateBar + `
+    const matches = (r) => !q2 || (r.person.name + ' ' + (r.person.title || '')).toLowerCase().includes(q2);
+    const view = state.compView || 'summary';
+    const segBar = `<div class="toolbar" style="margin-bottom:10px">
+      <div class="seg-view"><button id="cv-summary" class="${view === 'summary' ? 'on' : ''}" type="button">Summary</button><button id="cv-grid" class="${view === 'grid' ? 'on' : ''}" type="button">Month detail</button></div>
+      <input type="search" id="comp-search" placeholder="Filter person or title…" value="${esc(state.compSearch || '')}">
+      <span class="grow"></span>
+      <span class="note-txt">${view === 'summary' ? 'Grouped by who needs attention · sparkline = the window month by month' : 'Every month as a % of that person’s own bar — click any column header to re-sort'}</span>
+    </div>`;
+
+    let bodyHtml = '';
+    if (view === 'summary') {
+      // ---- SUMMARY: grouped rows + sparklines, worst first ----
+      const spark = (r) => '<span class="spark">' + ms.map(m => {
+        const c = r.byMonth[m];
+        if (c === 'leave') return '<i class="lv" style="height:20px" title="On leave"></i>';
+        if (!c) return '<i class="na" style="height:4px" title="Not here yet / not expected"></i>';
+        if (c.pct === 0) return `<i class="zero" style="height:3px" title="${esc(S.ymLabel(m))}: nothing logged"></i>`;
+        const h = Math.max(3, Math.round(Math.min(c.pct, 1.25) / 1.25 * 20));
+        return `<i${c.pct < 0.8 ? ' class="low"' : ''} style="height:${h}px" title="${esc(S.ymLabel(m))}: ${Math.round(c.pct * 100)}%"></i>`;
+      }).join('') + '</span>';
+      const trendWord = (r) => {
+        const exp = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave');
+        if (!exp.length) return r.leaveMonths ? ['on leave', '#6b3fa0'] : ['—', 'var(--sav-steel)'];
+        const pcts = exp.map(m => r.byMonth[m].pct);
+        const last = pcts[pcts.length - 1];
+        const avgPrev = pcts.length > 1 ? pcts.slice(0, -1).reduce((s, p) => s + p, 0) / (pcts.length - 1) : last;
+        if (last === 0 && avgPrev >= 0.5) return ['stopped in ' + S.ymLabel(exp[exp.length - 1]), '#8f2418'];
+        const avg = pcts.reduce((s, p) => s + p, 0) / pcts.length;
+        if (avg >= 0.95) return ['steady', '#0E7C7B'];
+        if (avg >= 0.8) return ['mostly on target', '#0E7C7B'];
+        if (pcts.length >= 3 && last < pcts[0] - 0.25) return ['slipping', '#8a6d00'];
+        return ['avg ' + Math.round(avg * 100) + '% of bar', '#8a6d00'];
+      };
+      const rowHtml = (r) => {
+        const [word, col] = trendWord(r);
+        const lag = lagOf(r.person.id);
+        return `<tr>
+          <td class="pname">${esc(r.person.name)}${personTags(r)}<div class="vmini">${esc(r.person.title || '')}</div></td>
+          <td>${spark(r)} <span style="font-size:11.5px;color:${col}">${esc(word)}</span></td>
+          <td class="num">${fmtH(r.totLogged)}</td>
+          <td class="num">${fmtH(r.totCap)}</td>
+          <td class="num" ${r.behindHrs > 8 ? 'style="color:#8f2418;font-weight:800"' : ''}>${r.behindHrs > 1 ? fmtH(r.behindHrs) : '—'}</td>
+          <td class="num">${lag != null ? lag.toFixed(1) + ' d' : '—'}</td>
+        </tr>`;
+      };
+      const measured = rows.filter(r => r.totCap > 0);
+      const notMeasured = rows.filter(r => r.totCap <= 0);
+      const gBehind = measured.filter(r => r.behindHrs > 8 && matches(r));
+      const gOk = measured.filter(r => r.behindHrs <= 8 && matches(r)).sort((a, b) => a.person.name.localeCompare(b.person.name));
+      const gNot = notMeasured.filter(matches);
+      const unShown = untracked.filter(u => !q2 || u.person.name.toLowerCase().includes(q2));
+      const grp = (label, note, n) => `<tr class="grouprow"><td colspan="6">${label} · ${n} ${n === 1 ? 'person' : 'people'} <span style="font-weight:400;color:var(--sav-steel)">— ${note}</span></td></tr>`;
+      let sBody = '';
+      if (gBehind.length) sBody += grp('Behind', 'more than 8 h under their own bar', gBehind.length) + gBehind.map(rowHtml).join('');
+      if (gOk.length) sBody += grp('On target', 'nothing to do', gOk.length) + gOk.map(rowHtml).join('');
+      if (gNot.length + unShown.length) sBody += grp('Not measured', 'on leave all window, or no hours can arrive for them', gNot.length + unShown.length)
+        + gNot.map(rowHtml).join('')
+        + unShown.map(u => `<tr><td class="pname">${esc(u.person.name)}<div class="vmini">${esc(u.person.title || '')}</div></td><td colspan="5" style="color:var(--sav-steel);font-size:12px">${esc(u.reason)} — <a href="#" data-goto-tab="mapping">fix in Mapping →</a></td></tr>`).join('');
+      bodyHtml = `<div class="hm-wrap"><table class="dt"><thead><tr>
+          <th style="width:24%">Person</th><th>Trend · ${ms.length} month${ms.length === 1 ? '' : 's'}</th>
+          <th class="num">Logged</th><th class="num">Their bar</th><th class="num">Missing</th><th class="num">Avg lag</th>
+        </tr></thead><tbody>${sBody || `<tr><td colspan="6"><div class="empty" style="border:0">Nobody matches the filter.</div></td></tr>`}</tbody></table></div>
+        <div class="legend"><span>Bar height = % of their own bar that month</span><span><span class="sw" style="background:#0E7C7B"></span>≥80%</span><span><span class="sw" style="background:#e8b563"></span>under 80%</span><span><span class="sw" style="background:#e4453a"></span>zero</span><span><span class="sw" style="background:#b9a3d8"></span>🌴 leave</span><span><span class="sw" style="background:rgba(37,39,58,0.12)"></span>not here yet</span><span>"Their bar" = ${S.monthHours()} h × capacity % — part-timers are never judged against the full-time number, and months before someone's first logged hour aren't expected of them.</span></div>`;
+    } else {
+      // ---- MONTH DETAIL: the original grid — searchable, sortable ----
+      const cellFor = (c) => {
+        if (c === 'leave') return '<td title="On leave of absence — no hours expected"><span class="cell" style="background:#efe6f7;color:#6b3fa0">🌴</span></td>';
+        if (!c) return '<td><span class="cell u0">·</span></td>';
+        const p = Math.round(c.pct * 100);
+        const cls = p >= 100 ? 'u2' : p >= 80 ? 'u1' : p > 0 ? 'u3' : 'u5';
+        return `<td title="${fmtH(c.h)} / ${fmtH(c.capM)} h"><span class="cell ${cls}" style="${p === 0 ? 'color:#fff' : ''}">${p}%</span></td>`;
+      };
+      const sort = state.compSort || { key: 'behind', dir: -1 };
+      let shown = rows.filter(matches);
+      const sortVal = (r) => {
+        if (sort.key === 'name') return r.person.name.toLowerCase();
+        if (sort.key === 'behind') return r.behindHrs;
+        if (sort.key === 'target') return r.compliance;
+        if (sort.key.startsWith('ym:')) { const c = r.byMonth[sort.key.slice(3)]; return c && c !== 'leave' ? c.pct : -1; }
+        return 0;
+      };
+      shown.sort((a, b) => { const va = sortVal(a), vb = sortVal(b); return (typeof va === 'string' ? va.localeCompare(vb) : va - vb) * sort.dir; });
+      let body = '';
+      shown.forEach(r => {
+        body += `<tr><td class="who"><div class="who-name" style="cursor:default">${esc(r.person.name)}${personTags(r)}</div><div class="who-meta">${esc(r.person.title || '')}</div></td>`;
+        ms.forEach(ym => body += cellFor(r.byMonth[ym]));
+        body += `<td class="pk ${r.behindHrs > 8 ? 'over' : ''}">${r.behindHrs > 1 ? fmtH(r.behindHrs) + 'h' : '—'}</td>`;
+        body += `<td class="pk ${r.compliance < 0.5 ? 'over' : ''}">${Math.round(r.compliance * 100)}%</td></tr>`;
+      });
+      const arrow = (key) => sort.key === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : '';
+      const sortTh = (key, label, extra) => `<th ${extra || ''} data-csort="${key}" style="cursor:pointer" title="Click to sort">${label}${arrow(key)}</th>`;
+      bodyHtml = `${untracked.length ? `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#f4f2ef;border-left:3px solid #b0b5bc"><b>${untracked.length} ${untracked.length === 1 ? 'person is' : 'people are'} not tracked here</b> — no hours can arrive for them, so a 0% row would be meaningless: ${untracked.slice(0, 8).map(u => `${esc(u.person.name)} <span class="vmini">(${esc(u.reason)})</span>`).join(' · ')}${untracked.length > 8 ? ` · +${untracked.length - 8} more` : ''}. <a href="#" data-goto-tab="mapping">Map them in Mapping →</a></div>` : ''}
+        <div class="hm-wrap"><table class="hm"><thead><tr>${sortTh('name', 'Person', 'class="who"')}${ms.map(m => sortTh('ym:' + m, esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">pro-rata</div>' : ''))).join('')}${sortTh('behind', 'Behind', 'class="pk"')}${sortTh('target', 'Months on target', 'class="pk"')}</tr></thead><tbody>${body || `<tr><td colspan="${ms.length + 3}"><div class="empty" style="border:0">Nobody matches the filter.</div></td></tr>`}</tbody></table></div>
+        <div class="legend"><span><span class="sw" style="background:#cfe6e4"></span>≥100%</span><span><span class="sw" style="background:#eef4f4"></span>80–99% on target</span><span><span class="sw" style="background:#fce7c2"></span>1–79% behind</span><span><span class="sw" style="background:#e4453a"></span>0% nothing logged</span><span><span class="sw" style="background:#efe6f7"></span>🌴 on leave — not expected</span><span>· = not allocated / not here yet</span><span>Months before someone's first-ever logged hour aren't expected of them ("joined" tag)</span></div>`;
+    }
+
+    $('#p-compliance').innerHTML = topBar + `
       <div class="kpi-strip">
-        <div class="kpi-card ${teamPct < 0.7 ? 'warn' : 'accent'}"><div class="k-num">${Math.round(teamPct * 100)}%</div><div class="k-lbl">Team compliance · months ≥80% logged</div></div>
-        <div class="kpi-card ${behindNow.length ? 'warn' : ''}"><div class="k-num">${behindNow.length}</div><div class="k-lbl">Behind right now (latest month &lt;80%)</div></div>
-        <div class="kpi-card ${zeroNow.length ? 'warn' : ''}"><div class="k-num">${zeroNow.length}</div><div class="k-lbl">Zero hours logged · ${esc(S.ymLabel(nowYm))}</div></div>
-        <div class="kpi-card ${rows.reduce((s, r) => s + r.behindHrs, 0) > 40 ? 'warn' : ''}"><div class="k-num">${fmtH(rows.reduce((s, r) => s + r.behindHrs, 0))}</div><div class="k-lbl">Hours missing across the window · ${rows.length} people expected to log</div></div>
+        <div class="kpi-card ${totMissing > 40 ? 'warn' : 'accent'}"><div class="k-num">${fmtH(totMissing)} h</div><div class="k-lbl">Hours missing · this window · vs each person's own bar</div></div>
+        <div class="kpi-card ${behindRows.length ? 'warn' : ''}"><div class="k-num">${behindRows.length}<span style="font-size:14px;font-weight:400;color:var(--sav-steel)"> of ${rows.length}</span></div><div class="k-lbl">People behind (&gt;8 h under their bar)</div></div>
+        <div class="kpi-card ${nowPct != null && nowPct < 80 ? 'warn' : ''}"><div class="k-num">${nowPct != null ? nowPct + '%' : '—'}</div><div class="k-lbl">Logged for ${esc(S.ymLabel(nowYm))} so far · month is ${Math.round(prorata * 100)}% gone</div></div>
+        <div class="kpi-card"><div class="k-num">${teamLag != null ? teamLag.toFixed(1) + ' d' : '—'}</div><div class="k-lbl">Avg days to log an entry${teamLag == null ? ' · pull lateness in Data Sources' : ''}</div></div>
       </div>
-      <div class="ins-grid" style="margin-bottom:16px">
-        ${latenessCard}
-        <div class="ins-card"><h3>⏰ Most behind <span>· hours missing vs THEIR bar (part-time % and joiner months respected)</span></h3><table class="dt"><thead><tr><th>Person</th><th class="num">Logged</th><th class="num">Their bar</th><th class="num">Missing</th><th class="num">Latest month</th></tr></thead><tbody>${rows.filter(r => r.behindHrs > 8).slice(0, 12).map(r => `<tr><td class="pname">${esc(r.person.name)}${r.person.capacityPct != null && r.person.capacityPct < 100 && !r.person.nonBillable ? ` <span class="nh-tag" style="background:#e3ecf7;color:#2f5d8f">PT · ${r.person.capacityPct}%</span>` : ''}${r.joinedMid ? ` <span class="nh-tag">joined ${esc(S.ymLabel(r.joined))}</span>` : ''}<div class="vmini">${esc(r.person.title || '')}</div></td><td class="num">${fmtH(r.totLogged)}</td><td class="num">${fmtH(r.totCap)}</td><td class="num var-over">${fmtH(r.behindHrs)}</td><td class="num ${r.lastPct < 0.8 ? 'var-over' : 'var-ok'}">${Math.round(r.lastPct * 100)}%</td></tr>`).join('') || '<tr><td colspan="5"><div class="empty" style="border:0">Everyone current.</div></td></tr>'}</tbody></table></div>
-        <div class="ins-card"><h3>📊 Entry insights</h3><div style="padding:14px 16px;font-size:12.5px;line-height:1.7;color:var(--sav-navy)">
-          ${chronic.length ? `<div>• <b>${chronic.length} chronic under-logger${chronic.length > 1 ? 's' : ''}</b> (&lt;50% of months at target): ${chronic.slice(0, 6).map(r => esc(r.person.name)).join(', ')}${chronic.length > 6 ? '…' : ''} — their projects read as under-served in Compare even if the work happened.</div>` : ''}
-          ${zeroNow.length ? `<div>• <b>${zeroNow.length} allocated but at zero for ${esc(S.ymLabel(nowYm))}</b>: ${zeroNow.slice(0, 6).map(r => esc(r.person.name)).join(', ')}${zeroNow.length > 6 ? '…' : ''} — chase these first; the month is ${Math.round(prorata * 100)}% gone.</div>` : ''}
-          ${worstDisc.length ? `<div>• <b>Weakest logging discipline</b> (completeness × timeliness): ${worstDisc.map(d => `${esc(d.person.name)} (${Math.round(d.score * 100)})`).join(', ')} — score = 60% months-on-target + 40% entries within a week${late.rows.length ? '' : ' (lateness not pulled — completeness only)'}.</div>` : ''}
-          ${stars.length ? `<div>• <b>Reliable loggers</b>: ${stars.slice(0, 6).map(r => esc(r.person.name)).join(', ')} — ≥95% of months on target.</div>` : ''}
-          <div>• Variance data is only as good as entry: team compliance of <b>${Math.round(teamPct * 100)}%</b> means roughly <b>${fmtH(rows.reduce((s, r) => s + r.behindHrs, 0))} h</b> of delivered work may be invisible in Compare.</div>
-          <div class="vmini" style="margin-top:6px;color:var(--sav-steel)">"On target" = ≥80% of <b>that person's own bar</b> logged for the month (current month pro-rata). The bar is ${S.monthHours()} h × their capacity %, so a part-timer at 50% is judged against ≈${Math.round(S.monthHours() * 0.5)} h — never the full-time number. Months before someone's first-ever logged hour are excluded (new joiners aren't "behind" for months they weren't here). Internal staff are still expected to log; their internal projects count. PTO/internal projects count if mapped rather than ignored.</div>
-        </div></div>
-      </div>
-      ${untracked.length ? `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#f4f2ef;border-left:3px solid #b0b5bc"><b>${untracked.length} ${untracked.length === 1 ? 'person is' : 'people are'} not tracked here</b> — no hours can arrive for them, so a 0% row would be meaningless: ${untracked.slice(0, 8).map(u => `${esc(u.person.name)} <span class="vmini">(${esc(u.reason)})</span>`).join(' · ')}${untracked.length > 8 ? ` · +${untracked.length - 8} more` : ''}. <a href="#" data-goto-tab="mapping">Map them in Mapping →</a></div>` : ''}
-      <div class="toolbar" style="margin-bottom:10px"><input type="search" id="comp-search" placeholder="Filter person or title…" value="${esc(state.compSearch || '')}"><span class="grow"></span><span class="note-txt">${shown.length} of ${rows.length} people · sorted by ${sort.key === 'behind' ? 'hours behind' : sort.key === 'name' ? 'name' : sort.key === 'target' ? 'months on target' : 'month ' + S.ymLabel(sort.key.slice(3))} — click any column header to re-sort</span></div>
-      <div class="hm-wrap"><table class="hm"><thead><tr>${sortTh('name', 'Person', 'class="who"')}${ms.map(m => sortTh('ym:' + m, esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">pro-rata</div>' : ''))).join('')}${sortTh('behind', 'Behind', 'class="pk"')}${sortTh('target', 'Months on target', 'class="pk"')}</tr></thead><tbody>${body || `<tr><td colspan="${ms.length + 3}"><div class="empty" style="border:0">Nobody matches the filter.</div></td></tr>`}</tbody></table></div>
-      <div class="legend"><span><span class="sw" style="background:#cfe6e4"></span>≥100%</span><span><span class="sw" style="background:#eef4f4"></span>80–99% on target</span><span><span class="sw" style="background:#fce7c2"></span>1–79% behind</span><span><span class="sw" style="background:#e4453a"></span>0% nothing logged</span><span><span class="sw" style="background:#efe6f7"></span>🌴 on leave — not expected</span><span>· = not allocated / not here yet</span><span>Months before someone's first-ever logged hour aren't expected of them ("joined" tag)</span></div>`;
+      ${chaseHtml}
+      ${segBar}
+      ${bodyHtml}`;
+
+    const cvS = $('#cv-summary'), cvG = $('#cv-grid');
+    if (cvS) cvS.onclick = () => { state.compView = 'summary'; renderCompliance(); };
+    if (cvG) cvG.onclick = () => { state.compView = 'grid'; renderCompliance(); };
     const cs = $('#comp-search');
     if (cs) cs.oninput = () => { state.compSearch = cs.value; renderCompliance(); const el = $('#comp-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $$('#p-compliance [data-csort]').forEach(th => th.onclick = () => {
@@ -1496,7 +1557,18 @@
       state.compSort = { key: k, dir: cur.key === k ? -cur.dir : firstDir };
       renderCompliance();
     });
+    wireGoto('#p-compliance');
     wireLateness();
+  }
+
+  /** The little fairness tags every person-row carries (PT / INT / joined / leave). */
+  function personTags(r) {
+    const ptTag = (r.person.capacityPct != null && r.person.capacityPct < 100 && !r.person.nonBillable)
+      ? ` <span class="nh-tag" style="background:#e3ecf7;color:#2f5d8f" title="Part time — every month here is judged against ${r.person.capacityPct}% of a full month (≈${Math.round(S.monthHours() * r.person.capacityPct / 100)} h)">PT · ${r.person.capacityPct}%</span>` : '';
+    const intTag = r.person.nonBillable ? ' <span class="nh-tag" style="background:#e7eef0;color:#4a5560" title="Internal / overhead — still expected to log their hours, internal projects count">INT</span>' : '';
+    const joinTag = r.joinedMid ? ` <span class="nh-tag" title="First logged hour ${esc(S.ymLabel(r.joined))} — earlier months aren't expected of them">joined ${esc(S.ymLabel(r.joined))}</span>` : '';
+    const lvTag = r.leaveMonths ? ` <span class="nh-tag" style="background:#efe6f7;color:#6b3fa0" title="On a leave of absence for ${r.leaveMonths} month${r.leaveMonths === 1 ? '' : 's'} of this window — those months aren't counted">🌴 ${r.leaveMonths} mo</span>` : '';
+    return ptTag + intTag + joinTag + lvTag;
   }
 
   function wireLateness() {
@@ -1504,7 +1576,7 @@
     if (ex) ex.onclick = async () => {
       const orig = ex.textContent;
       ex.disabled = true; ex.textContent = 'Building…';
-      try { await window.UFC_buildAndDownloadTimeEntryExport(months(), { clockifyUsers: state.clockifyUsers || [] }); toast('Time Entry exported.'); }
+      try { await window.UFC_buildAndDownloadTimeEntryExport(months(), { clockifyUsers: state.clockifyUsers || [] }); toast('Clockify Reporting exported.'); }
       catch (e) { console.error(e); alert('Export failed: ' + (e && e.message ? e.message : e)); }
       finally { ex.disabled = false; ex.textContent = orig; }
     };
@@ -1521,7 +1593,7 @@
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
         const rows = S.parseCsvRows(await res.text()).map(o => ({ user: o.User, ym: o.Month, entries: +o.Entries || 0, hours: +o.Hours || 0, avgLag: +o.AvgLagDays || 0, maxLag: +o.MaxLagDays || 0, pctWithin3: +o.PctWithin3d || 0, pctWithin7: +o.PctWithin7d || 0 }));
         S.setLateness(rows);
-        renderCompliance();
+        renderActive();   // bound from Data Sources and Clockify Reporting alike
         toast('Lateness stats loaded — ' + rows.length + ' person-months.');
       } catch (e) { b.disabled = false; if (note) { note.textContent = 'Lateness pull failed: ' + e.message; note.style.color = '#8f2418'; } }
     };
@@ -1586,8 +1658,8 @@
       const rows = S.parseCsvRows(await res.text()).map(o => ({ name: o.Project || o.project || Object.values(o)[0] || '', client: o.Client || o.client || '' }));
       if (!rows.length) throw new Error('empty project list');
       state.canonProposals = S.proposeCanonical(rows);
-      renderAllocations();
-    } catch (e) { alert('Could not pull the Clockify project list: ' + e.message + '\n\nAlternative: export any Clockify report as CSV and drop it on the Compare tab — unmatched projects can be mapped there.'); if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync names from Clockify'; } }
+      renderSources();
+    } catch (e) { alert('Could not pull the Clockify project list: ' + e.message + '\n\nAlternative: export any Clockify report as CSV and drop it on the import card below — unmatched projects can be mapped there.'); if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync names from Clockify'; } }
   }
   function renderCanonReview() {
     const props = state.canonProposals; if (!props) return;
@@ -1612,8 +1684,8 @@
         <button class="btn btn-ghost" id="canon-cancel">Cancel</button>
       </div>
     </div>`;
-    $('#p-allocations').insertAdjacentHTML('afterbegin', panel);
-    $('#canon-cancel').onclick = () => { state.canonProposals = null; renderAllocations(); };
+    $('#p-sources').insertAdjacentHTML('afterbegin', panel);
+    $('#canon-cancel').onclick = () => { state.canonProposals = null; renderSources(); };
     $('#canon-commit').onclick = () => {
       const pairs = [];
       $$('#canon-panel [data-canon-i]').forEach(cb => { if (cb.checked) { const p = need[+cb.dataset.canonI]; if (p && p.match) pairs.push({ from: p.matrix, to: p.match }); } });
@@ -1639,6 +1711,123 @@
     };
   }
 
+  /* ---------- DATA SOURCES — every feed in one place: what it is, what it
+     drives, when it last moved, and the one control that refreshes it. The
+     Clockify import card lives here now; Compare just reads the result. ---------- */
+  function ageDays(iso) { return iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : null; }
+  function agoTxt(iso) {
+    const d = ageDays(iso);
+    if (d == null) return 'never';
+    if (d === 0) return 'today';
+    if (d === 1) return 'yesterday';
+    if (d < 45) return d + ' days ago';
+    return new Date(iso).toLocaleDateString();
+  }
+  function unlinkedProjects() {
+    return S.distinctProjects().filter(pn => !S.isMacroProject(pn) && !S.isTimeOffProject(pn) && !S.isLeaveProject(pn) && !S.matchFeeProjects(pn, '').length);
+  }
+
+  function renderSources() {
+    const meta = S.readDb().meta || {};
+    const has = S.hasActuals();
+    const am = S.actualsMeta();
+    const late = S.getLateness();
+    const dot = (cls) => `<span class="fs-dot ${cls}" style="display:inline-block;margin-right:2px"></span>`;
+    const aAge = ageDays(am.importedAt);
+    const aDot = aAge == null ? 'bad' : aAge <= 7 ? 'ok' : aAge <= 21 ? 'warn' : 'bad';
+    const unlinked = unlinkedProjects();
+    const linkable = S.distinctProjects().filter(pn => !S.isMacroProject(pn) && !S.isTimeOffProject(pn) && !S.isLeaveProject(pn)).length;
+    const lAge = ageDays(late.at);
+
+    const row = (name, feeds, lastHtml, statusHtml, actionHtml) => `<tr>
+      <td class="pname" style="white-space:nowrap">${name}</td>
+      <td class="vmini" style="max-width:320px">${feeds}</td>
+      <td>${lastHtml}</td>
+      <td>${statusHtml}</td>
+      <td style="white-space:nowrap">${actionHtml}</td>
+    </tr>`;
+
+    let html = `<div class="note-txt" style="margin:0 0 12px;padding:10px 14px;background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid var(--sav-teal)">Everything the Review tabs read comes through here. Each feed shows when it last moved and who touched it — refresh a feed and every tab updates; nothing else on this page writes data behind your back.</div>
+      <table class="dt" style="margin-bottom:18px"><thead><tr><th>Feed</th><th>What it drives</th><th>Last updated</th><th>Status</th><th>Refresh</th></tr></thead><tbody>
+      ${row('③ Clockify actuals',
+        'Compare, Clockify Reporting, Insights — every &ldquo;what actually happened&rdquo; number.',
+        has ? `${esc(agoTxt(am.importedAt))}${am.importedAt ? ` <span class="vmini">· ${new Date(am.importedAt).toLocaleString()}</span>` : ''}<div class="vmini">${am.rows.toLocaleString()} rows · ${(am.months || []).length} month${(am.months || []).length === 1 ? '' : 's'}${(am.months || []).length ? ' · ' + esc(S.ymLabel(am.months[0]) + ' – ' + S.ymLabel(am.months[am.months.length - 1])) : ''}</div>` : '<span style="color:#8f2418">never loaded</span>',
+        dot(aDot) + (aAge == null ? 'missing' : aAge <= 7 ? 'fresh' : aAge <= 21 ? 'aging' : 'stale'),
+        '<a href="#import-anchor" style="font-weight:700">Import card below ↓</a>')}
+      ${row('① Allocations <span class="vmini">(maintained in this tool)</span>',
+        'The plan side of Compare, By Project, By Person, and the contract bridge. Edit rows on the <b>Allocations</b> tab — the sheet import is only for starting over.',
+        `${meta.updatedAt ? `Last edit ${esc(agoTxt(meta.updatedAt))}${meta.updatedBy ? ` by <b>${esc(meta.updatedBy)}</b>` : ''}` : '—'}<div class="vmini">${meta.matrixImportedAt ? `Seeded from ${esc(meta.matrixSource || 'JS sheet')} · ${new Date(meta.matrixImportedAt).toLocaleDateString()}` : 'No sheet import on record'}</div>`,
+        dot('ok') + 'live',
+        `<button class="btn btn-ghost" id="src-reimport" title="Replace ALL allocations from a fresh export of the staffing sheet (Data tab or CSV). Actuals and roster edits are kept.">⇪ Re-import sheet</button>
+         <button class="btn btn-ghost" id="canon-sync" title="Pull Clockify's project list and rename matrix projects to the canonical names — one-time mapping, remembered for future sheet imports">⇄ Sync names</button>`)}
+      ${row('② Fee-tool contract lines',
+        'The priced roles behind &ldquo;② Contract&rdquo; in Compare and the contract-vs-staffing checks.',
+        `${linkable - unlinked.length} of ${linkable} projects linked`,
+        dot(unlinked.length ? 'warn' : 'ok') + (unlinked.length ? unlinked.length + ' unlinked' : 'all linked'),
+        '<a href="#" data-goto-tab="mapping" style="font-weight:700">Fix in Mapping →</a>')}
+      ${row('🐌 Entry lateness',
+        'The &ldquo;avg days to log&rdquo; column and lag KPI in Clockify Reporting.',
+        late.at ? `${esc(agoTxt(late.at))} <span class="vmini">· ${new Date(late.at).toLocaleString()}</span>` : 'never pulled',
+        dot(late.at ? (lAge <= 21 ? 'ok' : 'warn') : 'warn') + (late.at ? 'loaded' : 'optional'),
+        '<button class="btn btn-ghost" id="pull-lateness">⟳ Pull lateness (API)</button>')}
+      </tbody></table>
+      <div class="note-txt" id="late-note" style="margin:-10px 0 14px"></div>`;
+
+    // Data health — the gaps that quietly corrupt the numbers downstream.
+    {
+      const missEnd = S.listAllocations().filter(a => !a.end).length;
+      const noTitle = S.listPeople().filter(p => p.active !== false && !(p.title || '').trim()).length;
+      const bits = [];
+      if (missEnd) bits.push(`<a href="#" data-goto-tab="allocations"><b>${missEnd}</b> allocation${missEnd === 1 ? '' : 's'} missing an end date</a>`);
+      if (noTitle) bits.push(`<a href="#" data-goto-tab="mapping"><b>${noTitle}</b> ${noTitle === 1 ? 'person' : 'people'} without a title</a> (their cost rate reads $0)`);
+      if (unlinked.length) bits.push(`<a href="#" data-goto-tab="mapping"><b>${unlinked.length}</b> project${unlinked.length === 1 ? '' : 's'} not linked to the fee tool</a> (no ② Contract line)`);
+      if (bits.length) html += `<div class="note-txt" style="margin:0 0 14px;padding:8px 12px;background:#fdf6e3;border-left:3px solid #e8b563">🩺 Data health: ${bits.join(' · ')}</div>`;
+    }
+
+    html += `<div id="import-anchor"></div>` + importCard(has, am);
+    if (state.clockifyReport) html += reportBlock(state.clockifyReport);
+
+    $('#p-sources').innerHTML = html;
+    wireImport();
+    wireGoto('#p-sources');
+    const mr = $('#src-reimport'); if (mr) mr.onclick = () => $('#matrix-file').click();
+    const cs2 = $('#canon-sync'); if (cs2) cs2.onclick = startCanonSync;
+    if (state.canonProposals) renderCanonReview();
+    wireLateness();
+  }
+
+  /* ---------- freshness strip — the age of every feed, on every tab ---------- */
+  function renderFreshness() {
+    const el = $('#fresh-strip'); if (!el) return;
+    try {
+      const meta = S.readDb().meta || {};
+      const am = S.actualsMeta();
+      const aAge = ageDays(am.importedAt);
+      const aDot = aAge == null ? 'bad' : aAge <= 7 ? 'ok' : aAge <= 21 ? 'warn' : 'bad';
+      const unlinked = unlinkedProjects().length;
+      let gapDot = 'warn', gapTxt = 'needs actuals', gapAge = 'load Clockify hours first';
+      if (S.hasActuals()) {
+        const comp = S.complianceRows(months(), { clockifyUsers: state.clockifyUsers || [] });
+        const behind = comp.rows.filter(r => r.behindHrs > 8).length;
+        const miss = comp.rows.reduce((s, r) => s + r.behindHrs, 0);
+        gapDot = behind ? 'warn' : 'ok';
+        gapTxt = behind ? behind + (behind === 1 ? ' person behind' : ' people behind') : 'everyone current';
+        gapAge = behind ? fmtH(miss) + ' h missing this window' : 'nothing to chase';
+      }
+      const cell = (goto, k, dotCls, v, age) => `<button class="fs-cell" data-goto-tab="${goto}" type="button" title="Open ${goto === 'sources' ? 'Data Sources' : goto}">
+        <span class="fs-k">${k}</span>
+        <span class="fs-v"><span class="fs-dot ${dotCls}"></span>${v}</span>
+        <span class="fs-age">${age}</span>
+      </button>`;
+      el.innerHTML =
+        cell('sources', '③ Clockify actuals', aDot, aAge == null ? 'not loaded' : 'updated ' + esc(agoTxt(am.importedAt)), (am.months || []).length ? (am.months || []).length + ' months of hours' : 'Compare runs blind without them') +
+        cell('allocations', '① Allocations', 'ok', meta.updatedAt ? 'edited ' + esc(agoTxt(meta.updatedAt)) : 'no edits recorded', meta.updatedBy ? 'by ' + esc(meta.updatedBy) : 'maintained in this tool') +
+        cell('mapping', '② Fee-tool links', unlinked ? 'warn' : 'ok', unlinked ? unlinked + ' unlinked' : 'all linked', unlinked ? 'no ② Contract line for those' : 'contract lines flowing') +
+        cell('compliance', '⏱ Entry gaps', gapDot, gapTxt, gapAge);
+      wireGoto('#fresh-strip');
+    } catch (e) { console.error('freshness strip', e); el.innerHTML = ''; }
+  }
+
   function renderCounts() {
     $('#cnt-alloc').textContent = '(' + S.listAllocations().length + ')';
     $('#cnt-proj').textContent = '(' + S.distinctProjects().length + ')';
@@ -1654,12 +1843,13 @@
       else if (state.tab === 'mapping') renderMapping();
       else if (state.tab === 'insights') renderInsights();
       else if (state.tab === 'compliance') renderCompliance();
+      else if (state.tab === 'sources') renderSources();
     } catch (e) {
       console.error('render failed', e);
       if (panel) panel.innerHTML = `<div class="empty" style="color:#8f2418"><b>This view hit an error:</b> ${esc(e.message)}<br><span class="vmini">${esc((e.stack || '').split('\n')[1] || '')}</span></div>`;
     }
   }
-  function renderAll() { buildIdentityBar(); renderCounts(); renderActive(); }
+  function renderAll() { buildIdentityBar(); renderCounts(); renderFreshness(); renderActive(); }
 
   function buildWindowOptions() {
     const sel = $('#win-start'); const now = new Date();
@@ -1677,12 +1867,13 @@
     wireStaffSync().then(() => {
       buildWindowOptions();
     $('#month-hrs').value = S.monthHours();
+    const gh = $('#gloss-hrs'); if (gh) gh.textContent = S.monthHours();
     $('#win-start').onchange = (e) => { state.winStart = e.target.value; renderActive(); };
     const step = (d) => { const nv = S.ymAdd(state.winStart, d); const sel = $('#win-start'); if ([...sel.options].some(o => o.value === nv)) { state.winStart = nv; sel.value = nv; renderActive(); } };
     $('#win-prev').onclick = () => step(-1);
     $('#win-next').onclick = () => step(1);
     $('#win-len').onchange = (e) => { state.winLen = +e.target.value; renderActive(); };
-    $('#month-hrs').onchange = (e) => { S.setMonthHours(+e.target.value); renderActive(); };
+    $('#month-hrs').onchange = (e) => { S.setMonthHours(+e.target.value); const g2 = $('#gloss-hrs'); if (g2) g2.textContent = S.monthHours(); renderActive(); };
     $('#inc-pursuit').onchange = (e) => { state.incPursuit = e.target.checked; renderActive(); };
     $('#export-snapshot-btn').onclick = async () => {
       if (typeof ExcelJS === 'undefined') { alert('Excel library failed to load.'); return; }
@@ -1692,7 +1883,7 @@
       catch (e) { console.error(e); alert('Snapshot export failed: ' + e.message); }
       finally { btn.textContent = orig; btn.disabled = false; }
     };
-    $$('#tabs .tab').forEach(t => t.onclick = () => { state.tab = t.dataset.tab; $$('#tabs .tab').forEach(x => x.classList.toggle('active', x === t)); $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'p-' + state.tab)); renderActive(); });
+    $$('#tabs .tab').forEach(t => t.onclick = () => setTab(t.dataset.tab));
     $('#am-close').onclick = closeAllocModal; $('#am-cancel').onclick = closeAllocModal; $('#am-save').onclick = saveAllocModal;
     $('#alloc-modal').onclick = (e) => { if (e.target.id === 'alloc-modal') closeAllocModal(); };
     renderAll();
