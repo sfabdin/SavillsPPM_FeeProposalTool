@@ -72,6 +72,18 @@
     const next = { ...p, source: { ...(p.source || {}), sheetKeys: keys.concat([String(groupKey).toLowerCase()]) } };
     try { STORE.saveProject(next, { baseUpdatedAt: p.updatedAt }); } catch (e) { /* non-fatal: matching still works this session */ }
   }
+  /** The other half rememberMatch never had: strip this sheet row's remembered
+      key from EVERY project that holds it. Without this, changing your mind
+      leaves the old link behind and the row keeps snapping back to it. */
+  function forgetMatch(groupKey) {
+    const gk = String(groupKey).toLowerCase();
+    STORE.listProjects().forEach(p => {
+      const keys = sheetKeysOf(p);
+      if (!keys.includes(gk)) return;
+      const next = { ...p, source: { ...(p.source || {}), sheetKeys: keys.filter(k => k !== gk) } };
+      try { STORE.saveProject(next, { baseUpdatedAt: p.updatedAt }); } catch (e) { /* non-fatal */ }
+    });
+  }
 
   function buildProjectIndex() {
     return STORE.listProjects().map(p => ({
@@ -703,11 +715,19 @@
       const checked = state.included.has(g.key);
       const cls = classify(g, matchedId);
       const via = g.match && g.match.via;
-      const matchBadge = !matchedId
-        ? (cls === 'newProj' ? `<span class="ri-badge ri-new">New</span>` : `<span class="ri-badge" style="background:#f7dedc;color:#a3352d">No match</span>`)
-        : (via === 'confirmed' ? `<span class="ri-badge ri-id" title="You linked this on a previous revision — remembered">✓ Confirmed</span>`
-          : via === 'id' ? `<span class="ri-badge ri-id">ID match</span>`
-          : `<span class="ri-badge ri-name" title="Fuzzy name match — check it">Name match${g.match && g.match.score ? ' · ' + g.match.score + '%' : ''}</span>`);
+      const overridden = state.overrides[g.key] !== undefined;
+      const matchBadge = overridden
+        ? (matchedId
+          ? `<span class="ri-badge ri-id" title="You picked this project by hand just now">✓ Your pick</span>`
+          : `<span class="ri-badge ri-new" title="You cleared the link — importing this row creates its own new project">Will create new</span>`)
+        : !matchedId
+          ? (cls === 'newProj' ? `<span class="ri-badge ri-new">New</span>` : `<span class="ri-badge" style="background:#f7dedc;color:#a3352d">No match</span>`)
+          : (via === 'confirmed' ? `<span class="ri-badge ri-id" title="You linked this on a previous revision — remembered">✓ Confirmed</span>`
+            : via === 'id' ? `<span class="ri-badge ri-id">ID match</span>`
+            : `<span class="ri-badge ri-name" title="Fuzzy name match — check it">Name match${g.match && g.match.score ? ' · ' + g.match.score + '%' : ''}</span>`);
+      const matchCtl = overridden
+        ? ` <a href="#" class="ri-match-reset" data-key="${esc(g.key)}" style="font-size:10.5px;font-weight:700" title="Undo your pick and go back to what the importer matched automatically">↺ back to auto</a>`
+        : (matchedId ? ` <a href="#" class="ri-match-clear" data-key="${esc(g.key)}" style="font-size:10.5px;color:#79828C" title="Unlink — importing this row would then create its own new project">✕ unlink</a>` : '');
       const clsBadge = `<div class="ri-cls ${CLASS[cls].tone}" title="${cls === 'review' ? 'A revenue leader has priced staffing on this project — importing changes their numbers underneath them' : cls === 'reconciledChanged' ? 'This project was marked reconciled — its projections follow the fee model now, so a sheet change here is a conversation, not an auto-apply' : ''}">${CLASS[cls].label}</div>`;
       const comment = g.comments ? `<div class="raw" style="color:#4a4f5e"><b>Finance:</b> ${esc(g.comments.slice(0, 160))}${g.comments.length > 160 ? '…' : ''}</div>` : '';
       const lockWarn = d.locked ? `<div class="ri-warn">⚠ locked to its original import — a new override won't show until this project is reconciled</div>` : '';
@@ -736,7 +756,7 @@
         <td><input type="checkbox" class="ri-check" data-key="${esc(g.key)}" ${checked ? 'checked' : ''}></td>
         <td>${esc(g.client)}</td>
         <td>${esc(g.project)}${g.engIdx ? `<span class="raw" style="color:#2f5d8f;font-weight:700" title="This Project ID appears on ${g.engCount} sheet rows — each is a separate contract/engagement and maps to its own project record">engagement ${g.engIdx} of ${g.engCount} · sheet row ${g.rows[0].rowNum}</span>` : ''}${g.rows.length > 1 ? `<span class="raw">fee-share deduction row attached</span>` : ''}${g.rating ? `<span class="raw">${esc(g.rating)}</span>` : ''}${g.newOrEdit ? `<span class="raw" style="color:#8a6d00">sheet: ${esc(String(g.newOrEdit))}</span>` : ''}${clsBadge}${feeShareNote}${comment}</td>
-        <td>${matchBadge}${matchedId && linkCounts[matchedId] > 1 ? `<div class="ri-warn">⚠ another sheet row links to this same project — engagements must stay separate; relink one of them or clear it to create new</div>` : ''}${!matchedId && g.claimLostTo ? `<div class="raw" style="color:#a3352d">Project ID already claimed by “${esc(g.claimLostTo)}” — link this one by hand, or leave blank to create its own record</div>` : ''}<div class="ri-match-pick"><input list="ri-projects-${i}" class="ri-match-input" data-key="${esc(g.key)}" value="${matchedProject ? esc(((matchedProject.project||{}).client||'') + ' — ' + ((matchedProject.project||{}).name||'')) : ''}" placeholder="type to link… or leave blank = new"><datalist id="ri-projects-${i}">${projectOptionsDatalist()}</datalist></div></td>
+        <td>${matchBadge}${matchCtl}${matchedId && linkCounts[matchedId] > 1 ? `<div class="ri-warn">⚠ another sheet row links to this same project — engagements must stay separate; relink one of them or clear it to create new</div>` : ''}${!matchedId && g.claimLostTo ? `<div class="raw" style="color:#a3352d">Project ID already claimed by “${esc(g.claimLostTo)}” — link this one by hand, or leave blank to create its own record</div>` : ''}<div class="ri-match-pick"><input list="ri-projects-${i}" class="ri-match-input" data-key="${esc(g.key)}" value="${matchedProject ? esc(((matchedProject.project||{}).client||'') + ' — ' + ((matchedProject.project||{}).name||'')) : ''}" placeholder="type any part of the name, Enter to link"><datalist id="ri-projects-${i}">${projectOptionsDatalist()}</datalist></div></td>
         <td>${revCell}</td>
         <td>${tfCell}</td>
         <td>${stCell}</td>
@@ -754,18 +774,47 @@
       const row = $(`.ri-detail-row[data-detail="${CSS.escape(b.dataset.key)}"]`);
       if (row) { row.hidden = !row.hidden; b.textContent = row.hidden ? '▸' : '▾'; }
     });
+    // Manual mapping — the human says which project a row belongs to, and the
+    // tool obeys without fighting back:
+    //  · partial text resolves if it uniquely identifies one project
+    //  · picking FIRST forgets any previously-remembered link for this row
+    //    (the old sticky behavior: the stale key kept snapping the row back)
+    //  · no match found → the typed text STAYS, box goes red, nothing resets
+    const applyPick = (k, hit) => {
+      forgetMatch(k);                       // un-stick whatever was remembered before
+      state.overrides[k] = hit ? hit.id : null;
+      if (hit) rememberMatch(hit.id, k);    // the new link is what future Revs see
+      const g = state.groups.find(x => x.key === k);
+      if (g) g.claimLostTo = null;          // a human decision outranks the auto-claim note
+      state.projectIndex = buildProjectIndex();
+      renderTable(); renderSummary();
+    };
     $$('.ri-match-input').forEach(inp => inp.onchange = () => {
       const k = inp.dataset.key;
-      const label = inp.value.trim();
-      if (!label) { state.overrides[k] = null; renderTable(); renderSummary(); return; }
-      const hit = state.projectIndex.find(p => p.label.toLowerCase() === label.toLowerCase());
-      if (hit) {
-        state.overrides[k] = hit.id;
-        // Remember it: the next revision of this workbook matches instantly.
-        rememberMatch(hit.id, k);
-        state.projectIndex = buildProjectIndex();
-        renderTable(); renderSummary();
+      const typed = inp.value.trim();
+      if (!typed) { applyPick(k, null); return; }
+      const low = typed.toLowerCase();
+      let hit = state.projectIndex.find(p => p.label.toLowerCase() === low);
+      if (!hit) {
+        const subs = state.projectIndex.filter(p => p.label.toLowerCase().includes(low));
+        if (subs.length === 1) hit = subs[0];
+        else if (subs.length > 1) { inp.style.borderColor = '#C0392B'; inp.title = subs.length + ' projects match “' + typed + '” — keep typing until only one does'; return; }
       }
+      if (!hit) { inp.style.borderColor = '#C0392B'; inp.title = 'No project matches “' + typed + '” — check the spelling, or clear the box to create a new project from this row'; return; }
+      applyPick(k, hit);
+    });
+    $$('.ri-match-reset').forEach(a => a.onclick = (e) => {
+      e.preventDefault();
+      const k = a.dataset.key;
+      forgetMatch(k);                       // drop the remembered pick so auto really is auto again
+      delete state.overrides[k];
+      const g = state.groups.find(x => x.key === k);
+      if (g) { state.projectIndex = buildProjectIndex(); g.match = matchGroup(state.projectIndex, g); }
+      renderTable(); renderSummary();
+    });
+    $$('.ri-match-clear').forEach(a => a.onclick = (e) => {
+      e.preventDefault();
+      applyPick(a.dataset.key, null);
     });
   }
   function projectOptionsDatalist() {
