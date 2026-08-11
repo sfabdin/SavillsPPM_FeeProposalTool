@@ -529,7 +529,7 @@
   }
 
   /* ---------- state + render ---------- */
-  const state = { fileName: '', years: [], groups: [], projectIndex: [], overrides: {}, included: new Set(), futureOnly: false };
+  const state = { fileName: '', years: [], groups: [], projectIndex: [], overrides: {}, included: new Set(), removeSel: new Set(), futureOnly: false };
 
   function setStatus(msg, cls) {
     const el = $('#ri-status'); if (!el) return;
@@ -551,7 +551,6 @@
         const rec = STORE.getProject(p.id);
         if (!rec) return null;
         const tot = toolTotalFor(rec, state.years);
-        if (Math.abs(tot) < 1) return null;
         return { id: p.id, label: p.label, rec, tot, span: toolSpan(rec), kind: staffingKind(rec), reconciled: !!(rec.source && rec.source.reconciled) };
       })
       .filter(Boolean)
@@ -860,9 +859,12 @@
     return state.projectIndex.map(p => `<option value="${esc(p.label)}">`).join('');
   }
 
-  /* The reverse half of the comparison: tool projects the sheet never
-     mentions. Read-only — the fix is either "sheet is incomplete, tell
-     finance" or "it's a rename, link it on a sheet row above". */
+  /* The reverse half of the comparison: EVERY tool project the sheet never
+     mentions — with revenue first, dormant records after. Three ways out:
+     it's a rename (link it on a sheet row above), the sheet is incomplete
+     (tell finance), or it shouldn't exist — tick it and Remove. Removal is
+     the same soft-delete the Projects Index uses: a tombstone, synced,
+     recoverable from Data Repair for ~4 months. */
   function renderMissing() {
     const card = document.getElementById('ri-missing-card');
     const host = document.getElementById('ri-missing');
@@ -870,17 +872,47 @@
     if (!state.groups.length) { card.hidden = true; host.innerHTML = ''; return; }
     const list = missingFromSheet();
     card.hidden = false;
-    if (!list.length) { host.innerHTML = '<p class="hint" style="margin:6px 0 2px">Every tool project with revenue in these years appears in the sheet — full book accounted for. ✓</p>'; return; }
-    host.innerHTML = `<p class="hint" style="margin:6px 0 10px">${list.length} project${list.length === 1 ? '' : 's'} carr${list.length === 1 ? 'ies' : 'y'} ${money(list.reduce((s, x) => s + x.tot, 0))} of ${state.years.join('/')} revenue in the tool but never appear${list.length === 1 ? 's' : ''} in this workbook.</p>
-      <table class="ri"><thead><tr><th>Project (tool)</th><th>Status</th><th>Timeframe</th><th>Staffing</th><th class="num">Tool revenue · ${state.years.join('+')}</th></tr></thead><tbody>
-      ${list.map(x => `<tr>
+    if (!list.length) { host.innerHTML = '<p class="hint" style="margin:6px 0 2px">Every tool project appears in the sheet — full book accounted for. ✓</p>'; return; }
+    const withRev = list.filter(x => Math.abs(x.tot) >= 1);
+    state.removeSel = new Set([...(state.removeSel || new Set())].filter(id => list.some(x => x.id === id)));
+    const rowFor = (x) => `<tr>
+        <td><input type="checkbox" class="ri-rm-check" data-id="${esc(x.id)}" ${state.removeSel.has(x.id) ? 'checked' : ''} title="Tick to mark this project for removal"></td>
         <td>${esc(x.label)}</td>
         <td>${esc(((x.rec.project || {}).status) || '—')}</td>
+        <td>${esc(((x.rec.project || {}).lead) || '—')}</td>
         <td>${esc(x.span ? x.span.label : '—')}</td>
         <td>${x.reconciled ? '<span class="ri-badge" style="background:#fbe9ea;color:#b3151b">✓ reconciled</span>' : x.kind === 'priced' ? '<span class="ri-badge" style="background:#fdf3d7;color:#8a6d00">priced staffing</span>' : x.kind === 'zeroSeed' ? '<span class="ri-badge" style="background:#e7f0ee;color:#0E7C7B">$0 seed (ours)</span>' : '<span class="raw">not staffed</span>'}</td>
-        <td class="num">${money(x.tot)}</td>
-      </tr>`).join('')}
-      </tbody></table>`;
+        <td class="num">${Math.abs(x.tot) >= 1 ? money(x.tot) : '<span class="raw">—</span>'}</td>
+      </tr>`;
+    host.innerHTML = `<p class="hint" style="margin:6px 0 10px">${list.length} tool project${list.length === 1 ? '' : 's'} never appear${list.length === 1 ? 's' : ''} in this workbook${withRev.length ? ` — ${withRev.length} of them carr${withRev.length === 1 ? 'ies' : 'y'} ${money(withRev.reduce((s, x) => s + x.tot, 0))} of ${state.years.join('/')} revenue` : ''}. If a row is really a rename, link it in the match column above and it leaves this list; tick the ones that shouldn't exist and remove them.</p>
+      <table class="ri"><thead><tr><th></th><th>Project (tool)</th><th>Status</th><th>Lead</th><th>Timeframe</th><th>Staffing</th><th class="num">Tool revenue · ${state.years.join('+')}</th></tr></thead><tbody>
+      ${list.map(rowFor).join('')}
+      </tbody></table>
+      <div class="src-actions" style="margin-top:12px;display:flex;gap:10px;align-items:center">
+        <button class="btn" id="ri-remove-btn" ${state.removeSel.size ? '' : 'disabled'} style="border-color:#a3352d;color:#a3352d">🗑 Remove selected (${state.removeSel.size})</button>
+        <span class="hint">Soft delete — a tombstone syncs to everyone and the record is recoverable from Data Repair for ~4 months. Nothing else is touched.</span>
+      </div>`;
+    $$('.ri-rm-check').forEach(cb => cb.onchange = () => {
+      if (cb.checked) state.removeSel.add(cb.dataset.id); else state.removeSel.delete(cb.dataset.id);
+      const btn = document.getElementById('ri-remove-btn');
+      if (btn) { btn.disabled = !state.removeSel.size; btn.textContent = `🗑 Remove selected (${state.removeSel.size})`; }
+    });
+    const rb = document.getElementById('ri-remove-btn');
+    if (rb) rb.onclick = () => {
+      const chosen = list.filter(x => state.removeSel.has(x.id));
+      if (!chosen.length) return;
+      const risky = chosen.filter(x => x.kind === 'priced' || x.reconciled);
+      const msg = `Remove ${chosen.length} project${chosen.length === 1 ? '' : 's'} from the tool?\n\n   • ${chosen.slice(0, 15).map(x => x.label + (Math.abs(x.tot) >= 1 ? ` (${money(x.tot)})` : '')).join('\n   • ')}${chosen.length > 15 ? `\n   • …and ${chosen.length - 15} more` : ''}` +
+        (risky.length ? `\n\n⚠ ${risky.length} of these ${risky.length === 1 ? 'has' : 'have'} priced staffing or ${risky.length === 1 ? 'is' : 'are'} marked reconciled — someone has worked on ${risky.length === 1 ? 'it' : 'them'}.` : '') +
+        `\n\nThis is a soft delete: recoverable from Data Repair for ~4 months.`;
+      if (!confirm(msg)) return;
+      let removed = 0, failed = 0;
+      chosen.forEach(x => { try { STORE.deleteProject(x.id); removed++; } catch (e) { failed++; } });
+      state.removeSel = new Set();
+      state.projectIndex = buildProjectIndex();
+      renderTable(); renderSummary();
+      setStatus(`Removed ${removed} project${removed === 1 ? '' : 's'} (soft delete)` + (failed ? ` — ${failed} failed` : ''), failed ? 'bad' : '');
+    };
   }
 
   async function applySelected() {
@@ -924,6 +956,7 @@
     state.projectIndex = buildProjectIndex();
     state.overrides = {};
     state.included = new Set();
+    state.removeSel = new Set();
     groups.forEach(g => { g.match = matchGroup(state.projectIndex, g); });
     // ONE tool project per sheet row: sibling engagements sharing a Project ID
     // all ID-match the same record, but only one of them can BE that record.
