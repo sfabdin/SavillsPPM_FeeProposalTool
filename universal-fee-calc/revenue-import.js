@@ -291,9 +291,6 @@
     series.forEach(s => { if (out[s.year]) out[s.year][s.month] = s.amount || 0; });
     return out;
   }
-  function lockedByOriginalImport(project) {
-    return !!(project && project.source && project.source.importedByMonth && !project.source.reconciled);
-  }
 
   /** What KIND of staffing sits on a project. 'zeroSeed' = every role was
       written by OUR matrix seeding at a $0 contracted placeholder — the
@@ -353,7 +350,6 @@
       isNew: false, changedMonths, totalDelta, current,
       sheetTotal, toolTotal: toolTotalFor(matchedProject, years),
       sheetSpan: sSpan, toolSpan: tSpan, spanOk: spanFits(sSpan, tSpan),
-      locked: lockedByOriginalImport(matchedProject),
       staffed: hasStaffing(matchedProject),
       staffKind: staffingKind(matchedProject),
       reconciled: !!(matchedProject.source && matchedProject.source.reconciled),
@@ -475,12 +471,15 @@
         catalogBaseYear: (window.RATES_CATALOG && window.RATES_CATALOG.baseYear) || 2024,
         feeShare: { enabled: hasFeeShare, pct: hasFeeShare ? g.feeSharePct : 0, mode: 'offtop' },
       },
-      // a brand-new project has no history to protect — take every month
-      monthlyOverrides: buildOverrides(g, years, { futureOnly: false }),
+      // a brand-new project has no history to protect — take every month.
+      // The figures land as IMPORTED revenue (source.importedByMonth), the
+      // same channel the calculator shows as "Imported · locked" — NOT as
+      // manual monthlyOverrides, which would nag every leader to reconcile.
       source: {
         type: 'revenue-import', name: state.fileName || 'revenue projections', ingestedAt: new Date().toISOString(),
         sheetProjectId: g.projectId || null, sheetRating: g.rating || null,
         sheetKeys: [String(g.key).toLowerCase()],
+        importedByMonth: buildOverrides(g, years, { futureOnly: false }),
         brokerByMonth: hasFeeShare ? buildBrokerByMonth(g, years) : undefined,
       },
     };
@@ -489,23 +488,32 @@
   function applyOverridesToProject(projectId, g, years, opts) {
     const p = STORE.getProject(projectId);
     if (!p) throw new Error('Matched project no longer exists — it may have been deleted.');
-    // ONLY monthlyOverrides move. The roster, rates, phases and every other
-    // field a revenue leader has been working on are left exactly as they are.
     const futureOnly = !!(opts && opts.futureOnly);
-    const ov = Object.assign({}, p.monthlyOverrides || {}, buildOverrides(g, years, opts));
-    // Reconciling to the file also means CLEARING: a month the sheet holds at
-    // $0 while the tool shows money gets an explicit $0 override — otherwise
-    // the old figure would survive the import and the diff you approved on
-    // screen would never fully land.
-    const current = currentSeriesByYear(p, years);
+    // The sheet lands as IMPORTED revenue: source.importedByMonth, replacing
+    // whatever an earlier import put there for the sheet's years (months the
+    // sheet holds at $0 simply disappear — exact reconciliation). This is the
+    // channel the calculator shows as "Imported · locked", not the manual
+    // override channel that nags every revenue leader to reconcile.
+    const imp = { ...(((p.source || {}).importedByMonth) || {}) };
     years.forEach(y => {
       for (let m = 1; m <= 12; m++) {
         if (futureOnly && isPastMonth(y, m)) continue;
-        const sheetV = Math.round((g.byYear[y][m] || 0) * 100) / 100;
-        const curV = Math.round((current[y][m] || 0) * 100) / 100;
-        if (!sheetV && Math.abs(curV) >= 0.5) ov[y + '-' + m] = 0;
+        const v = Math.round((g.byYear[y][m] || 0) * 100) / 100;
+        if (v) imp[y + '-' + m] = v; else delete imp[y + '-' + m];
       }
     });
+    // Manual overrides inside the sheet's years are cleared — the sheet owns
+    // those months now. (This is also what retires stale overrides written by
+    // earlier versions of this importer.) Months outside the sheet's years
+    // keep whatever overrides they had.
+    const ov = { ...(p.monthlyOverrides || {}) };
+    Object.keys(ov).forEach(k => {
+      const [yy, mm] = k.split('-').map(Number);
+      if (years.includes(yy) && !(futureOnly && isPastMonth(yy, mm))) delete ov[k];
+    });
+    // A project someone had marked reconciled goes back to LOCKED-to-imported:
+    // ticking it was an explicit decision that the sheet wins again.
+    const relocked = !!((p.source || {}).reconciled);
     // The sheet is also the source of truth for what the engagement is CALLED.
     // Rename to the sheet's name (client prefix stripped), keep the old names
     // on the record for traceability, and pick up a missing Salesforce ID.
@@ -522,10 +530,18 @@
       ...p,
       project: proj,
       monthlyOverrides: ov,
-      source: { ...(p.source || {}), sheetKeys: keys.includes(gk) ? keys : keys.concat([gk]), ...(renamed ? { priorNames: priorNames.filter(Boolean) } : {}) },
+      source: {
+        ...(p.source || {}),
+        importedByMonth: imp,
+        reconciled: false,
+        revenueImportFile: state.fileName || 'revenue projections',
+        revenueImportedAt: new Date().toISOString(),
+        sheetKeys: keys.includes(gk) ? keys : keys.concat([gk]),
+        ...(renamed ? { priorNames: priorNames.filter(Boolean) } : {}),
+      },
     };
     STORE.saveProject(next, { baseUpdatedAt: p.updatedAt });
-    return { renamed };
+    return { renamed, relocked };
   }
 
   /* ---------- state + render ---------- */
@@ -560,7 +576,7 @@
   /** Of the ticked rows, which would UPDATE an existing project (a match
       exists — only its monthly $ move) vs CREATE a brand-new one (no match). */
   function selectionSplit() {
-    let updates = 0; const creates = []; const renames = [];
+    let updates = 0; const creates = []; const renames = []; const relocks = [];
     state.groups.forEach(g => {
       if (!state.included.has(g.key)) return;
       const id = matchedIdFor(g);
@@ -569,8 +585,9 @@
       const p = STORE.getProject(id);
       const nn = sheetName(g);
       if (p && nn && ((p.project || {}).name || '') !== nn) renames.push(`${(p.project || {}).name || '(unnamed)'} → ${nn}`);
+      if (p && (p.source || {}).reconciled) relocks.push(((p.project || {}).client || '') + ' — ' + ((p.project || {}).name || ''));
     });
-    return { updates, creates, renames };
+    return { updates, creates, renames, relocks };
   }
 
   function summarize() {
@@ -701,7 +718,7 @@
       ['Past months', state.futureOnly
         ? 'SKIPPED — forward-only movement was explicitly selected. The tool keeps whatever history it holds today.'
         : 'RECONCILED to this workbook — its closed months are the record of what was actually billed, so they are imported as-is. The "Closed months restated" column shows where that changes a figure the tool held.'],
-      ['What an import touches', 'The monthly revenue figures (monthlyOverrides) and the project NAME, which syncs to the sheet (client prefix stripped; old names kept on the record). Rosters, rates, phases and every other field are never touched. Because the figures land as overrides, a later staffing edit cannot retroactively restate a billed month.'],
+      ['What an import touches', 'The sheet lands as IMPORTED revenue (source.importedByMonth — shown as "Imported · locked" in the calculator), replacing the previous import for the sheet\u2019s years; stale manual overrides inside those years are cleared, and the project NAME syncs to the sheet (client prefix stripped; old names kept). Rosters, rates, phases and every other field are never touched. A staffing edit cannot restate an imported month — projections stay locked to the import until the project is explicitly marked reconciled.'],
     ].forEach(([k, v]) => {
       cv.getCell(`A${cr}`).value = k;
       cv.getCell(`A${cr}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
@@ -768,7 +785,6 @@
         : (matchedId ? ` <a href="#" class="ri-match-clear" data-key="${esc(g.key)}" style="font-size:10.5px;color:#79828C" title="Unlink — importing this row would then create its own new project">✕ unlink</a>` : '');
       const clsBadge = `<div class="ri-cls ${CLASS[cls].tone}" title="${cls === 'review' ? 'A revenue leader has priced staffing on this project — importing changes their numbers underneath them' : cls === 'reconciledChanged' ? 'This project was marked reconciled — its projections follow the fee model now, so a sheet change here is a conversation, not an auto-apply' : ''}">${CLASS[cls].label}</div>`;
       const comment = g.comments ? `<div class="raw" style="color:#4a4f5e"><b>Finance:</b> ${esc(g.comments.slice(0, 160))}${g.comments.length > 160 ? '…' : ''}</div>` : '';
-      const lockWarn = d.locked ? `<div class="ri-warn">⚠ locked to its original import — a new override won't show until this project is reconciled</div>` : '';
       const feeShareNote = g.feeSharePct > 0
         ? `<div class="raw" style="color:#8a6d00">− broker ${g.feeSharePct}%${matchedId ? ' (existing project — set feeShare manually if needed, not auto-applied)' : ' — applied on create'}</div>`
         : '';
@@ -776,7 +792,7 @@
       const revCell = d.isNew
         ? `<div class="num">sheet <b>${money(d.sheetTotal)}</b></div><div class="raw">no tool side — would be created</div>`
         : d.changedMonths
-          ? `<div class="num">sheet <b>${money(d.sheetTotal)}</b> · tool ${money(d.toolTotal)}</div><div class="num ri-delta">${d.totalDelta >= 0 ? '+' : ''}${money(d.totalDelta)} across ${d.changedMonths} mo</div>${lockWarn}`
+          ? `<div class="num">sheet <b>${money(d.sheetTotal)}</b> · tool ${money(d.toolTotal)}</div><div class="num ri-delta">${d.totalDelta >= 0 ? '+' : ''}${money(d.totalDelta)} across ${d.changedMonths} mo</div>`
           : `<div class="num">✓ matches · ${money(d.sheetTotal)}</div>`;
       // timeframe cell: sheet revenue months vs the tool's project timeline
       const tfCell = !d.sheetSpan ? '<span class="raw">—</span>'
@@ -919,9 +935,12 @@
     // Say exactly what is about to happen — update vs create — before it does.
     const split = selectionSplit();
     const lines = [
-      `${split.updates} UPDATE existing projects — monthly revenue figures and the project name sync to the sheet; rosters, rates and phases are untouched.`,
+      `${split.updates} UPDATE existing projects — the sheet's months land as IMPORTED revenue (replacing the previous import for these years; stale manual overrides in them are cleared) and the project name syncs; rosters, rates and phases are untouched.`,
       split.renames.length
         ? `${split.renames.length} of those get RENAMED to the sheet's name:\n   • ${split.renames.slice(0, 8).join('\n   • ')}${split.renames.length > 8 ? `\n   • …and ${split.renames.length - 8} more` : ''}`
+        : null,
+      split.relocks.length
+        ? `${split.relocks.length} currently marked reconciled get RE-LOCKED to the imported figures:\n   • ${split.relocks.slice(0, 8).join('\n   • ')}`
         : null,
       split.creates.length
         ? `${split.creates.length} CREATE brand-new projects:\n   • ${split.creates.slice(0, 12).join('\n   • ')}${split.creates.length > 12 ? `\n   • …and ${split.creates.length - 12} more` : ''}`
@@ -930,12 +949,12 @@
     if (!confirm(`Import ${split.updates + split.creates.length} selected rows?\n\n` + lines.join('\n\n'))) return;
     const btn = $('#ri-apply-btn'); const orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Importing…';
-    let created = 0, updated = 0, renamed = 0, failed = [];
+    let created = 0, updated = 0, renamed = 0, relocked = 0, failed = [];
     for (const g of state.groups) {
       if (!state.included.has(g.key)) continue;
       const matchedId = state.overrides[g.key] !== undefined ? state.overrides[g.key] : (g.match && g.match.id);
       try {
-        if (matchedId) { const r = applyOverridesToProject(matchedId, g, state.years, { futureOnly: !!state.futureOnly }); updated++; if (r && r.renamed) renamed++; }
+        if (matchedId) { const r = applyOverridesToProject(matchedId, g, state.years, { futureOnly: !!state.futureOnly }); updated++; if (r && r.renamed) renamed++; if (r && r.relocked) relocked++; }
         else { createLightweightProject(g, state.years); created++; }
       } catch (e) { failed.push(`${g.client} — ${g.project}: ${e.message}`); }
     }
@@ -943,7 +962,7 @@
     state.projectIndex = buildProjectIndex();   // new projects now exist — refresh matching pool
     renderTable(); renderSummary();
     btn.textContent = orig; btn.disabled = false;
-    setStatus(`Imported: ${updated} updated${renamed ? ` (${renamed} renamed to the sheet's name)` : ''}, ${created} created` + (failed.length ? ` — ${failed.length} failed (${failed.join(' · ')})` : ''), failed.length ? 'bad' : '');
+    setStatus(`Imported: ${updated} updated${renamed ? ` · ${renamed} renamed` : ''}${relocked ? ` · ${relocked} re-locked to imported` : ''}, ${created} created` + (failed.length ? ` — ${failed.length} failed (${failed.join(' · ')})` : ''), failed.length ? 'bad' : '');
   }
 
   /** Everything after the raw sheet_to_json rows are in hand — shared by the
