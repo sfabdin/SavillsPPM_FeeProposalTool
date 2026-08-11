@@ -31,6 +31,45 @@
   .tab.tab-mapping { color:#fff; background:var(--sav-teal); border-radius:3px 3px 0 0; margin-bottom:0; padding-bottom:11px; }
   .tab.tab-mapping:hover { color:#fff; background:#0a6564; }
   .tab.tab-mapping.active { color:#fff; border-bottom-color:var(--sav-navy); }
+
+  /* ---- Review / Manage zones in the tab bar ---- */
+  .tabs { flex-wrap:wrap; align-items:stretch; }
+  .zone-tag { display:flex; align-items:center; padding:0 10px 0 2px; font-family:var(--font-display); font-size:9px; font-weight:800; letter-spacing:0.16em; text-transform:uppercase; color:var(--sav-steel); }
+  .zone-tag.zone-manage { border-left:1px solid rgba(37,39,58,0.18); margin-left:10px; padding-left:14px; }
+  .tab.tab-entry.active { border-bottom-color:var(--sav-teal); }
+
+  /* ---- Freshness strip — data age on every tab ---- */
+  #fresh-strip { display:flex; flex-wrap:wrap; background:#efece8; border:1px solid rgba(37,39,58,0.12); border-bottom:0; }
+  #fresh-strip:empty { display:none; }
+  .fs-cell { flex:1 1 200px; padding:9px 16px; border-right:1px solid rgba(37,39,58,0.08); display:flex; flex-direction:column; gap:1px; cursor:pointer; background:none; border-top:0; border-bottom:0; border-left:0; text-align:left; font-family:inherit; }
+  .fs-cell:last-child { border-right:0; }
+  .fs-cell:hover { background:#e9e5df; }
+  .fs-k { font-family:var(--font-display); font-size:8.5px; font-weight:800; letter-spacing:0.14em; text-transform:uppercase; color:var(--sav-steel); }
+  .fs-v { font-family:var(--font-display); font-size:12.5px; font-weight:700; color:var(--sav-navy); display:flex; align-items:center; gap:6px; }
+  .fs-dot { width:7px; height:7px; border-radius:50%; flex:none; }
+  .fs-dot.ok { background:var(--sav-teal); } .fs-dot.warn { background:#D4A017; } .fs-dot.bad { background:#B3413B; }
+  .fs-age { font-size:10.5px; color:var(--sav-steel); }
+
+  /* ---- Clockify Reporting: segmented view + sparklines + groups ---- */
+  .seg-view { display:inline-flex; border:1px solid rgba(37,39,58,0.25); }
+  .seg-view button { appearance:none; border:0; background:#fff; cursor:pointer; font-family:var(--font-display); font-size:12px; font-weight:700; color:var(--sav-steel); padding:7px 14px; }
+  .seg-view button + button { border-left:1px solid rgba(37,39,58,0.18); }
+  .seg-view button.on { background:var(--sav-navy); color:#fff; }
+  .spark { display:inline-flex; align-items:flex-end; gap:3px; height:20px; vertical-align:middle; margin-right:8px; }
+  .spark i { width:7px; display:block; background:var(--sav-teal); opacity:.85; }
+  .spark i.low { background:#e8b563; }
+  .spark i.zero { background:#e4453a; }
+  .spark i.lv { background:#b9a3d8; opacity:.6; }
+  .spark i.na { background:rgba(37,39,58,0.12); }
+  tr.grouprow td { background:var(--sav-cream); font-family:var(--font-display); font-weight:800; font-size:11px; letter-spacing:0.04em; color:var(--sav-navy); border-bottom:1px solid rgba(37,39,58,0.14); }
+  .chase { border-left:3px solid #e8b563; background:#fdf6e3; padding:8px 12px; font-size:12.5px; margin:0 0 10px; }
+
+  /* ---- glossary popover in the controls row ---- */
+  details.gloss { position:relative; align-self:center; }
+  details.gloss summary { list-style:none; cursor:pointer; font-family:var(--font-display); font-weight:700; font-size:12px; color:var(--sav-navy); border:1px solid rgba(37,39,58,0.25); padding:8px 12px; background:#fff; white-space:nowrap; }
+  details.gloss summary::-webkit-details-marker { display:none; }
+  details.gloss[open] summary { background:var(--sav-navy); color:#fff; }
+  details.gloss .gloss-pop { position:absolute; right:0; top:calc(100% + 6px); z-index:60; width:430px; max-width:82vw; background:#fff; border:1px solid rgba(37,39,58,0.2); box-shadow:0 10px 34px rgba(37,39,58,0.22); padding:12px 16px; font-size:12.5px; line-height:1.7; color:var(--sav-steel); }
   .panel { display:none; }
   .panel.active { display:block; }
 
@@ -256,17 +295,35 @@
     </div>
     <div class="ctl">
       <label>&nbsp;</label>
-      <button class="btn btn-secondary" id="export-snapshot-btn" title="Download every view on this page as one .xlsx — Compare, By Project, By Person, Allocations, Contract vs Staffing, Leaves, Insights, Time Entry, Mapping and raw Actuals. Static values, not live formulas.">⬇ Export All Views</button>
+      <details class="gloss">
+        <summary>❓ ①②③</summary>
+        <div class="gloss-pop">
+          <div><b style="color:#0E7C7B">① Plan (matrix)</b> — who we <b>plan</b> to staff: names and allocation % entered in this tool. Expected hours = <span id="gloss-hrs">173.33</span> hrs/mo × capacity% × allocation%.</div>
+          <div><b style="color:#79828C">② Contract (fee tool)</b> — what the signed fee matrix <b>priced</b>: titles and hours, no names. Flows in from the linked fee-tool project — <b>Mapping</b> controls that link.</div>
+          <div><b style="color:#b39b00">③ Actual (Clockify)</b> — what actually got <b>logged</b>, split into billable / macro / Time Off.</div>
+          <div style="margin-top:4px">Healthy = ③ tracks ①, and both stay inside ②. ▲ over plan · ▼ under · ● on plan (±10%).</div>
+        </div>
+      </details>
+    </div>
+    <div class="ctl">
+      <label>&nbsp;</label>
+      <button class="btn btn-secondary" id="export-snapshot-btn" title="Download every view on this page as one .xlsx — Compare, By Project, By Person, Allocations, Contract vs Staffing, Leaves, Insights, Clockify Reporting, Mapping and raw Actuals. Static values, not live formulas.">⬇ Export All Views</button>
     </div>
   </div>
 
+  <!-- Freshness strip — the age of every feed, visible from every tab -->
+  <div id="fresh-strip"></div>
+
   <div class="tabs" id="tabs">
+    <span class="zone-tag">Review</span>
     <button class="tab active" data-tab="actuals">Compare · Plan / Contract / Actual</button>
     <button class="tab" data-tab="projects">By Project <span class="cnt" id="cnt-proj"></span></button>
     <button class="tab" data-tab="people">By Person <span class="cnt" id="cnt-ppl"></span></button>
-    <button class="tab" data-tab="allocations">Allocations <span class="cnt" id="cnt-alloc"></span></button>
     <button class="tab" data-tab="insights">Insights</button>
-    <button class="tab" data-tab="compliance">Time Entry</button>
+    <button class="tab" data-tab="compliance">Clockify Reporting</button>
+    <span class="zone-tag zone-manage">Manage</span>
+    <button class="tab tab-entry" data-tab="allocations">Allocations <span class="cnt" id="cnt-alloc"></span></button>
+    <button class="tab tab-entry" data-tab="sources">Data Sources</button>
     <span class="grow"></span>
     <button class="tab tab-mapping" data-tab="mapping">🔗 Mapping</button>
   </div>
@@ -277,6 +334,7 @@
   <section class="panel" id="p-allocations"></section>
   <section class="panel" id="p-insights"></section>
   <section class="panel" id="p-compliance"></section>
+  <section class="panel" id="p-sources"></section>
   <section class="panel" id="p-mapping"></section>
 
 </div>
