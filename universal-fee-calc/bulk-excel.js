@@ -29,6 +29,15 @@
   /* ---------- small helpers ---------- */
   const S = (v) => (v == null ? '' : String(v)).trim();
   const N = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(/[$,\s]/g, '')); return isFinite(n) ? n : 0; };
+  /** Strictly numeric, or null. N() coerces junk to 0, which is right for
+      "read a number out of a cell" and catastrophically wrong for "are these
+      two values equal" — "Tasia Long" and "Renamed Person" are both 0. */
+  const NUM = (v) => {
+    const t = String(v == null ? '' : v).replace(/[$,\s]/g, '');
+    if (t === '' || !/^-?\d*\.?\d+$/.test(t)) return null;
+    const n = Number(t);
+    return isFinite(n) ? n : null;
+  };
   const YESNO = (v) => /^(y|yes|true|on|1)$/i.test(S(v));
   const uid = (p) => p + Math.random().toString(36).slice(2, 9);
   /** Store month keys are unpadded ("2026-3"); Excel wants sortable text. */
@@ -387,6 +396,25 @@
     const get = (n) => wb.worksheets.find(w => w.name.toLowerCase() === n);
     const projects = rowsOf(get('projects'), PROJECT_COLS);
     if (!projects.length) throw new Error('No rows found on a "Projects" sheet — is this the exported workbook?');
+    // The Lists + Type subs sheets are EDITABLE: whatever you add there
+    // becomes part of the system vocabulary when the workbook is applied.
+    const listsWs = get('lists');
+    const lists = { Industry: [], ProjectType: [], LossReason: [] };
+    if (listsWs) {
+      const head = [];
+      listsWs.getRow(1).eachCell({ includeEmpty: true }, (c, i) => { head[i] = S(c.value); });
+      head.forEach((h, col) => {
+        if (!lists[h]) return;
+        listsWs.eachRow((row, rn) => { if (rn === 1) return; const v = S(row.getCell(col).value); if (v) lists[h].push(v); });
+      });
+    }
+    const subsWs = get('type subs');
+    const typeSubs = [];
+    if (subsWs) subsWs.eachRow((row, rn) => {
+      if (rn === 1) return;
+      const t = S(row.getCell(1).value), sub = S(row.getCell(2).value);
+      if (t && sub) typeSubs.push({ type: t, sub });
+    });
     return {
       fileName: file.name,
       projects,
@@ -394,6 +422,7 @@
       phases: rowsOf(get('phases'), PHASE_COLS),
       groups: rowsOf(get('groups'), GROUP_COLS),
       revenue: rowsOf(get('revenue'), REV_COLS),
+      lists, typeSubs,
     };
   }
 
@@ -401,7 +430,43 @@
   function buildPlan(parsed) {
     const st = STORE();
     const errors = [], changes = [], creates = [], removes = [], untouched = [];
-    const catalogTitles = new Set(((window.RATES_CATALOG && window.RATES_CATALOG.titles) || []).map(t => t.id));
+    /* A title id is valid if the rate grid knows it OR the catalog maps it as
+       a legacy alias — the calculator resolves both, so flagging an alias that
+       has been on a role for two years would be a lie. When the grid hasn't
+       hydrated (offline), skip the check rather than reject everything. */
+    const cat = window.RATES_CATALOG || {};
+    const catalogTitles = new Set((cat.titles || []).map(t => t.id));
+    const legacyIds = new Set(Object.keys(cat.legacyAlias || {}));
+    const titleKnown = (id) => !catalogTitles.size || catalogTitles.has(id) || legacyIds.has(id);
+
+    /* Vocabulary: system lists PLUS anything added on the workbook's Lists /
+       Type subs sheets. Validation runs against the effective set, and the
+       additions are applied first when the plan runs. */
+    const wbLists = (parsed.lists || { Industry: [], ProjectType: [], LossReason: [] });
+    const sysIndustries = st.INDUSTRIES, sysReasons = st.LOST_REASONS, sysTypes = st.PROJECT_TYPES;
+    const newIndustries = (wbLists.Industry || []).filter(x => !sysIndustries.includes(x));
+    const newReasons = (wbLists.LossReason || []).filter(x => !sysReasons.includes(x));
+    const wbTypeNames = (wbLists.ProjectType || []);
+    const subsByType = {};
+    (parsed.typeSubs || []).forEach(({ type, sub }) => { (subsByType[type] = subsByType[type] || []).push(sub); });
+    const newTypes = [];
+    const seenTypeNames = new Set(wbTypeNames.concat(Object.keys(subsByType)));
+    seenTypeNames.forEach(name => {
+      const base = sysTypes.find(t => t.name === name);
+      const subs = (subsByType[name] || []).filter(x => !base || !base.subs.includes(x));
+      if (!base) newTypes.push({ name, subs: subsByType[name] || [] });
+      else if (subs.length) newTypes.push({ name, subs });
+    });
+    const vocabAdds = { industries: newIndustries, lossReasons: newReasons, projectTypes: newTypes };
+    const vocabCount = newIndustries.length + newReasons.length + newTypes.reduce((n, t) => n + 1 + t.subs.length, 0);
+    const effIndustries = sysIndustries.concat(newIndustries);
+    const effReasons = sysReasons.concat(newReasons);
+    const effSubs = (typeName) => {
+      const base = sysTypes.find(t => t.name === typeName);
+      const add = newTypes.find(t => t.name === typeName);
+      return (base ? base.subs : []).concat(add ? add.subs : []);
+    };
+    const effTypeNames = sysTypes.map(t => t.name).concat(newTypes.filter(t => !sysTypes.some(s2 => s2.name === t.name)).map(t => t.name));
     const byProjRoles = {}, byProjPhases = {}, byProjGroups = {}, byProjRev = {};
     (parsed.roles || []).forEach(r => { const k = S(r.projectId); if (k) (byProjRoles[k] = byProjRoles[k] || []).push(r); });
     (parsed.phases || []).forEach(r => { const k = S(r.projectId); if (k) (byProjPhases[k] = byProjPhases[k] || []).push(r); });
@@ -435,34 +500,43 @@
       // --- validated header fields ---
       const pj = Object.assign({}, (prev && prev.project) || {});
       const setIf = (k, v) => { pj[k] = v; };
+      /* Validate only what you actually CHANGED. A value that came out of the
+         export and went back untouched is pre-existing data — legacy title
+         ids, a lead who left, an industry from before the list settled — and
+         blocking the whole import on it would make the round trip impossible
+         on real data. Untouched cells pass through exactly as they were. */
+      const base = prev ? projectRow(prev) : null;
+      const edited = (k) => !base || S(row[k]) !== S(base[k]);
+      const errIf = (k, cond, msg) => { if (edited(k) && cond) err('Projects', row._row, msg); };
+
       const status = S(row.status);
-      if (status && !st.STATUSES.includes(status)) err('Projects', row._row, `Status "${status}" is not one of: ${st.STATUSES.join(', ')}`);
+      errIf('status', status && !st.STATUSES.includes(status), `Status "${status}" is not one of: ${st.STATUSES.join(', ')}`);
       const industry = S(row.industry);
-      if (industry && !st.INDUSTRIES.includes(industry)) err('Projects', row._row, `Industry "${industry}" is not on the list`);
+      errIf('industry', industry && !effIndustries.includes(industry), `Industry "${industry}" is not on the list — add it to the Lists sheet if it's a real new industry`);
       const ptype = S(row.projectType);
-      if (ptype && !st.PROJECT_TYPES.some(t => t.name === ptype)) err('Projects', row._row, `Project type "${ptype}" is not on the list`);
+      errIf('projectType', ptype && !effTypeNames.includes(ptype), `Project type "${ptype}" is not on the list — add it to the Lists sheet if it's a real new type`);
       const leadTxt = S(row.lead);
       let leader = null;
       if (leadTxt) {
         leader = st.resolveLeader(leadTxt);
-        if (!leader) err('Projects', row._row, `Lead PE "${leadTxt}" is not a known revenue leader`);
+        errIf('lead', !leader, `Lead PE "${leadTxt}" is not a known revenue leader`);
       }
       const lossReason = S(row.lossReason);
-      if (lossReason && !st.LOST_REASONS.includes(lossReason)) err('Projects', row._row, `Loss reason "${lossReason}" is not one of: ${st.LOST_REASONS.join(', ')}`);
+      errIf('lossReason', lossReason && !effReasons.includes(lossReason), `Loss reason "${lossReason}" is not one of: ${effReasons.join(', ')}`);
       // Sub-services must belong to the chosen project type — that's the whole
       // point of the taxonomy, and a typo here is invisible everywhere else.
       const subs = splitList(row.projectSubtypes);
-      if (subs.length) {
+      if (subs.length && edited('projectSubtypes')) {
         if (!ptype) err('Projects', row._row, 'Sub-services are set but Project type is blank — pick the type first');
         else {
-          const valid = st.projectTypeSubs(ptype);
-          subs.forEach(s2 => { if (!valid.includes(s2)) err('Projects', row._row, `Sub-service "${s2}" isn't part of "${ptype}" — valid: ${valid.join(' · ')}`); });
+          const valid = effSubs(ptype);
+          subs.forEach(s2 => { if (!valid.includes(s2)) err('Projects', row._row, `Sub-service "${s2}" isn't part of "${ptype}" — valid: ${valid.join(' · ')}${valid.length ? '' : '(none defined)'}`); });
         }
       }
       // Access grant: emails only, normalised the same way the access wall reads them.
       const rawAccess = S(row.accessGrant);
       const emails = st.parseAccessEmails(rawAccess);
-      if (rawAccess) {
+      if (rawAccess && edited('accessGrant')) {
         const junk = rawAccess.split(/[,;\n]+/).map(x => x.trim()).filter(x => x && !x.includes('@'));
         if (junk.length) err('Projects', row._row, `Grant access needs email addresses — "${junk.join('", "')}" ${junk.length === 1 ? 'is not one' : 'are not'}`);
       }
@@ -470,16 +544,18 @@
       let relOwner = null;
       if (relTxt) {
         relOwner = st.resolveLeader(relTxt);
-        if (!relOwner) err('Projects', row._row, `Relationship owner "${relTxt}" is not a known revenue leader`);
+        errIf('clientRelOwner', !relOwner, `Relationship owner "${relTxt}" is not a known revenue leader`);
       }
       setIf('name', S(row.name)); setIf('client', S(row.client));
       if (status || !isNew) setIf('status', status || pj.status || 'draft');
       setIf('lossReason', lossReason);
       setIf('rating', S(row.rating)); setIf('industry', industry); setIf('projectType', ptype);
       pj.projectSubtypes = subs;
-      pj.leadId = leader ? leader.id : ''; pj.lead = leader ? leader.displayName : '';
-      pj.clientRelOwner = relOwner ? relOwner.id : (relTxt ? pj.clientRelOwner : '');
-      pj.accessGrant = emails.join(', ');
+      if (leader) { pj.leadId = leader.id; pj.lead = leader.displayName; }
+      else if (!leadTxt) { pj.leadId = ''; pj.lead = ''; }
+      else if (edited('lead')) { pj.leadId = ''; pj.lead = leadTxt; }   // unresolved but deliberately typed
+      pj.clientRelOwner = relOwner ? relOwner.id : (relTxt ? (prev ? (prev.project || {}).clientRelOwner : relTxt) : '');
+      if (edited('accessGrant')) pj.accessGrant = emails.join(', ');
       pj.assumptionsList = splitList(row.assumptionsList);
       setIf('location', S(row.location)); setIf('salesforceId', S(row.salesforceId));
       setIf('clientContact', S(row.clientContact));
@@ -496,10 +572,10 @@
       if (sYm) { timeline.startYear = sYm.year; timeline.startMonth = sYm.month; }
       if (eYm) { timeline.endYear = eYm.year; timeline.endMonth = eYm.month; }
 
-      const assumptions = Object.assign({
-        hrsPerMo: 173.33, escalation: 3, industryAdj: 20, discount: 0, rateLock: false,
-        billingMode: 'phase', catalogBaseYear: (window.RATES_CATALOG && window.RATES_CATALOG.baseYear) || 2024,
-      }, (prev && prev.assumptions) || {});
+      const assumptions = Object.assign(
+        isNew ? { hrsPerMo: 173.33, escalation: 3, industryAdj: 20, discount: 0, rateLock: false,
+                  billingMode: 'phase', catalogBaseYear: (window.RATES_CATALOG && window.RATES_CATALOG.baseYear) || 2024 } : {},
+        (prev && prev.assumptions) || {});
       if (S(row.hrsPerMo) !== '') assumptions.hrsPerMo = N(row.hrsPerMo);
       if (S(row.escalation) !== '') assumptions.escalation = N(row.escalation);
       if (S(row.industryAdj) !== '') assumptions.industryAdj = N(row.industryAdj);
@@ -511,7 +587,11 @@
         else assumptions.billingMode = bm;
       }
       if (S(row.catalogBaseYear) !== '') assumptions.catalogBaseYear = N(row.catalogBaseYear);
+      // …then put back anything that only LOOKED changed (a record with no
+      // rateLock key exports as "N" and would otherwise come back as false).
+      if (prev) settle(prev.assumptions || {}, assumptions, ['hrsPerMo', 'escalation', 'industryAdj', 'discount', 'rateLock', 'billingMode', 'catalogBaseYear']);
 
+      if (prev) settle(prev.project || {}, pj, PROJ_SETTLE);
       const next = Object.assign({}, prev || {}, { project: pj, timeline, assumptions });
       if (isNew) { delete next.id; delete next.updatedAt; delete next.createdAt; }
 
@@ -544,16 +624,18 @@
           if (S(rr.action).toUpperCase() === 'REMOVE') return;
           const titleId = S(rr.titleId);
           const rateSource = S(rr.rateSource).toLowerCase() === 'contracted' ? 'contracted' : 'grid';
-          if (rateSource === 'grid' && titleId && catalogTitles.size && !catalogTitles.has(titleId)) {
+          const old0 = prevRoles[S(rr.roleId)] || null;
+          const titleEdited = !old0 || S(old0.titleId) !== titleId;
+          if (rateSource === 'grid' && titleId && titleEdited && !titleKnown(titleId)) {
             err('Roles', rr._row, `Title ID "${titleId}" isn't in the rate grid — fix it, or set Rate source to contracted`);
           }
-          if (rateSource === 'contracted' && S(rr.contractedRate) === '') {
+          if (rateSource === 'contracted' && S(rr.contractedRate) === '' && (!old0 || old0.rateSource !== 'contracted' || old0.contractedRate != null)) {
             err('Roles', rr._row, 'Rate source is contracted but Contracted rate is blank');
           }
           const gName = S(rr.group);
           let g = groups.find(x => (x.name || '').toLowerCase() === gName.toLowerCase());
           if (!g && gName) { g = { id: uid('g_'), name: gName }; groups.push(g); }
-          const old = prevRoles[S(rr.roleId)] || null;
+          const old = old0;
           const fte = {};
           let fteTouched = false;
           phases.forEach((ph, i) => {
@@ -565,14 +647,17 @@
           const role = Object.assign({}, old || {}, {
             id: (old && old.id) || uid('r_'),
             groupId: g ? g.id : groups[0].id,
-            titleId, tierId: S(rr.tierId) || 'mid',
+            titleId,
+            // Blank tier cell = the role never had one; don't invent 'mid'.
+            tierId: S(rr.tierId) || (old ? old.tierId : 'mid'),
             projectRole: S(rr.projectRole), resource: S(rr.resource),
             rateSource, fte,
           });
           if (rateSource === 'contracted') role.contractedRate = N(rr.contractedRate); else delete role.contractedRate;
           // A month-by-month schedule only survives while its phase FTEs are left alone.
           if (old && old.fteMonthly && !fteTouched) role.fteMonthly = old.fteMonthly; else delete role.fteMonthly;
-          roles.push(role);
+          // Unchanged in substance → keep the original object untouched.
+          roles.push(old && sameRole(old, role) ? old : role);
         });
         next.roles = roles;
         next.groups = groups;
@@ -634,8 +719,49 @@
     const missing = st.listProjects().filter(p => !inSheet.has(p.id))
       .map(p => ({ id: p.id, label: ((p.project || {}).client || '') + ' — ' + ((p.project || {}).name || '') }));
 
-    return { plan, errors, changes, creates, removes, untouched, missing };
+    if (vocabCount) plan.unshift({ kind: 'vocab', adds: vocabAdds });
+    return { plan, errors, changes, creates, removes, untouched, missing, vocab: vocabAdds, vocabCount };
   }
+  /** Excel round-trips lose types: a numeric rating comes back "1", a blank
+      cell becomes '' where the record held undefined. Those are the SAME
+      value, and reporting 300 projects as "changed" because of it would bury
+      the edits that matter. Where a field is unchanged in substance, put the
+      original value back so the diff — and the saved record — stay clean. */
+  function settle(prev, next, keys) {
+    if (!prev) return;
+    keys.forEach(k => {
+      const a = prev[k], b = next[k];
+      if (a === b) return;
+      const bothBlank = (a == null || a === '' || a === false) && (b == null || b === '' || b === false);
+      const sameText = S(a) === S(b);
+      const na = NUM(a), nb = NUM(b);
+      const sameNum = na !== null && nb !== null && na === nb;
+      if (bothBlank || sameText || sameNum) next[k] = a;
+    });
+  }
+  const PROJ_SETTLE = ['name', 'client', 'status', 'lossReason', 'rating', 'industry', 'projectType', 'lead', 'leadId',
+    'clientRelOwner', 'accessGrant', 'location', 'salesforceId', 'clientContact', 'proposalDate', 'firstProposalDate',
+    'signedContractDate', 'notes', 'intakeSent'];
+  const ROLE_SETTLE = ['titleId', 'tierId', 'projectRole', 'resource', 'rateSource', 'contractedRate', 'groupId'];
+  /** Two roles are the same in substance if every modelled field matches
+      loosely — then we keep the ORIGINAL object, preserving its id, its
+      month-by-month schedule and any field the workbook doesn't carry. */
+  function sameRole(a, b) {
+    if (!a || !b) return false;
+    // "grid" IS the absence of a contracted rate — an older role simply has no
+    // rateSource key, and the export writes "grid" for it either way.
+    const norm = (k, v) => k === 'rateSource' ? (v === 'contracted' ? 'contracted' : 'grid') : S(v);
+    if (ROLE_SETTLE.some(k => {
+      if (norm(k, a[k]) === norm(k, b[k])) return false;
+      const na = NUM(a[k]), nb = NUM(b[k]);
+      return !(na !== null && nb !== null && na === nb);   // 200 vs "200" is the same rate
+    })) return false;
+    const fa = a.fte || {}, fb = b.fte || {};
+    const keys = new Set(Object.keys(fa).concat(Object.keys(fb)));
+    for (const k of keys) if (N(fa[k]) !== N(fb[k])) return false;   // FTE cells are numbers or blank
+    return true;
+  }
+
   function rolesKey(r) {
     return [r.titleId, r.tierId, r.projectRole, r.resource, r.rateSource, r.contractedRate, JSON.stringify(r.fte || {})].join('|');
   }
@@ -643,17 +769,18 @@
   /* ---------- APPLY ---------- */
   function apply(plan) {
     const st = STORE();
-    let created = 0, updated = 0, removed = 0; const failed = [];
+    let created = 0, updated = 0, removed = 0, vocab = 0; const failed = [];
     plan.forEach(step => {
       try {
-        if (step.kind === 'remove') { st.deleteProject(step.id); removed++; }
+        if (step.kind === 'vocab') { vocab += st.addVocab(step.adds); }
+        else if (step.kind === 'remove') { st.deleteProject(step.id); removed++; }
         else if (step.kind === 'create') { st.saveProject(step.record); created++; }
         else { st.saveProject(step.record, { baseUpdatedAt: step.baseUpdatedAt }); updated++; }
       } catch (e) {
         failed.push((step.id || (step.record && step.record.project && step.record.project.name) || '?') + ': ' + (e.message || e));
       }
     });
-    return { created, updated, removed, failed };
+    return { created, updated, removed, vocab, failed };
   }
 
   window.UFC_BulkExcel = { exportWorkbook, parseWorkbook, buildPlan, apply, PROJECT_COLS, ROLE_COLS };
