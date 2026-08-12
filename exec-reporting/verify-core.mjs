@@ -81,6 +81,44 @@ ck('budget baseline carries 39 client lines', (() => {
   return clients.size === 39;
 })(), 'got a different client-line count');
 
+// ---- Tab 1 panels ----
+const p = CORE.tab1Panels(m, s, o, Date.parse('2026-08-12T12:00:00-04:00'));
+ck('top client is the merged JPMorgan Chase', p.topClients.rows[0] && p.topClients.rows[0].name === 'JPMorgan Chase',
+  p.topClients.rows[0] && p.topClients.rows[0].name);
+ck('top-10 + other reconcile to the projected total',
+  near(p.topClients.total.projected, o.projected),
+  p.topClients.total.projected.toFixed(2) + ' vs ' + o.projected.toFixed(2));
+ck('top-10 long shots + projected reconcile to all-ratings total',
+  near(p.topClients.total.projected + p.topClients.total.longShots, o.total));
+ck('monthly tracking: 12 rows, flat = budget/12',
+  p.monthly.rows.length === 12 && near(p.monthly.flat, o.budget / 12));
+ck('catch-up identity: last cumulative = year total - budget', (() => {
+  const sumTotals = p.monthly.rows.reduce((a, r) => a + r.total, 0);
+  return near(p.monthly.rows[11].cumVsBudget, sumTotals - o.budget, 1);
+})());
+ck('leader split: four tiers, tier totals match tier revenue', (() => {
+  if (p.leaderRows.length !== 4) return false;
+  for (const row of p.leaderRows) {
+    const segSum = row.segs.reduce((a, s2) => a + s2.value, 0);
+    if (!near(segSum, row.total)) return false;
+  }
+  return true;
+})());
+ck('staleness: bands account for every open R2-R4 deal', (() => {
+  const open = (() => {
+    const yr = CORE.projectYearRevenue(m);
+    let n = 0;
+    for (const pr of m.projects) {
+      const years = yr.get(pr.source_id);
+      if (years && years.has(o.year) && pr.rating >= 2 && pr.rating <= 4) n += 1;
+    }
+    return n;
+  })();
+  return p.stale.bands.green + p.stale.bands.amber + p.stale.bands.red === open;
+})());
+ck('staleness history is real (material moves resolve day counts)',
+  p.stale.rows.some((r) => r.days !== null));
+
 console.log('');
 console.log(checks + ' checks, ' + (fails ? fails + ' FAILURES' : 'all passed'));
 if (m.notes.length) { console.log('mapper notes:'); m.notes.slice(0, 8).forEach((n) => console.log('  - ' + n)); }

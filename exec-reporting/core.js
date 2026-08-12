@@ -125,6 +125,24 @@
       || inferServiceLine(group.name);
   }
 
+  /* ---------------- client canonicalisation (Data Dictionary register) ---------------- */
+  const UNNAMED_CLIENT = '(unnamed client)';
+  const KNOWN_ALIASES = {
+    'jpmc': 'JPMorgan Chase',
+    'jp morgan chase': 'JPMorgan Chase',
+    'savillls': 'Savills',
+    'fanatics holdings, inc. (fanatics betting & gaming)': 'Fanatics',
+    'speros / moffitt': 'Speros Moffitt',
+    'speros moffitt itc': 'Speros Moffitt',
+  };
+  function canonicalNameFor(raw) {
+    const trimmed = String(raw == null ? '' : raw).trim();
+    let hasAlnum = false;
+    for (const ch of trimmed) if (/[a-z0-9]/i.test(ch)) { hasAlnum = true; break; }
+    if (!hasAlnum) return UNNAMED_CLIENT;
+    return KNOWN_ALIASES[trimmed.toLowerCase()] || trimmed;
+  }
+
   /* ---------------- material changes (bible §6) ---------------- */
   const MATERIAL_FIELDS = new Set([
     'rating', 'team', 'phases', 'timeline', 'fee basis', 'client discount %',
@@ -179,6 +197,25 @@
     if (!raw || typeof raw !== 'object') return Object.assign(empty, { error: 'projects.json is not an object' });
     const projectsObj = raw.projects;
     if (!projectsObj || typeof projectsObj !== 'object') return Object.assign(empty, { error: 'projects.json has no projects map' });
+
+    // DB-level flash snapshots { "YYYY-MM": { label: { asOf, rows } } } - the
+    // by-month grain rides along so vintages can be recomputed per year.
+    for (const [period, byLabel] of Object.entries(raw.snapshots || {})) {
+      const ym = splitYearMonth(String(period).replace(/-0?(\d+)$/, '-$1'));
+      if (!ym) continue;
+      for (const [label, snap] of Object.entries(byLabel || {})) {
+        empty.flashSnapshots.push({ year: ym.year, month: ym.month, label, as_of: nullIfBlank(snap && snap.asOf) });
+        for (const [pid, row] of Object.entries((snap && snap.rows) || {})) {
+          empty.flashRows.push({
+            snapshot_key: ym.year + '-' + ym.month + '-' + label,
+            project_source_id: pid,
+            rating: row && row.rating != null ? row.rating : null,
+            amount: row && row.amount != null ? row.amount : null,
+            by_month: (row && (row.byMonth || row.by_month)) || null,
+          });
+        }
+      }
+    }
 
     const version = Number(raw.schemaVersion);
     const shape = shapeIsUsable(projectsObj);
@@ -538,6 +575,207 @@
     };
   }
 
+  /* ============================================================
+     TAB 1 PANELS (port of lib/queries/pipeline-panels.ts)
+     ============================================================ */
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  /** Resolved monthly revenue: overrides win per (project, year, month);
+      override-only months join in. Port of v_monthly_revenue_resolved. */
+  function resolvedMonthly(mapped) {
+    const key = (pid, y, m) => pid + '|' + y + '|' + m;
+    const out = new Map();
+    for (const r of mapped.monthlyRevenue) {
+      out.set(key(r.project_source_id, r.year, r.month), {
+        project_source_id: r.project_source_id, year: r.year, month: r.month,
+        amount: typeof r.amount === 'number' ? r.amount : null,
+      });
+    }
+    for (const o of mapped.monthlyOverrides) {
+      out.set(key(o.project_source_id, o.year, o.month), {
+        project_source_id: o.project_source_id, year: o.year, month: o.month, amount: o.amount,
+      });
+    }
+    return [...out.values()];
+  }
+
+  function tab1Panels(mapped, studioMapped, overview, nowMs) {
+    const year = overview.year;
+    const budget = overview.budget;
+    const now = new Date(nowMs != null ? nowMs : Date.now());
+
+    // Per-project display name (canonical) + year revenue + rating.
+    const yearRev = projectYearRevenue(mapped);
+    const projects = [];
+    for (const p of mapped.projects) {
+      const years = yearRev.get(p.source_id);
+      const revenue = years ? (years.get(year) || 0) : 0;
+      if (!years || !years.has(year)) continue;   // parity view inner-joins on revenue rows
+      projects.push({
+        project_id: p.source_id,
+        name: p.name,
+        rating: p.rating,
+        leader_id: p.leader_id,
+        display: p.raw_client ? canonicalNameFor(p.raw_client) : UNNAMED_CLIENT,
+        revenue,
+      });
+    }
+
+    // ---- Revenue by rating, split by leader (top 5 + Other), R1-R4 ----
+    const leaderRows = [1, 2, 3, 4].map((rating) => {
+      const byLeader = new Map();
+      for (const p of projects) {
+        if (p.rating !== rating || p.revenue <= 0) continue;
+        const k = p.leader_id ? leaderDisplay(p.leader_id) : 'Unassigned';
+        byLeader.set(k, (byLeader.get(k) || 0) + p.revenue);
+      }
+      const sorted = [...byLeader.entries()].sort((a, b) => b[1] - a[1]);
+      const segs = sorted.slice(0, 5).map(([name, value]) => ({ name, value }));
+      const other = sorted.slice(5).reduce((a, e) => a + e[1], 0);
+      if (other > 0) segs.push({ name: 'Other', value: other });
+      return { rating, label: RATING_LABELS[rating], total: sorted.reduce((a, e) => a + e[1], 0), segs };
+    });
+
+    // ---- Top 10 clients by projected revenue --------------------------
+    const byClient = new Map();
+    for (const p of projects) {
+      const row = byClient.get(p.display) || { name: p.display, r1: 0, r2: 0, r34: 0, projected: 0, longShots: 0, budget: null };
+      if (p.rating === 1) row.r1 += p.revenue;
+      else if (p.rating === 2) row.r2 += p.revenue;
+      else if (p.rating === 3 || p.rating === 4) row.r34 += p.revenue;
+      else row.longShots += p.revenue;
+      row.projected = row.r1 + row.r2 + row.r34;
+      byClient.set(p.display, row);
+    }
+    const budgetByClient = new Map();
+    const budgetRow = budgetBaseline(studioMapped);
+    if (budgetRow) {
+      for (const l of studioMapped.baselineLines) {
+        if (l.baseline_source_id !== budgetRow.source_id || l.year !== year) continue;
+        const k = canonicalNameFor(l.client);
+        budgetByClient.set(k, (budgetByClient.get(k) || 0) + l.amount);
+      }
+    }
+    for (const row of byClient.values()) {
+      row.budget = budgetByClient.has(row.name) ? budgetByClient.get(row.name) : null;
+    }
+    const ranked = [...byClient.values()].sort((a, b) => b.projected - a.projected);
+    const top10 = ranked.slice(0, 10);
+    const rest = ranked.slice(10);
+    const sumRows = (rows, name) => ({
+      name,
+      r1: rows.reduce((a, r) => a + r.r1, 0),
+      r2: rows.reduce((a, r) => a + r.r2, 0),
+      r34: rows.reduce((a, r) => a + r.r34, 0),
+      projected: rows.reduce((a, r) => a + r.projected, 0),
+      longShots: rows.reduce((a, r) => a + r.longShots, 0),
+      budget: rows.reduce((a, r) => a + (r.budget || 0), 0),
+    });
+    const other = sumRows(rest, 'Other (' + rest.length + ' clients)');
+    const total = sumRows(ranked, 'Total (all clients)');
+    const topShare = total.projected > 0 ? Math.round(((top10[0] ? top10[0].projected : 0) / total.projected) * 100) : 0;
+    const topMsg = (top10[0] ? top10[0].name : '-') + ' alone carries ' + topShare + '% of projected revenue (' + fmtMoney(top10[0] ? top10[0].projected : 0) + ').';
+
+    // ---- Monthly tracking + catch-up target (§8) ----------------------
+    const flat = budget / 12;
+    const projByIdRating = new Map(mapped.projects.map((p) => [p.source_id, p.rating]));
+    const mm = new Map();
+    for (const r of resolvedMonthly(mapped)) {
+      if (r.year !== year || typeof r.amount !== 'number') continue;
+      const rating = projByIdRating.get(r.project_source_id);
+      if (rating == null) continue;
+      const slot = mm.get(r.month) || { r1: 0, r2: 0, r34: 0 };
+      if (rating === 1) slot.r1 += r.amount;
+      else if (rating === 2) slot.r2 += r.amount;
+      else if (rating === 3 || rating === 4) slot.r34 += r.amount;
+      mm.set(r.month, slot);
+    }
+    let cum = 0;
+    const monthRows = [];
+    for (let m = 1; m <= 12; m++) {
+      const s = mm.get(m) || { r1: 0, r2: 0, r34: 0 };
+      const totalM = s.r1 + s.r2 + s.r34;
+      const revised = flat + cum;
+      cum += flat - totalM;
+      monthRows.push({ month: m, r1: s.r1, r2: s.r2, r34: s.r34, total: totalM, flat, revised, variance: totalM - flat, cumVsBudget: -cum });
+    }
+    const todayMonth = now.getFullYear() === year ? now.getMonth() + 1 : 13;
+    const lastActual = Math.min(todayMonth - 1, 12);
+    const ytdVar = monthRows.slice(0, Math.max(lastActual, 0)).reduce((a, r) => a + r.variance, 0);
+    const posLabel = lastActual === 6 ? 'Half-year position' : 'Position after ' + (MON[lastActual - 1] || '-');
+    const monthlyMsg = posLabel + ': ' + fmtMoney(Math.abs(ytdVar)) + ' ' + (ytdVar < 0 ? 'behind' : 'ahead of') + ' the flat budget pace after ' + (MON[lastActual - 1] || '-') + '.';
+
+    // ---- Full-year projection by vintage (frozen snapshots, if any) ----
+    const snapRows = new Map();
+    for (const r of mapped.flashRows) {
+      const list = snapRows.get(r.snapshot_key) || [];
+      list.push(r);
+      snapRows.set(r.snapshot_key, list);
+    }
+    const vintages = [...mapped.flashSnapshots]
+      .sort((a, b) => String(a.as_of || '').localeCompare(String(b.as_of || '')))
+      .map((s) => {
+        const v = { r1: 0, r2: 0, r3: 0, r4: 0 };
+        for (const row of snapRows.get(s.year + '-' + s.month + '-' + s.label) || []) {
+          if (!row.rating || row.rating > 4 || !row.by_month) continue;
+          let yearSum = 0;
+          for (const [k, amt] of Object.entries(row.by_month)) {
+            if (String(k).indexOf(year + '-') === 0 && typeof amt === 'number') yearSum += amt;
+          }
+          if (row.rating === 1) v.r1 += yearSum;
+          else if (row.rating === 2) v.r2 += yearSum;
+          else if (row.rating === 3) v.r3 += yearSum;
+          else v.r4 += yearSum;
+        }
+        return { label: MON[s.month - 1] + ' ' + s.year, asOf: s.as_of, r1: v.r1, r2: v.r2, r3: v.r3, r4: v.r4, total: v.r1 + v.r2 + v.r3 + v.r4 };
+      });
+
+    // ---- Staleness (bible §6): time since the last MATERIAL move -------
+    const lastMove = new Map();
+    for (const c of mapped.activityChanges) {
+      if (!c.material || !c.changed_at) continue;
+      const cur = lastMove.get(c.project_source_id);
+      if (!cur || c.changed_at > cur) lastMove.set(c.project_source_id, c.changed_at);
+    }
+    let earliest = null;
+    for (const c of mapped.activityChanges) {
+      if (!c.changed_at) continue;
+      if (!earliest || c.changed_at < earliest) earliest = c.changed_at;
+    }
+    const started = earliest
+      ? new Date(earliest).getDate() + ' ' + MON[new Date(earliest).getMonth()] + ' ' + new Date(earliest).getFullYear()
+      : 'with the first upstream change log';
+    const staleRows = projects
+      .filter((p) => p.rating != null && p.rating >= 2 && p.rating <= 4)
+      .map((p) => {
+        const moved = lastMove.get(p.project_id);
+        const days = moved ? Math.floor((now.getTime() - new Date(moved).getTime()) / 86400000) : null;
+        return { projectId: p.project_id, name: p.name, client: p.display, rating: p.rating, value: p.revenue, days };
+      })
+      .sort((a, b) => ((b.days == null ? -1 : b.days) - (a.days == null ? -1 : a.days)));
+    const bands = { green: 0, amber: 0, red: 0, greenV: 0, amberV: 0, redV: 0 };
+    for (const r of staleRows) {
+      const d = r.days == null ? 0 : r.days;
+      if (d >= 90) { bands.red += 1; bands.redV += r.value; }
+      else if (d >= 30) { bands.amber += 1; bands.amberV += r.value; }
+      else { bands.green += 1; bands.greenV += r.value; }
+    }
+    const anyHistory = staleRows.some((r) => r.days !== null);
+    const staleMsg = anyHistory
+      ? fmtMoney(bands.amberV + bands.redV) + ' of open pipeline has not moved in 30+ days (' + fmtMoney(bands.redV) + ' of it for 90+).'
+      : 'No rating or value changes recorded yet - the change history started accruing ' + started + ', so every open deal reads on track today.';
+
+    return {
+      year,
+      leaderRows,
+      topClients: { rows: top10, other, total, otherCount: rest.length },
+      topMsg,
+      monthly: { rows: monthRows, flat, todayMonth, msg: monthlyMsg },
+      vintages,
+      stale: { rows: staleRows.slice(0, 15), msg: staleMsg, started, bands },
+    };
+  }
+
   /* ---------------- public surface ---------------- */
   const CORE = {
     RATING_WEIGHTS, RATING_LABELS, BUDGET_RATINGS, isBudgetRating, weightFor, ratingFromStatus,
@@ -547,6 +785,7 @@
     isMaterialChange, splitYearMonth, nullIfBlank,
     KNOWN_SCHEMA_VERSION, mapProjects, mapStudio,
     projectYearRevenue, budgetBaseline, pipelineOverview,
+    UNNAMED_CLIENT, canonicalNameFor, resolvedMonthly, tab1Panels, MON,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = CORE;
