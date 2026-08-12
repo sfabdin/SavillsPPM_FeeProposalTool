@@ -257,6 +257,16 @@
   }
 
   /* Status pills */
+  /* Quick edit (superuser): inline selects in the table */
+  .projects-table td select.qe-sel {
+    width: 100%; max-width: 190px; font-family: inherit; font-size: 12px;
+    padding: 5px 6px; border: 1px dashed rgba(14,124,123,0.55); background: #fffdf4;
+    color: var(--sav-navy); cursor: pointer;
+  }
+  .projects-table td select.qe-sel:focus { outline: none; border-style: solid; border-color: var(--sav-teal); }
+  .projects-table td select.qe-saved { animation: qeflash 1.2s ease-out; }
+  @keyframes qeflash { 0% { background: #cfe6e4; border-color: var(--sav-teal); } 100% { background: #fffdf4; } }
+
   .pill {
     display: inline-block;
     font-weight: 700;
@@ -498,8 +508,10 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
     <div class="actions-group">
       <button class="btn btn-ghost" id="seed-btn" title="Add a demo 383M project to see the system populated">Seed demo data</button>
       <button class="btn btn-ghost" id="clear-btn" title="Clear all filters">Clear filters</button>
+      <button class="btn btn-ghost" id="qe-btn" hidden title="Superuser only — edit Lead PE, Project type and Industry directly in the table. Each change saves instantly and lands in the Change Log.">✎ Quick edit</button>
     </div>
   </div>
+  <div id="qe-note" hidden style="margin:-8px 0 12px;padding:8px 14px;background:#fdf6e3;border-left:3px solid #e8b563;font-size:12.5px;color:#4a4f5e"><b>Quick edit is ON.</b> Lead PE, Project type and Industry are editable in the table — every change saves the moment you pick it (and shows in the Change Log). Row clicks won't open the calculator while editing. Click <b>✓ Done</b> to finish.</div>
 
   <!-- ===== Projects table / empty state ===== -->
   <div id="table-host"></div>
@@ -531,6 +543,7 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
     lead: '',
   };
   let sort = { col: 'updatedAt', dir: 'desc' };
+  let quickEdit = false;   // superuser-only inline editing of Lead PE / type / industry
 
   /* ---------- Helpers ---------- */
   function $(s, r = document) { return r.querySelector(s); }
@@ -887,9 +900,13 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
           <div class="pclient-sub">${esc(pj.location || '')}</div>
         </td>
         <td><span class="pill status-${statusKey}">${esc(statusLabel)}</span></td>
+        ${quickEdit ? `
+        <td><select class="qe-sel" data-qe="industry" data-id="${p.id}"><option value="">—</option>${STORE.INDUSTRIES.map(x => `<option ${pj.industry === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></td>
+        <td><select class="qe-sel" data-qe="projectType" data-id="${p.id}"><option value="">—</option>${STORE.PROJECT_TYPES.map(t => `<option ${pj.projectType === t.name ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></td>
+        <td><select class="qe-sel" data-qe="lead" data-id="${p.id}"><option value="">—</option>${STORE.REVENUE_LEADERS.map(l => `<option value="${esc(l.id)}" ${(pj.leadId === l.id || (!pj.leadId && pj.lead === l.displayName)) ? 'selected' : ''}>${esc(l.displayName)}</option>`).join('')}</select></td>` : `
         <td>${esc(pj.industry || '—')}</td>
         <td>${esc(pj.projectType || '—')}</td>
-        <td>${esc(pj.lead || '—')}</td>
+        <td>${esc(pj.lead || '—')}</td>`}
         <td style="font-family: var(--font-body); color: var(--sav-steel); font-size: 12px;">${fmtPeriod(p)}</td>
         <td class="num">${feeCell}</td>
         <td style="font-family: var(--font-body); color: var(--sav-steel); font-size: 12px;">${fmtRelative(p.updatedAt)}</td>
@@ -910,12 +927,41 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
         </table>
       </div>`;
 
-    // Wire row clicks → open calculator
+    // Wire row clicks → open calculator (suspended while quick-editing, so a
+    // stray click can't navigate away mid-edit)
     $$('.projects-table tbody tr').forEach(tr => {
       tr.addEventListener('click', (e) => {
+        if (quickEdit) return;
         if (e.target.closest('.row-actions')) return;
         const id = tr.dataset.id;
         window.location.href = 'Universal Fee Calculator.html?id=' + encodeURIComponent(id);
+      });
+    });
+    // Quick-edit selects — superuser only; each change saves immediately.
+    $$('.projects-table [data-qe]').forEach(sel => {
+      sel.addEventListener('click', (e) => e.stopPropagation());
+      sel.addEventListener('change', (e) => {
+        e.stopPropagation();
+        if (!STORE.canImpersonate()) return;   // hard gate: superuser's REAL identity only
+        const p = STORE.getProject(sel.dataset.id);
+        if (!p) return;
+        const pj = { ...(p.project || {}) };
+        if (sel.dataset.qe === 'lead') {
+          const l = STORE.leaderById(sel.value);
+          pj.leadId = l ? l.id : '';
+          pj.lead = l ? l.displayName : '';
+        } else {
+          pj[sel.dataset.qe] = sel.value;
+        }
+        try {
+          STORE.saveProject({ ...p, project: pj }, { baseUpdatedAt: p.updatedAt });
+          sel.classList.remove('qe-saved'); void sel.offsetWidth; sel.classList.add('qe-saved');
+        } catch (err) {
+          alert(err && err.code === 'STALE_WRITE'
+            ? 'Someone saved this project while you were looking — the table will refresh so you can re-apply your change.'
+            : 'Save failed: ' + (err.message || err));
+          render();
+        }
       });
     });
     // Sort
@@ -984,6 +1030,20 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
   $('#filter-industry')?.addEventListener('change', e => { filters.industry = e.target.value; render(); });
   $('#filter-ptype')?.addEventListener('change', e => { filters.ptype = e.target.value; render(); });
   $('#filter-lead')?.addEventListener('change', e => { filters.lead = e.target.value; render(); });
+  // Quick edit — the button only exists for the superuser's REAL identity
+  // (impersonation previews don't unlock it).
+  {
+    const qb = $('#qe-btn');
+    if (qb && STORE.canImpersonate()) qb.hidden = false;
+    qb?.addEventListener('click', () => {
+      quickEdit = !quickEdit;
+      qb.textContent = quickEdit ? '✓ Done' : '✎ Quick edit';
+      qb.classList.toggle('btn-primary', quickEdit);
+      qb.classList.toggle('btn-ghost', !quickEdit);
+      const note = $('#qe-note'); if (note) note.hidden = !quickEdit;
+      render();
+    });
+  }
   $('#clear-btn')?.addEventListener('click', () => {
     filters = { search: '', status: '', industry: '', ptype: '', lead: '' };
     $('#search-input').value = '';
