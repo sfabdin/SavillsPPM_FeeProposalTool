@@ -9,7 +9,7 @@
 <style>
   :root { --hair: rgba(37,39,58,0.10); --hair-strong: rgba(37,39,58,0.18);
           --st-billed:#1F8A5B; --st-accrued:#C07A00; --st-slip:#CE181E; --st-early:#097CE8;
-          --st-wo:#79828C; --st-new:#83007E; --st-fee:#CE181E; --st-reclass:#238291; --st-trueup:#EF6B00; }
+          --st-wo:#79828C; --st-new:#83007E; --st-fee:#CE181E; --st-reclass:#238291; --st-trueup:#EF6B00; --st-unruled:#FFDF00; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #f3f3f0; font-family: var(--font-display); color: var(--sav-navy); }
   .wrap { max-width: 1680px; margin: 0 auto; padding: 40px 40px 90px; }
@@ -154,6 +154,63 @@
   table.ws td.s-reclass { border-bottom:3px solid var(--st-reclass); }
   table.ws td.s-fee     { border-bottom:3px solid var(--st-fee); }
 
+  /* ---- interactive grid cells ---- */
+  table.ws td.cell { cursor:pointer; border-bottom:3px solid transparent; }
+  table.ws td.cell:hover { box-shadow:inset 0 0 0 2px var(--sav-navy); }
+  table.ws td.cell:focus-visible { outline:3px solid var(--sav-teal); outline-offset:-3px; }
+  table.ws td.unruled-c { border-bottom-color:var(--st-unruled); background:#fffdf2; font-weight:700; }
+  table.ws th.focus-h { background:var(--sav-teal) !important; }
+  table.ws td.focus-c { box-shadow:inset 2px 0 0 var(--sav-teal), inset -2px 0 0 var(--sav-teal); }
+  table.ws tfoot tr.lane-plan td { background:#233a44; font-size:11.5px; font-weight:700; bottom:33px; color:#a9d9e5; }
+  table.ws tfoot tr.lane-plan td:first-child { background:#233a44; color:#a9d9e5; }
+  table.ws tfoot tr.lane-bill td { bottom:132px; }
+  table.ws tfoot tr.lane-fee td { bottom:99px; }
+  table.ws tfoot tr.lane-acc td { bottom:66px; }
+  .modebar { display:inline-flex; gap:4px; }
+  .btn.sm { padding:7px 12px; font-size:10px; }
+  .ctl-toggle { display:inline-flex; align-items:center; gap:7px; font-family:var(--font-body);
+                font-size:12px; color:var(--sav-navy); cursor:pointer; }
+  .ctl-toggle input { width:15px; height:15px; accent-color:var(--sav-navy); }
+  .ws-head .legend .hint { font-style:italic; }
+  .map-btn { font-family:var(--font-body); font-size:9.5px; border:1px solid var(--hair-strong);
+             background:var(--sav-cream); color:var(--sav-navy); padding:1px 6px; cursor:pointer; }
+  .map-btn:hover { background:var(--sav-yellow); }
+  .imp-chip { display:inline-block; background:var(--sav-cream); color:var(--sav-navy); font-family:var(--font-display);
+              font-weight:700; font-size:9.5px; padding:2px 7px; margin-left:6px; }
+
+  /* ---- popover (status picker / project mapper) ---- */
+  .popover { position:absolute; z-index:9000; background:#fff; border:1px solid var(--sav-navy);
+             box-shadow:0 8px 28px rgba(37,39,58,.26); min-width:290px; max-width:340px; }
+  .popover .pop-head { background:var(--sav-navy); color:#fff; font-family:var(--font-display);
+                       font-size:11.5px; font-weight:700; padding:9px 12px; }
+  .popover .pop-head b { color:var(--sav-yellow); }
+  .popover .pop-nums { display:flex; flex-wrap:wrap; gap:4px 14px; padding:9px 12px;
+                       background:var(--sav-cream); font-family:var(--font-body); font-size:11px; color:var(--sav-steel); }
+  .popover .pop-nums b { font-family:var(--font-display); color:var(--sav-navy); font-variant-numeric:tabular-nums; }
+  .popover .pop-nums .fee b { color:var(--st-fee); } .popover .pop-nums .acc b { color:var(--st-accrued); }
+  .popover .pop-nums .neg b { color:var(--st-slip); } .popover .pop-nums .pos b { color:var(--st-billed); }
+  .popover .pop-list { max-height:290px; overflow-y:auto; }
+  .popover .pop-opt { display:flex; align-items:center; gap:8px; width:100%; text-align:left; border:0;
+                      background:#fff; padding:8px 12px; cursor:pointer; font-family:var(--font-body);
+                      font-size:12px; color:var(--sav-navy); border-bottom:1px solid var(--hair); }
+  .popover .pop-opt:hover { background:var(--sav-cream); }
+  .popover .pop-opt.on { background:var(--sav-navy); color:#fff; font-weight:700; }
+  .popover .pop-opt em { margin-left:auto; font-size:9.5px; font-style:normal; letter-spacing:.06em;
+                         text-transform:uppercase; color:#8a5a00; background:#fdf0d8; padding:1px 6px; }
+  .popover .pop-opt.clear { color:var(--sav-steel); font-style:italic; }
+  .popover .pop-opt .dot { width:10px; height:10px; flex:none; }
+  .popover .dot.billed{background:var(--st-billed);} .popover .dot.accrued{background:var(--st-accrued);}
+  .popover .dot.slip{background:var(--st-slip);} .popover .dot.early{background:var(--st-early);}
+  .popover .dot.wo{background:var(--st-wo);} .popover .dot.new{background:var(--st-new);}
+  .popover .dot.trueup{background:var(--st-trueup);} .popover .dot.reclass{background:var(--st-reclass);}
+  .popover .dot.fee{background:var(--st-fee);}
+  .popover .pop-carry { padding:9px 12px; background:var(--sav-cream); font-family:var(--font-body); font-size:11.5px; }
+  .popover .pop-carry[hidden] { display:none; }
+  .popover .map-search { width:100%; border:0; border-bottom:1px solid var(--hair-strong); padding:9px 12px;
+                         font-family:var(--font-body); font-size:12px; }
+  .popover .map-list .pop-opt { flex-direction:column; align-items:flex-start; gap:1px; }
+  .popover .mp-n { font-weight:700; } .popover .mp-c { font-size:10.5px; color:var(--sav-steel); }
+
   select.disp-pick { font-family:var(--font-body); font-size:11.5px; border:1px solid var(--hair-strong);
                      background:#fffdf2; color:var(--sav-navy); padding:6px 7px; min-width:210px; cursor:pointer; }
   select.disp-pick.set { background:#e6f3ea; border-color:var(--st-billed); font-weight:600; }
@@ -203,49 +260,51 @@
   </header>
 
   <div class="period-bar">
-    <span class="pb-t">Close period</span>
+    <span class="pb-t">Year</span>
     <select id="year-pick" aria-label="Year"></select>
-    <select id="period-pick" aria-label="Month"></select>
-    <span class="p-status none" id="period-status">Not imported</span>
-    <span class="pb-meta" id="period-meta"></span>
+    <span class="p-status none" id="year-status">No actuals</span>
+    <span class="pb-meta" id="year-meta"></span>
     <span class="pb-right">
-      <button class="btn danger" id="remove-period" hidden>Remove period</button>
+      <button class="btn danger" id="remove-year" hidden>Remove year</button>
     </span>
-  </div>
-
-  <div class="catchup" id="catchup-wrap">
-    <span class="cu-lbl">Catch-up:</span>
-    <span id="catchup" style="display:contents"></span>
   </div>
 
   <div class="kpis" id="kpis"></div>
 
   <section class="card">
-    <h2>Import the monthly close <span class="owner">Finance owns this — the only way actuals enter the system</span></h2>
+    <h2>Import the year-to-date actuals <span class="owner">Finance owns this — the only way actuals enter the system</span></h2>
     <div class="cbody">
       <p class="intro">
-        Upload <b>Revenue by Month by Client</b> and pick the <b>YTD &lt;Month&gt; &lt;Year&gt;</b> tab for the period above.
+        Upload <b>Revenue by Month by Client</b> and pick the <b>YTD &lt;Month&gt; &lt;Year&gt;</b> tab. One upload lands
+        <b>every month that tab carries</b> — the July tab brings in January through July in a single go. Next month,
+        upload the August tab and it refreshes in place, keeping every billing status you have already set.
         Columns are found by their header text, not their position, and every row is footed against the sheet's own
-        Reported Revenue column before anything lands. Accruals are <b>balances</b>, not monthly amounts — so import
-        oldest month first when catching up, or the opening balance is read as zero. Prior-year reversals are
-        <b>not imported</b>: this ledger reports the selected year on its own.
+        Reported Revenue column before anything lands. The <b>accrual balance</b> is recorded only at that tab's close
+        month, because that is the only month it states one for. Prior-year reversals are not imported.
       </p>
       <div class="frow">
-        <label for="close-file">Close workbook</label>
+        <label for="close-file">Workbook</label>
         <input type="file" id="close-file" accept=".xlsx,.xlsm,.xls">
       </div>
       <div class="frow" id="sheet-row" hidden>
         <label for="sheet-pick">Sheet</label>
         <select id="sheet-pick"></select>
-        <button class="btn btn-primary" id="post-period" disabled>Post period</button>
+        <button class="btn btn-primary" id="post-year" disabled>Post actuals</button>
       </div>
       <div id="import-msg"></div>
     </div>
   </section>
 
   <div class="ws-head">
-    <h2 id="ws-title">Reconciliation worksheet</h2>
+    <h2>Actuals vs plan, by project and month</h2>
+    <span class="modebar">
+      <button class="btn sm on" id="mode-actual">Actual</button>
+      <button class="btn sm" id="mode-plan">Plan</button>
+      <button class="btn sm" id="mode-variance">Variance</button>
+    </span>
+    <label class="ctl-toggle"><input type="checkbox" id="show-zero"> Show projects with no activity</label>
     <div class="legend">
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-unruled)"></span>No status yet</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-billed)"></span>Billed</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-accrued)"></span>Accrued</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-slip)"></span>Slipped</span>
@@ -254,21 +313,26 @@
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-wo)"></span>Written off</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-new)"></span>Unforecast</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-fee)"></span>Fee share</span>
+      <span class="hint">Click any figure to set its billing status</span>
     </div>
   </div>
 
-  <div class="empty" id="empty" hidden>This period hasn't been imported yet. Upload the close workbook above to reconcile it.</div>
-  <div class="ws-scroll"><table class="ws month" id="worksheet"></table></div>
+  <div class="empty" id="empty" hidden>No actuals for this year yet. Upload the year-to-date tab above.</div>
+  <div class="ws-scroll"><table class="ws" id="grid"></table></div>
 
   <section class="card" id="flash-card" hidden>
-    <h2>Monthly flash <span class="owner">The reconciled month, ready to send</span></h2>
+    <h2 id="flash-title">Monthly flash</h2>
     <div class="cbody">
       <p class="intro">
-        Recognised revenue with the accrual and fee-share detail behind it, per project. The Excel export carries
-        three tabs: the flash itself, a <b>Reconciliation</b> tab showing exactly how the total is built up from
-        billings, and any lines still awaiting a disposition.
+        One month, ready to send — recognised revenue with the billing, fee-share and accrual detail behind it.
+        Use <b>Month</b> above to pick which. The Excel export carries three tabs: this flash, the whole year by
+        project and month with each status as a cell note, and anything still unruled.
       </p>
-      <div class="frow"><button class="btn btn-primary" id="flash-export">⤓ Export flash (Excel)</button></div>
+      <div class="frow">
+        <label for="focus-pick">Month</label>
+        <select id="focus-pick" aria-label="Month focus"></select>
+        <button class="btn btn-primary" id="flash-export">⤓ Export flash (Excel)</button>
+      </div>
       <div class="ws-scroll" style="max-height:52vh; margin-top:12px;"><table class="ws" id="flash-table"></table></div>
     </div>
   </section>
@@ -277,34 +341,32 @@
     <h3>How recognised revenue is built</h3>
     <p>
       <strong>Recognised = billed gross + fee share + (closing accrual − opening accrual).</strong>
-      The accrual column in the close file is a <strong>balance</strong>, not a monthly figure, which is why a month
-      can't be reconciled on its own — July's revenue depends on June's closing balance. Post the months in order and
-      the arithmetic holds; skip one and the page will tell you the opening balance is being read as zero.
+      The accrual column in the close file is a <strong>balance</strong>, not a monthly figure, and a tab states only
+      one — the balance at its own close date. So accrual movement is reported only in months where a balance was
+      actually imported, never guessed for the months between. Upload each month's tab as you close it and the
+      picture fills in.
     </p>
     <h3>One year at a time</h3>
     <p>
       The ledger starts in <strong>2026</strong> and only looks forward. The close file's prior-year accrual reversal
       is read at import — purely to prove the sheet parsed correctly against its own totals — and then discarded: it is
-      a whole-year opening adjustment about last year's work, and folding it in would dump a lump into January and make
-      month-on-month revenue unreadable. So this ledger's YTD <strong>deliberately differs</strong> from the file's
-      "YTD Reported Revenue" by exactly that reversal. January opens at a zero accrual balance; prior years stay in
-      Finance's own files.
+      a whole-year opening adjustment about last year's work. So this ledger's total <strong>deliberately differs</strong>
+      from the file's "YTD Reported Revenue" by exactly that reversal. Prior years stay in Finance's own files.
     </p>
     <h3>Why fee shares sit below billed, not inside it</h3>
     <p>
       The invoice really did go out gross — the client was billed the full amount, and the co-broker's cut comes off
       Savills' revenue afterwards. Netting it into the billed figure would destroy the number Finance reconciles
-      against, so every fee share stays its own line, indented under the project it comes out of, and reads as a
-      <strong>deduction from recognised revenue</strong>.
+      against, so every fee share stays its own line, indented under the project it comes out of. A fee share is
+      <strong>signed</strong>: a reversal of a prior-period share shows as a positive month.
     </p>
     <h3>Who does what</h3>
     <ul>
-      <li><strong>Finance</strong> imports the close and rules on every exception. Nothing is auto-applied except
-          clean on-plan billings and fee shares, which are marked as such.</li>
-      <li><strong>Revenue leaders</strong> never touch this page. They see the result in Revenue Projections, where
-          a closed month reads from this ledger instead of the forecast.</li>
-      <li>A <strong>slipped</strong> fee records the month it should bill instead. That is recorded here as intent —
-          it does not silently rewrite a project's forecast.</li>
+      <li><strong>Finance</strong> uploads the tab and rules on each figure. Only two things are pre-filled — fee
+          shares, and billings that land on plan — and both can be changed.</li>
+      <li><strong>Revenue leaders</strong> never touch this page. They see the result in Revenue Projections.</li>
+      <li>A <strong>slipped</strong> figure records the month it should bill instead. That is intent — it does not
+          silently rewrite a project's forecast.</li>
     </ul>
   </div>
 </div>

@@ -402,13 +402,12 @@
       };
     }
     /* Revenue ledger + flash snapshots: union by PERIOD, never whole-key.
-       Both are built up one month at a time, often from different machines —
-       Finance posts July on their laptop while someone else is still working
-       through June. The catch-all below takes whichever side wrote last for
+       Both are built up over time, often from different machines — Finance
+       posts 2026 on their laptop while someone else works a prior year. The catch-all below takes whichever side wrote last for
        the entire key, which would silently drop the other month. Merging per
        period keeps every close that either side has, and only compares
        timestamps when the SAME period exists on both. */
-    const unionByPeriod = (key, stamp) => {
+    const unionByPeriod = (key, stamp) => {   // period = a year for the ledger, a month for snapshots
       const rp = remote[key], lp = local[key];
       if (!rp && !lp) return;
       const merged = { ...(rp || {}) };
@@ -419,7 +418,7 @@
       });
       out[key] = merged;
     };
-    unionByPeriod('ledger', (v) => (v && v.postedAt) || '');
+    unionByPeriod('ledger', (v) => (v && v.updatedAt) || '');
     // Snapshots nest a second level (period → label), so union that too: two
     // people capturing #1 FLASH and #2 FINAL for the same month both keep theirs.
     (function () {
