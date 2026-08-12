@@ -940,26 +940,36 @@
            rows: { <key>: {
              code, name, client,
              pid,                      // matched project in projects.json
-             billed:   { 1: 38000, 2: 38000, … },   // by month number
-             feeShare: { 2: -7500, … },             // signed, its own line
-             accrual:  { 7: 45000 },   // BALANCE — only at imported close months
-             status:   { 1: 'billed', 6: 'slip', … },  // per-cell billing status
-             carryTo:  { 6: 9 },       // a slipped cell's intended billing month
+             billed:     { 1: 38000, … },  // AS IMPORTED from the sheet
+             billedEdit: { 1: 40000, … },  // manual correction, wins over the import
+             feeShare:   { 2: -7500, … },  // signed, its own line
+             accrued:    { 4: 170000, … }, // MOVEMENT per month — entered by hand
+             accrualBal: { 7: 680000 },    // the lump BALANCE as imported, per close
+             status:     { 1: 'billed', … },
+             carryTo:    { 6: 9 },
              note, billingSummary } }
          }
        }
 
-     WHY ACCRUALS ARE SPARSE
-     A close tab states ONE accrual balance — the one at its close date.
-     The July tab knows July's balance and says nothing about March's.
-     So accruals are stored per known close month, never interpolated,
-     and accrual movement is only reported in months where a balance was
-     actually imported. Guessing the months between would be inventing
-     figures Finance never published.
+     THE ACCRUAL LUMP IS A HUMAN'S JOB, NOT A DERIVATION
+     A close tab states ONE accrual figure per project — a balance at
+     its close date, with no month behind it. P009355 carries $680,000
+     against no billings at all; that is really $170,000 earned in each
+     of April, May, June and July, and nothing in the sheet says so.
+     No arithmetic can recover that, so the ledger does not pretend to:
+     the imported lump is kept as `accrualBal` (the target), and a human
+     allocates it across months in `accrued`. The page shows both and
+     flags when the allocation does not foot to the lump.
+
+     `accrued[m]` is MOVEMENT, not a balance — what was earned but not
+     invoiced in that month. Billing something previously accrued is a
+     negative entry in the billing month, exactly as it unwinds in the
+     ledger.
 
      RECOGNITION
-       cell recognised = billed + feeShare + (accrual − last known accrual)
-     the accrual term applying only in months carrying a balance.
+       cell recognised = billed + feeShare + accrued
+     where billed is the manual correction if one exists, else the
+     imported figure.
 
      PRIOR-YEAR REVERSALS ARE EXCLUDED. The close file's "Dec-<PY>
      Accruals Reversed" column is a whole-year opening adjustment about
@@ -1023,13 +1033,19 @@
       const old = prev.rows[r.key];
       out[r.key] = {
         ...r,
-        // accrual balances accumulate across imports: each tab contributes
-        // the one close month it actually knows about.
-        accrual: { ...((old && old.accrual) || {}), ...(r.accrual || {}) },
-        status:  { ...((old && old.status) || {}) },
-        carryTo: { ...((old && old.carryTo) || {}) },
-        // a match a human confirmed outranks the auto-matcher
-        pid: (old && old.pidManual) ? old.pid : r.pid,
+        // The sheet is the authority on what was invoiced, so `billed` is
+        // replaced wholesale. Everything a human put in survives: their
+        // billing corrections, their accrual allocation, statuses, matches.
+        // Incoming first, then what a human already put in — so an existing
+        // hand entry always wins, but nothing passed in is silently dropped.
+        billedEdit: { ...(r.billedEdit || {}), ...((old && old.billedEdit) || {}) },
+        accrued:    { ...(r.accrued || {}),    ...((old && old.accrued) || {}) },
+        // Imported lumps accumulate: each tab contributes the one close
+        // month it actually knows a figure for.
+        accrualBal: { ...((old && old.accrualBal) || {}), ...(r.accrualBal || {}) },
+        status:     { ...((old && old.status) || {}) },
+        carryTo:    { ...((old && old.carryTo) || {}) },
+        pid: (old && old.pidManual) ? old.pid : r.pid,     // a human's match outranks the matcher
         pidManual: !!(old && old.pidManual),
       };
     });
@@ -1091,44 +1107,95 @@
   }
 
   const nnum = (v) => (typeof v === 'number' && isFinite(v)) ? v : 0;
-  /** The accrual balance carried into `month` — the most recent balance
-      Finance actually published before it, or 0 if none. */
-  function openingAccrual(row, month) {
-    const acc = (row && row.accrual) || {};
-    let best = 0;
-    Object.keys(acc).forEach(m => { if (+m < +month) best = nnum(acc[m]); });
-    return best;
+
+  /** What was invoiced in this month: a manual correction if someone made
+      one, otherwise whatever the sheet said. */
+  function billedOf(row, month) {
+    const e = (row && row.billedEdit) || {};
+    return (month in e) ? nnum(e[month]) : nnum(((row && row.billed) || {})[month]);
   }
-  /** Recognised revenue for one project in one month. The accrual term
-      applies only where a balance was imported for that month. */
+  const accruedOf = (row, month) => nnum(((row && row.accrued) || {})[month]);
+  const feeShareOf = (row, month) => nnum(((row && row.feeShare) || {})[month]);
+
+  /** Recognised revenue for one project in one month. */
   function cellRecognised(row, month) {
     if (!row) return 0;
-    const billed = nnum((row.billed || {})[month]) + nnum((row.feeShare || {})[month]);
-    const acc = (row.accrual || {});
-    if (!(month in acc)) return billed;
-    return billed + (nnum(acc[month]) - openingAccrual(row, month));
+    return billedOf(row, month) + feeShareOf(row, month) + accruedOf(row, month);
   }
-  /** Does this month carry an imported accrual balance? */
-  const hasAccrual = (row, month) => !!(row && row.accrual && (month in row.accrual));
+  /** Has anything at all happened in this cell? */
+  const cellHasValue = (row, month) => !!(billedOf(row, month) || feeShareOf(row, month) || accruedOf(row, month));
 
-  /** Column totals for a year: billed, fee share, accrual movement and
-      recognised, per month plus the year. */
+  /** The accrual lump as imported (the latest close's figure) versus what a
+      human has actually allocated across the months. `ok` is the whole point
+      of the column: an allocation that does not foot to the lump is wrong. */
+  function accrualCheck(row) {
+    const bal = (row && row.accrualBal) || {};
+    const closes = Object.keys(bal).map(Number).sort((a, b) => a - b);
+    const imported = closes.length ? nnum(bal[closes[closes.length - 1]]) : 0;
+    let allocated = 0;
+    for (let m = 1; m <= 12; m++) allocated += accruedOf(row, m);
+    return { imported, allocated, diff: allocated - imported, ok: Math.abs(allocated - imported) < 1, closeMonth: closes[closes.length - 1] || 0 };
+  }
+
+  /** Write one figure into one cell. `field` is 'billed' (a correction that
+      overrides the import) or 'accrued' (the human's allocation). Passing
+      null clears the entry — for billed, that restores the imported figure. */
+  function setCellAmount(year, key, month, field, value) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can edit revenue actuals.');
+    const db = readDb();
+    const y = (db.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    const bucket = field === 'billed' ? 'billedEdit' : 'accrued';
+    row[bucket] = row[bucket] || {};
+    if (value == null || value === '') delete row[bucket][month];
+    else row[bucket][month] = Number(value) || 0;
+    writeDb(db);
+    return row;
+  }
+
+  /** Spread an accrual lump evenly across a run of months — the common case
+      by far, and the reason the lump is unusable as imported. Remainder lands
+      on the last month so the allocation foots to the cent. */
+  function spreadAccrual(year, key, fromMonth, toMonth, amount) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can edit revenue actuals.');
+    const db = readDb();
+    const y = (db.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    const a = +fromMonth, b = +toMonth;
+    if (!(a >= 1 && b <= 12 && a <= b)) throw new Error('Pick a month range inside the year.');
+    const total = (amount == null) ? accrualCheck(row).imported : Number(amount) || 0;
+    const n = b - a + 1;
+    const each = Math.round((total / n) * 100) / 100;
+    row.accrued = row.accrued || {};
+    for (let m = a; m <= b; m++) row.accrued[m] = each;
+    row.accrued[b] = Math.round((total - each * (n - 1)) * 100) / 100;   // remainder on the last month
+    writeDb(db);
+    return row;
+  }
+
+  /** Column totals for a year: billed, fee share, accrued and recognised,
+      per month plus the year. */
   function yearTotals(year) {
     const y = getLedgerYear(year);
     if (!y) return null;
-    const blank = () => Array.from({ length: 13 }, () => 0);   // index 1..12
-    const t = { billed: blank(), feeShare: blank(), accrual: blank(), recognised: blank(), rows: 0 };
+    const blank = () => Array.from({ length: 13 }, () => 0);
+    const t = { billed: blank(), feeShare: blank(), accrued: blank(), plan: blank(), recognised: blank(), rows: 0 };
     Object.values(y.rows || {}).forEach(r => {
       t.rows++;
       for (let m = 1; m <= 12; m++) {
-        t.billed[m] += nnum((r.billed || {})[m]);
-        t.feeShare[m] += nnum((r.feeShare || {})[m]);
-        if (hasAccrual(r, m)) t.accrual[m] += nnum(r.accrual[m]) - openingAccrual(r, m);
+        t.billed[m] += billedOf(r, m);
+        t.feeShare[m] += feeShareOf(r, m);
+        t.accrued[m] += accruedOf(r, m);
         t.recognised[m] += cellRecognised(r, m);
       }
     });
     const sum = (a) => a.reduce((x, y2) => x + y2, 0);
-    t.total = { billed: sum(t.billed), feeShare: sum(t.feeShare), accrual: sum(t.accrual), recognised: sum(t.recognised) };
+    t.total = { billed: sum(t.billed), feeShare: sum(t.feeShare), accrued: sum(t.accrued), recognised: sum(t.recognised) };
+    // The unallocated remainder across the book — money Finance has accrued
+    // that nobody has placed in a month yet.
+    t.unallocated = Object.values(y.rows || {}).reduce((a, r) => { const c = accrualCheck(r); return a + (c.imported - c.allocated); }, 0);
     return t;
   }
 
@@ -1140,8 +1207,7 @@
     const out = [];
     Object.entries(y.rows || {}).forEach(([key, r]) => {
       for (let m = 1; m <= 12; m++) {
-        const moved = nnum((r.billed || {})[m]) || nnum((r.feeShare || {})[m]) || hasAccrual(r, m);
-        if (!moved) continue;
+        if (!cellHasValue(r, m)) continue;
         if (!(r.status || {})[m]) out.push({ key, month: m, row: r, recognised: cellRecognised(r, m) });
       }
     });
@@ -2317,7 +2383,8 @@
     FLASH_LABELS, captureSnapshot, getSnapshots, deleteSnapshot, periodKey,
     DISPOSITIONS, DISPOSITION_LABEL, LEDGER_FIRST_YEAR,
     ledgerYears, getLedgerYear, closedThrough, postLedgerYear, deleteLedgerYear,
-    setCellStatus, setRowMatch, cellRecognised, openingAccrual, hasAccrual,
+    setCellStatus, setRowMatch, setCellAmount, spreadAccrual,
+    cellRecognised, cellHasValue, billedOf, accruedOf, feeShareOf, accrualCheck,
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     computeFinancials, financialsInputsHash, restampFinancials,
