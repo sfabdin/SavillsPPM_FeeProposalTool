@@ -41,6 +41,8 @@
       desc: 'Two ingestion modes: paste or upload a single proposal document, or bulk-import the projections workbook.' },
     { href: 'Ingestion Studio.html?mode=bulk', label: 'Import Projections', group: 'Data Admin', admin: true,
       desc: 'Full book vs full book: ingest the latest projections workbook ("3. Detailed Revenues" tab), see name / revenue / timeframe / staffing differences on every row, and build the Excel review report before anything lands. Re-run for each new Rev.' },
+    { href: 'Bulk Editor.html',              label: 'Bulk Editor (Excel)', group: 'Data Admin', admin: true,
+      desc: 'Superuser only — export the whole project book to Excel, scrub it (including rosters and monthly revenue), and put it back with a full diff. Includes the maintenance lock that pauses everyone else’s saves while you work.' },
     { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
       desc: 'One-time import of the small-works project book.' },
     { href: 'Data Repair.html',              label: 'Data Repair',         group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
@@ -176,6 +178,33 @@
       } catch (e) {}
     }
     if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(applyRole); else applyRole();
+
+    /* Maintenance banner — shown on every page while a superuser is doing a
+       bulk scrub, so nobody wonders why their save was refused. Re-checked
+       when the tab regains focus (the flag arrives through the Box sync). */
+    function paintMaintenance() {
+      try {
+        const S = window.UFC_Store; if (!S || !S.getMaintenance) return;
+        const m = S.getMaintenance();
+        let bar = document.getElementById('ppm-maint-bar');
+        if (!m) { if (bar) bar.remove(); document.documentElement.style.removeProperty('--ppm-maint-h'); return; }
+        const mine = S.isSuperuser && S.isSuperuser();
+        if (!bar) {
+          bar = document.createElement('div');
+          bar.id = 'ppm-maint-bar';
+          bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;padding:9px 68px 9px 20px;font-family:"Helvetica Neue",Arial,sans-serif;font-size:12.5px;font-weight:700;color:#25273A;background:#FFDF00;box-shadow:0 2px 10px rgba(37,39,58,.2)';
+          document.body.appendChild(bar);
+          document.body.style.paddingTop = '38px';
+        }
+        bar.innerHTML = mine
+          ? `🔧 <b>Maintenance mode is ON</b> — everyone else is read-only right now. ${m.note ? esc(m.note) + ' · ' : ''}You can still save.`
+          : `🔧 <b>The tool is down for maintenance</b>${m.note ? ' — ' + esc(m.note) : ''}. You can read, report and export as normal; saving is paused${m.by ? ' by ' + esc(m.by) : ''}.`;
+      } catch (e) {}
+    }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+    if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(paintMaintenance); else paintMaintenance();
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) paintMaintenance(); });
+    document.addEventListener('ufc:remote-updated', paintMaintenance);
   }
 
   if (document.body) build(); else document.addEventListener('DOMContentLoaded', build);

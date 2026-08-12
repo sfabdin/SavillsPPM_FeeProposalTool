@@ -186,6 +186,38 @@
     }
   }
 
+  /* ===== Maintenance mode =====
+     A superuser doing a bulk scrub (export → edit in Excel → reimport) needs
+     the book to hold still: a teammate saving mid-scrub would either be
+     clobbered by the reimport or trip its staleness guard. The flag lives on
+     the shared db, so it reaches every browser through the normal Box sync,
+     and it blocks WRITES only — everyone can still read, run reports and
+     export while it's on. Superusers are exempt (they're the ones fixing it). */
+  function getMaintenance() {
+    const m = (readDb() || {}).maintenance;
+    return (m && m.on) ? m : null;
+  }
+  function setMaintenance(on, note) {
+    if (!isSuperuser()) throw new Error('Only a superuser can change maintenance mode.');
+    const db = readDb();
+    db.maintenance = on
+      ? { on: true, note: note || '', at: new Date().toISOString(),
+          by: ((getRealIdentity() || getCurrentUser() || {}).name) || ((getRealIdentity() || getCurrentUser() || {}).username) || 'superuser' }
+      : { on: false, endedAt: new Date().toISOString() };
+    writeDb(db);
+    return db.maintenance;
+  }
+  /** Throws unless writing is allowed right now. opts.maintenanceOverride is
+      for the bulk importer itself, which runs AS the superuser. */
+  function assertWritable(opts) {
+    const m = getMaintenance();
+    if (!m) return;
+    if (isSuperuser() || (opts && opts.maintenanceOverride)) return;
+    const err = new Error('The tool is down for maintenance' + (m.note ? ' — ' + m.note : '') + '. Your change was not saved; try again once it reopens.');
+    err.code = 'MAINTENANCE';
+    throw err;
+  }
+
   function writeDb(db) {
     db.schemaVersion = SCHEMA;
     // Quota-safe local write: if localStorage is full, the local cache write
@@ -489,6 +521,7 @@
 
   function saveProject(record, opts) {
     opts = opts || {};
+    assertWritable(opts);
     const db = readDb();
     const prev = record.id ? db.projects[record.id] : null;
     const isNew = !record.id;
@@ -554,6 +587,7 @@
      propagates through the newest-updatedAt-wins Box merge. A hard delete only
      removes it locally and the record resurrects from another device's copy. */
   function deleteProject(id) {
+    assertWritable();
     const db = readDb();
     const p = db.projects[id];
     if (!p) return;
@@ -1860,10 +1894,11 @@
   }
 
   /* Impersonation — ONLY the SUPERUSER may preview another person's view. */
-  function canImpersonate() {
+  function isSuperuser() {
     const r = getRealIdentity();
-    return !!r && SUPERUSERS.has(r.username.toLowerCase());
+    return !!r && SUPERUSERS.has(String(r.username || '').toLowerCase());
   }
+  function canImpersonate() { return isSuperuser(); }
   function getImpersonation() {
     if (!canImpersonate()) return null;          // hard gate: ignored for everyone else
     try { return sessionStorage.getItem(IMP_KEY) || null; } catch (e) { return null; }
@@ -1988,7 +2023,8 @@
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
-    setRealIdentity, getRealIdentity, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
+    setRealIdentity, getRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
+    getMaintenance, setMaintenance, assertWritable,
     REVENUE_LEADERS, leaderById, resolveLeader, leaderDisplay,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,
