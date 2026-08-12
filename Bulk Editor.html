@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Savills PPM · Bulk Editor</title>
+<link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  body { margin:0; font-family:var(--font-body,Arial,sans-serif); color:var(--sav-navy,#25273A); background:#f3f3f0; }
+  .wrap { max-width:1080px; margin:0 auto; padding:36px 28px 90px; }
+  h1 { font-family:var(--font-display); font-weight:800; font-size:26px; margin:0 0 6px; }
+  .sub { color:#79828C; font-size:13.5px; line-height:1.65; margin-bottom:24px; max-width:820px; }
+  .card { background:#fff; border:1px solid rgba(37,39,58,0.12); padding:20px 24px; margin-bottom:16px; }
+  .card h2 { font-family:var(--font-display); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; margin:0 0 4px; color:#79828C; }
+  .card h3 { font-family:var(--font-display); font-size:19px; margin:0 0 10px; }
+  .btn { font-family:var(--font-display); font-weight:700; font-size:13px; letter-spacing:0.03em; padding:12px 22px; border:0; cursor:pointer; background:var(--sav-navy); color:#fff; }
+  .btn.yellow { background:#FFDF00; color:var(--sav-navy); }
+  .btn.ghost { background:#fff; color:var(--sav-navy); border:1px solid rgba(37,39,58,0.25); }
+  .btn.red { background:#CE181E; color:#fff; }
+  .btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .hint { font-size:12px; color:#79828C; line-height:1.6; }
+  .drop { border:2px dashed rgba(37,39,58,0.3); padding:26px; text-align:center; cursor:pointer; background:#faf9f7; }
+  .drop.over { border-color:var(--sav-teal); background:#eef5f4; }
+  .drop b { font-family:var(--font-display); font-size:14px; }
+  table { width:100%; border-collapse:collapse; margin-top:12px; font-size:12px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid rgba(37,39,58,0.08); vertical-align:top; }
+  th { font-family:var(--font-display); font-size:9.5px; letter-spacing:0.07em; text-transform:uppercase; color:#79828C; }
+  .scroll { max-height:420px; overflow:auto; }
+  .stat { display:inline-block; margin-right:30px; }
+  .stat b { font-family:var(--font-display); font-size:26px; display:block; line-height:1.1; }
+  .stat span { font-size:10px; color:#79828C; text-transform:uppercase; letter-spacing:0.08em; }
+  .msg { font-size:13px; padding:10px 14px; margin-top:12px; line-height:1.6; }
+  .msg.ok { background:#e8f3ec; color:#1f7a44; }
+  .msg.err { background:#fbe9ea; color:#b3151b; }
+  .msg.warn { background:#fdf6e3; color:#8a6d00; }
+  .chip { display:inline-block; font-size:10px; font-weight:700; padding:2px 7px; background:#EEE8E3; margin-right:4px; }
+  .chip.on { background:#FFDF00; }
+  #gate { display:none; padding:60px 30px; text-align:center; font-size:14px; color:#79828C; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Bulk editor — the whole project book, in Excel.</h1>
+  <div class="sub">Export every project as a workbook, scrub it in Excel, and put it back. Roles, phases, teams and monthly revenue are all editable. Nothing is written until you review the full diff. <b>Superuser only</b> — and meant for a deliberate one-off cleanup, not daily edits.</div>
+
+  <div id="gate">Superuser only. This page rewrites the entire project database.</div>
+
+  <div id="app" style="display:none">
+
+    <div class="card">
+      <h2>01 · Hold the book still</h2>
+      <h3>Maintenance mode.</h3>
+      <div class="hint" style="margin-bottom:12px">While this is on, everyone else can read, report and export as normal but <b>cannot save</b> — so nobody's edit gets clobbered by your reimport, and nothing changes underneath the workbook while it's out of the building. A yellow banner explains it on every page. You are exempt.</div>
+      <div class="row">
+        <button class="btn yellow" id="maint-on">🔧 Turn maintenance ON</button>
+        <button class="btn ghost" id="maint-off">Turn OFF</button>
+        <span id="maint-state" class="hint"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>02 · Take it out</h2>
+      <h3>Export the workbook.</h3>
+      <div class="hint" style="margin-bottom:12px">Six sheets: <b>Projects</b> (one row each, with dropdowns), <b>Roles</b>, <b>Phases</b>, <b>Groups</b>, <b>Revenue</b>, plus a Read me. Grey ▸ columns are reference only. A JSON backup downloads alongside it.</div>
+      <div class="row">
+        <button class="btn" id="export-btn">⭳ Export projects workbook</button>
+        <button class="btn ghost" id="backup-btn">⭳ JSON backup only</button>
+        <span id="export-note" class="hint"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>03 · Put it back</h2>
+      <h3>Reimport and review.</h3>
+      <div class="drop" id="drop">
+        <input type="file" id="file" accept=".xlsx" hidden>
+        <b>Drop the edited workbook here, or click to choose</b>
+        <div class="hint" style="margin-top:6px">Parsed in your browser. Nothing is written until you confirm the diff below.</div>
+      </div>
+      <div id="status" class="hint" style="margin-top:10px"></div>
+      <div id="review"></div>
+    </div>
+
+  </div>
+</div>
+
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/bulk-excel.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+<script>
+(function () {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let STORE, BULK, parsed = null, planned = null;
+
+  function setStatus(msg, cls) { const el = $('#status'); el.className = 'msg ' + (cls || 'warn'); el.innerHTML = msg; }
+  function paintMaint() {
+    const m = STORE.getMaintenance();
+    $('#maint-state').innerHTML = m
+      ? `<span class="chip on">ON</span> since ${esc(new Date(m.at).toLocaleString())}${m.by ? ' · by ' + esc(m.by) : ''}`
+      : '<span class="chip">OFF</span> everyone can save normally';
+    $('#maint-on').disabled = !!m;
+    $('#maint-off').disabled = !m;
+  }
+
+  function backupJson() {
+    const db = STORE.exportDb ? STORE.exportDb() : null;
+    const blob = new Blob([JSON.stringify(db || {}, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `PPM-projects-backup_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function renderReview() {
+    const r = planned;
+    const host = $('#review');
+    if (!r) { host.innerHTML = ''; return; }
+    const errHtml = r.errors.length
+      ? `<div class="msg err"><b>${r.errors.length} problem${r.errors.length === 1 ? '' : 's'} must be fixed before anything can be applied.</b> Correct them in the workbook and drop it again.</div>
+         <div class="scroll"><table><thead><tr><th>Sheet</th><th>Row</th><th>Problem</th></tr></thead><tbody>
+         ${r.errors.slice(0, 200).map(e => `<tr><td>${esc(e.sheet)}</td><td>${e.row}</td><td>${esc(e.msg)}</td></tr>`).join('')}
+         </tbody></table></div>`
+      : '';
+    const changeHtml = r.changes.length
+      ? `<div class="scroll"><table><thead><tr><th>Project</th><th>What changes</th></tr></thead><tbody>
+         ${r.changes.map(c => `<tr><td><b>${esc(c.label)}</b></td><td>${c.fields.map(f => `<div>${esc(f.field)}: <span style="color:#79828C">${esc(f.from)}</span> → <b>${esc(f.to)}</b></div>`).join('')}</td></tr>`).join('')}
+         </tbody></table></div>`
+      : '<div class="hint" style="margin-top:10px">No field changes detected on existing projects.</div>';
+    host.innerHTML = `
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(37,39,58,0.12)">
+        <div class="row" style="margin-bottom:6px">
+          <span class="stat"><b>${r.changes.length}</b><span>Projects changed</span></span>
+          <span class="stat"><b>${r.creates.length}</b><span>To create</span></span>
+          <span class="stat"><b>${r.removes.length}</b><span>To remove</span></span>
+          <span class="stat"><b>${r.untouched.length}</b><span>Unchanged</span></span>
+          <span class="stat"><b>${r.missing.length}</b><span>Not in workbook</span></span>
+        </div>
+        ${r.missing.length ? `<div class="msg warn"><b>${r.missing.length} project${r.missing.length === 1 ? '' : 's'} in the tool ${r.missing.length === 1 ? 'is' : 'are'} not in this workbook</b> — they are left exactly as they are: ${r.missing.slice(0, 6).map(m => esc(m.label)).join(' · ')}${r.missing.length > 6 ? ` · +${r.missing.length - 6} more` : ''}</div>` : ''}
+        ${r.removes.length ? `<div class="msg err"><b>${r.removes.length} marked REMOVE</b> (soft delete, recoverable from Data Repair): ${r.removes.slice(0, 10).map(m => esc(m.label)).join(' · ')}${r.removes.length > 10 ? '…' : ''}</div>` : ''}
+        ${r.creates.length ? `<div class="msg warn"><b>${r.creates.length} new project${r.creates.length === 1 ? '' : 's'}</b>: ${r.creates.slice(0, 10).map(m => esc(m.label)).join(' · ')}${r.creates.length > 10 ? '…' : ''}</div>` : ''}
+        ${errHtml}
+        ${errHtml ? '' : changeHtml}
+        <div class="row" style="margin-top:16px">
+          <button class="btn red" id="apply-btn" ${r.errors.length || !r.plan.length ? 'disabled' : ''}>Apply to the database (${r.plan.length} write${r.plan.length === 1 ? '' : 's'})</button>
+          <span class="hint">A JSON backup downloads automatically first.</span>
+        </div>
+      </div>`;
+    const ab = $('#apply-btn');
+    if (ab) ab.onclick = () => {
+      if (!confirm(`Write ${planned.plan.length} change${planned.plan.length === 1 ? '' : 's'} to the project database?\n\n` +
+        `   • ${planned.changes.length} updated\n   • ${planned.creates.length} created\n   • ${planned.removes.length} removed (soft delete)\n\n` +
+        `A JSON backup downloads first. Projects not in the workbook are untouched.`)) return;
+      backupJson();
+      ab.disabled = true; ab.textContent = 'Writing…';
+      const res = BULK.apply(planned.plan);
+      setStatus(`Applied — <b>${res.updated}</b> updated · <b>${res.created}</b> created · <b>${res.removed}</b> removed.` +
+        (res.failed.length ? ` <b>${res.failed.length} failed:</b> ${esc(res.failed.slice(0, 5).join(' · '))}` : ' Everything landed cleanly.'),
+        res.failed.length ? 'err' : 'ok');
+      parsed = null; planned = null; renderReview();
+    };
+  }
+
+  async function handleFile(f) {
+    setStatus('Reading ' + esc(f.name) + '…', 'warn');
+    try {
+      parsed = await BULK.parseWorkbook(f);
+      planned = BULK.buildPlan(parsed);
+      setStatus(`Read <b>${parsed.projects.length}</b> project rows · ${parsed.roles.length} roles · ${parsed.phases.length} phases · ${parsed.revenue.length} revenue rows. Nothing has been written.`, 'ok');
+      renderReview();
+    } catch (e) {
+      console.error(e);
+      setStatus('Could not read that workbook: ' + esc(e.message || e), 'err');
+      parsed = planned = null; renderReview();
+    }
+  }
+
+  function init() {
+    STORE = window.UFC_Store; BULK = window.UFC_BulkExcel;
+    if (!(STORE && STORE.isSuperuser && STORE.isSuperuser())) { $('#gate').style.display = 'block'; return; }
+    $('#app').style.display = 'block';
+    paintMaint();
+
+    $('#maint-on').onclick = () => {
+      const note = prompt('Optional note for everyone else (e.g. "bulk data cleanup, back by 3pm")', 'bulk data cleanup in progress');
+      if (note === null) return;
+      STORE.setMaintenance(true, note);
+      paintMaint();
+    };
+    $('#maint-off').onclick = () => { STORE.setMaintenance(false); paintMaint(); };
+
+    $('#export-btn').onclick = async () => {
+      const b = $('#export-btn'), o = b.textContent;
+      b.disabled = true; b.textContent = 'Building…';
+      try {
+        const r = await BULK.exportWorkbook();
+        backupJson();
+        $('#export-note').innerHTML = `Exported <b>${r.count}</b> projects · JSON backup downloaded too.`;
+      } catch (e) { console.error(e); $('#export-note').textContent = 'Export failed: ' + (e.message || e); }
+      finally { b.disabled = false; b.textContent = o; }
+    };
+    $('#backup-btn').onclick = backupJson;
+
+    const drop = $('#drop'), file = $('#file');
+    drop.onclick = () => file.click();
+    file.onchange = () => { if (file.files[0]) handleFile(file.files[0]); file.value = ''; };
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'dragend', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) handleFile(f); });
+  }
+
+  if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(init); else document.addEventListener('ufc:ready', init);
+})();
+</script>
+</body>
+</html>
