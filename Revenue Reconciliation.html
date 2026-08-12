@@ -154,18 +154,49 @@
   table.ws td.s-reclass { border-bottom:3px solid var(--st-reclass); }
   table.ws td.s-fee     { border-bottom:3px solid var(--st-fee); }
 
-  /* ---- interactive grid cells ---- */
-  table.ws td.cell { cursor:pointer; border-bottom:3px solid transparent; }
-  table.ws td.cell:hover { box-shadow:inset 0 0 0 2px var(--sav-navy); }
-  table.ws td.cell:focus-visible { outline:3px solid var(--sav-teal); outline-offset:-3px; }
+  /* ---- three-lane editable grid ---- */
+  table.ws td.pcell { vertical-align:top; padding-top:9px; }
+  table.ws th.lane-h, table.ws td.lane-c { font-size:9.5px; font-weight:800; letter-spacing:.1em;
+        text-transform:uppercase; color:var(--sav-steel); min-width:74px; background:#fafaf8; }
+  table.ws td:first-child { z-index:2; }
+  table.ws tr.ln.grp-top td { border-top:2px solid var(--hair-strong); }
+  table.ws tr.ln-tool td.lane-c { color:#1d6b78; }
+  table.ws tr.ln-billed td.lane-c { color:#166b45; }
+  table.ws tr.ln-accrued td.lane-c { color:#8a5a00; }
+  table.ws td.plan-c { color:#1d6b78; background:#f5fafb; }
+  table.ws td.ed { border-bottom:3px solid transparent; cursor:text; }
+  table.ws td.ed:hover { box-shadow:inset 0 0 0 1px var(--hair-strong); }
+  table.ws td.ed:focus { outline:0; box-shadow:inset 0 0 0 2px var(--sav-navy); background:#fff !important; }
+  table.ws tr.ln-accrued td.ed { background:#fffdf5; }
+  table.ws td.ed.edited { font-weight:700; }
+  table.ws td.ed.edited::after { content:"•"; color:var(--sav-red); margin-left:3px; }
+  /* accrual target column */
+  table.ws th.acc-h { background:#3b3a34; }
+  table.ws td.acc-c { text-align:right; padding:4px 9px; min-width:132px; background:#fbfaf6; }
+  table.ws td.acc-c .acc-n { font-weight:800; font-size:12px; font-variant-numeric:tabular-nums; }
+  table.ws td.acc-c .acc-d { font-family:var(--font-body); font-size:9.5px; margin-top:1px; }
+  table.ws td.acc-c.ok .acc-n { color:#166b45; } table.ws td.acc-c.ok .acc-d { color:#166b45; }
+  table.ws td.acc-c.off .acc-n { color:#8a5a00; } table.ws td.acc-c.off .acc-d { color:#8a5a00; }
+  .spread-btn { font-family:var(--font-display); font-weight:700; font-size:9px; letter-spacing:.06em;
+        text-transform:uppercase; border:0; background:var(--sav-yellow); color:var(--sav-navy);
+        padding:3px 8px; margin-top:3px; cursor:pointer; }
+  .spread-btn:hover { background:#ffe94d; }
+  .popover.spread .sp-body { padding:12px; display:flex; flex-direction:column; gap:9px; }
+  .popover.spread label { font-family:var(--font-body); font-size:11.5px; color:var(--sav-steel);
+        display:flex; align-items:center; gap:8px; justify-content:space-between; }
+  .popover.spread input, .popover.spread select { font-family:var(--font-body); font-size:12px;
+        border:1px solid var(--hair-strong); background:var(--sav-cream); padding:6px 8px; color:var(--sav-navy); min-width:130px; }
+  .popover.spread .sp-preview { font-family:var(--font-display); font-weight:700; font-size:11.5px;
+        color:var(--sav-navy); background:var(--sav-cream); padding:8px 10px; }
+  .popover.spread .sp-go { justify-content:center; }
   table.ws td.unruled-c { border-bottom-color:var(--st-unruled); background:#fffdf2; font-weight:700; }
   table.ws th.focus-h { background:var(--sav-teal) !important; }
   table.ws td.focus-c { box-shadow:inset 2px 0 0 var(--sav-teal), inset -2px 0 0 var(--sav-teal); }
-  table.ws tfoot tr.lane-plan td { background:#233a44; font-size:11.5px; font-weight:700; bottom:33px; color:#a9d9e5; }
+  table.ws tfoot tr.lane-plan td { background:#233a44; font-size:11.5px; font-weight:700; bottom:99px; color:#a9d9e5; }
   table.ws tfoot tr.lane-plan td:first-child { background:#233a44; color:#a9d9e5; }
-  table.ws tfoot tr.lane-bill td { bottom:132px; }
-  table.ws tfoot tr.lane-fee td { bottom:99px; }
-  table.ws tfoot tr.lane-acc td { bottom:66px; }
+  table.ws tfoot tr.lane-bill td { bottom:66px; }
+  table.ws tfoot tr.lane-acc td { bottom:33px; }
+  table.ws tfoot tr.tot td.acc-c { background:inherit; color:inherit; }
   .modebar { display:inline-flex; gap:4px; }
   .btn.sm { padding:7px 12px; font-size:10px; }
   .ctl-toggle { display:inline-flex; align-items:center; gap:7px; font-family:var(--font-body);
@@ -279,8 +310,9 @@
         <b>every month that tab carries</b> — the July tab brings in January through July in a single go. Next month,
         upload the August tab and it refreshes in place, keeping every billing status you have already set.
         Columns are found by their header text, not their position, and every row is footed against the sheet's own
-        Reported Revenue column before anything lands. The <b>accrual balance</b> is recorded only at that tab's close
-        month, because that is the only month it states one for. Prior-year reversals are not imported.
+        Reported Revenue column before anything lands. The <b>accrual figure is a single lump</b> with no month behind
+        it — it lands beside the Accrued lane as a target for you to spread across months. Prior-year reversals are
+        not imported.
       </p>
       <div class="frow">
         <label for="close-file">Workbook</label>
@@ -296,7 +328,7 @@
   </section>
 
   <div class="ws-head">
-    <h2>Actuals vs plan, by project and month</h2>
+    <h2>Tool vs billed vs accrued, by project and month</h2>
     <span class="modebar">
       <button class="btn sm on" id="mode-actual">Actual</button>
       <button class="btn sm" id="mode-plan">Plan</button>
@@ -313,7 +345,7 @@
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-wo)"></span>Written off</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-new)"></span>Unforecast</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-fee)"></span>Fee share</span>
-      <span class="hint">Click any figure to set its billing status</span>
+      <span class="hint">Type into Billed and Accrued · double-click a figure to set its billing status</span>
     </div>
   </div>
 
@@ -338,13 +370,22 @@
   </section>
 
   <div class="foot">
-    <h3>How recognised revenue is built</h3>
+    <h3>Three lanes, one question per cell</h3>
     <p>
-      <strong>Recognised = billed gross + fee share + (closing accrual − opening accrual).</strong>
-      The accrual column in the close file is a <strong>balance</strong>, not a monthly figure, and a tab states only
-      one — the balance at its own close date. So accrual movement is reported only in months where a balance was
-      actually imported, never guessed for the months between. Upload each month's tab as you close it and the
-      picture fills in.
+      <strong>Tool</strong> is what the fee record says should bill, straight from the project — read-only, because it
+      is the plan being reconciled against. <strong>Billed</strong> is what the sheet says was invoiced; type over it
+      when the sheet is wrong, and clear the cell to put the sheet's figure back. <strong>Accrued</strong> is earned
+      but not invoiced, and you fill it in — the file cannot tell you.
+      <strong>Recognised = billed + fee share + accrued.</strong>
+    </p>
+    <h3>Why the accrual has to be spread by hand</h3>
+    <p>
+      The close file states <strong>one accrual figure per project</strong>, with no month behind it. P009355 carries
+      $680,000 against no billings at all — which is really $170,000 earned in each of April through July, and nothing
+      in the file says so. No arithmetic can recover that, so the tool does not pretend to: the imported lump sits in
+      the <strong>Accrual</strong> column as a target, the row shows how much is still unplaced, and
+      <strong>Spread…</strong> fills an even run in one action. A row is right when the column reads
+      <em>allocated ✓</em>.
     </p>
     <h3>One year at a time</h3>
     <p>
