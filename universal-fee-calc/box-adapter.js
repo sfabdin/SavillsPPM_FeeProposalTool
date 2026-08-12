@@ -401,6 +401,43 @@
         leaders: byId(rv.leaders, lv.leaders, 'id'),
       };
     }
+    /* Revenue ledger + flash snapshots: union by PERIOD, never whole-key.
+       Both are built up one month at a time, often from different machines —
+       Finance posts July on their laptop while someone else is still working
+       through June. The catch-all below takes whichever side wrote last for
+       the entire key, which would silently drop the other month. Merging per
+       period keeps every close that either side has, and only compares
+       timestamps when the SAME period exists on both. */
+    const unionByPeriod = (key, stamp) => {
+      const rp = remote[key], lp = local[key];
+      if (!rp && !lp) return;
+      const merged = { ...(rp || {}) };
+      Object.entries(lp || {}).forEach(([ym, lv]) => {
+        const rv = merged[ym];
+        if (!rv) { merged[ym] = lv; return; }
+        merged[ym] = (stamp(lv) >= stamp(rv)) ? lv : rv;
+      });
+      out[key] = merged;
+    };
+    unionByPeriod('ledger', (v) => (v && v.postedAt) || '');
+    // Snapshots nest a second level (period → label), so union that too: two
+    // people capturing #1 FLASH and #2 FINAL for the same month both keep theirs.
+    (function () {
+      const rs = remote.snapshots, ls = local.snapshots;
+      if (!rs && !ls) return;
+      const merged = { ...(rs || {}) };
+      Object.entries(ls || {}).forEach(([ym, labels]) => {
+        if (!merged[ym]) { merged[ym] = labels; return; }
+        const both = { ...merged[ym] };
+        Object.entries(labels || {}).forEach(([lbl, snap]) => {
+          const cur = both[lbl];
+          if (!cur || ((snap && snap.asOf) || '') >= ((cur && cur.asOf) || '')) both[lbl] = snap;
+        });
+        merged[ym] = both;
+      });
+      out.snapshots = merged;
+    })();
+
     // Anything added to the db in future: keep it rather than dropping it.
     Object.keys({ ...remote, ...local }).forEach(k => {
       if (k in out || k === 'schemaVersion') return;

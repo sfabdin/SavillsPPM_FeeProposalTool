@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Savills PPM · Revenue Reconciliation</title>
+<link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<style>
+  :root { --hair: rgba(37,39,58,0.10); --hair-strong: rgba(37,39,58,0.18);
+          --st-billed:#1F8A5B; --st-accrued:#C07A00; --st-slip:#CE181E; --st-early:#097CE8;
+          --st-wo:#79828C; --st-new:#83007E; --st-fee:#CE181E; --st-reclass:#238291; --st-trueup:#EF6B00; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #f3f3f0; font-family: var(--font-display); color: var(--sav-navy); }
+  .wrap { max-width: 1680px; margin: 0 auto; padding: 40px 40px 90px; }
+
+  .head { display: grid; grid-template-columns: auto 1fr auto; gap: 24px; align-items: end;
+          padding-bottom: 22px; border-bottom: 4px solid var(--sav-navy); margin-bottom: 24px; }
+  .head .logo { width: 64px; height: 64px; }
+  .head .lbl { font-weight: 700; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+               color: var(--sav-steel); margin-bottom: 8px; }
+  .head .lbl a { color: var(--sav-steel); text-decoration: none; }
+  .head .lbl a:hover { color: var(--sav-red); }
+  .head .lbl .adm { background:#fdf3d7; color:#8a6d00; font-size:9px; padding:2px 7px; margin-left:8px; letter-spacing:.1em; }
+  .head h1 { font-weight: 900; font-size: 34px; line-height: 1; letter-spacing: -0.015em; margin: 0; }
+  .head .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn { font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: 0.1em;
+         text-transform: uppercase; padding: 11px 16px; border: 0; cursor: pointer;
+         background: var(--sav-cream); color: var(--sav-navy); text-decoration: none; display: inline-flex; align-items: center; }
+  .btn:hover { background: #e6ded6; }
+  .btn-primary { background: var(--sav-navy); color: var(--sav-yellow); }
+  .btn.on { background: var(--sav-navy); color: var(--sav-yellow); }
+  .btn.danger { background:#fff; color:var(--sav-red); border:1px solid rgba(206,24,30,.35); }
+  .btn:disabled { opacity:.4; cursor:not-allowed; }
+  .btn:focus-visible, select:focus-visible, input:focus-visible { outline:3px solid var(--sav-teal); outline-offset:2px; }
+
+  /* ---- period bar ---- */
+  .period-bar { background:#fff; border:1px solid var(--hair-strong); border-left:5px solid var(--sav-teal);
+                padding:14px 18px; margin-bottom:16px; display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+  .period-bar .pb-t { font-weight:900; font-size:12px; letter-spacing:.1em; text-transform:uppercase; }
+  .period-bar select { font-family:var(--font-display); font-weight:700; font-size:13px;
+                       border:1px solid var(--hair-strong); background:var(--sav-cream); color:var(--sav-navy); padding:7px 10px; }
+  .p-status { font-family:var(--font-display); font-weight:800; font-size:10px; letter-spacing:.1em;
+              text-transform:uppercase; padding:5px 10px; }
+  .p-status.none { background:var(--sav-steel-10,#F2F3F5); color:var(--sav-steel); }
+  .p-status.open { background:#fdf0d8; color:#8a5a00; }
+  .p-status.done { background:#e6f3ea; color:var(--st-billed); }
+  .period-bar .pb-meta { font-family:var(--font-body); font-size:11.5px; color:var(--sav-steel); }
+  .period-bar .pb-meta b { font-family:var(--font-display); color:var(--sav-navy); }
+  .period-bar .pb-right { margin-left:auto; display:flex; gap:8px; align-items:center; }
+
+  /* ---- catch-up strip ---- */
+  .catchup { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:20px; align-items:center; }
+  .catchup .chip { font-family:var(--font-display); font-weight:700; font-size:10.5px; letter-spacing:.04em;
+                   padding:7px 11px; border:1px solid var(--hair-strong); background:#fff; color:var(--sav-navy); cursor:pointer; }
+  .catchup .chip-done { background:#e6f3ea; border-color:#a9d5bb; color:#166b45; }
+  .catchup .chip-open { background:#fdf0d8; border-color:#e8c98a; color:#8a5a00; }
+  .catchup .chip-none { background:#fff; color:var(--sav-steel); border-style:dashed; }
+  .catchup .chip-cur { outline:2px solid var(--sav-navy); outline-offset:1px; }
+  .catchup .cu-lbl { font-family:var(--font-body); font-size:11px; color:var(--sav-steel); margin-right:6px; }
+
+  /* ---- KPIs ---- */
+  .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 22px; }
+  @media (max-width: 1200px) { .kpis { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 700px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpi { background: #fff; border: 1px solid var(--hair); padding: 15px 17px; }
+  .kpi.navy { background: var(--sav-navy); }
+  .kpi .k-lbl { font-weight: 700; font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+                color: var(--sav-steel); margin-bottom: 8px; }
+  .kpi.navy .k-lbl { color: rgba(255,255,255,0.72); }
+  .kpi .k-val { font-weight: 900; font-size: 24px; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .kpi.navy .k-val { color: #fff; }
+  .kpi .k-val.neg { color: var(--st-slip); } .kpi .k-val.acc { color: var(--st-accrued); }
+  .kpi .k-sub { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); margin-top: 4px; line-height:1.4; }
+  .kpi.navy .k-sub { color: rgba(255,255,255,0.65); }
+
+  /* ---- import card ---- */
+  .card { background:#fff; border:1px solid var(--hair-strong); margin-bottom:20px; }
+  .card > h2 { margin:0; background:var(--sav-navy); color:#fff; font-size:12px; font-weight:900;
+               letter-spacing:.11em; text-transform:uppercase; padding:12px 16px; display:flex; align-items:center; gap:10px; }
+  .card > h2 .owner { margin-left:auto; font-family:var(--font-body); font-size:10.5px; font-weight:400;
+                      letter-spacing:0; text-transform:none; color:rgba(255,255,255,.75); }
+  .card .cbody { padding:16px; }
+  .card .intro { font-family:var(--font-body); font-size:12.5px; color:var(--sav-steel); line-height:1.6; margin:0 0 14px; max-width:95ch; }
+  .card .intro b { font-family:var(--font-display); color:var(--sav-navy); }
+  .frow { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+  .frow label { font-family:var(--font-display); font-weight:700; font-size:10px; letter-spacing:.1em;
+                text-transform:uppercase; color:var(--sav-steel); }
+  input[type=file] { font-family:var(--font-body); font-size:12px; }
+  #sheet-pick { font-family:var(--font-body); font-size:12px; border:1px solid var(--hair-strong);
+                background:var(--sav-cream); padding:7px 9px; min-width:240px; color:var(--sav-navy); }
+  .msg { font-family:var(--font-body); font-size:12px; line-height:1.55; padding:9px 12px; margin-top:8px;
+         background:var(--sav-cream); color:var(--sav-navy); }
+  .msg.ok { background:#e6f3ea; color:#166b45; } .msg.err { background:#fbe6e7; color:#8f1015; }
+  .msg.warn { background:#fdf0d8; color:#8a5a00; }
+  .msg b { font-family:var(--font-display); }
+
+  /* ---- worksheet / matrix ---- */
+  .ws-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .ws-head h2 { font-size:12px; font-weight:900; letter-spacing:.11em; text-transform:uppercase; margin:0; }
+  .ws-head .legend { display:flex; gap:13px; flex-wrap:wrap; margin-left:auto;
+                     font-family:var(--font-body); font-size:11px; color:var(--sav-steel); }
+  .ws-head .legend .lg { display:inline-flex; align-items:center; gap:5px; }
+  .ws-head .legend .sw { width:14px; height:8px; display:inline-block; border-bottom:3px solid; background:#f2f3f5; }
+  .ws-scroll { overflow:auto; max-height:74vh; border:1px solid var(--hair-strong); background:#fff; margin-bottom:24px; }
+  table.ws { border-collapse:collapse; width:100%; font-family:var(--font-display); }
+  table.ws th, table.ws td { border-bottom:1px solid var(--hair); border-right:1px solid var(--hair); white-space:nowrap; }
+  table.ws thead th { background:var(--sav-navy); color:#fff; font-weight:700; font-size:10.5px;
+                      padding:9px 10px; text-align:right; position:sticky; top:0; z-index:3; }
+  table.ws thead th.l { text-align:left; }
+  table.ws thead th:first-child { position:sticky; left:0; z-index:5; min-width:300px; }
+  table.ws thead th.closed-h { background:#1a1c2c; }
+  table.ws thead th.open-h { background:#3a3c50; }
+  table.ws thead th .sub { display:block; font-size:7.5px; font-weight:800; letter-spacing:.08em;
+                           color:var(--sav-yellow); margin-top:2px; }
+  table.ws thead th.open-h .sub { color:rgba(255,255,255,.4); }
+  table.ws td { text-align:right; padding:8px 10px; font-size:12px; font-variant-numeric:tabular-nums; }
+  table.ws td.l { text-align:left; }
+  table.ws td:first-child { position:sticky; left:0; z-index:2; background:#fff; min-width:300px; white-space:normal; }
+  table.ws td.strong { font-weight:700; }
+  table.ws td.zero { color:#D7DADE; }
+  table.ws td.neg { color:var(--st-slip); font-weight:700; }
+  table.ws td.pos { color:var(--st-billed); font-weight:700; }
+  table.ws td.fee-cell { color:var(--st-fee); font-weight:700; }
+  table.ws td.acc-cell { color:var(--st-accrued); font-weight:700; }
+  table.ws .wp-name { font-weight:700; font-size:12.5px; }
+  table.ws .wp-meta { font-family:var(--font-body); font-size:10px; color:var(--sav-steel); margin-top:1px; }
+  table.ws .wp-meta .unmatched { background:#fbe6e7; color:#8f1015; padding:1px 6px; margin-left:6px; font-size:9px; }
+  table.ws .wp-meta .feehint { background:#fdf0d8; color:#8a5a00; padding:1px 6px; margin-left:6px; font-size:9px; }
+  table.ws .wp-note { font-family:var(--font-body); font-size:10.5px; color:#8a5a00; font-style:italic;
+                      margin-top:3px; white-space:normal; max-width:46ch; }
+  tr.unruled td:first-child { border-left:4px solid var(--sav-yellow); }
+  tr.ruled td:first-child { border-left:4px solid transparent; }
+  tr.fee-row td { background:#fbf7f4; color:var(--st-fee); font-size:11px; padding:5px 10px; font-style:italic; }
+  tr.fee-row td:first-child { background:#fbf7f4; padding-left:26px; }
+  table.ws tfoot tr.tot td { background:var(--sav-navy); color:#fff; font-weight:900; font-size:12.5px;
+                             padding:11px 10px; position:sticky; bottom:0; z-index:2; border-bottom:0; }
+  table.ws tfoot tr.tot td:first-child { left:0; z-index:4; background:var(--sav-navy); color:var(--sav-yellow); }
+  table.ws tfoot tr.lane-bill td { background:#2f3147; font-size:11.5px; font-weight:700; bottom:99px; }
+  table.ws tfoot tr.lane-bill td:first-child { background:#2f3147; color:rgba(255,255,255,.85); }
+  table.ws tfoot tr.lane-fee td { background:#4a2d31; font-size:11.5px; font-weight:700; bottom:66px; color:#ffc9cb; }
+  table.ws tfoot tr.lane-fee td:first-child { background:#4a2d31; color:#ffc9cb; }
+  table.ws tfoot tr.lane-acc td { background:#3b3a34; font-size:11.5px; font-weight:700; bottom:33px; color:#f2c56b; }
+  table.ws tfoot tr.lane-acc td:first-child { background:#3b3a34; color:#f2c56b; }
+
+  /* settlement stripes in the YTD matrix */
+  table.ws td.s-billed  { border-bottom:3px solid var(--st-billed); }
+  table.ws td.s-accrued { border-bottom:3px solid var(--st-accrued); color:#8a5a00; font-weight:700; background:rgba(192,122,0,.07); }
+  table.ws td.s-slip    { border-bottom:3px solid var(--st-slip); color:var(--st-slip); font-weight:700; background:rgba(206,24,30,.05); }
+  table.ws td.s-early   { border-bottom:3px solid var(--st-early); color:var(--st-early); font-weight:700; }
+  table.ws td.s-wo      { border-bottom:3px solid var(--st-wo); color:var(--sav-steel); text-decoration:line-through; }
+  table.ws td.s-new     { border-bottom:3px solid var(--st-new); color:var(--st-new); font-weight:700; }
+  table.ws td.s-trueup  { border-bottom:3px solid var(--st-trueup); }
+  table.ws td.s-reclass { border-bottom:3px solid var(--st-reclass); }
+  table.ws td.s-fee     { border-bottom:3px solid var(--st-fee); }
+
+  select.disp-pick { font-family:var(--font-body); font-size:11.5px; border:1px solid var(--hair-strong);
+                     background:#fffdf2; color:var(--sav-navy); padding:6px 7px; min-width:210px; cursor:pointer; }
+  select.disp-pick.set { background:#e6f3ea; border-color:var(--st-billed); font-weight:600; }
+  .carry-wrap { display:inline-flex; align-items:center; gap:5px; margin-left:6px; }
+  /* A class-level `display` outranks the UA's [hidden] rule, so the carry
+     picker would show on every row instead of only slipped ones. */
+  .carry-wrap[hidden] { display:none; }
+  .carry-lbl { font-family:var(--font-body); font-size:10px; color:var(--sav-steel); }
+  select.carry-pick { font-family:var(--font-body); font-size:11px; border:1px solid var(--hair-strong);
+                      background:var(--sav-cream); padding:5px 6px; color:var(--sav-navy); }
+  .suggest { font-family:var(--font-body); font-size:10px; color:var(--sav-steel); margin-top:3px; }
+  .suggest b { font-family:var(--font-display); color:var(--sav-navy); }
+  .tag { display:inline-block; font-size:9.5px; font-weight:800; letter-spacing:.05em; padding:2px 7px;
+         text-transform:uppercase; color:#fff; font-style:normal; }
+  .tag.billed{background:var(--st-billed);} .tag.accrued{background:var(--st-accrued);}
+  .tag.slip{background:var(--st-slip);} .tag.early{background:var(--st-early);}
+  .tag.wo{background:var(--st-wo);} .tag.new{background:var(--st-new);}
+  .tag.trueup{background:var(--st-trueup);} .tag.reclass{background:var(--st-reclass);}
+  .tag.fee{background:var(--st-fee);} .tag.none{background:#fdf0d8; color:#8a5a00;}
+
+  .empty { padding:60px; text-align:center; font-family:var(--font-body); color:var(--sav-steel);
+           background:#fff; border:1px solid var(--hair-strong); margin-bottom:24px; }
+  .foot { margin-top:26px; font-family:var(--font-body); font-size:12px; line-height:1.65;
+          color:var(--sav-steel); max-width:95ch; }
+  .foot h3 { font-family:var(--font-display); font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+             color:var(--sav-navy); margin:20px 0 8px; }
+  .foot strong { font-family:var(--font-display); color:var(--sav-navy); }
+  .foot ul { padding-left:18px; } .foot li { margin-bottom:6px; }
+  @media (prefers-reduced-motion:reduce){ * { transition:none !important; animation:none !important; } }
+</style>
+</head>
+<body class="sav-doc">
+<div class="wrap">
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div>
+      <div class="lbl"><a href="Fee Generator.html">Home</a> &nbsp;·&nbsp;
+        <a href="Revenue Projections.html">Revenue Projections</a> &nbsp;·&nbsp; Revenue Reconciliation
+        <span class="adm">admin only</span></div>
+      <h1>Revenue reconciliation.</h1>
+    </div>
+    <div class="actions">
+      <button class="btn on" id="view-month">This month</button>
+      <button class="btn" id="view-ytd">Year to date</button>
+      <a class="btn" href="Revenue Projections.html">Projections →</a>
+    </div>
+  </header>
+
+  <div class="period-bar">
+    <span class="pb-t">Close period</span>
+    <select id="year-pick" aria-label="Year"></select>
+    <select id="period-pick" aria-label="Month"></select>
+    <span class="p-status none" id="period-status">Not imported</span>
+    <span class="pb-meta" id="period-meta"></span>
+    <span class="pb-right">
+      <button class="btn danger" id="remove-period" hidden>Remove period</button>
+    </span>
+  </div>
+
+  <div class="catchup" id="catchup-wrap">
+    <span class="cu-lbl">Catch-up:</span>
+    <span id="catchup" style="display:contents"></span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <section class="card">
+    <h2>Import the monthly close <span class="owner">Finance owns this — the only way actuals enter the system</span></h2>
+    <div class="cbody">
+      <p class="intro">
+        Upload <b>Revenue by Month by Client</b> and pick the <b>YTD &lt;Month&gt; &lt;Year&gt;</b> tab for the period above.
+        Columns are found by their header text, not their position, and every row is footed against the sheet's own
+        Reported Revenue column before anything lands. Accruals are <b>balances</b>, not monthly amounts — so import
+        oldest month first when catching up, or the opening balance is read as zero. Prior-year reversals are
+        <b>not imported</b>: this ledger reports the selected year on its own.
+      </p>
+      <div class="frow">
+        <label for="close-file">Close workbook</label>
+        <input type="file" id="close-file" accept=".xlsx,.xlsm,.xls">
+      </div>
+      <div class="frow" id="sheet-row" hidden>
+        <label for="sheet-pick">Sheet</label>
+        <select id="sheet-pick"></select>
+        <button class="btn btn-primary" id="post-period" disabled>Post period</button>
+      </div>
+      <div id="import-msg"></div>
+    </div>
+  </section>
+
+  <div class="ws-head">
+    <h2 id="ws-title">Reconciliation worksheet</h2>
+    <div class="legend">
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-billed)"></span>Billed</span>
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-accrued)"></span>Accrued</span>
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-slip)"></span>Slipped</span>
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-early)"></span>Billed early</span>
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-trueup)"></span>True-up</span>
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-wo)"></span>Written off</span>
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-new)"></span>Unforecast</span>
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-fee)"></span>Fee share</span>
+    </div>
+  </div>
+
+  <div class="empty" id="empty" hidden>This period hasn't been imported yet. Upload the close workbook above to reconcile it.</div>
+  <div class="ws-scroll"><table class="ws month" id="worksheet"></table></div>
+
+  <section class="card" id="flash-card" hidden>
+    <h2>Monthly flash <span class="owner">The reconciled month, ready to send</span></h2>
+    <div class="cbody">
+      <p class="intro">
+        Recognised revenue with the accrual and fee-share detail behind it, per project. The Excel export carries
+        three tabs: the flash itself, a <b>Reconciliation</b> tab showing exactly how the total is built up from
+        billings, and any lines still awaiting a disposition.
+      </p>
+      <div class="frow"><button class="btn btn-primary" id="flash-export">⤓ Export flash (Excel)</button></div>
+      <div class="ws-scroll" style="max-height:52vh; margin-top:12px;"><table class="ws" id="flash-table"></table></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <h3>How recognised revenue is built</h3>
+    <p>
+      <strong>Recognised = billed gross + fee share + (closing accrual − opening accrual).</strong>
+      The accrual column in the close file is a <strong>balance</strong>, not a monthly figure, which is why a month
+      can't be reconciled on its own — July's revenue depends on June's closing balance. Post the months in order and
+      the arithmetic holds; skip one and the page will tell you the opening balance is being read as zero.
+    </p>
+    <h3>One year at a time</h3>
+    <p>
+      The ledger starts in <strong>2026</strong> and only looks forward. The close file's prior-year accrual reversal
+      is read at import — purely to prove the sheet parsed correctly against its own totals — and then discarded: it is
+      a whole-year opening adjustment about last year's work, and folding it in would dump a lump into January and make
+      month-on-month revenue unreadable. So this ledger's YTD <strong>deliberately differs</strong> from the file's
+      "YTD Reported Revenue" by exactly that reversal. January opens at a zero accrual balance; prior years stay in
+      Finance's own files.
+    </p>
+    <h3>Why fee shares sit below billed, not inside it</h3>
+    <p>
+      The invoice really did go out gross — the client was billed the full amount, and the co-broker's cut comes off
+      Savills' revenue afterwards. Netting it into the billed figure would destroy the number Finance reconciles
+      against, so every fee share stays its own line, indented under the project it comes out of, and reads as a
+      <strong>deduction from recognised revenue</strong>.
+    </p>
+    <h3>Who does what</h3>
+    <ul>
+      <li><strong>Finance</strong> imports the close and rules on every exception. Nothing is auto-applied except
+          clean on-plan billings and fee shares, which are marked as such.</li>
+      <li><strong>Revenue leaders</strong> never touch this page. They see the result in Revenue Projections, where
+          a closed month reads from this ledger instead of the forecast.</li>
+      <li>A <strong>slipped</strong> fee records the month it should bill instead. That is recorded here as intent —
+          it does not silently rewrite a project's forecast.</li>
+    </ul>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script>
+  // ---- Access gate (fail-closed) ----------------------------------------
+  // The nav hides this page from non-admins, but hiding a link is not access
+  // control. This tool posts the numbers the whole business reports on, so the
+  // page itself checks — same allowlist pattern as Ingestion Studio.
+  (window.ufcReady && window.ufcReady.then ? window.ufcReady
+    : new Promise(r => { if (document.readyState !== 'loading') r(); else document.addEventListener('DOMContentLoaded', r); })
+  ).then(() => {
+    const S = window.UFC_Store;
+    const u = S && S.getCurrentUser ? S.getCurrentUser() : null;
+    if (S && S.isAdmin && S.isAdmin(u)) {
+      const s = document.createElement('script');
+      s.src = 'universal-fee-calc/revenue-reconcile.js';
+      document.body.appendChild(s);
+      return;
+    }
+    document.querySelector('.wrap').innerHTML = `
+      <header class="head">
+        <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+        <div><h1>Revenue reconciliation.</h1></div>
+        <div></div>
+      </header>
+      <div style="padding:70px 40px;text-align:center">
+        <div style="font-family:var(--font-display);font-weight:800;font-size:20px;color:var(--sav-navy);margin-bottom:10px">This tool is admin-only.</div>
+        <div style="max-width:520px;margin:0 auto;line-height:1.6;color:var(--sav-steel)">You're signed in as <strong>${(u && u.username ? String(u.username) : '(no identity)').replace(/[&<>"]/g, '')}</strong>, which isn't on the admin list. Revenue reconciliation posts the actuals the whole business reports on — if a month looks wrong on your projects, contact Sarah Abdin.</div>
+        <div style="margin-top:22px"><a href="Revenue Projections.html" class="btn" style="text-decoration:none">Revenue Projections</a></div>
+      </div>`;
+  });
+</script>
+<script src="universal-fee-calc/guide.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+</body>
+</html>
