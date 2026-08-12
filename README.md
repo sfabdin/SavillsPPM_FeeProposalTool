@@ -25,14 +25,23 @@ lives in Box (`projects.json`, `studio.json`); the confidential rate grid
   client profile
 
 **Admin**
+- `Revenue Reconciliation.html` — the monthly close, Finance-owned: import the
+  actuals workbook, reconcile billed vs accrued vs forecast per project, fee
+  shares as their own deduction line, disposition every variance, export the
+  monthly flash to Excel. One calendar year at a time, 2026 forward
 - `Import Revenues.html` — bulk-import monthly billing (admin only)
 
 **Docs**
 - `Enterprise Migration Guide.html`, `Fee System Roadmap.html`, `Maintainers Runbook.html`
 
 ## Modules — `universal-fee-calc/`
+- `revenue-reconcile.js` — Revenue Reconciliation: close-workbook parser (columns
+  found by header text, rows footed against the sheet's own reported revenue),
+  project matching, disposition queue, flash + Excel export
 - `store.js` — data layer: projects + studio stores, the calc engines
-  (`computeFinancials`, `monthlySeries`, `projectFinancials`), change-order ledger,
+  (`computeFinancials`, `monthlySeries`, `projectFinancials`), the **revenue ledger**
+  (posted monthly closes; `recognised = billed + fee share + accrual movement`),
+  change-order ledger,
   version history, **schema migrations**, **tombstone soft-delete**, **activity log**,
   access wall + leader directory
 - `box-adapter.js` — Box OAuth, pull/push with etag concurrency + union merge

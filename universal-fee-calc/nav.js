@@ -28,6 +28,8 @@
     // ── Operations — running the business (admin) ──
     { href: 'Staffing Matrix.html',          label: 'Staffing & Bandwidth', group: 'Operations', admin: true,
       desc: 'Who is working on what and how loaded they are — allocations, bandwidth, and contract-vs-staffing checks.' },
+    { href: 'Revenue Reconciliation.html',   label: 'Revenue Reconciliation', group: 'Operations', admin: true,
+      desc: 'Finance-owned monthly close: import the actuals, reconcile billed vs accrued vs forecast per project, disposition every variance, and export the monthly flash.' },
     { href: 'Revenue Studio.html',           label: 'Revenue Studio',      group: 'Operations', admin: true,
       desc: 'Slice, compare, and shape revenue against frozen baselines — without touching project data.' },
     { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Operations', admin: true,
