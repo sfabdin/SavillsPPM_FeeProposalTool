@@ -954,14 +954,10 @@
       const revByMonth = {}; let revTotal = 0;
       const add = (ym, amt) => { if (inWin.has(ym)) { revByMonth[ym] = (revByMonth[ym] || 0) + amt; revTotal += amt; } };
       try {
-        const fin = p.financials;
-        if (fin && !fin.stale && Array.isArray(fin.byMonth) && fin.byMonth.length) {
-          fin.byMonth.forEach(s => add(s.ym, (s.invoice != null) ? s.invoice : s.net));
-        } else {
-          const fs0 = (p.assumptions && p.assumptions.feeShare) || {};
-          const pct0 = fs0.enabled ? (parseFloat(fs0.pct) || 0) / 100 : 0;
-          (S2.monthlySeries(p, cat) || []).forEach(m => add(m.year + '-' + String(m.month).padStart(2, '0'), fs0.mode === 'ontop' ? m.amount * (1 + pct0) : m.amount));
-        }
+        // One canonical series (store.billingSeries) — the frozen snapshot was
+        // being read raw here too, so a slipped or adjusted month showed its
+        // old figure against the moved effort.
+        (S2.billingSeries(p, cat) || []).forEach(m => add(m.ym, m.invoice));
         (S2.approvedChangeOrders ? S2.approvedChangeOrders(p.id) : []).forEach(co => {
           try { S2.changeOrderDelta(co).byMonth.forEach(x => add(x.ym, x.net)); } catch (e) {}
         });
