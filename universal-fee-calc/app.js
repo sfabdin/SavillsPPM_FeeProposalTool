@@ -500,6 +500,7 @@
     renderMonthly();
     renderFloorCheck();
     renderReconcile();
+    renderFitMonth();
   }
 
   /* ----- Reconcile to proposal (back-solve to a target fee) ----- */
@@ -537,6 +538,326 @@
     }
     if (noteOverride) $('#rc-note').innerHTML = noteOverride;
     renderImportReconcile();
+  }
+
+  /* ===== Fit to month — step 2 =====
+     Fit to target settles HOW MUCH (it solves the client discount).
+     Fit to month settles WHEN: it moves allocations so each month's fee lands
+     on a number you choose, without touching rates, the discount, or the total.
+
+     Why it can be exact rather than iterative: with the discount fixed, a
+     month's net fee is LINEAR in that month's FTE values —
+
+         net(m) = Σ_roles  fte(r,m) × v(r,m)
+         v(r,m) = hrsPerMo × (1 − discount) × effectiveRate(r, year(m)) / 100
+
+     — so hitting a month's target is one multiplication: scale every role in
+     that month by k = target / current. And because the targets are held to
+     the same sum as the settled total, total gross is unchanged, which is
+     precisely why the discount never has to move and Fit to target survives. */
+  let fmOpen = false;
+  let fmTargets = null;              // { 'YYYY-M': dollars } — session only, never saved
+  let fmPinned = new Set();          // months the user typed; the rest absorb the difference
+  let fmUndo = null;                 // pre-apply roles snapshot
+  let fmOverwrite = false;           // import-locked project: rewrite the imported months too
+
+  /** Net dollars produced by ONE percent of FTE for this role in this month.
+      Mirrors monthlyFee − monthlyLockCredit exactly, at fte = 1%. */
+  function fmUnitNet(role, monthObj) {
+    const d = (state.assumptions.discount || 0) / 100;
+    const unlocked = unlockedRateForYear(role, monthObj.year);
+    const lockDiff = state.assumptions.rateLock
+      ? Math.max(0, unlocked - rateForYear(role, monthObj.year)) : 0;
+    return (unlocked - lockDiff) * (state.assumptions.hrsPerMo || 0) * (1 - d) / 100;
+  }
+  /** Every project month with the phase that owns it (needed for FTE fallback). */
+  function fmMonthList() {
+    const out = [];
+    getMonthsByPhase().forEach(b => (b.months || []).forEach(m => {
+      out.push({ m, phaseId: b.phase.id, mk: monthKey(m), label: m.label });
+    }));
+    return out;
+  }
+  /** What each month currently bills, from the live allocations. */
+  function fmCurrentByMonth() {
+    const out = {};
+    fmMonthList().forEach(({ m, phaseId, mk }) => {
+      let sum = 0;
+      state.roles.forEach(r => { sum += effectiveFte(r, m, phaseId) * fmUnitNet(r, m); });
+      out[mk] = sum;
+    });
+    return out;
+  }
+
+  /* ---- gates ---- */
+  function fmReconciled() {
+    const t = currentTargetFee();
+    return t != null && t > 0 && Math.abs(netTotal() - t) < 0.005;
+  }
+  function fmImportLock() {
+    const src = state.source;
+    return !!(src && src.importedByMonth && !src.reconciled);
+  }
+  function fmBlockReason() {
+    if (state.assumptions.billingMode === 'flatline') return 'flatline';
+    if (!state.roles.length) return 'noroles';
+    if (!fmReconciled()) return 'unreconciled';
+    if (fmImportLock()) return 'importlock';
+    return null;
+  }
+
+  /* ---- targets: typed months pin, the rest absorb, sum always equals the total ---- */
+  function fmSeedTargets() {
+    fmTargets = fmCurrentByMonth();
+    fmPinned = new Set();
+  }
+  /** Re-spread the unpinned months so the column still totals the settled fee,
+      then round to cents and give the residual to the largest unpinned month —
+      so what you READ is exactly what gets applied, to the penny. */
+  function fmRebalance() {
+    const total = currentTargetFee();
+    const base = fmCurrentByMonth();
+    const list = fmMonthList().map(x => x.mk);
+    let pinnedSum = 0;
+    const free = [];
+    list.forEach(mk => { if (fmPinned.has(mk)) pinnedSum += (fmTargets[mk] || 0); else free.push(mk); });
+    const rest = total - pinnedSum;
+    if (!free.length) return rest;                       // everything pinned — caller reports the gap
+    const baseSum = free.reduce((s, mk) => s + (base[mk] || 0), 0);
+    if (baseSum > 0.005) free.forEach(mk => { fmTargets[mk] = rest * (base[mk] || 0) / baseSum; });
+    else free.forEach(mk => { fmTargets[mk] = rest / free.length; });
+    // cents, with the rounding residual parked on the biggest free month
+    let acc = 0;
+    free.forEach(mk => { fmTargets[mk] = Math.round(fmTargets[mk] * 100) / 100; acc += fmTargets[mk]; });
+    const resid = Math.round((rest - acc) * 100) / 100;
+    if (Math.abs(resid) >= 0.005) {
+      const big = free.slice().sort((a, b) => (fmTargets[b] || 0) - (fmTargets[a] || 0))[0];
+      fmTargets[big] = Math.round((fmTargets[big] + resid) * 100) / 100;
+    }
+    return 0;
+  }
+  function fmAllocated() {
+    return fmMonthList().reduce((s, x) => s + (fmTargets[x.mk] || 0), 0);
+  }
+
+  /* ---- the solve ---- */
+  function fmSolve() {
+    const rows = [], blocked = [], over = [];
+    const byRole = {};                                   // roleId → { mk: pct }
+    fmMonthList().forEach(({ m, phaseId, mk, label }) => {
+      const target = fmTargets[mk] || 0;
+      let cur = 0;
+      const parts = [];
+      state.roles.forEach(r => {
+        const fte = effectiveFte(r, m, phaseId);
+        const v = fmUnitNet(r, m);
+        if (fte > 0 && v > 0) { cur += fte * v; parts.push({ r, fte, v }); }
+        else if (v > 0) parts.push({ r, fte: 0, v });     // billable but idle this month
+      });
+      const payload = { mk, label, target, current: cur, k: null, movers: [] };
+      if (cur <= 0.005) {
+        // Nothing billable is staffed here — there is no allocation to scale.
+        if (target > 0.005) blocked.push({ mk, label, target });
+        rows.push(payload); return;
+      }
+      const k = target / cur;
+      payload.k = k;
+      parts.forEach(({ r, fte }) => {
+        if (fte <= 0) return;                            // 0 × k is still 0 — leave it alone
+        const next = fte * k;
+        (byRole[r.id] = byRole[r.id] || {})[mk] = next;
+        payload.movers.push({ role: r, from: fte, to: next });
+        if (next > 100.0001) over.push({ label, role: r, pct: next });
+      });
+      rows.push(payload);
+    });
+    return { byRole, rows, blocked, over };
+  }
+
+  /* ---- apply / undo ---- */
+  function fmApply() {
+    // Rule 4 is structural, not a UI courtesy: rebalance and re-check the sum
+    // HERE, so no path — button, keyboard, or API — can drift the total away
+    // from what Fit to target settled.
+    if (!fmTargets) fmSeedTargets();
+    fmRebalance();
+    const t = currentTargetFee();
+    if (Math.abs(fmAllocated() - t) >= 0.005) {
+      renderFitMonth('<b>Not applied.</b> The months don&rsquo;t total ' + fmtMoneyCents(t) + ' — unpin a month so it can absorb the difference.');
+      return;
+    }
+    const solved = fmSolve();
+    if (solved.blocked.length) { renderFitMonth(); return; }
+    fmUndo = { roles: JSON.parse(JSON.stringify(state.roles)), imported: fmOverwrite && state.source ? JSON.parse(JSON.stringify(state.source.importedByMonth || {})) : null };
+    const list = fmMonthList();
+    Object.entries(solved.byRole).forEach(([roleId, months]) => {
+      const role = state.roles.find(r => r.id === roleId);
+      if (!role) return;
+      // Pin every month to its current effective value first — same rule the
+      // per-month cell editor uses — so months we don't touch can't drift when
+      // the phase average is recomputed below.
+      role.fteMonthly = role.fteMonthly || {};
+      list.forEach(({ m, phaseId, mk }) => {
+        if (role.fteMonthly[mk] == null) role.fteMonthly[mk] = effectiveFte(role, m, phaseId);
+      });
+      Object.entries(months).forEach(([mk, pct]) => { role.fteMonthly[mk] = pct; });
+    });
+    // Import-locked project the user chose to overwrite rather than unlock:
+    // the projection reads source.importedByMonth, so put the same numbers there.
+    if (fmOverwrite && state.source) {
+      const imp = { ...(state.source.importedByMonth || {}) };
+      fmMonthList().forEach(({ m, mk }) => { imp[m.year + '-' + m.month] = Math.round((fmTargets[mk] || 0) * 100) / 100; });
+      state.source.importedByMonth = imp;
+    }
+    // Phase cells are a display average of the months (they don't feed them).
+    state.phases.forEach(p => state.roles.forEach(r => recomputePhaseAvg(r, p)));
+    markDirty();
+    renderAll();
+    renderFitMonth(`<strong>Months reconciled to the penny.</strong> Allocations moved; rates, discount and the ${fmtMoneyCents(currentTargetFee())} total are untouched.`);
+  }
+  function fmUndoApply() {
+    if (!fmUndo) return;
+    state.roles = JSON.parse(JSON.stringify(fmUndo.roles));
+    if (fmUndo.imported && state.source) state.source.importedByMonth = fmUndo.imported;
+    fmUndo = null;
+    markDirty();
+    renderAll();
+    renderFitMonth('Reverted to the allocations from before the fit.');
+  }
+
+  /* ---- render ---- */
+  function renderFitMonth(note) {
+    const panel = $('#fitmonth-panel');
+    if (!panel) return;
+    const body = $('#fm-body'), sub = $('#fm-sub'), caret = $('#fm-caret');
+    const reason = fmBlockReason();
+
+    // The panel only exists once there is a target to distribute.
+    const t = currentTargetFee();
+    if (t == null || !state.roles.length) { panel.hidden = true; return; }
+    panel.hidden = false;
+    panel.classList.toggle('is-locked', !!reason && reason !== 'importlock');
+
+    if (reason && reason !== 'importlock') {
+      fmOpen = false;
+      body.hidden = true; caret.classList.remove('open');
+      sub.textContent = reason === 'flatline'
+        ? 'Unavailable on flatline billing — the fee is spread evenly no matter how the time sits. Switch to phase-based to use it.'
+        : reason === 'noroles'
+          ? 'Add roles first — there is no allocation to move.'
+          : 'Available once Fit to target reconciles the total to the penny.';
+      return;
+    }
+    sub.textContent = 'Distribute the settled fee across the months — moves allocations, never rates.';
+    caret.classList.toggle('open', fmOpen);
+    body.hidden = !fmOpen;
+    if (!fmOpen) return;
+
+    // Import-locked: the projection ignores staffing entirely, so say so and
+    // offer the two ways through rather than silently doing nothing.
+    if (reason === 'importlock' && !fmOverwrite) {
+      body.innerHTML = `
+        <div class="fm-warn"><b>This project's projections are locked to its imported figures.</b>
+          Monthly revenue comes from the import, not from staffing, so moving allocations would change nothing you can see.
+          <div style="margin-top:8px">
+            <button class="btn btn-primary" id="fm-unlock" type="button">Unlock — projections follow the fee model</button>
+            <button class="btn btn-ghost" id="fm-overwrite" type="button" style="margin-left:8px">Overwrite the imported months instead</button>
+          </div>
+        </div>
+        <div class="fm-note">“Unlock” marks the project reconciled, exactly like the button on the import panel — from then on the monthly figures are whatever the staffing computes.
+          “Overwrite” keeps it locked but rewrites the imported months to the targets you set here.</div>`;
+      $('#fm-unlock').onclick = () => {
+        state.source.reconciled = true;
+        markDirty(); renderAll();
+        fmSeedTargets(); renderFitMonth('Unlocked — projections now follow the fee model.');
+      };
+      $('#fm-overwrite').onclick = () => { fmOverwrite = true; fmSeedTargets(); renderFitMonth('Applying will also rewrite this project&rsquo;s imported months to the targets below.'); };
+      return;
+    }
+
+    if (!fmTargets) fmSeedTargets();
+    const gap = fmRebalance();
+    const solved = fmSolve();
+    const allocated = fmAllocated();
+    const remaining = Math.round((t - allocated) * 100) / 100;
+    const balanced = Math.abs(remaining) < 0.005;
+
+    const fmt = (n) => fmtMoneyCents(n);
+    const rowsHtml = solved.rows.map(r => {
+      const pinned = fmPinned.has(r.mk);
+      const delta = (fmTargets[r.mk] || 0) - r.current;
+      const kTxt = r.k == null ? '—' : (Math.abs(r.k - 1) < 0.0005 ? 'no change' : '×' + r.k.toFixed(3));
+      const eff = r.movers.length
+        ? r.movers.slice(0, 3).map(mv => `${escapeHtml(mv.role.resource || mv.role.projectRole || 'role')} ${trimNum(Math.round(mv.from * 10) / 10)}→${trimNum(Math.round(mv.to * 10) / 10)}%`).join(' · ')
+          + (r.movers.length > 3 ? ` +${r.movers.length - 3} more` : '')
+        : '<span class="fm-eff">nobody billable staffed</span>';
+      const overHere = solved.over.some(o => o.label === r.label);
+      return `<tr class="${pinned ? 'is-pinned' : ''}">
+        <td><button class="fm-pin ${pinned ? 'on' : ''}" data-pin="${r.mk}" title="${pinned ? 'Pinned — unpin to let this month absorb changes' : 'Unpinned — absorbs the difference automatically'}">${pinned ? '📌' : '○'}</button> ${escapeHtml(r.label)}</td>
+        <td class="num">${fmt(r.current)}</td>
+        <td class="num"><input class="fm-in" data-month="${r.mk}" value="${(fmTargets[r.mk] || 0).toFixed(2)}" inputmode="decimal"></td>
+        <td class="num">${Math.abs(delta) < 0.005 ? '—' : (delta > 0 ? '+' : '−') + fmt(Math.abs(delta))}</td>
+        <td class="fm-eff ${overHere ? 'over' : (r.k > 1 ? 'up' : r.k < 1 ? 'down' : '')}">${kTxt}${r.movers.length ? ' · ' + eff : ''}</td>
+      </tr>`;
+    }).join('');
+
+    body.innerHTML = `
+      <div class="fm-note">Type the months you care about — they <b>pin</b>, and the rest re-spread so the column always totals
+        <b>${fmt(t)}</b>. Applying scales each month's allocations so the fee lands exactly there; rates and the discount never move.</div>
+      ${note ? `<div class="fm-warn">${note}</div>` : ''}
+      ${solved.blocked.length ? `<div class="fm-bad"><b>${solved.blocked.length} month${solved.blocked.length === 1 ? '' : 's'} can't be targeted:</b>
+        ${solved.blocked.map(b => `${escapeHtml(b.label)} (${fmt(b.target)})`).join(' · ')} — nobody billable is staffed there, so there is no allocation to scale.
+        Add a role to ${solved.blocked.length === 1 ? 'that month' : 'those months'}, or move the money elsewhere.</div>` : ''}
+      ${solved.over.length ? `<div class="fm-warn"><b>${solved.over.length} allocation${solved.over.length === 1 ? '' : 's'} above 100%:</b>
+        ${solved.over.slice(0, 6).map(o => `${escapeHtml(o.label)} — ${escapeHtml(o.role.resource || o.role.projectRole || 'role')} ${trimNum(Math.round(o.pct))}%`).join(' · ')}${solved.over.length > 6 ? ' …' : ''}.
+        Applied as-is (one person can't really exceed 100% — check it's a pool line or an overtime month).</div>` : ''}
+      <div class="fm-strip">
+        <div class="fm-stat"><label>Settled total</label><b>${fmt(t)}</b></div>
+        <div class="fm-stat"><label>Allocated</label><b>${fmt(allocated)}</b></div>
+        <div class="fm-stat"><label>Remaining</label><b class="${balanced ? 'ok' : 'off'}">${balanced ? '$0.00' : fmt(remaining)}</b></div>
+        <div class="fm-stat"><label>Pinned</label><b>${fmPinned.size} of ${solved.rows.length}</b></div>
+      </div>
+      <table class="fm-tbl">
+        <thead><tr><th>Month</th><th class="num">Currently</th><th class="num">Target</th><th class="num">Δ</th><th>Effect on allocations</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div class="fm-actions">
+        <button class="btn btn-primary" id="fm-apply" type="button" ${(!balanced || solved.blocked.length) ? 'disabled' : ''}>Apply to allocations</button>
+        <button class="btn btn-ghost" id="fm-even" type="button">Even split</button>
+        <button class="btn btn-ghost" id="fm-reset" type="button">Reset to current</button>
+        ${fmUndo ? '<button class="btn btn-ghost" id="fm-undo" type="button">↺ Undo the fit</button>' : ''}
+        <span class="fm-hint">${gap ? 'Every month is pinned and they don\'t sum to the total — unpin one to absorb the difference.' : 'Nothing is written until you apply. Targets are not saved with the project.'}</span>
+      </div>`;
+
+    body.querySelectorAll('[data-pin]').forEach(b => b.onclick = () => {
+      const mk = b.dataset.pin;
+      if (fmPinned.has(mk)) fmPinned.delete(mk); else fmPinned.add(mk);
+      renderFitMonth();
+    });
+    body.querySelectorAll('.fm-in').forEach(inp => {
+      inp.onchange = () => {
+        const mk = inp.dataset.month;
+        const v = parseFloat(String(inp.value).replace(/[$,\s]/g, ''));
+        if (!isFinite(v)) { renderFitMonth(); return; }
+        fmTargets[mk] = Math.round(v * 100) / 100;
+        fmPinned.add(mk);
+        renderFitMonth();
+      };
+      inp.onfocus = () => inp.select();
+    });
+    const ap = $('#fm-apply'); if (ap) ap.onclick = fmApply;
+    const ev = $('#fm-even'); if (ev) ev.onclick = () => {
+      const list = fmMonthList();
+      fmPinned = new Set(); fmTargets = {};
+      list.forEach(({ mk }) => { fmTargets[mk] = 0; });
+      const each = Math.round((t / list.length) * 100) / 100;
+      list.forEach(({ mk }) => { fmTargets[mk] = each; fmPinned.add(mk); });
+      const resid = Math.round((t - each * list.length) * 100) / 100;
+      if (Math.abs(resid) >= 0.005) fmTargets[list[list.length - 1].mk] += resid;
+      renderFitMonth();
+    };
+    const rs = $('#fm-reset'); if (rs) rs.onclick = () => { fmSeedTargets(); renderFitMonth(); };
+    const un = $('#fm-undo'); if (un) un.onclick = fmUndoApply;
   }
 
   /** Import reconciliation panel: imported $ (locked, from the source sheet)
@@ -2603,6 +2924,14 @@
     // Reconcile to proposal
     const fitBtn = $('#fit-btn');
     if (fitBtn) fitBtn.addEventListener('click', fitToTarget);
+    const fmT = $('#fm-toggle');
+    if (fmT) fmT.addEventListener('click', () => {
+      if (fmBlockReason() && fmBlockReason() !== 'importlock') return;   // locked: nothing to open
+      fmOpen = !fmOpen;
+      fmT.setAttribute('aria-expanded', String(fmOpen));
+      if (fmOpen && !fmTargets) fmSeedTargets();
+      renderFitMonth();
+    });
     const fitInput = $('#fit-target');
     if (fitInput) {
       fitInput.addEventListener('input', e => {
@@ -2789,6 +3118,9 @@
     roleFloorViolation,
     seedAllocationsToTarget,
     fitToTarget,
+    fmSolve, fmSeedTargets, fmApply, fmUndoApply, fmCurrentByMonth, fmMonthList, fmBlockReason, fmAllocated,
+    fmSetTarget: (mk, v) => { if (!fmTargets) fmSeedTargets(); fmTargets[mk] = v; fmPinned.add(mk); renderFitMonth(); },
+    fmTargetsNow: () => fmTargets,
     renderMatrix,
     renderMonthly,
     renderProjectMeta,

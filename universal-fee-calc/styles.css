@@ -1774,3 +1774,59 @@ tr.pt-contract td { background: rgba(0,166,158,0.08); }
 /* pass-through column in the monthly grid */
 .monthly th.pt-col, .monthly td.pt-col { background: rgba(0,166,158,0.06); color: var(--sav-teal); text-align: right; }
 .monthly th.pt-col { color: var(--sav-teal); }
+
+/* ===== Fit to month — step 2 under Reconcile: distribute the settled total ===== */
+.fitmonth { margin: 0 0 4px; background: #2f3147; color: #fff; }
+.fitmonth[hidden] { display: none; }
+.fitmonth .fm-head {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  padding: 12px 24px; background: none; border: 0; cursor: pointer; text-align: left; color: inherit;
+}
+.fitmonth .fm-head:hover { background: rgba(255,255,255,0.05); }
+.fitmonth .fm-caret { font-size: 9px; color: var(--sav-yellow); transition: transform .15s; display: inline-block; }
+.fitmonth .fm-caret.open { transform: rotate(90deg); }
+.fitmonth .fm-title {
+  font-family: var(--font-display); font-weight: 700; font-size: 10px;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--sav-yellow);
+}
+.fitmonth .fm-sub { font-size: 11.5px; color: rgba(255,255,255,0.6); }
+.fitmonth .fm-body { padding: 0 24px 20px; }
+.fitmonth.is-locked .fm-head { cursor: default; opacity: 0.75; }
+
+.fm-note { font-size: 12px; line-height: 1.6; color: rgba(255,255,255,0.75); margin: 0 0 12px; max-width: 780px; }
+.fm-note b { color: #fff; }
+.fm-warn { background: rgba(255,223,0,0.14); border-left: 3px solid var(--sav-yellow); padding: 9px 13px; margin: 0 0 12px; font-size: 12px; line-height: 1.6; }
+.fm-bad  { background: rgba(206,24,30,0.18); border-left: 3px solid #ff6b6b; padding: 9px 13px; margin: 0 0 12px; font-size: 12px; line-height: 1.6; }
+
+.fm-strip { display: flex; gap: 30px; flex-wrap: wrap; margin: 0 0 14px; }
+.fm-strip .fm-stat { display: flex; flex-direction: column; gap: 3px; }
+.fm-strip .fm-stat label { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.55); }
+.fm-strip .fm-stat b { font-family: var(--font-display); font-weight: 900; font-size: 19px; }
+.fm-strip .fm-stat b.ok { color: #6ee7a8; }
+.fm-strip .fm-stat b.off { color: #ffd7d7; }
+
+table.fm-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.fm-tbl th {
+  font-family: var(--font-display); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: rgba(255,255,255,0.5); text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.16);
+}
+table.fm-tbl th.num, table.fm-tbl td.num { text-align: right; }
+table.fm-tbl td { padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.07); vertical-align: middle; }
+table.fm-tbl tr.is-pinned td { background: rgba(255,223,0,0.07); }
+table.fm-tbl input.fm-in {
+  width: 118px; padding: 4px 8px; text-align: right;
+  font-family: var(--font-display); font-weight: 700; font-size: 13px;
+  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.22); color: #fff;
+}
+table.fm-tbl input.fm-in:focus { outline: none; border-color: var(--sav-yellow); background: rgba(255,255,255,0.16); }
+table.fm-tbl tr.is-pinned input.fm-in { border-color: var(--sav-yellow); }
+.fm-pin { background: none; border: 0; cursor: pointer; font-size: 12px; color: rgba(255,255,255,0.35); padding: 2px 4px; }
+.fm-pin.on { color: var(--sav-yellow); }
+.fm-eff { font-size: 11px; color: rgba(255,255,255,0.55); }
+.fm-eff.up { color: #ffd98a; }
+.fm-eff.down { color: #9fd8ff; }
+.fm-eff.over { color: #ffb3b3; font-weight: 700; }
+
+.fm-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+.fm-actions .btn { font-size: 12px; padding: 9px 16px; }
+.fm-actions .fm-hint { font-size: 11.5px; color: rgba(255,255,255,0.55); }
