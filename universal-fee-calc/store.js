@@ -2035,7 +2035,7 @@
   const ADMINS = new Set([
     'sabdin@savills.us',      // Salim — owner (current login)
     'salim@savills.us',      // Salim — owner (legacy login, kept for transition)
-    'kyriacos.yerou@savills.com', // Kyri Yerou — developer (note .com)
+    'kyerou@savills.us',      // Kyri Yerou — developer (on the Savills system now)
     'esobel@savills.us',     // Emily Sobel
     'jsantoro@savills.us',   // Jeff Santoro
     'mglatt@savills.us',     // Michael Glatt
@@ -2071,7 +2071,7 @@
   const SUPERUSERS = new Set([
     'sabdin@savills.us',
     'salim@savills.us',
-    'kyriacos.yerou@savills.com',
+    'kyerou@savills.us',
   ]);
 
   function roleFor(login) {
