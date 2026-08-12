@@ -347,7 +347,10 @@
   }
   function freshDb() {
     localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    localStorage.removeItem('savills-ppm-revenue-db:v1');
   }
+  const feeDb = () => JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1') || '{}');
+  const revDb = () => JSON.parse(localStorage.getItem('savills-ppm-revenue-db:v1') || 'null');
   const lrow = (over) => Object.assign({
     key: 'P001', code: 'P001', name: 'Test Project', client: 'Acme',
     billed: {}, feeShare: {}, accrued: {}, accrualBal: {}, billingSummary: 0,
@@ -493,6 +496,48 @@
     S.setCellStatus(2026, 'A', 1, 'billed');
     const open = S.openCells(2026);
     return (open.length === 1 && open[0].month === 2) || `${open.length} unruled, expected 1 (Feb)`;
+  });
+
+  /* ---- the ledger is its own store (revenue.json), not projects.json ---- */
+
+  test('Ledger · store', 'actuals never land in projects.json', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    if ('ledger' in feeDb()) return 'the ledger was written into projects.json';
+    const r = revDb();
+    return (r && r.ledger && r.ledger['2026']) ? true : 'the ledger is not in revenue.json';
+  });
+
+  test('Ledger · store', 'editing actuals does not touch projects.json', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    const before = JSON.stringify(feeDb().projects);
+    S.setCellAmount(2026, 'A', 1, 'accrued', 500);
+    S.setCellStatus(2026, 'A', 1, 'accrued');
+    return JSON.stringify(feeDb().projects) === before || 'project records changed when actuals were edited';
+  });
+
+  test('Ledger · store', 'a ledger left in projects.json is lifted out on first read', () => {
+    // Early builds kept it inside projects.json; the lift must move it and strip it.
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({
+      schemaVersion: 2, projects: {}, activity: [],
+      ledger: { '2026': { updatedAt: 'x', rows: { A: { key: 'A', billed: { 3: 777 } } }, imports: [] } },
+    }));
+    localStorage.removeItem('savills-ppm-revenue-db:v1');
+    const y = S.getLedgerYear(2026);
+    if (!y || !y.rows.A) return 'the old ledger was not carried across';
+    if ('ledger' in feeDb()) return 'the old ledger was left behind in projects.json';
+    return eq(S.billedOf(y.rows.A, 3), 777, 'figures survived the lift');
+  });
+
+  test('Ledger · store', 'every row edit stamps updatedAt, so the Box merge can pick a winner', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    const t0 = S.getLedgerYear(2026).rows.A.updatedAt;
+    if (!t0) return 'no stamp written on post';
+    S.setCellAmount(2026, 'A', 1, 'accrued', 500);
+    const t1 = S.getLedgerYear(2026).rows.A.updatedAt;
+    return (t1 && t1 >= t0) || 'the stamp did not move on edit';
   });
 
   /* ---- workbook parser: the piece that breaks when Finance's file moves ---- */

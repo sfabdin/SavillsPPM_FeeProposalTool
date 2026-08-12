@@ -2,8 +2,9 @@
 
 A multi-page, Box-backed system for building, pricing, storing, and reporting on
 fee proposals. The app is a **front door to Box after OAuth** — all project data
-lives in Box (`projects.json`, `studio.json`); the confidential rate grid
-(`rates.json`) is pulled from Box only after sign-in and is **never** in this repo.
+lives in Box (`projects.json`, `studio.json`, `staff.json`, `revenue.json`); the
+confidential rate grid (`rates.json`) is pulled from Box only after sign-in and is
+**never** in this repo.
 
 ## Pages (all wired into the shared hamburger nav)
 
@@ -40,7 +41,7 @@ lives in Box (`projects.json`, `studio.json`); the confidential rate grid
   project matching, disposition queue, flash + Excel export
 - `store.js` — data layer: projects + studio stores, the calc engines
   (`computeFinancials`, `monthlySeries`, `projectFinancials`), the **revenue ledger**
-  (posted monthly closes; `recognised = billed + fee share + accrual movement`),
+  (its own store, backed by `revenue.json`; `recognised = billed + fee share + accrued`),
   change-order ledger,
   version history, **schema migrations**, **tombstone soft-delete**, **activity log**,
   access wall + leader directory
@@ -72,6 +73,17 @@ It uses an in-memory storage shim, so it never touches real Box-synced data.
 Host on Vercel. Required env vars: `BOX_CLIENT_ID`, `BOX_CLIENT_SECRET`,
 `ANTHROPIC_API_KEY`. `rates.json` is uploaded to the Box folder (not here);
 its file id is set in `box-adapter.js` config.
+
+## Box files
+- `projects.json` — project records only. Nothing else is written here.
+- `rates.json` — the confidential rate grid (pulled post-login, never in this repo).
+- `studio.json` — Revenue Studio baselines + scenarios.
+- `staff.json` — the living staffing matrix.
+- `revenue.json` — Revenue Reconciliation's actuals ledger, keyed by year then
+  project. **Self-configuring**: with no file id set it is found by name in the
+  shared folder and created on first run, so every admin lands on the same file.
+  Merged per ROW (each carries `updatedAt`), because everything lives under one
+  year — a whole-year newest-wins would let two admins erase each other.
 
 ## Data model
 Project records store **inputs only** (roles, FTE %, assumptions) — never dollar

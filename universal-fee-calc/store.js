@@ -6,6 +6,7 @@
   'use strict';
   const KEY = 'savills-ppm-fee-db:v1';
   const STUDIO_KEY = 'savills-ppm-studio-db:v1';   // Revenue Studio — SEPARATE store/file
+  const REVENUE_KEY = 'savills-ppm-revenue-db:v1'; // Revenue Reconciliation — SEPARATE store/file (revenue.json in Box)
   const SCHEMA = 2;
 
   const STATUSES = ['draft','submitted','negotiation','won','lost','active','closed','hold'];
@@ -933,7 +934,8 @@
      one project in one month — because that is the grain at which a
      billing question actually gets asked and answered.
 
-       db.ledger = {
+     revenue.json (Box) — never inside projects.json:
+       revenue.ledger = {
          "2026": {
            updatedAt, updatedBy,
            imports: [{ file, sheet, closeMonth, at, by }],
@@ -1004,7 +1006,58 @@
   ];
   const DISPOSITION_LABEL = (id) => (DISPOSITIONS.find(d => d.id === id) || {}).label || '';
 
-  function readLedger() { const db = readDb(); return db.ledger || {}; }
+  /* ------------------------------------------------------------
+     The ledger is its OWN store, backed by revenue.json in Box —
+     deliberately not part of projects.json. Actuals are a different
+     kind of data on a different cadence: one admin re-posting a close
+     would otherwise churn the file every project record shares, and
+     projects.json's shape would grow a key that has nothing to do
+     with project records. Same separation studio.json and staff.json
+     already have.
+     ------------------------------------------------------------ */
+  let _revenuePush = null;
+  function attachRevenueRemote(pushFn) { _revenuePush = typeof pushFn === 'function' ? pushFn : null; }
+  function defaultRevenue() { return { schemaVersion: SCHEMA, ledger: {} }; }
+  function readRevenue() {
+    try {
+      const raw = localStorage.getItem(REVENUE_KEY);
+      if (!raw) return migrateLedgerOutOfProjects();
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return defaultRevenue();
+      parsed.ledger = parsed.ledger || {};
+      return parsed;
+    } catch (e) { return defaultRevenue(); }
+  }
+  function writeRevenue(r) {
+    r.schemaVersion = SCHEMA;
+    r.updatedAt = new Date().toISOString();
+    localStorage.setItem(REVENUE_KEY, JSON.stringify(r));
+    if (typeof _revenuePush === 'function') { try { _revenuePush(r); } catch (e) { console.warn('revenue push failed', e); } }
+  }
+  function hydrateRevenueFromRemote(r) {
+    if (!r || typeof r !== 'object') return;
+    r.schemaVersion = SCHEMA;
+    r.ledger = r.ledger || {};
+    localStorage.setItem(REVENUE_KEY, JSON.stringify(r));
+  }
+  /** One-time lift: early builds kept the ledger inside projects.json. Move it
+      into revenue.json and strip it out, so projects.json goes back to holding
+      only project records. Runs once, on the first read of the new store. */
+  function migrateLedgerOutOfProjects() {
+    const out = defaultRevenue();
+    try {
+      const db = readDb();
+      if (db && db.ledger && Object.keys(db.ledger).length) {
+        out.ledger = db.ledger;
+        localStorage.setItem(REVENUE_KEY, JSON.stringify(out));
+        delete db.ledger;
+        writeDb(db);                                  // pushes the slimmed projects.json
+        logActivity('ledger-migrate', null, { years: Object.keys(out.ledger) });
+      }
+    } catch (e) { /* a failed lift must never block reading the ledger */ }
+    return out;
+  }
+  function readLedger() { return readRevenue().ledger || {}; }
   /** Years that have been imported, oldest first. */
   function ledgerYears() { return Object.keys(readLedger()).sort(); }
   function getLedgerYear(year) { return readLedger()[String(year)] || null; }
@@ -1024,10 +1077,10 @@
     if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can post revenue actuals.');
     if (+year < LEDGER_FIRST_YEAR)
       throw new Error(`The ledger starts at ${LEDGER_FIRST_YEAR}. Earlier years stay in Finance's own files.`);
-    const db = readDb();
-    db.ledger = db.ledger || {};
+    const rev = readRevenue();
+    rev.ledger = rev.ledger || {};
     const yk = String(year);
-    const prev = db.ledger[yk] || { rows: {}, imports: [] };
+    const prev = rev.ledger[yk] || { rows: {}, imports: [] };
     const out = {};
     rows.forEach(r => {
       const old = prev.rows[r.key];
@@ -1052,8 +1105,10 @@
     // Rows that existed before but are absent from this tab keep their history.
     Object.entries(prev.rows || {}).forEach(([k, r]) => { if (!out[k]) out[k] = r; });
     const cu = getCurrentUser() || {};
-    db.ledger[yk] = {
-      updatedAt: new Date().toISOString(),
+    const stamp = new Date().toISOString();
+    Object.values(out).forEach(r => { r.updatedAt = r.updatedAt || stamp; });
+    rev.ledger[yk] = {
+      updatedAt: stamp,
       updatedBy: cu.name || cu.username || 'admin',
       imports: [
         ...(prev.imports || []).filter(i => +i.closeMonth !== +(meta && meta.closeMonth)),
@@ -1063,16 +1118,16 @@
       ].sort((a, b) => a.closeMonth - b.closeMonth),
       rows: out,
     };
-    writeDb(db);
+    writeRevenue(rev);
     logActivity('ledger-post', null, { year: yk, closeMonth: (meta && meta.closeMonth) || 0, rows: rows.length, file: (meta && meta.file) || '' });
-    return db.ledger[yk];
+    return rev.ledger[yk];
   }
 
   /** Set the billing status on ONE cell (project × month). */
   function setCellStatus(year, key, month, status, extra) {
     if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can set a billing status.');
-    const db = readDb();
-    const y = (db.ledger || {})[String(year)];
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
     if (!y || !y.rows || !y.rows[key]) return null;
     const row = y.rows[key];
     row.status = row.status || {}; row.carryTo = row.carryTo || {};
@@ -1080,7 +1135,8 @@
     if (extra && 'carryTo' in extra) {
       if (extra.carryTo) row.carryTo[month] = extra.carryTo; else delete row.carryTo[month];
     }
-    writeDb(db);
+    row.updatedAt = new Date().toISOString();          // row-level stamp drives the Box merge
+    writeRevenue(rev);
     return row;
   }
 
@@ -1088,20 +1144,21 @@
       later import cannot silently re-match it to something else. */
   function setRowMatch(year, key, pid) {
     if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can re-map a revenue line.');
-    const db = readDb();
-    const y = (db.ledger || {})[String(year)];
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
     if (!y || !y.rows || !y.rows[key]) return null;
     y.rows[key].pid = pid || null;
     y.rows[key].pidManual = !!pid;
-    writeDb(db);
+    y.rows[key].updatedAt = new Date().toISOString();
+    writeRevenue(rev);
     return y.rows[key];
   }
 
   function deleteLedgerYear(year) {
     if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can remove revenue actuals.');
-    const db = readDb();
-    if (db.ledger && db.ledger[String(year)]) {
-      delete db.ledger[String(year)]; writeDb(db);
+    const rev = readRevenue();
+    if (rev.ledger && rev.ledger[String(year)]) {
+      delete rev.ledger[String(year)]; writeRevenue(rev);
       logActivity('ledger-remove', null, { year: String(year) });
     }
   }
@@ -1142,15 +1199,16 @@
       null clears the entry — for billed, that restores the imported figure. */
   function setCellAmount(year, key, month, field, value) {
     if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can edit revenue actuals.');
-    const db = readDb();
-    const y = (db.ledger || {})[String(year)];
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
     if (!y || !y.rows || !y.rows[key]) return null;
     const row = y.rows[key];
     const bucket = field === 'billed' ? 'billedEdit' : 'accrued';
     row[bucket] = row[bucket] || {};
     if (value == null || value === '') delete row[bucket][month];
     else row[bucket][month] = Number(value) || 0;
-    writeDb(db);
+    row.updatedAt = new Date().toISOString();
+    writeRevenue(rev);
     return row;
   }
 
@@ -1159,8 +1217,8 @@
       on the last month so the allocation foots to the cent. */
   function spreadAccrual(year, key, fromMonth, toMonth, amount) {
     if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can edit revenue actuals.');
-    const db = readDb();
-    const y = (db.ledger || {})[String(year)];
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
     if (!y || !y.rows || !y.rows[key]) return null;
     const row = y.rows[key];
     const a = +fromMonth, b = +toMonth;
@@ -1171,7 +1229,8 @@
     row.accrued = row.accrued || {};
     for (let m = a; m <= b; m++) row.accrued[m] = each;
     row.accrued[b] = Math.round((total - each * (n - 1)) * 100) / 100;   // remainder on the last month
-    writeDb(db);
+    row.updatedAt = new Date().toISOString();
+    writeRevenue(rev);
     return row;
   }
 
@@ -2398,6 +2457,7 @@
     leaderById, resolveLeader, leaderDisplay,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,
+    attachRevenueRemote, hydrateRevenueFromRemote, readRevenue, defaultRevenue,
     listBaselines, getBaseline, saveBaseline, deleteBaseline, baselineFromBudget, baselineGridForSlice,
     listScenarios, getScenario, saveScenario, deleteScenario,
   };

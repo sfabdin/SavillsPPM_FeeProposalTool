@@ -401,6 +401,14 @@
       against, so every fee share stays its own line, indented under the project it comes out of. A fee share is
       <strong>signed</strong>: a reversal of a prior-period share shows as a positive month.
     </p>
+    <h3>Where this is stored</h3>
+    <p>
+      Actuals live in their own Box file, <strong>revenue.json</strong> — never inside
+      <code>projects.json</code>, which holds project records and nothing else. Re-posting a close would otherwise
+      churn the file every other page reads. The file configures itself: the first admin to open this page creates it
+      in the shared folder, and everyone lands on the same one. Edits merge <strong>per project row</strong>, so two
+      people reconciling different projects at the same time both keep their work.
+    </p>
     <h3>Who does what</h3>
     <ul>
       <li><strong>Finance</strong> uploads the tab and rules on each figure. Only two things are pre-filled — fee
