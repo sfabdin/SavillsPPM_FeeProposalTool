@@ -333,14 +333,14 @@
     return fields.includes('Team') || 'removing a role did not register as a Team change';
   });
 
-  /* ============ REVENUE LEDGER (monthly close reconciliation) ============
-     recognised(M) = billed + feeShare + (accrual − openingAccrual)
-     The accrual column is a BALANCE. Every test below exists because
-     treating it as a monthly flow gives an answer that looks plausible
-     and is wrong. Prior-year reversals are deliberately excluded — the
-     ledger reports one year at a time, starting 2026. */
+  /* ============ REVENUE LEDGER (year of actuals, cell by cell) ============
+     cell recognised = billed + feeShare + (accrual − last known accrual)
+     The accrual column is a BALANCE and a close tab states only ONE — its own
+     close month. Every test below exists because treating it as a monthly
+     flow, or interpolating the months between, gives an answer that looks
+     plausible and is wrong. Prior-year reversals are excluded; the ledger
+     reports one year at a time from 2026. */
 
-  // postLedgerPeriod is admin-gated; become one for these tests.
   function asAdmin() {
     S.setRealIdentity({ username: 'sabdin@savills.us', name: 'Test Admin' });
     return S.isAdmin(S.getCurrentUser());
@@ -350,109 +350,117 @@
   }
   const lrow = (over) => Object.assign({
     key: 'P001', code: 'P001', name: 'Test Project', client: 'Acme',
-    billed: 0, feeShare: 0, accrual: 0, billingSummary: 0,
+    billed: {}, feeShare: {}, accrual: {}, billingSummary: 0,
   }, over || {});
 
   test('Ledger · recognition', 'recognised = billed + feeShare + accrual movement', () => {
-    const r = lrow({ billed: 100000, feeShare: -7500, accrual: 30000 });
-    return eq(S.rowRecognised(r, 12000), 100000 - 7500 + (30000 - 12000), 'recognised');
+    const r = lrow({ billed: { 7: 100000 }, feeShare: { 7: -7500 }, accrual: { 6: 12000, 7: 30000 } });
+    return eq(S.cellRecognised(r, 7), 100000 - 7500 + (30000 - 12000), 'July recognised');
   });
 
-  test('Ledger · recognition', 'a prior-year reversal never reaches revenue', () => {
-    const r = lrow({ billed: 100000, reversal: -2717570 });
-    return eq(S.rowRecognised(r, 0), 100000, 'last year must not land in this year');
+  test('Ledger · recognition', 'a month with no imported balance carries no accrual term', () => {
+    // Only July's balance is known. March must report its billings and nothing else.
+    const r = lrow({ billed: { 3: 40000, 7: 10000 }, accrual: { 7: 90000 } });
+    return eq(S.cellRecognised(r, 3), 40000, 'March must not invent an accrual');
   });
 
-  test('Ledger · recognition', 'an unchanged accrual balance adds nothing', () => {
-    const r = lrow({ billed: 50000, accrual: 29000 });
-    return eq(S.rowRecognised(r, 29000), 50000, 'flat accrual must not double-count');
+  test('Ledger · recognition', 'an unchanged balance across two closes adds nothing', () => {
+    const r = lrow({ billed: { 7: 50000 }, accrual: { 6: 29000, 7: 29000 } });
+    return eq(S.cellRecognised(r, 7), 50000, 'flat accrual must not double-count');
   });
 
-  test('Ledger · recognition', 'accrual settled next month nets to zero', () => {
-    // June: nothing billed, $29k accrued. July: $29k billed, balance back to 0.
-    const june = S.rowRecognised(lrow({ billed: 0, accrual: 29000 }), 0);
-    const july = S.rowRecognised(lrow({ billed: 29000, accrual: 0 }), 29000);
-    return eq(june, 29000, 'June recognised') === true
-      ? eq(july, 0, 'July recognised (already taken in June)')
-      : eq(june, 29000, 'June recognised');
+  test('Ledger · recognition', 'accrual settled the next month nets to zero', () => {
+    const r = lrow({ billed: { 7: 29000 }, accrual: { 6: 29000, 7: 0 } });
+    const june = S.cellRecognised(lrow({ accrual: { 6: 29000 } }), 6);
+    if (!near(june, 29000)) return 'June recognised ' + round(june);
+    return eq(S.cellRecognised(r, 7), 0, 'July (already taken in June)');
+  });
+
+  test('Ledger · recognition', 'openingAccrual reaches back to the last KNOWN close, not the prior month', () => {
+    const r = lrow({ accrual: { 2: 15000, 7: 40000 } });
+    return eq(S.openingAccrual(r, 7), 15000, 'opening balance for July');
   });
 
   test('Ledger · recognition', 'fee share moves revenue but never billings', () => {
-    const gross = lrow({ key: 'P002', billed: 200000 });
-    const share = lrow({ key: 'P002-FS', billed: 0, feeShare: -30000, isFeeShare: true });
-    const billedTotal = gross.billed + share.billed;
-    const rec = S.rowRecognised(gross, 0) + S.rowRecognised(share, 0);
-    return eq(billedTotal, 200000, 'billed gross unchanged') === true
-      ? eq(rec, 170000, 'recognised net of the share')
-      : eq(billedTotal, 200000, 'billed gross unchanged');
+    const gross = lrow({ key: 'P002', billed: { 4: 200000 } });
+    const share = lrow({ key: 'P002-FS', feeShare: { 4: -30000 }, isFeeShare: true });
+    const rec = S.cellRecognised(gross, 4) + S.cellRecognised(share, 4);
+    if (!near((gross.billed[4] || 0) + (share.billed[4] || 0), 200000)) return 'billed gross changed';
+    return eq(rec, 170000, 'recognised net of the share');
   });
 
   test('Ledger · recognition', 'a positive fee share (reversal) adds revenue back', () => {
-    // Hoffman's February line is +$43,112 — a share is signed, not always a deduction.
-    return eq(S.rowRecognised(lrow({ billed: 0, feeShare: 43112 }), 0), 43112, 'positive share');
+    return eq(S.cellRecognised(lrow({ feeShare: { 2: 43112 } }), 2), 43112, 'positive share');
   });
 
-  test('Ledger · periods', 'periodTotals foots to the sum of its rows', () => {
+  test('Ledger · year', 'yearTotals foots to the sum of its cells', () => {
     freshDb(); if (!asAdmin()) return 'could not assume admin identity';
-    S.postLedgerPeriod('2026-06', [
-      lrow({ key: 'A', billed: 40000, accrual: 10000 }),
-      lrow({ key: 'B', billed: 25000, feeShare: -5000 }),
-    ], {});
-    const t = S.periodTotals('2026-06');
-    return eq(t.recognised, 40000 + 10000 + 25000 - 5000, 'period recognised');
+    S.postLedgerYear(2026, [
+      lrow({ key: 'A', billed: { 1: 40000, 2: 40000 }, accrual: { 2: 10000 } }),
+      lrow({ key: 'B', billed: { 2: 25000 }, feeShare: { 2: -5000 } }),
+    ], { closeMonth: 2 });
+    const t = S.yearTotals(2026);
+    if (!near(t.recognised[1], 40000)) return 'Jan ' + round(t.recognised[1]);
+    if (!near(t.recognised[2], 40000 + 10000 + 25000 - 5000)) return 'Feb ' + round(t.recognised[2]);
+    return eq(t.total.recognised, 110000, 'year recognised');
   });
 
-  test('Ledger · periods', 'the ledger refuses years before it models', () => {
+  test('Ledger · year', 'one upload lands every month the tab carries', () => {
     freshDb(); if (!asAdmin()) return 'could not assume admin identity';
-    try { S.postLedgerPeriod('2025-12', [lrow({})], {}); return '2025 was accepted'; }
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 10, 2: 20, 3: 30, 4: 40, 5: 50, 6: 60, 7: 70 } })], { closeMonth: 7 });
+    const t = S.yearTotals(2026);
+    const months = [1,2,3,4,5,6,7].filter(m => t.recognised[m] > 0);
+    return months.length === 7 || `only ${months.length} months landed from a July tab`;
+  });
+
+  test('Ledger · year', 'the ledger refuses years before it models', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    try { S.postLedgerYear(2025, [lrow({})], {}); return '2025 was accepted'; }
     catch (e) { return /2026/.test(e.message) || 'wrong error: ' + e.message; }
   });
 
-  test('Ledger · periods', 'January opens at zero — it does not inherit last December', () => {
+  test('Ledger · year', 're-importing next month keeps every status already set', () => {
     freshDb(); if (!asAdmin()) return 'could not assume admin identity';
-    S.postLedgerPeriod('2026-12', [lrow({ key: 'A', billed: 0, accrual: 80000 })], {});
-    S.postLedgerPeriod('2027-01', [lrow({ key: 'A', billed: 0, accrual: 0 })], {});
-    if (S.priorLedgerPeriod('2027-01') !== null) return 'January reached back into the prior year';
-    return eq(S.periodTotals('2027-01').recognised, 0, 'January recognised');
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 6: 1000 } })], { closeMonth: 6 });
+    S.setCellStatus(2026, 'A', 6, 'slip', { carryTo: 9 });
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 6: 4000, 7: 5000 } })], { closeMonth: 7 });
+    const r = S.getLedgerYear(2026).rows.A;
+    if (r.billed[6] !== 4000) return 'corrected figure did not land';
+    if (r.status[6] !== 'slip') return 'status lost on re-import';
+    return r.carryTo[6] === 9 || 'carry month lost on re-import';
   });
 
-  test('Ledger · periods', 'the opening balance comes from the prior POSTED period, not the prior month', () => {
+  test('Ledger · year', 'accrual balances accumulate across imports, one close month each', () => {
     freshDb(); if (!asAdmin()) return 'could not assume admin identity';
-    // April posted, May never imported, June posted. June must open from April.
-    S.postLedgerPeriod('2026-04', [lrow({ key: 'A', billed: 0, accrual: 15000 })], {});
-    S.postLedgerPeriod('2026-06', [lrow({ key: 'A', billed: 15000, accrual: 0 })], {});
-    if (S.priorLedgerPeriod('2026-06') !== '2026-04') return 'prior period resolved to ' + S.priorLedgerPeriod('2026-06');
-    const t = S.periodTotals('2026-06');
-    return eq(t.recognised, 0, 'June recognised — the April accrual was already taken');
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrual: { 2: 15000 } })], { closeMonth: 2 });
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrual: { 7: 40000 } })], { closeMonth: 7 });
+    const r = S.getLedgerYear(2026).rows.A;
+    if (!(2 in r.accrual)) return 'February balance was dropped by the July import';
+    return eq(r.accrual[7], 40000, 'July balance');
   });
 
-  test('Ledger · periods', 're-posting a corrected file keeps dispositions already made', () => {
+  test('Ledger · year', 'closedThrough reports the latest close imported', () => {
     freshDb(); if (!asAdmin()) return 'could not assume admin identity';
-    S.postLedgerPeriod('2026-07', [lrow({ key: 'A', billed: 1000 })], {});
-    S.setLedgerDisposition('2026-07', 'A', 'slip', { carryTo: '2026-09' });
-    S.postLedgerPeriod('2026-07', [lrow({ key: 'A', billed: 4000 })], {});   // corrected figures
-    const r = S.getLedgerPeriod('2026-07').rows.A;
-    if (r.billed !== 4000) return 'figures did not update on re-post';
-    if (r.disposition !== 'slip') return 'disposition was lost on re-post';
-    return r.carryTo === '2026-09' || 'carry month was lost on re-post';
+    S.postLedgerYear(2026, [lrow({})], { closeMonth: 2 });
+    S.postLedgerYear(2026, [lrow({})], { closeMonth: 7 });
+    S.postLedgerYear(2026, [lrow({})], { closeMonth: 5 });
+    return S.closedThrough(2026) === 7 || 'closedThrough = ' + S.closedThrough(2026);
   });
 
-  test('Ledger · periods', 'closedThrough reports the latest posted period', () => {
+  test('Ledger · year', 'a manual project match survives the next import', () => {
     freshDb(); if (!asAdmin()) return 'could not assume admin identity';
-    S.postLedgerPeriod('2026-03', [lrow({})], {});
-    S.postLedgerPeriod('2026-07', [lrow({})], {});
-    S.postLedgerPeriod('2026-05', [lrow({})], {});
-    return S.closedThrough() === '2026-07' || 'closedThrough = ' + S.closedThrough();
+    S.postLedgerYear(2026, [lrow({ key: 'A', pid: null })], { closeMonth: 6 });
+    S.setRowMatch(2026, 'A', 'proj_manual');
+    S.postLedgerYear(2026, [lrow({ key: 'A', pid: 'proj_autoguess' })], { closeMonth: 7 });
+    return S.getLedgerYear(2026).rows.A.pid === 'proj_manual' || 'the auto-matcher overwrote a human decision';
   });
 
-  test('Ledger · periods', 'auto-dispositioned lines stay out of the exception queue', () => {
+  test('Ledger · year', 'only cells where money moved need a status', () => {
     freshDb(); if (!asAdmin()) return 'could not assume admin identity';
-    S.postLedgerPeriod('2026-07', [
-      lrow({ key: 'A', billed: 1000, disposition: 'billed', auto: true }),
-      lrow({ key: 'B', billed: 2000 }),
-    ], {});
-    const open = S.openExceptions('2026-07');
-    return (open.length === 1 && open[0].key === 'B') || `${open.length} open, expected 1 (B)`;
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000, 2: 2000 } })], { closeMonth: 2 });
+    S.setCellStatus(2026, 'A', 1, 'billed');
+    const open = S.openCells(2026);
+    return (open.length === 1 && open[0].month === 2) || `${open.length} unruled, expected 1 (Feb)`;
   });
 
   /* ---- workbook parser: the piece that breaks when Finance's file moves ---- */
@@ -462,25 +470,41 @@
      'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'Sept', 'Oct', 'Nov', 'Dec',
      'YTD July-2026 Billings +', 'Dec-2025 Accruals Reversed Jan-2025', 'July 2026 Revenue Accruals',
      'YTD 2026 Reported Revenue', null, 'YTD July 2026 Billing Summary', 'Reported vs Billing Summary OVER(UNDER)', 'Comments'],
-    ['C1', 'Acme', 'Acme Tower Fitout', 'P001', 0,0,0,0,0,0, 50000, 0,0,0,0,0, 50000, 0, 10000, 60000, null, 50000, 0, ''],
+    ['C1', 'Acme', 'Acme Tower Fitout', 'P001', 10000,20000,0,0,0,0, 50000, 0,0,0,0,0, 80000, 0, 10000, 90000, null, 50000, 0, ''],
     ['C1', 'Acme', 'Acme Tower Fitout - Hoffman Fee Share', 'P001FS', 0,0,0,0,0,0, -7500, 0,0,0,0,0, -7500, 0, 0, -7500, null, 0, 0, ''],
     ['C2', 'Baxter', 'Baxter Bardy MN (NO FEE SHARE)', 'P002', 0,0,0,0,0,0, 12000, 0,0,0,0,0, 12000, 0, 0, 12000, null, 0, 0, 'Brokerage revenue adjustment'],
     ['C3', 'Conde Nast', 'Condé Nast-1WTC Workplace Study', 'P003', 0,0,0,0,0,0, 24500, 0,0,0,0,0, 24500, 0, 0, 24500, null, 0, 0, '2025 Fee Share Due to WPG'],
   ];
-  const parsed = (P && P.parseSheet) ? P.parseSheet(SHEET, 'YTD July 2026', '2026-07') : null;
+  const parsed = (P && P.parseSheet) ? P.parseSheet(SHEET, 'YTD July 2026') : null;
 
-  test('Ledger · parser', 'finds the header row and the right month column', () => {
+  test('Ledger · parser', 'reads EVERY month column, not just the close month', () => {
     if (!parsed) return 'parser not exposed';
-    const acme = parsed.rows.find(r => r.code === 'P001');
-    return acme ? eq(acme.billed, 50000, 'July billings') : 'Acme row not parsed';
+    const a = parsed.rows.find(r => r.code === 'P001');
+    if (!a) return 'Acme row not parsed';
+    if (!near(a.billed[1], 10000)) return 'January missed: ' + round(a.billed[1] || 0);
+    if (!near(a.billed[2], 20000)) return 'February missed: ' + round(a.billed[2] || 0);
+    return eq(a.billed[7], 50000, 'July');
+  });
+
+  test('Ledger · parser', 'detects the close month from the YTD header, not the mislabelled accrual header', () => {
+    if (!parsed) return 'parser not exposed';
+    return parsed.closeMonth === 7 || 'closeMonth = ' + parsed.closeMonth;
+  });
+
+  test('Ledger · parser', 'the accrual balance is recorded only at the close month', () => {
+    if (!parsed) return 'parser not exposed';
+    const a = parsed.rows.find(r => r.code === 'P001');
+    if (!near(a.accrual[7] || 0, 10000)) return 'July balance missing';
+    const others = Object.keys(a.accrual).filter(m => +m !== 7);
+    return others.length === 0 || 'balances invented for months ' + others.join(',');
   });
 
   test('Ledger · parser', 'a row named "Fee Share" posts as a fee share, not billings', () => {
     if (!parsed) return 'parser not exposed';
     const fs = parsed.rows.find(r => r.code === 'P001FS');
     if (!fs || !fs.isFeeShare) return 'fee-share row not classified';
-    if (fs.billed !== 0) return 'fee share leaked into billings';
-    return eq(fs.feeShare, -7500, 'fee share amount');
+    if (Object.keys(fs.billed).length) return 'fee share leaked into billings';
+    return eq(fs.feeShare[7], -7500, 'fee share amount');
   });
 
   test('Ledger · parser', '"(NO FEE SHARE)" is a project, not a fee share', () => {
@@ -488,7 +512,7 @@
     const b = parsed.rows.find(r => r.code === 'P002');
     if (!b) return 'row not parsed';
     if (b.isFeeShare) return 'negation ignored — the row was classified as a fee share';
-    return eq(b.billed, 12000, 'billings kept on the project');
+    return eq(b.billed[7], 12000, 'billings kept on the project');
   });
 
   test('Ledger · parser', 'a comment mentioning a fee share does not reclassify the row', () => {
@@ -496,7 +520,7 @@
     const c = parsed.rows.find(r => r.code === 'P003');
     if (!c) return 'row not parsed';
     if (c.isFeeShare) return 'classified off the Comments column — real billings would be pulled out of revenue';
-    if (c.billed !== 24500) return 'billings did not stay on the project';
+    if (!near(c.billed[7], 24500)) return 'billings did not stay on the project';
     return c.feeHint === true || 'the comment hint was not surfaced for a human to rule on';
   });
 
@@ -512,11 +536,20 @@
     return parsed.footFails === 0 || `${parsed.footFails} row(s) failed to foot on a sheet that should balance`;
   });
 
-  test('Ledger · parser', 'a sheet without the period\'s month column is rejected', () => {
+  test('Ledger · parser', 'the accrual header is not mistaken for a month column', () => {
+    if (!P || !P.monthIndexOf) return 'parser not exposed';
+    if (P.monthIndexOf('July 2026 Revenue Accruals') !== -1) return '"July 2026 Revenue Accruals" read as a month column';
+    if (P.monthIndexOf('YTD July-2026 Billings +') !== -1) return 'the YTD header read as a month column';
+    if (P.monthIndexOf('July') !== 6) return '"July" not recognised';
+    if (P.monthIndexOf('Sept') !== 8) return '"Sept" not recognised';
+    return P.monthIndexOf('Jan-2026') === 0 || '"Jan-2026" not recognised';
+  });
+
+  test('Ledger · parser', 'a sheet with no month columns is rejected', () => {
     if (!P || !P.parseSheet) return 'parser not exposed';
-    const noMonths = [['Customer account', 'Customer name', 'Project Name', 'PROJECT', 'July 2026 Revenue Accruals']];
-    try { P.parseSheet(noMonths, 'x', '2026-03'); return 'a sheet with no March column was accepted'; }
-    catch (e) { return /march/i.test(e.message) || 'wrong error: ' + e.message; }
+    const bad = [['Customer account', 'Customer name', 'Project Name', 'PROJECT', 'July 2026 Revenue Accruals']];
+    try { P.parseSheet(bad, 'x'); return 'a sheet with no month columns was accepted'; }
+    catch (e) { return /month/i.test(e.message) || 'wrong error: ' + e.message; }
   });
 
   /* ---- render ---- */

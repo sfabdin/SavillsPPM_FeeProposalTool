@@ -917,56 +917,65 @@
   }
 
   /* ============================================================
-     REVENUE LEDGER — the monthly close, as posted by Finance
+  /* ============================================================
+     REVENUE LEDGER — the year's actuals, as posted by Finance
      ------------------------------------------------------------
      Everything above this line is a FORECAST: what the fee record says
      a project should bill. The ledger is the other half — what Finance
-     actually recognised, billed, and accrued in a closed month. It is
-     imported from the monthly close workbook and is NEVER derived from
+     actually invoiced and accrued — and it is never derived from
      project records, because the whole point is to disagree with them.
 
+     SHAPE: A YEAR, NOT A MONTH.
+     Finance's book is a running year-to-date sheet: one tab per close
+     ("YTD July 2026") whose monthly columns already carry January
+     through July. So one upload lands the whole year, and re-uploading
+     next month's tab refreshes it. The unit of work is the CELL —
+     one project in one month — because that is the grain at which a
+     billing question actually gets asked and answered.
+
        db.ledger = {
-         "2026-07": {
-           postedAt, postedBy, sourceFile, sourceSheet,
-           rows: { <key>: { code, name, client, pid,
-                            billed,        // gross invoiced this month
-                            feeShare,      // signed — broker cut out of that billing
-                            accrual,       // accrual BALANCE at close of this month
-                            billingSummary,// the AR-side cross-check column
-                            disposition, note, carryTo } }
+         "2026": {
+           updatedAt, updatedBy,
+           imports: [{ file, sheet, closeMonth, at, by }],
+           rows: { <key>: {
+             code, name, client,
+             pid,                      // matched project in projects.json
+             billed:   { 1: 38000, 2: 38000, … },   // by month number
+             feeShare: { 2: -7500, … },             // signed, its own line
+             accrual:  { 7: 45000 },   // BALANCE — only at imported close months
+             status:   { 1: 'billed', 6: 'slip', … },  // per-cell billing status
+             carryTo:  { 6: 9 },       // a slipped cell's intended billing month
+             note, billingSummary } }
          }
        }
 
-     THE ONE IDENTITY EVERYTHING RESTS ON
-       recognised(M) = billed(M) + feeShare(M) + accrual(M) − accrual(M−1)
+     WHY ACCRUALS ARE SPARSE
+     A close tab states ONE accrual balance — the one at its close date.
+     The July tab knows July's balance and says nothing about March's.
+     So accruals are stored per known close month, never interpolated,
+     and accrual movement is only reported in months where a balance was
+     actually imported. Guessing the months between would be inventing
+     figures Finance never published.
 
-     The accrual column is a BALANCE, not a flow — which is why a month
-     cannot be reconciled on its own. Reconciling July means knowing what
-     June's balance was, so periods are imported in order and `recognised`
-     always takes the prior posted period into account.
+     RECOGNITION
+       cell recognised = billed + feeShare + (accrual − last known accrual)
+     the accrual term applying only in months carrying a balance.
 
-     PRIOR-YEAR REVERSALS ARE DELIBERATELY EXCLUDED. The close file carries
-     a "Dec-<PY> Accruals Reversed" column that unwinds last year's accruals,
-     and it is a whole-year opening adjustment, not activity in any month of
-     THIS year. Including it would push a single lump into January and make
-     month-on-month revenue unreadable. The consequence is explicit and
-     intended: this ledger's YTD total differs from the file's "YTD Reported
-     Revenue" by exactly that reversal. The reversal column is still read at
-     import time — to prove the sheet was parsed correctly against its own
-     arithmetic — and then discarded. Finance keeps prior-year in their own
-     files; the ledger starts at LEDGER_FIRST_YEAR and only looks forward.
-
-     FEE SHARE is held as its own signed figure rather than netted into
-     `billed`, because the invoice genuinely went out gross: the client
-     was billed the full amount and the co-broker's cut comes off Savills'
-     revenue afterwards. Netting it early loses the billed figure Finance
-     reconciles against, so it stays a separate line that reads as a
-     deduction everywhere it is shown.
+     PRIOR-YEAR REVERSALS ARE EXCLUDED. The close file's "Dec-<PY>
+     Accruals Reversed" column is a whole-year opening adjustment about
+     last year's work, not activity in any month of this one. It is read
+     at import to prove the sheet parsed correctly against its own
+     arithmetic, then discarded — so this ledger's YTD deliberately
+     differs from the file's "YTD Reported Revenue" by exactly that
+     amount. Each year stands alone from LEDGER_FIRST_YEAR forward.
      ============================================================ */
 
-  /* Dispositions — the vocabulary Finance already writes by hand in the
-     close file's Comments column, turned into a closed list. `forecast`
-     says what each one does to the remaining year:
+  /** The ledger does not model anything before this year. */
+  const LEDGER_FIRST_YEAR = 2026;
+
+  /* Billing statuses — the vocabulary Finance already writes by hand in
+     the close file's Comments column, turned into a closed list. `forecast`
+     says what each one does to the rest of the year:
        keep   — timing only, the year is unchanged
        push   — the money moves to a later month (needs carryTo)
        drop   — it leaves the forecast for good
@@ -985,139 +994,160 @@
   ];
   const DISPOSITION_LABEL = (id) => (DISPOSITIONS.find(d => d.id === id) || {}).label || '';
 
-  /** The ledger does not model anything before this year. */
-  const LEDGER_FIRST_YEAR = 2026;
-
   function readLedger() { const db = readDb(); return db.ledger || {}; }
-  /** Every period that has been imported, oldest first. */
-  function ledgerPeriods() { return Object.keys(readLedger()).sort(); }
-  /** The latest period Finance has posted — everything up to here is actual. */
-  function closedThrough() {
-    const posted = ledgerPeriods().filter(ym => (readLedger()[ym] || {}).postedAt);
-    return posted.length ? posted[posted.length - 1] : null;
-  }
-  function getLedgerPeriod(ym) { return readLedger()[ym] || null; }
-  /** The period immediately before `ym` that actually has data — NOT simply
-      the previous calendar month, so a gap in the imports can't silently
-      restate an accrual balance as if the missing month were zero. */
-  function priorLedgerPeriod(ym) {
-    const year = String(ym).slice(0, 4);
-    // Scoped to the same year on purpose: each year is reconciled on its own,
-    // so January opens at a zero accrual balance rather than inheriting a
-    // closing balance from a year this ledger does not model.
-    const before = ledgerPeriods().filter(p => p < ym && p.slice(0, 4) === year);
-    return before.length ? before[before.length - 1] : null;
+  /** Years that have been imported, oldest first. */
+  function ledgerYears() { return Object.keys(readLedger()).sort(); }
+  function getLedgerYear(year) { return readLedger()[String(year)] || null; }
+  /** The latest close month imported for a year (1–12), or 0 if none. */
+  function closedThrough(year) {
+    const y = getLedgerYear(year);
+    if (!y || !y.imports || !y.imports.length) return 0;
+    return y.imports.reduce((a, i) => Math.max(a, +i.closeMonth || 0), 0);
   }
 
-  /** Land a parsed close file as a period. Rows are keyed by project code
-      (falling back to a normalised name), so re-importing a corrected file
-      replaces the period cleanly instead of doubling it. Dispositions a
-      human already made are carried across the re-import — re-running the
-      close must never throw away review work. */
-  function postLedgerPeriod(ym, rows, meta) {
-    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can post a close period.');
-    if (+String(ym).slice(0, 4) < LEDGER_FIRST_YEAR)
+  /** Land a parsed close tab into a year. Billed / fee-share figures are
+      REPLACED from the sheet (it is the source of truth and a correction
+      must win), while every human decision — the billing status on each
+      cell, its carry month, a manual project match — is carried across.
+      Re-importing next month's tab must never throw away review work. */
+  function postLedgerYear(year, rows, meta) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can post revenue actuals.');
+    if (+year < LEDGER_FIRST_YEAR)
       throw new Error(`The ledger starts at ${LEDGER_FIRST_YEAR}. Earlier years stay in Finance's own files.`);
     const db = readDb();
     db.ledger = db.ledger || {};
-    const prev = db.ledger[ym];
-    const keep = {};
-    if (prev && prev.rows) Object.entries(prev.rows).forEach(([k, r]) => {
-      if (r && r.disposition) keep[k] = { disposition: r.disposition, carryTo: r.carryTo || null, note: r.note || '' };
-    });
+    const yk = String(year);
+    const prev = db.ledger[yk] || { rows: {}, imports: [] };
     const out = {};
     rows.forEach(r => {
-      const k = r.key;
-      out[k] = keep[k] ? { ...r, ...keep[k] } : r;
+      const old = prev.rows[r.key];
+      out[r.key] = {
+        ...r,
+        // accrual balances accumulate across imports: each tab contributes
+        // the one close month it actually knows about.
+        accrual: { ...((old && old.accrual) || {}), ...(r.accrual || {}) },
+        status:  { ...((old && old.status) || {}) },
+        carryTo: { ...((old && old.carryTo) || {}) },
+        // a match a human confirmed outranks the auto-matcher
+        pid: (old && old.pidManual) ? old.pid : r.pid,
+        pidManual: !!(old && old.pidManual),
+      };
     });
+    // Rows that existed before but are absent from this tab keep their history.
+    Object.entries(prev.rows || {}).forEach(([k, r]) => { if (!out[k]) out[k] = r; });
     const cu = getCurrentUser() || {};
-    db.ledger[ym] = {
-      postedAt: new Date().toISOString(),
-      postedBy: cu.name || cu.username || 'admin',
-      sourceFile: (meta && meta.file) || '',
-      sourceSheet: (meta && meta.sheet) || '',
+    db.ledger[yk] = {
+      updatedAt: new Date().toISOString(),
+      updatedBy: cu.name || cu.username || 'admin',
+      imports: [
+        ...(prev.imports || []).filter(i => +i.closeMonth !== +(meta && meta.closeMonth)),
+        { file: (meta && meta.file) || '', sheet: (meta && meta.sheet) || '',
+          closeMonth: +(meta && meta.closeMonth) || 0, at: new Date().toISOString(),
+          by: cu.name || cu.username || 'admin', rows: rows.length },
+      ].sort((a, b) => a.closeMonth - b.closeMonth),
       rows: out,
     };
     writeDb(db);
-    logActivity('close-post', null, { period: ym, rows: rows.length, file: (meta && meta.file) || '' });
-    return db.ledger[ym];
+    logActivity('ledger-post', null, { year: yk, closeMonth: (meta && meta.closeMonth) || 0, rows: rows.length, file: (meta && meta.file) || '' });
+    return db.ledger[yk];
   }
 
-  function setLedgerDisposition(ym, key, disposition, extra) {
-    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can disposition a close line.');
+  /** Set the billing status on ONE cell (project × month). */
+  function setCellStatus(year, key, month, status, extra) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can set a billing status.');
     const db = readDb();
-    const per = (db.ledger || {})[ym];
-    if (!per || !per.rows || !per.rows[key]) return null;
-    per.rows[key].disposition = disposition || null;
-    if (extra && 'carryTo' in extra) per.rows[key].carryTo = extra.carryTo || null;
-    if (extra && 'note' in extra) per.rows[key].note = extra.note || '';
-    if (extra && 'pid' in extra) per.rows[key].pid = extra.pid || null;
+    const y = (db.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.status = row.status || {}; row.carryTo = row.carryTo || {};
+    if (status) row.status[month] = status; else delete row.status[month];
+    if (extra && 'carryTo' in extra) {
+      if (extra.carryTo) row.carryTo[month] = extra.carryTo; else delete row.carryTo[month];
+    }
     writeDb(db);
-    return per.rows[key];
+    return row;
   }
 
-  function deleteLedgerPeriod(ym) {
-    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can remove a close period.');
+  /** Point a ledger row at a project record (or clear it). Marked manual so a
+      later import cannot silently re-match it to something else. */
+  function setRowMatch(year, key, pid) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can re-map a revenue line.');
     const db = readDb();
-    if (db.ledger && db.ledger[ym]) { delete db.ledger[ym]; writeDb(db); logActivity('close-remove', null, { period: ym }); }
+    const y = (db.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    y.rows[key].pid = pid || null;
+    y.rows[key].pidManual = !!pid;
+    writeDb(db);
+    return y.rows[key];
   }
 
-  /** Recognised revenue for one ledger row in one period. `priorAccrual` is
-      that row's accrual balance at the previous posted close — pass 0 for the
-      first period ever imported. */
-  function rowRecognised(row, priorAccrual) {
+  function deleteLedgerYear(year) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can remove revenue actuals.');
+    const db = readDb();
+    if (db.ledger && db.ledger[String(year)]) {
+      delete db.ledger[String(year)]; writeDb(db);
+      logActivity('ledger-remove', null, { year: String(year) });
+    }
+  }
+
+  const nnum = (v) => (typeof v === 'number' && isFinite(v)) ? v : 0;
+  /** The accrual balance carried into `month` — the most recent balance
+      Finance actually published before it, or 0 if none. */
+  function openingAccrual(row, month) {
+    const acc = (row && row.accrual) || {};
+    let best = 0;
+    Object.keys(acc).forEach(m => { if (+m < +month) best = nnum(acc[m]); });
+    return best;
+  }
+  /** Recognised revenue for one project in one month. The accrual term
+      applies only where a balance was imported for that month. */
+  function cellRecognised(row, month) {
     if (!row) return 0;
-    const n = (v) => (typeof v === 'number' && isFinite(v)) ? v : 0;
-    return n(row.billed) + n(row.feeShare) + (n(row.accrual) - n(priorAccrual));
+    const billed = nnum((row.billed || {})[month]) + nnum((row.feeShare || {})[month]);
+    const acc = (row.accrual || {});
+    if (!(month in acc)) return billed;
+    return billed + (nnum(acc[month]) - openingAccrual(row, month));
   }
+  /** Does this month carry an imported accrual balance? */
+  const hasAccrual = (row, month) => !!(row && row.accrual && (month in row.accrual));
 
-  /** Period totals, split the way Finance reads them: gross billed, fee share
-      (signed), the accrual movement, and recognised revenue. */
-  function periodTotals(ym) {
-    const per = getLedgerPeriod(ym);
-    if (!per) return null;
-    const prevYm = priorLedgerPeriod(ym);
-    const prev = prevYm ? (getLedgerPeriod(prevYm) || {}).rows || {} : {};
-    const t = { billed: 0, feeShare: 0, accrual: 0, priorAccrual: 0, recognised: 0, rows: 0 };
-    Object.entries(per.rows || {}).forEach(([k, r]) => {
-      const pa = (prev[k] && prev[k].accrual) || 0;
-      t.billed += r.billed || 0;
-      t.feeShare += r.feeShare || 0;
-      t.accrual += r.accrual || 0;
-      t.priorAccrual += pa;
-      t.recognised += rowRecognised(r, pa);
+  /** Column totals for a year: billed, fee share, accrual movement and
+      recognised, per month plus the year. */
+  function yearTotals(year) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    const blank = () => Array.from({ length: 13 }, () => 0);   // index 1..12
+    const t = { billed: blank(), feeShare: blank(), accrual: blank(), recognised: blank(), rows: 0 };
+    Object.values(y.rows || {}).forEach(r => {
       t.rows++;
+      for (let m = 1; m <= 12; m++) {
+        t.billed[m] += nnum((r.billed || {})[m]);
+        t.feeShare[m] += nnum((r.feeShare || {})[m]);
+        if (hasAccrual(r, m)) t.accrual[m] += nnum(r.accrual[m]) - openingAccrual(r, m);
+        t.recognised[m] += cellRecognised(r, m);
+      }
     });
+    const sum = (a) => a.reduce((x, y2) => x + y2, 0);
+    t.total = { billed: sum(t.billed), feeShare: sum(t.feeShare), accrual: sum(t.accrual), recognised: sum(t.recognised) };
     return t;
   }
 
-  /** One project's ledger history across every posted period — the series
-      behind the performed / accrued / billed timing lanes. */
-  function ledgerSeriesFor(key) {
-    return ledgerPeriods().map(ym => {
-      const per = getLedgerPeriod(ym);
-      const row = (per.rows || {})[key] || null;
-      const prevYm = priorLedgerPeriod(ym);
-      const pa = prevYm ? (((getLedgerPeriod(prevYm) || {}).rows || {})[key] || {}).accrual || 0 : 0;
-      return {
-        ym, row,
-        billed: row ? (row.billed || 0) : 0,
-        feeShare: row ? (row.feeShare || 0) : 0,
-        accrual: row ? (row.accrual || 0) : 0,
-        recognised: row ? rowRecognised(row, pa) : 0,
-      };
+  /** Cells a human still has to rule on: money moved (or was planned and
+      didn't) and nobody has said what that means. */
+  function openCells(year) {
+    const y = getLedgerYear(year);
+    if (!y) return [];
+    const out = [];
+    Object.entries(y.rows || {}).forEach(([key, r]) => {
+      for (let m = 1; m <= 12; m++) {
+        const moved = nnum((r.billed || {})[m]) || nnum((r.feeShare || {})[m]) || hasAccrual(r, m);
+        if (!moved) continue;
+        if (!(r.status || {})[m]) out.push({ key, month: m, row: r, recognised: cellRecognised(r, m) });
+      }
     });
+    return out;
   }
 
-  /** Lines a human still has to rule on: the close disagrees with the
-      forecast (or with itself) and nobody has said what that means yet. */
-  function openExceptions(ym) {
-    const per = getLedgerPeriod(ym);
-    if (!per) return [];
-    return Object.entries(per.rows || {})
-      .filter(([, r]) => !r.disposition && !r.auto)
-      .map(([key, r]) => ({ key, ...r }));
-  }
 
   function importDb(jsonStr, mode = 'merge') {
     const incoming = JSON.parse(jsonStr);
@@ -2285,9 +2315,10 @@
     proposalHealth,
     exportDb, importDb, downloadJson,
     FLASH_LABELS, captureSnapshot, getSnapshots, deleteSnapshot, periodKey,
-    DISPOSITIONS, DISPOSITION_LABEL, LEDGER_FIRST_YEAR, ledgerPeriods, closedThrough, getLedgerPeriod,
-    priorLedgerPeriod, postLedgerPeriod, setLedgerDisposition, deleteLedgerPeriod,
-    rowRecognised, periodTotals, ledgerSeriesFor, openExceptions,
+    DISPOSITIONS, DISPOSITION_LABEL, LEDGER_FIRST_YEAR,
+    ledgerYears, getLedgerYear, closedThrough, postLedgerYear, deleteLedgerYear,
+    setCellStatus, setRowMatch, cellRecognised, openingAccrual, hasAccrual,
+    yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     computeFinancials, financialsInputsHash, restampFinancials,
     isChangeOrder, childChangeOrders, approvedChangeOrders, createChangeOrder,
