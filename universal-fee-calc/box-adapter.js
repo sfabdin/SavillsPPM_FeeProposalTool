@@ -376,6 +376,36 @@
     out.activity = Object.values(seen)
       .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''))
       .slice(-500);
+
+    /* Everything else on the db is dropped unless it is merged here — this is
+       what silently ate the maintenance flag on every sync. */
+    // Maintenance: last writer wins, comparing when each side was set.
+    const mStamp = (m) => (m && (m.at || m.endedAt)) || '';
+    const rm = remote.maintenance, lm = local.maintenance;
+    const win = mStamp(lm) >= mStamp(rm) ? lm : rm;
+    if (win) out.maintenance = win;
+    // Vocabulary: additive on both sides, so union it — a list value added in
+    // one browser must never be removed by a save from another.
+    const rv = remote.vocab || {}, lv = local.vocab || {};
+    if (rv.industries || lv.industries || rv.projectTypes || lv.projectTypes || rv.lossReasons || lv.lossReasons || rv.leaders || lv.leaders) {
+      const uniq = (a, b) => [...new Set([...(a || []), ...(b || [])])];
+      const byId = (a, b, key) => {
+        const map = {};
+        [...(a || []), ...(b || [])].forEach(x => { if (!x || !x[key]) return; map[x[key]] = map[x[key]] ? { ...map[x[key]], ...x, subs: [...new Set([...(map[x[key]].subs || []), ...(x.subs || [])])] } : x; });
+        return Object.values(map);
+      };
+      out.vocab = {
+        industries: uniq(rv.industries, lv.industries),
+        lossReasons: uniq(rv.lossReasons, lv.lossReasons),
+        projectTypes: byId(rv.projectTypes, lv.projectTypes, 'name'),
+        leaders: byId(rv.leaders, lv.leaders, 'id'),
+      };
+    }
+    // Anything added to the db in future: keep it rather than dropping it.
+    Object.keys({ ...remote, ...local }).forEach(k => {
+      if (k in out || k === 'schemaVersion') return;
+      out[k] = (k in local) ? local[k] : remote[k];
+    });
     return out;
   }
 

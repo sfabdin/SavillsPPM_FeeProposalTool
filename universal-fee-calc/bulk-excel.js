@@ -225,7 +225,7 @@
       ['Rating', (st.RATINGS || []).map(r => (typeof r === 'string' ? r : (r.label || r.id || '')))],
       ['Industry', st.INDUSTRIES.slice()],
       ['ProjectType', st.PROJECT_TYPES.map(t => t.name)],
-      ['Lead', st.REVENUE_LEADERS.map(l => l.displayName)],
+      ['Lead', st.REVENUE_LEADERS.map(l => l.displayName + (l.username ? ' <' + l.username + '>' : ''))],
       ['YesNo', ['Y', 'N']],
       ['Billing', ['phase', 'flatline']],
       ['RateSource', ['grid', 'contracted']],
@@ -399,7 +399,7 @@
     // The Lists + Type subs sheets are EDITABLE: whatever you add there
     // becomes part of the system vocabulary when the workbook is applied.
     const listsWs = get('lists');
-    const lists = { Industry: [], ProjectType: [], LossReason: [] };
+    const lists = { Industry: [], ProjectType: [], LossReason: [], Lead: [] };
     if (listsWs) {
       const head = [];
       listsWs.getRow(1).eachCell({ includeEmpty: true }, (c, i) => { head[i] = S(c.value); });
@@ -424,6 +424,23 @@
       revenue: rowsOf(get('revenue'), REV_COLS),
       lists, typeSubs,
     };
+  }
+
+  /** A leader typed onto the Lists sheet arrives as "Michael Glatt" or, better,
+      "Michael Glatt <mglatt@savills.us>". The email is what ownership and the
+      access wall actually key on, so when it isn't supplied we derive the house
+      convention (first initial + surname @savills.us) and say so in the review,
+      where a wrong guess is easy to spot and fix. */
+  function deriveLeader(text) {
+    const m = /^(.*?)[<(]\s*([^\s<>()]+@[^\s<>()]+?)\s*[>)]?\s*$/.exec(S(text));
+    const name = S(m ? m[1] : text);
+    const email = m ? m[2].toLowerCase() : '';
+    if (!name) return null;
+    const parts = name.split(/\s+/).filter(Boolean);
+    const slug = (parts.length > 1 ? parts[0][0] + parts[parts.length - 1] : parts[0] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const id = email ? email.split('@')[0].toLowerCase().replace(/[^a-z0-9.]/g, '') : slug;
+    if (!id) return null;
+    return { id, displayName: name, username: email || (slug + '@savills.us'), aliases: [name], guessedEmail: !email };
   }
 
   /* ---------- VALIDATE + BUILD the next record for each project ---------- */
@@ -457,8 +474,20 @@
       if (!base) newTypes.push({ name, subs: subsByType[name] || [] });
       else if (subs.length) newTypes.push({ name, subs });
     });
-    const vocabAdds = { industries: newIndustries, lossReasons: newReasons, projectTypes: newTypes };
-    const vocabCount = newIndustries.length + newReasons.length + newTypes.reduce((n, t) => n + 1 + t.subs.length, 0);
+    const newLeaders = [];
+    (wbLists.Lead || []).forEach(txt => {
+      if (st.resolveLeader(S(txt).replace(/\s*[<(][^<>()]*[>)]\s*$/, '').trim()) || st.resolveLeader(txt)) return;
+      const l = deriveLeader(txt);
+      if (l && !newLeaders.some(x => x.id === l.id)) newLeaders.push(l);
+    });
+    const resolveEff = (value) => {
+      const hit = st.resolveLeader(value);
+      if (hit) return hit;
+      const vk = S(value).toLowerCase();
+      return newLeaders.find(l => l.id === vk || l.displayName.toLowerCase() === vk || String(l.username).toLowerCase() === vk) || null;
+    };
+    const vocabAdds = { industries: newIndustries, lossReasons: newReasons, projectTypes: newTypes, leaders: newLeaders };
+    const vocabCount = newIndustries.length + newReasons.length + newLeaders.length + newTypes.reduce((n, t) => n + 1 + t.subs.length, 0);
     const effIndustries = sysIndustries.concat(newIndustries);
     const effReasons = sysReasons.concat(newReasons);
     const effSubs = (typeName) => {
@@ -518,8 +547,8 @@
       const leadTxt = S(row.lead);
       let leader = null;
       if (leadTxt) {
-        leader = st.resolveLeader(leadTxt);
-        errIf('lead', !leader, `Lead PE "${leadTxt}" is not a known revenue leader`);
+        leader = resolveEff(leadTxt);
+        errIf('lead', !leader, `Lead PE "${leadTxt}" is not a known revenue leader — add them to the Lead column on the Lists sheet (ideally as "Name <email@savills.us>")`);
       }
       const lossReason = S(row.lossReason);
       errIf('lossReason', lossReason && !effReasons.includes(lossReason), `Loss reason "${lossReason}" is not one of: ${effReasons.join(', ')}`);
@@ -543,8 +572,8 @@
       const relTxt = S(row.clientRelOwner);
       let relOwner = null;
       if (relTxt) {
-        relOwner = st.resolveLeader(relTxt);
-        errIf('clientRelOwner', !relOwner, `Relationship owner "${relTxt}" is not a known revenue leader`);
+        relOwner = resolveEff(relTxt);
+        errIf('clientRelOwner', !relOwner, `Relationship owner "${relTxt}" is not a known revenue leader — add them to the Lead column on the Lists sheet (ideally as "Name <email@savills.us>")`);
       }
       setIf('name', S(row.name)); setIf('client', S(row.client));
       if (status || !isNew) setIf('status', status || pj.status || 'draft');
