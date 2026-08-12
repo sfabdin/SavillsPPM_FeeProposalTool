@@ -2112,13 +2112,137 @@
   /** Manual monthly overrides (set in Revenue Projections) replace the computed
       amount for that month. Stored as p.monthlyOverrides = { "YYYY-M": number }. */
   function applyOverrides(series, p, slFilter) {
+    if (slFilter) return series;                    // a service-line slice can't carry either
     const ov = p.monthlyOverrides;
-    if (slFilter || !ov) return series;
-    return series.map(s => {
+    const withOv = !ov ? series : series.map(s => {
       const k = s.year + '-' + s.month;
       return (ov[k] != null && !isNaN(ov[k])) ? { ...s, amount: Number(ov[k]), overridden: true } : s;
     });
+    return applySlips(withOv, p);
   }
+
+  /* ============================================================
+     REVENUE SLIPS — Finance moving money between months
+     ------------------------------------------------------------
+     When a close shows a month that was planned to bill and didn't —
+     neither invoiced nor accrued — the fee is not lost, it is late.
+     Reconciliation records that as a SLIP against the project: an
+     amount, the month it should have billed, and the month it is now
+     expected in.
+
+     A slip MOVES money, it never creates or destroys it: the same
+     figure comes off the from-month and lands on the to-month, so a
+     project's total is identical before and after. That invariant is
+     what makes this safe to let Finance write into a revenue leader's
+     forecast at all, and it is asserted in the test suite.
+
+     Slips stay OPEN until someone reconciles them, and every page
+     that reads monthlySeries gets `slipOut` / `slipIn` flags on the
+     affected months so an open slip shows in red wherever the
+     forecast is read. Reconciling does not undo the move — the money
+     really did shift — it just stops the shouting.
+     ============================================================ */
+  const slipYm = (y, m) => y + '-' + String(m).padStart(2, '0');
+  function projectSlips(p) { return (p && p.revenueSlips) || []; }
+  function openSlips(p) { return projectSlips(p).filter(s => !s.reconciled); }
+
+  /** Fold open AND reconciled slips into a monthly series. Both move money —
+      reconciling is an acknowledgement, not a reversal — but only open ones
+      raise a flag for the UI to paint. */
+  function applySlips(series, p) {
+    const slips = projectSlips(p);
+    if (!slips.length) return series;
+    const byKey = {};
+    series.forEach(s => { byKey[slipYm(s.year, s.month)] = { ...s }; });
+    slips.forEach(sl => {
+      const amt = Number(sl.amount) || 0;
+      if (!amt) return;
+      const from = byKey[sl.fromYm], to = byKey[sl.toYm];
+      if (from) { from.amount -= amt; if (!sl.reconciled) { from.slipOut = (from.slipOut || 0) + amt; } }
+      if (to) { to.amount += amt; if (!sl.reconciled) { to.slipIn = (to.slipIn || 0) + amt; } }
+    });
+    return series.map(s => byKey[slipYm(s.year, s.month)] || s);
+  }
+
+  /** Record (or update) a slip on a project. Keyed by the ledger cell it came
+      from, so re-picking the carry month moves the existing slip instead of
+      stacking a second one on top. */
+  function recordSlip(projectId, slip) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can move revenue between months.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p) return null;
+    p.revenueSlips = p.revenueSlips || [];
+    const cu = getCurrentUser() || {};
+    const idx = p.revenueSlips.findIndex(s => s.ledgerKey === slip.ledgerKey && s.fromYm === slip.fromYm);
+    if (idx >= 0) {
+      // Keep the amount settled at creation: the plan has already moved to
+      // reflect this slip, so recomputing it here would shrink it each time.
+      p.revenueSlips[idx] = { ...p.revenueSlips[idx], toYm: slip.toYm, note: slip.note || p.revenueSlips[idx].note, at: new Date().toISOString(), by: cu.name || cu.username || 'admin' };
+    } else {
+      p.revenueSlips.push({
+        id: 'slip_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        ledgerKey: slip.ledgerKey || '', fromYm: slip.fromYm, toYm: slip.toYm,
+        amount: Number(slip.amount) || 0, note: slip.note || '',
+        source: 'reconciliation', reconciled: false,
+        at: new Date().toISOString(), by: cu.name || cu.username || 'admin',
+      });
+    }
+    p.updatedAt = new Date().toISOString();
+    writeDb(db);
+    logActivity('slip', projectId, { from: slip.fromYm, to: slip.toYm, amount: Number(slip.amount) || 0 });
+    return p;
+  }
+
+  /** Drop a slip — used when a cell's status stops being 'slipped'. */
+  function removeSlip(projectId, match) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can move revenue between months.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p || !p.revenueSlips) return null;
+    const before = p.revenueSlips.length;
+    p.revenueSlips = p.revenueSlips.filter(s => match.id ? s.id !== match.id
+      : !(s.ledgerKey === match.ledgerKey && s.fromYm === match.fromYm));
+    if (p.revenueSlips.length !== before) {
+      p.updatedAt = new Date().toISOString();
+      writeDb(db);
+      logActivity('slip-remove', projectId, { from: match.fromYm || null });
+    }
+    return p;
+  }
+
+  /** Mark a slip settled. The money stays where the slip put it; this only
+      clears the red. */
+  function reconcileSlip(projectId, slipId, on) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can reconcile a slip.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p || !p.revenueSlips) return null;
+    const sl = p.revenueSlips.find(s => s.id === slipId);
+    if (!sl) return null;
+    const cu = getCurrentUser() || {};
+    sl.reconciled = on !== false;
+    sl.reconciledAt = sl.reconciled ? new Date().toISOString() : null;
+    sl.reconciledBy = sl.reconciled ? (cu.name || cu.username || 'admin') : null;
+    p.updatedAt = new Date().toISOString();
+    writeDb(db);
+    logActivity(sl.reconciled ? 'slip-reconciled' : 'slip-reopened', projectId, { from: sl.fromYm, to: sl.toYm, amount: sl.amount });
+    return p;
+  }
+
+  /** Every unreconciled slip in the book — drives the red banner on
+      Revenue Projections. */
+  function allOpenSlips() {
+    const out = [];
+    listProjects().forEach(p => openSlips(p).forEach(s => out.push({
+      projectId: p.id,
+      name: (p.project && p.project.name) || 'Untitled',
+      client: (p.project && p.project.client) || '',
+      ...s,
+    })));
+    return out.sort((a, b) => (a.fromYm || '').localeCompare(b.fromYm || ''));
+  }
+
 
   /** Resolve a role's base rate AND its escalation anchor year, matching the
       calculator's roleBaseInfo():
@@ -2449,6 +2573,7 @@
     computeFinancials, financialsInputsHash, restampFinancials,
     isChangeOrder, childChangeOrders, approvedChangeOrders, createChangeOrder,
     importedBrokerSeries, reconcileImport,
+    projectSlips, openSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,

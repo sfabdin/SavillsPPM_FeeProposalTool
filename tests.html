@@ -498,6 +498,84 @@
     return (open.length === 1 && open[0].month === 2) || `${open.length} unruled, expected 1 (Feb)`;
   });
 
+  /* ---- revenue slips: Finance moving money between months ---- */
+
+  function slipProject() {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 6, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }],
+    }));
+    return p;
+  }
+  const seriesMap = (p) => { const m = {}; S.monthlySeries(p, C).forEach(s => { m[s.year + '-' + s.month] = s; }); return m; };
+
+  test('Slips · engine', 'a slip moves money and leaves the total untouched', () => {
+    const p = slipProject();
+    const before = seriesSum(S.getProject(p.id));
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    const after = seriesSum(S.getProject(p.id));
+    return eq(after, before, 'project total after a slip');
+  });
+
+  test('Slips · engine', 'the from-month falls and the to-month rises by the same figure', () => {
+    const p = slipProject();
+    const b = seriesMap(S.getProject(p.id));
+    const b3 = b['2026-3'].amount, b5 = b['2026-5'].amount;
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    const a = seriesMap(S.getProject(p.id));
+    if (!near(a['2026-3'].amount, b3 - 5000)) return 'March ' + round(a['2026-3'].amount) + ', expected ' + round(b3 - 5000);
+    return eq(a['2026-5'].amount, b5 + 5000, 'May');
+  });
+
+  test('Slips · engine', 'an open slip flags both months so the forecast can paint it red', () => {
+    const p = slipProject();
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    const m = seriesMap(S.getProject(p.id));
+    if (!m['2026-3'].slipOut) return 'the from-month is not flagged';
+    return !!m['2026-5'].slipIn || 'the to-month is not flagged';
+  });
+
+  test('Slips · engine', 'reconciling clears the flag but keeps the money where it moved', () => {
+    const p = slipProject();
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    const moved = seriesMap(S.getProject(p.id))['2026-5'].amount;
+    const sl = S.projectSlips(S.getProject(p.id))[0];
+    S.reconcileSlip(p.id, sl.id, true);
+    const m = seriesMap(S.getProject(p.id));
+    if (m['2026-5'].slipIn) return 'still flagged after reconciling';
+    if (!near(m['2026-5'].amount, moved)) return 'reconciling silently moved the money back';
+    return S.allOpenSlips().length === 0 || 'still listed as open';
+  });
+
+  test('Slips · engine', 're-picking the carry month moves the slip, it does not stack a second', () => {
+    const p = slipProject();
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-06', amount: 5000 });
+    const slips = S.projectSlips(S.getProject(p.id));
+    if (slips.length !== 1) return slips.length + ' slips recorded for one cell';
+    const m = seriesMap(S.getProject(p.id));
+    return (slips[0].toYm === '2026-06' && !m['2026-5'].slipIn) || 'the old carry month was left behind';
+  });
+
+  test('Slips · engine', 'removing a slip puts the forecast back exactly', () => {
+    const p = slipProject();
+    const before = JSON.stringify(seriesMap(S.getProject(p.id)));
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    S.removeSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03' });
+    return JSON.stringify(seriesMap(S.getProject(p.id))) === before || 'the forecast did not return to its prior shape';
+  });
+
+  test('Slips · engine', 'allOpenSlips lists only what is still unreconciled', () => {
+    const p = slipProject();
+    S.recordSlip(p.id, { ledgerKey: 'A', fromYm: '2026-02', toYm: '2026-04', amount: 1000 });
+    S.recordSlip(p.id, { ledgerKey: 'B', fromYm: '2026-03', toYm: '2026-05', amount: 2000 });
+    const sl = S.projectSlips(S.getProject(p.id))[0];
+    S.reconcileSlip(p.id, sl.id, true);
+    const open = S.allOpenSlips();
+    return (open.length === 1 && open[0].ledgerKey === 'B') || open.length + ' open, expected 1';
+  });
+
   /* ---- the ledger is its own store (revenue.json), not projects.json ---- */
 
   test('Ledger · store', 'actuals never land in projects.json', () => {

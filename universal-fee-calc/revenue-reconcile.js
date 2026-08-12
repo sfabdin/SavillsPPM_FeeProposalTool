@@ -656,12 +656,47 @@
     pop.style.left = Math.max(8, Math.min(rect.left + window.scrollX - 90, window.innerWidth - pop.offsetWidth - 12)) + 'px';
 
     pop.querySelectorAll('.pop-opt').forEach(b => b.addEventListener('click', () => {
-      STORE.setCellStatus(YEAR, key, m, b.dataset.s || null);
+      const next = b.dataset.s || null;
+      STORE.setCellStatus(YEAR, key, m, next);
+      // Stepping away from 'slipped' takes the money back off the project.
+      if (cur === 'slip' && next !== 'slip' && row.pid) {
+        try { STORE.removeSlip(row.pid, { ledgerKey: key, fromYm: ymOf(YEAR, m) }); } catch (e) {}
+      }
       closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash();
     }));
     pop.querySelector('.carry-pick')?.addEventListener('change', (e) => {
-      STORE.setCellStatus(YEAR, key, m, 'slip', { carryTo: +e.target.value || null });
+      const to = +e.target.value || null;
+      STORE.setCellStatus(YEAR, key, m, 'slip', { carryTo: to });
+      applySlipToProject(key, m, to);
+      closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash();
     });
+  }
+
+  const ymOf = (y, m) => y + '-' + String(m).padStart(2, '0');
+
+  /** A slip is the one thing on this page that writes into a project record:
+      the fee was planned, it did not bill, so it moves to a later month and the
+      project carries a flag until someone reconciles it. Unmatched rows cannot
+      slip — there is no forecast to move. */
+  function applySlipToProject(key, month, toMonth) {
+    const row = STORE.getLedgerYear(YEAR).rows[key];
+    if (!row) return;
+    if (!row.pid) {
+      alert('This line is not mapped to a project yet, so there is no forecast to move.\n\nUse “map to project…” on the row first.');
+      return;
+    }
+    if (!toMonth) { try { STORE.removeSlip(row.pid, { ledgerKey: key, fromYm: ymOf(YEAR, month) }); } catch (e) {} return; }
+    // The amount is what the plan expected and the month did not deliver. Settled
+    // once, at creation: the plan has moved by the time we look again.
+    const shortfall = planFor(row.pid, YEAR, month) - STORE.cellRecognised(row, month);
+    try {
+      STORE.recordSlip(row.pid, {
+        ledgerKey: key, fromYm: ymOf(YEAR, month), toYm: ymOf(YEAR, toMonth),
+        amount: Math.round(shortfall * 100) / 100,
+        note: `${MONTHS[month - 1]} ${YEAR} did not bill or accrue — moved to ${MONTHS[toMonth - 1]}`,
+      });
+      _planCache[row.pid + '|' + YEAR] = null; delete _planCache[row.pid + '|' + YEAR];
+    } catch (e) { alert(e.message); }
   }
 
   function openMapMenu(btn) {

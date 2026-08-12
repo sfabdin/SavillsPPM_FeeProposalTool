@@ -18,7 +18,8 @@ confidential rate grid (`rates.json`) is pulled from Box only after sign-in and 
 **Manage**
 - `Projects Index.html` — every project; client rollup; per-project fees
 - `Revenue Projections.html` — monthly invoice matrix (reads the materialized
-  billing series), broker split toggle, current-month marker, Excel export
+  billing series), broker split toggle, current-month marker, Excel export,
+  **open revenue slips banner** (months Finance moved, shown red until reconciled)
 - `Revenue Studio.html` — budget/RF baselines vs. actuals, scenarios, waterfall,
   drill-down (bucket → client → project), Exec Report tab
 - `Benchmarking Dashboard.html` — rate spread + scope/assumptions comparison
@@ -42,6 +43,8 @@ confidential rate grid (`rates.json`) is pulled from Box only after sign-in and 
 - `store.js` — data layer: projects + studio stores, the calc engines
   (`computeFinancials`, `monthlySeries`, `projectFinancials`), the **revenue ledger**
   (its own store, backed by `revenue.json`; `recognised = billed + fee share + accrued`),
+  **revenue slips** (Finance moving a missed fee to a later month — moves money,
+  never creates it; open slips flag the affected months for the red on Projections),
   change-order ledger,
   version history, **schema migrations**, **tombstone soft-delete**, **activity log**,
   access wall + leader directory
