@@ -576,6 +576,117 @@
     return (open.length === 1 && open[0].ledgerKey === 'B') || open.length + ' open, expected 1';
   });
 
+  /* ---- one canonical series: freeze the price, not the calendar ---- */
+
+  test('Series · canonical', 'a monthly override shows on a BOOKED record', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ id: 'bk1', project: { name: 'B', client: 'A', status: 'active' },
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    const jun0 = S.billingSeries(S.getProject(p.id), C).find(x => x.month === 6).net;
+    const rec = S.getProject(p.id); rec.monthlyOverrides = { '2026-6': 15000 }; S.saveProject(rec);
+    const s2 = S.billingSeries(S.getProject(p.id), C).find(x => x.month === 6);
+    if (near(s2.net, jun0)) return 'the frozen snapshot won — override invisible (' + round(s2.net) + ')';
+    if (!s2.overridden) return 'the cell is not flagged as overridden';
+    return eq(s2.net, 15000, 'June');
+  });
+
+  test('Series · canonical', 'a slip shows on a BOOKED record', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ id: 'bk2', project: { name: 'B', client: 'A', status: 'active' },
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    const g = () => { const m = {}; S.billingSeries(S.getProject(p.id), C).forEach(x => m[x.month] = x); return m; };
+    const b = g(); const jun = b[6].net, aug = b[8].net;
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-06', toYm: '2026-08', amount: jun });
+    const a = g();
+    if (!near(a[6].net, 0)) return 'June ' + round(a[6].net);
+    if (!a[6].slipOut || !a[8].slipIn) return 'flags missing on a booked record';
+    return eq(a[8].net, aug + jun, 'August');
+  });
+
+  /* ---- plan adjustments ---- */
+
+  test('Adjust · plan', 'an adjustment changes the month and the year total', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    const before = seriesSum(S.getProject(p.id));
+    S.recordAdjustment(p.id, { ledgerKey: 'K', ym: '2026-06', delta: -5000 });
+    return eq(seriesSum(S.getProject(p.id)), before - 5000, 'total after adjusting a month down');
+  });
+
+  test('Adjust · plan', 'an open adjustment flags its month, reconciling clears it', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    S.recordAdjustment(p.id, { ledgerKey: 'K', ym: '2026-06', delta: -5000 });
+    const g = () => S.billingSeries(S.getProject(p.id), C).find(x => x.month === 6);
+    if (!g().adjusted) return 'not flagged';
+    const held = g().net;
+    const adj = S.projectSlips(S.getProject(p.id))[0];
+    S.reconcileSlip(p.id, adj.id, true);
+    if (g().adjusted) return 'still flagged after reconciling';
+    if (!near(g().net, held)) return 'reconciling silently undid the adjustment';
+    return S.allOpenSlips().length === 0 || 'still listed as open';
+  });
+
+  test('Adjust · plan', 'adjusting the same month twice replaces, never compounds', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    S.recordAdjustment(p.id, { ledgerKey: 'K', ym: '2026-06', delta: -5000 });
+    S.recordAdjustment(p.id, { ledgerKey: 'K', ym: '2026-06', delta: -8000 });
+    const adjs = S.projectSlips(S.getProject(p.id)).filter(x => x.kind === 'adjust');
+    return adjs.length === 1 && near(adjs[0].delta, -8000) ? true : adjs.length + ' records, delta ' + round(adjs[0].delta);
+  });
+
+  /* ---- schedule shift: move the work, not just the money ---- */
+
+  test('Shift · schedule', 'the timeline moves and phase lengths are untouched', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 3, startYear: 2026, endMonth: 8, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }] }));
+    S.shiftSchedule(p.id, 2);
+    const t = S.getProject(p.id).timeline;
+    if (t.startMonth !== 5 || t.startYear !== 2026) return 'start ' + t.startYear + '-' + t.startMonth;
+    if (t.endMonth !== 10) return 'end month ' + t.endMonth;
+    return S.getProject(p.id).phases[0].length === 6 || 'phase length changed';
+  });
+
+  test('Shift · schedule', 'a shift crossing December rolls the year', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 11, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 2 }] }));
+    S.shiftSchedule(p.id, 3);
+    const t = S.getProject(p.id).timeline;
+    return (t.startYear === 2027 && t.startMonth === 2) || 'start ' + t.startYear + '-' + t.startMonth;
+  });
+
+  test('Shift · schedule', 'per-month staffing moves with the dates', () => {
+    freshDb(); asAdmin();
+    const rec = base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 6, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }] });
+    rec.roles[0].fteMonthly = { '2026-3': 50 };
+    const p = S.saveProject(rec);
+    S.shiftSchedule(p.id, 2);
+    const fm = S.getProject(p.id).roles[0].fteMonthly;
+    if (fm['2026-3'] != null) return 'FTE left behind in the old month';
+    return fm['2026-5'] === 50 || 'FTE did not land in May: ' + JSON.stringify(fm);
+  });
+
+  test('Shift · schedule', 'the revenue moves with the work', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 6, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }] }));
+    const before = seriesSum(S.getProject(p.id));
+    const firstBefore = S.monthlySeries(S.getProject(p.id), C)[0];
+    S.shiftSchedule(p.id, 2);
+    const firstAfter = S.monthlySeries(S.getProject(p.id), C)[0];
+    if (firstAfter.month !== firstBefore.month + 2) return 'series starts at month ' + firstAfter.month;
+    return eq(seriesSum(S.getProject(p.id)), before, 'total after the shift');
+  });
+
   /* ---- the ledger is its own store (revenue.json), not projects.json ---- */
 
   test('Ledger · store', 'actuals never land in projects.json', () => {

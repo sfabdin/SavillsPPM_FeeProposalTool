@@ -87,6 +87,8 @@
   table.proj td.slip-out::after { content: "↘"; margin-left: 3px; }
   table.proj td.slip-in::after { content: "↗"; margin-left: 3px; }
   table.proj td.slip-out.slip-in::after { content: "↕"; }
+  table.proj td.slip-adj { background:#fdeaea; color:var(--sav-red); font-weight:700; }
+  table.proj td.slip-adj::after { content: "✎"; margin-left:3px; }
   .slip-bar { background:#fdeaea; border:1px solid var(--sav-red); border-left:5px solid var(--sav-red);
               padding:12px 16px; margin-bottom:16px; }
   .slip-bar .sb-top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -109,6 +111,11 @@
                       text-transform:uppercase; border:0; background:var(--sav-red); color:#fff;
                       padding:5px 10px; cursor:pointer; }
   .slip-list .sl-ok:hover { background:#a71217; }
+  .slip-list .sl-shift { font-family:var(--font-display); font-weight:700; font-size:9.5px; letter-spacing:.08em;
+                         text-transform:uppercase; border:1px solid var(--sav-red); background:#fff; color:var(--sav-red);
+                         padding:5px 10px; margin-right:6px; cursor:pointer; }
+  .slip-list .sl-shift:hover { background:var(--sav-red); color:#fff; }
+  .slip-list .sl-open { font-family:var(--font-body); font-size:10.5px; color:var(--sav-red); text-decoration:underline; }
   .matrix-scroll.editing { box-shadow: 0 0 0 2px var(--sav-yellow); }
   select.rtag-edit { font-family: var(--font-display); font-weight: 700; font-size: 11px; border: 0; padding: 2px 4px; margin-right: 6px; color: #fff; cursor: pointer; }
   select.rtag-edit.r1 { background: #1f8a5b; } select.rtag-edit.r2 { background: #3AA95C; }
@@ -314,36 +321,23 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
       // Prefer the materialized billing series on the record (booked = frozen contract,
       // pursuit = live-refreshed on save). map = client INVOICE per month (incl. pass-through);
       // brokerMap = broker cut; passMap = pass-through vendor cost (flows out, not revenue).
-      const fin = p.financials;
-      // A booked snapshot that's gone STALE (inputs changed in the calculator since
-      // booking) no longer represents what the calculator shows — fall through to
-      // the live compute so edits show up here immediately.
-      let usedFrozen = false;
-      if (fin && !fin.stale && Array.isArray(fin.byMonth) && fin.byMonth.length) {
-        usedFrozen = true;
-        fin.byMonth.forEach(s => {
-          const [y, m] = s.ym.split('-').map(Number);   // stored '2026-01' → grid key '2026-1'
-          const k = y + '-' + m;
-          const inv = (s.invoice != null) ? s.invoice : s.net;   // older snapshots: net only
-          map[k] = (map[k] || 0) + inv;
-          brokerMap[k] = (brokerMap[k] || 0) + (s.broker || 0);
-          passMap[k] = (passMap[k] || 0) + (s.passCost || 0);
-          total += inv;
-        });
-      } else {
-        // Fallback: live compute (older records, or not yet priced when saved).
-        const series = STORE.monthlySeries(p, CATALOG);
-        const fs0 = (p.assumptions && p.assumptions.feeShare) || {};
-        const pct0 = fs0.enabled ? (parseFloat(fs0.pct) || 0) / 100 : 0;
-        const onTop0 = fs0.mode === 'ontop';
-        series.forEach(s => {
-          const k = s.year + '-' + s.month;
-          const inv = onTop0 ? s.amount * (1 + pct0) : s.amount;
-          map[k] = (map[k] || 0) + inv;
-          brokerMap[k] = (brokerMap[k] || 0) + s.amount * pct0;
-          total += inv;
-        });
-      }
+      /* ONE canonical series for every month — see store.billingSeries().
+         Freezing protects the price, not the calendar: a booked record keeps
+         its contracted pricing, but overrides, slips and plan adjustments
+         always show. Reading the frozen byMonth raw (what this did) meant a
+         monthly edit was saved, flagged red, and then drawn at its old value. */
+      const slipMap = {};
+      (STORE.billingSeries(p, CATALOG) || []).forEach(s => {
+        const k = s.year + '-' + s.month;
+        map[k] = (map[k] || 0) + s.invoice;
+        brokerMap[k] = (brokerMap[k] || 0) + (s.broker || 0);
+        passMap[k] = (passMap[k] || 0) + (s.passCost || 0);
+        total += s.invoice;
+        if (s.slipOut || s.slipIn || s.adjusted) {
+          const e = slipMap[k] = slipMap[k] || { out: 0, in: 0, adj: 0 };
+          e.out += s.slipOut || 0; e.in += s.slipIn || 0; e.adj += s.adjusted || 0;
+        }
+      });
       // Add each approved change order's incremental curve on top of the baseline.
       const cos = STORE.approvedChangeOrders ? STORE.approvedChangeOrders(p.id) : [];
       cos.forEach(co => {
@@ -353,34 +347,12 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
           map[k] = (map[k] || 0) + x.net; total += x.net;
         });
       });
-      /* Revenue slips — Finance moved money out of a month that didn't bill
-         into a later one. monthlySeries already folds them in, so the amounts
-         are only moved here for a BOOKED record, which read its frozen
-         snapshot above and never went through that path. Applying both would
-         double the move. Flags are collected either way, so the cells paint. */
-      const slipMap = {};
-      (STORE.projectSlips ? STORE.projectSlips(p) : []).forEach(sl => {
-        const amt = Number(sl.amount) || 0;
-        if (!amt) return;
-        const kf = sl.fromYm.split('-').map(Number), kt = sl.toYm.split('-').map(Number);
-        const from = kf[0] + '-' + kf[1], to = kt[0] + '-' + kt[1];
-        if (usedFrozen) {
-          map[from] = (map[from] || 0) - amt;
-          map[to] = (map[to] || 0) + amt;
-        }
-        if (!sl.reconciled) {
-          (slipMap[from] = slipMap[from] || { out: 0, in: 0, slips: [] }).out += amt;
-          slipMap[from].slips.push(sl);
-          (slipMap[to] = slipMap[to] || { out: 0, in: 0, slips: [] }).in += amt;
-          slipMap[to].slips.push(sl);
-        }
-      });
       const pj = p.project || {};
       const leaders = [pj.lead, pj.clientRelOwner].map(x => (x || '').trim()).filter(Boolean);
       const serviceLines = STORE.projectServiceLines(p);
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
       const feeSharePct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
-      const ptCost = (fin && fin.passThroughCost) || 0;
+      const ptCost = (p.financials && p.financials.passThroughCost) || 0;
       return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, total, ov: p.monthlyOverrides || null, slipMap,
                coCount: cos.length, feeSharePct, ptCost,
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim(), projectType: (pj.projectType || '').trim() };
@@ -545,8 +517,8 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
         const today = c.key === _ck ? ' today' : '';
         const isOv = r.ov && r.ov[c.key] != null;
         const sl = r.slipMap && r.slipMap[c.key];
-        const slCls = sl ? (sl.out ? ' slip-out' : '') + (sl.in ? ' slip-in' : '') : '';
-        const slTip = sl ? ` · ${sl.out ? 'slipped out ' + fmtExact(sl.out) : ''}${sl.out && sl.in ? ' / ' : ''}${sl.in ? 'slipped in ' + fmtExact(sl.in) : ''} — unreconciled` : '';
+        const slCls = sl ? (sl.out ? ' slip-out' : '') + (sl.in ? ' slip-in' : '') + (sl.adj ? ' slip-adj' : '') : '';
+        const slTip = sl ? ` · ${sl.out ? 'slipped out ' + fmtExact(sl.out) : ''}${sl.out && sl.in ? ' / ' : ''}${sl.in ? 'slipped in ' + fmtExact(sl.in) : ''}${sl.adj ? 'plan adjusted ' + fmtExact(sl.adj) : ''} — unreconciled` : '';
         if (editMode) {
           html += `<td class="num editable${isOv ? ' overridden' : ''}${slCls}${sep}${today}" contenteditable="true" data-pid="${r.p.id}" data-key="${c.key}">${v ? Math.round(v) : ''}</td>`;
         } else {
@@ -1012,23 +984,40 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
   /* ---------- open slips banner ---------- */
   const MLBL = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const YMLBL = (ym) => { const [y, m] = String(ym).split('-').map(Number); return MLBL[m - 1] + ' ' + y; };
+  const monthsBetween = (a, b) => { const [ay, am] = String(a).split('-').map(Number), [by, bm] = String(b).split('-').map(Number); return (by - ay) * 12 + (bm - am); };
   function renderSlips() {
     const bar = $('#slip-bar');
     if (!STORE.allOpenSlips) { bar.hidden = true; return; }
     const slips = STORE.allOpenSlips();
     if (!slips.length) { bar.hidden = true; return; }
     bar.hidden = false;
-    const total = slips.reduce((a, s) => a + (Number(s.amount) || 0), 0);
-    $('#slip-sub').innerHTML = `<b>${slips.length}</b> fee${slips.length === 1 ? '' : 's'} moved to a later month by
-      Revenue Reconciliation — <b>${fmtExact(total)}</b> — shown in red below until reconciled.`;
+    const total = slips.reduce((a, s) => a + Math.abs(Number((s.kind || 'slip') === 'adjust' ? s.delta : s.amount) || 0), 0);
+    const nAdj = slips.filter(s => (s.kind || 'slip') === 'adjust').length;
+    const nSlip = slips.length - nAdj;
+    $('#slip-sub').innerHTML = `<b>${slips.length}</b> open change${slips.length === 1 ? '' : 's'} from Revenue Reconciliation`
+      + (nSlip ? ` — ${nSlip} moved to a later month` : '') + (nAdj ? `${nSlip ? ',' : ' —'} ${nAdj} plan adjustment${nAdj === 1 ? '' : 's'}` : '')
+      + ` — <b>${fmtExact(total)}</b>. Red below until the schedule is moved and each one is reconciled.`;
     $('#slip-list').innerHTML = `<table><thead><tr>
-        <th>Project</th><th>Was due</th><th>Now expected</th><th style="text-align:right">Amount</th><th></th>
-      </tr></thead><tbody>` + slips.map(s => `<tr>
-        <td><strong>${esc(s.name)}</strong><div class="sl-note">${esc(s.client || '')}${s.note ? ' · ' + esc(s.note) : ''}</div></td>
-        <td>${YMLBL(s.fromYm)}</td><td>${YMLBL(s.toYm)}</td>
-        <td class="n">${fmtExact(s.amount)}</td>
-        <td><button class="sl-ok" data-pid="${s.projectId}" data-sid="${s.id}">Reconciled</button></td>
-      </tr>`).join('') + '</tbody></table>';
+        <th>Project</th><th>Change</th><th>Month(s)</th><th style="text-align:right">Amount</th><th></th>
+      </tr></thead><tbody>` + slips.map(s => {
+        const isAdj = (s.kind || 'slip') === 'adjust';
+        const amt = Number(isAdj ? s.delta : s.amount) || 0;
+        const shift = isAdj ? 0 : monthsBetween(s.fromYm, s.toYm);
+        return `<tr>
+        <td><strong>${esc(s.name)}</strong><div class="sl-note">${esc(s.client || '')}${s.note ? ' · ' + esc(s.note) : ''}</div>
+            <a class="sl-open" href="Universal Fee Calculator.html?project=${encodeURIComponent(s.projectId)}">Open in calculator →</a></td>
+        <td>${isAdj ? 'Plan adjusted' : 'Slipped ' + shift + ' month' + (Math.abs(shift) === 1 ? '' : 's')}</td>
+        <td>${isAdj ? YMLBL(s.ym) : YMLBL(s.fromYm) + ' → ' + YMLBL(s.toYm)}</td>
+        <td class="n">${fmtExact(amt)}</td>
+        <td>${!isAdj && shift ? `<button class="sl-shift" data-pid="${s.projectId}" data-n="${shift}">Shift schedule ${shift > 0 ? '+' : ''}${shift}</button>` : ''}
+            <button class="sl-ok" data-pid="${s.projectId}" data-sid="${s.id}">Reconciled</button></td>
+      </tr>`; }).join('') + '</tbody></table>';
+    document.querySelectorAll('#slip-list .sl-shift').forEach(b => b.addEventListener('click', () => {
+      const n = +b.dataset.n;
+      if (!confirm(`Move this project's whole schedule ${n > 0 ? 'out' : 'in'} by ${Math.abs(n)} month${Math.abs(n) === 1 ? '' : 's'}?\n\nPhase lengths stay the same; the start date and every month of staffing move with it.`)) return;
+      try { STORE.shiftSchedule(b.dataset.pid, n); } catch (e) { alert(e.message); return; }
+      prepData(); build();
+    }));
     document.querySelectorAll('#slip-list .sl-ok').forEach(b => b.addEventListener('click', () => {
       try { STORE.reconcileSlip(b.dataset.pid, b.dataset.sid, true); } catch (e) { alert(e.message); return; }
       prepData(); build();

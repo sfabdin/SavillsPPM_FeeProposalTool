@@ -474,14 +474,19 @@
        directly, because the sheet is right most of the time and silent the
        rest of it. */
     const laneRow = (r, kind, isChild) => {
-      const editable = kind !== 'tool';
+      // The Tool lane is editable too now — "the sheet says 15k, make the plan
+      // say 15k" is the single most common correction, and having to remember
+      // to go do it on another page is how it stops happening.
+      const editable = kind !== 'tool' || !!r.pid;
       let s = `<tr class="ln ln-${kind} ${isChild ? 'fee-row' : ''} ${kind === 'tool' ? 'grp-top' : ''}" data-key="${esc(r.key)}">`;
       if (kind === 'tool') {
         s += `<td class="l pcell" rowspan="3">`;
         if (isChild) s += `<div class="wp-name fee">${feeLabel(Object.values(r.feeShare || {})[0] || 0)} — ${esc(r.name || 'co-broker')}</div>`;
         else {
           s += `<div class="wp-name">${esc(r.name || '(unnamed)')}</div><div class="wp-meta">${esc(r.client || '—')}${r.code ? ' · ' + esc(r.code) : ''}`;
-          s += r.pid ? '' : ` <button class="map-btn" data-key="${esc(r.key)}">map to project…</button>`;
+          s += r.pid
+            ? ` <a class="proj-link" href="Universal Fee Calculator.html?project=${encodeURIComponent(r.pid)}" title="Open this project in the calculator">open ↗</a>`
+            : ` <button class="map-btn" data-key="${esc(r.key)}">map to project…</button>`;
           s += r.feeHint ? ' <span class="feehint">comment mentions a fee share</span>' : '';
           s += `</div>`;
           if (r.note) s += `<div class="wp-note">“${esc(r.note)}”</div>`;
@@ -498,6 +503,16 @@
         tot += v;
         const focus = FOCUS === m ? 'focus-c' : '';
         if (!editable) { s += `<td class="plan-c ${focus} ${v ? '' : 'zero'}">${v ? money(v) : '—'}</td>`; continue; }
+        if (kind === 'tool') {
+          const adj = (STORE.projectSlips(STORE.getProject(r.pid) || {}) || [])
+            .find(x => (x.kind || 'slip') === 'adjust' && x.ledgerKey === r.key && x.ym === ymOf(YEAR, m) && !x.reconciled);
+          s += `<td class="ed plan-c ${focus} ${adj ? 'adjusted-c' : ''} ${v ? '' : 'zero'}"
+                   data-key="${esc(r.key)}" data-m="${m}" data-f="tool"
+                   contenteditable="true" inputmode="decimal" role="textbox"
+                   aria-label="Tool plan ${MONTHS[m - 1]} ${esc(r.name || '')}"
+                   title="${esc('The project\'s planned billing. Editing this adjusts the project and flags it red until reconciled.')}">${v ? Math.round(v).toLocaleString() : ''}</td>`;
+          continue;
+        }
         const st = (r.status || {})[m];
         const edited = kind === 'billed' && (r.billedEdit || {})[m] != null;
         const cls = st ? 's-' + (ST_CLASS[st] || '') : ((v || plan) ? 'unruled-c' : '');
@@ -558,7 +573,8 @@
         const raw = td.textContent.replace(/[$,\s]/g, '').replace(/[−–—]/g, '-').trim();
         if (raw === (td.dataset.before || '').replace(/[$,\s]/g, '')) return;
         if (raw !== '' && isNaN(Number(raw))) { td.textContent = td.dataset.before || ''; return; }
-        STORE.setCellAmount(YEAR, td.dataset.key, +td.dataset.m, td.dataset.f, raw === '' ? null : Number(raw));
+        if (td.dataset.f === 'tool') adjustPlan(td.dataset.key, +td.dataset.m, raw === '' ? null : Number(raw));
+        else STORE.setCellAmount(YEAR, td.dataset.key, +td.dataset.m, td.dataset.f, raw === '' ? null : Number(raw));
         buildBar(); kpis(); renderGrid(); renderFlash();
       });
       // A click on an already-focused cell opens the status picker instead of
@@ -648,6 +664,7 @@
             ${MONTHS.map((mn, i) => i + 1 > m ? `<option value="${i + 1}" ${(row.carryTo || {})[m] === i + 1 ? 'selected' : ''}>${mn}</option>` : '').join('')}
           </select>
         </label>
+        ${(row.carryTo || {})[m] && row.pid ? `<button class="btn sm shift-btn" data-pid="${esc(row.pid)}" data-n="${(row.carryTo[m] - m)}">Shift schedule +${row.carryTo[m] - m} &amp; staffing</button>` : ''}
       </div>`;
     document.body.appendChild(pop);
     const rect = td.getBoundingClientRect();
@@ -664,6 +681,13 @@
       }
       closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash();
     }));
+    pop.querySelector('.shift-btn')?.addEventListener('click', () => {
+      const n = +pop.querySelector('.shift-btn').dataset.n;
+      if (!confirm(`Move this project's whole schedule out by ${n} month${n === 1 ? '' : 's'}?\n\nPhase lengths stay the same; the start date and every month of staffing move with it, so effort and revenue stay in step.`)) return;
+      try { STORE.shiftSchedule(pop.querySelector('.shift-btn').dataset.pid, n); } catch (e) { alert(e.message); return; }
+      _planCache[row.pid + '|' + YEAR] = null; delete _planCache[row.pid + '|' + YEAR];
+      closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash();
+    });
     pop.querySelector('.carry-pick')?.addEventListener('change', (e) => {
       const to = +e.target.value || null;
       STORE.setCellStatus(YEAR, key, m, 'slip', { carryTo: to });
@@ -673,6 +697,33 @@
   }
 
   const ymOf = (y, m) => y + '-' + String(m).padStart(2, '0');
+
+  /** Change what the project SAYS it should bill in a month. Recorded as a
+      reconcilable adjustment rather than a silent overwrite, so it shows red
+      on Revenue Projections and in the calculator until someone signs it off.
+      The delta is measured against the UNADJUSTED plan, so typing twice lands
+      where you typed rather than compounding. */
+  function adjustPlan(key, month, value) {
+    const row = STORE.getLedgerYear(YEAR).rows[key];
+    if (!row || !row.pid) { alert('Map this line to a project first — there is no plan to change.'); return; }
+    const ym = ymOf(YEAR, month);
+    const existing = (STORE.projectSlips(STORE.getProject(row.pid)) || [])
+      .find(x => (x.kind || 'slip') === 'adjust' && x.ledgerKey === key && x.ym === ym);
+    const shown = planFor(row.pid, YEAR, month);
+    const bare = shown - (existing ? (Number(existing.delta) || 0) : 0);
+    try {
+      if (value == null || Math.abs(value - bare) < 0.005) {
+        if (existing) STORE.removeSlip(row.pid, { id: existing.id });     // back to the plan
+      } else {
+        STORE.recordAdjustment(row.pid, {
+          ledgerKey: key, ym, delta: Math.round((value - bare) * 100) / 100,
+          was: bare, now: value,
+          note: `${MONTHS[month - 1]} ${YEAR} plan corrected to match what was billed`,
+        });
+      }
+      delete _planCache[row.pid + '|' + YEAR];
+    } catch (e) { alert(e.message); }
+  }
 
   /** A slip is the one thing on this page that writes into a project record:
       the fee was planned, it did not bill, so it moves to a later month and the

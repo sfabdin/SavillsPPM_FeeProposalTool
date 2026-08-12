@@ -1953,12 +1953,12 @@
       // Flatline distributes the project's net evenly; a service-line slice gets
       // its proportional share of each flat month.
       const flat = months.length ? net / months.length : 0;
-      if (!slFilter) return applyOverrides(rows.map(r => ({ year: r.year, month: r.month, amount: flat })), p, slFilter);
+      if (!slFilter) return applyOverrides(rows.map(r => ({ year: r.year, month: r.month, amount: flat })), p, slFilter, opts && opts.raw);
       const sliceGross = totalGross || 1;
       return rows.map(r => ({ year: r.year, month: r.month, amount: flat * (r.gross / sliceGross) }));
     }
     let series = rows.map(r => ({ year: r.year, month: r.month, amount: r.gross * (1 - discPct) - r.lockC }));
-    return applyOverrides(series, p, slFilter);
+    return applyOverrides(series, p, slFilter, opts && opts.raw);
   }
 
   /** Imported broker (fee-share) series for a project, by month. */
@@ -2111,8 +2111,8 @@
 
   /** Manual monthly overrides (set in Revenue Projections) replace the computed
       amount for that month. Stored as p.monthlyOverrides = { "YYYY-M": number }. */
-  function applyOverrides(series, p, slFilter) {
-    if (slFilter) return series;                    // a service-line slice can't carry either
+  function applyOverrides(series, p, slFilter, raw) {
+    if (slFilter || raw) return series;             // a slice, or a deliberately raw read
     const ov = p.monthlyOverrides;
     const withOv = !ov ? series : series.map(s => {
       const k = s.year + '-' + s.month;
@@ -2145,16 +2145,27 @@
   const slipYm = (y, m) => y + '-' + String(m).padStart(2, '0');
   function projectSlips(p) { return (p && p.revenueSlips) || []; }
   function openSlips(p) { return projectSlips(p).filter(s => !s.reconciled); }
+  const changeKind = (s) => s.kind || 'slip';       // records written before adjustments existed
 
   /** Fold open AND reconciled slips into a monthly series. Both move money —
       reconciling is an acknowledgement, not a reversal — but only open ones
       raise a flag for the UI to paint. */
   function applySlips(series, p) {
-    const slips = projectSlips(p);
-    if (!slips.length) return series;
+    const changes = projectSlips(p);
+    if (!changes.length) return series;
     const byKey = {};
     series.forEach(s => { byKey[slipYm(s.year, s.month)] = { ...s }; });
-    slips.forEach(sl => {
+    changes.forEach(sl => {
+      if (changeKind(sl) === 'adjust') {
+        // A plan correction: Finance found the month should have been a
+        // different figure. Changes the year's total — that is the point.
+        const d = Number(sl.delta) || 0;
+        const cell = byKey[sl.ym];
+        if (!d || !cell) return;
+        cell.amount += d;
+        if (!sl.reconciled) cell.adjusted = (cell.adjusted || 0) + d;
+        return;
+      }
       const amt = Number(sl.amount) || 0;
       if (!amt) return;
       const from = byKey[sl.fromYm], to = byKey[sl.toYm];
@@ -2162,6 +2173,149 @@
       if (to) { to.amount += amt; if (!sl.reconciled) { to.slipIn = (to.slipIn || 0) + amt; } }
     });
     return series.map(s => byKey[slipYm(s.year, s.month)] || s);
+  }
+
+  /** Record a plan ADJUSTMENT: this month should have been a different number.
+      Unlike a slip it changes the year — money is added or removed, not moved —
+      and like a slip it stays open (red everywhere) until someone reconciles it. */
+  function recordAdjustment(projectId, adj) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can adjust a project plan.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p) return null;
+    p.revenueSlips = p.revenueSlips || [];
+    const cu = getCurrentUser() || {};
+    const idx = p.revenueSlips.findIndex(s => changeKind(s) === 'adjust' && s.ledgerKey === adj.ledgerKey && s.ym === adj.ym);
+    const rec = {
+      kind: 'adjust', ledgerKey: adj.ledgerKey || '', ym: adj.ym,
+      delta: Number(adj.delta) || 0, was: Number(adj.was) || 0, now: Number(adj.now) || 0,
+      note: adj.note || '', source: 'reconciliation', reconciled: false,
+      at: new Date().toISOString(), by: cu.name || cu.username || 'admin',
+    };
+    if (idx >= 0) rec.id = p.revenueSlips[idx].id;
+    else rec.id = 'adj_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    if (idx >= 0) p.revenueSlips[idx] = rec; else p.revenueSlips.push(rec);
+    p.updatedAt = new Date().toISOString();
+    writeDb(db);
+    logActivity('plan-adjust', projectId, { ym: adj.ym, delta: rec.delta });
+    return p;
+  }
+
+  /* ============================================================
+     SCHEDULE SHIFT — moving the work, not just the money
+     ------------------------------------------------------------
+     A slip says the fee arrives later. Usually that is because the
+     WORK is later, and until the schedule moves with it the roster
+     still shows people booked in a month that earns nothing. This
+     shifts a project's timeline by N months and carries the per-month
+     staffing with it, so effort and revenue stay in step.
+
+     Phase lengths are untouched — the shape of the job does not
+     change, it just starts later, which is what "push it out two
+     months" actually means.
+     ============================================================ */
+  function shiftSchedule(projectId, months) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can move a project schedule.');
+    const n = parseInt(months, 10);
+    if (!n) return null;
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p || !p.timeline) return null;
+    const bump = (y, m) => { const d = new Date(y, (m - 1) + n, 1); return { year: d.getFullYear(), month: d.getMonth() + 1 }; };
+    const st = bump(p.timeline.startYear, p.timeline.startMonth);
+    const en = bump(p.timeline.endYear || p.timeline.startYear, p.timeline.endMonth || p.timeline.startMonth);
+    p.timeline = { ...p.timeline, startYear: st.year, startMonth: st.month, endYear: en.year, endMonth: en.month };
+    // Carry the month-level staffing with the dates, or a shifted schedule
+    // would keep pointing its FTE at the months it just left.
+    (p.roles || []).forEach(r => {
+      if (!r.fteMonthly) return;
+      const moved = {};
+      Object.entries(r.fteMonthly).forEach(([k, v]) => {
+        const [y, m] = k.split('-').map(Number);
+        const t = bump(y, m);
+        moved[t.year + '-' + t.month] = v;
+      });
+      r.fteMonthly = moved;
+    });
+    // Monthly billing overrides are keyed by month too.
+    if (p.monthlyOverrides) {
+      const mo = {};
+      Object.entries(p.monthlyOverrides).forEach(([k, v]) => {
+        const [y, m] = k.split('-').map(Number);
+        const t = bump(y, m);
+        mo[t.year + '-' + t.month] = v;
+      });
+      p.monthlyOverrides = mo;
+    }
+    p.scheduleShiftedAt = new Date().toISOString();
+    p.updatedAt = p.scheduleShiftedAt;
+    // The frozen snapshot is now describing the wrong months — restamp it.
+    const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    if (catalog && catalog.hydrated) {
+      const fin = computeFinancials(p, catalog);
+      if (fin) { fin.inputsHash = financialsInputsHash(p); fin.stale = false; p.financials = fin; }
+    } else if (p.financials) { p.financials.stale = true; }
+    writeDb(db);
+    logActivity('schedule-shift', projectId, { months: n, start: st.year + '-' + st.month });
+    return p;
+  }
+
+  /** THE canonical monthly billing series — what every page should read.
+      ------------------------------------------------------------------
+      Freezing protects the PRICE, not the CALENDAR. A booked record's
+      frozen snapshot is the authority on what the work is worth (immune to
+      later rate-grid changes), but the month-by-month distribution stays
+      live, because overrides, slips and adjustments are exactly the things
+      that must show up after a record is booked. Reading the frozen
+      byMonth raw — which Revenue Projections and the staffing dollars view
+      both did — meant a monthly edit was recorded, flagged in red, and
+      then displayed at its old value. */
+  function billingSeries(p, catalog) {
+    const fs = (p.assumptions && p.assumptions.feeShare) || {};
+    const pct = fs.enabled ? (parseFloat(fs.pct) || 0) / 100 : 0;
+    const onTop = fs.mode === 'ontop';
+    const fin = p.financials;
+    const base = {};
+    if (fin && Array.isArray(fin.byMonth) && fin.byMonth.length) {
+      fin.byMonth.forEach(s => {
+        const [y, m] = s.ym.split('-').map(Number);
+        base[y + '-' + m] = { year: y, month: m, net: s.net || 0,
+          broker: s.broker || 0, passCost: s.passCost || 0, passClient: s.passClient || 0 };
+      });
+    } else {
+      (monthlySeries(p, catalog, { raw: true }) || []).forEach(s => {
+        base[s.year + '-' + s.month] = { year: s.year, month: s.month, net: s.amount,
+          broker: s.amount * pct, passCost: 0, passClient: 0 };
+      });
+    }
+    // The live series carries the same months with overrides + changes folded
+    // in; use it as the authority on `net` and on the flags.
+    const live = monthlySeries(p, catalog) || [];
+    const out = [];
+    const seen = {};
+    live.forEach(s => {
+      const k = s.year + '-' + s.month;
+      const b = base[k] || { net: s.amount, broker: 0, passCost: 0, passClient: 0 };
+      const net = s.amount;
+      // Broker/pass-through ride the ORIGINAL proportions — a monthly edit
+      // changes what we bill, not the deal behind it.
+      const ratio = b.net ? net / b.net : 1;
+      const broker = (b.broker || 0) * ratio;
+      out.push({
+        ym: k, year: s.year, month: s.month, net,
+        invoice: (onTop ? net + broker : net) + (b.passClient || 0),
+        broker, passCost: b.passCost || 0, passClient: b.passClient || 0,
+        overridden: !!s.overridden, slipOut: s.slipOut || 0, slipIn: s.slipIn || 0, adjusted: s.adjusted || 0,
+      });
+      seen[k] = true;
+    });
+    // Months the snapshot knows about that the live compute doesn't reach.
+    Object.entries(base).forEach(([k, b]) => {
+      if (seen[k]) return;
+      out.push({ ym: k, year: b.year, month: b.month, net: b.net, invoice: (onTop ? b.net + b.broker : b.net) + (b.passClient || 0),
+                 broker: b.broker, passCost: b.passCost, passClient: b.passClient, overridden: false, slipOut: 0, slipIn: 0, adjusted: 0 });
+    });
+    return out.sort((a, b) => a.year - b.year || a.month - b.month);
   }
 
   /** Record (or update) a slip on a project. Keyed by the ledger cell it came
@@ -2574,6 +2728,7 @@
     isChangeOrder, childChangeOrders, approvedChangeOrders, createChangeOrder,
     importedBrokerSeries, reconcileImport,
     projectSlips, openSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
+    recordAdjustment, shiftSchedule, billingSeries,
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
