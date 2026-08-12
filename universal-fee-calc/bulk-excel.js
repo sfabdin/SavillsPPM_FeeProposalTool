@@ -54,14 +54,22 @@
     { key: 'name',          h: 'Project name',      w: 38 },
     { key: 'client',        h: 'Client',            w: 26 },
     { key: 'status',        h: 'Status',            w: 14, list: 'Status' },
+    { key: 'lossReason',    h: 'Loss reason',       w: 20, list: 'LossReason' },
     { key: 'rating',        h: 'Rating',            w: 18, list: 'Rating' },
     { key: 'industry',      h: 'Industry',          w: 20, list: 'Industry' },
     { key: 'projectType',   h: 'Project type',      w: 34, list: 'ProjectType' },
+    { key: 'projectSubtypes', h: 'Type sub-services (; separated)', w: 46 },
     { key: 'lead',          h: 'Lead PE',           w: 22, list: 'Lead' },
+    { key: 'clientRelOwner',h: 'Relationship owner',w: 22, list: 'Lead' },
+    { key: 'accessGrant',   h: 'Grant access to (emails)', w: 40 },
+    { key: 'assumptionsList', h: 'Assumptions / exclusions (; separated)', w: 52 },
     { key: 'location',      h: 'Location',          w: 20 },
     { key: 'salesforceId',  h: 'Salesforce ID',     w: 16, text: true },
     { key: 'clientContact', h: 'Client contact',    w: 22 },
-    { key: 'clientRelOwner',h: 'Relationship owner',w: 22 },
+    { key: 'proposalDate',  h: 'Proposal date',     w: 15, text: true },
+    { key: 'firstProposalDate', h: 'First proposal date', w: 17, text: true },
+    { key: 'signedContractDate', h: 'Signed contract date', w: 18, text: true },
+    { key: 'intakeSent',    h: 'Intake sent (Y/N)', w: 14, list: 'YesNo' },
     { key: 'start',         h: 'Start (YYYY-MM)',   w: 15, text: true },
     { key: 'end',           h: 'End (YYYY-MM)',     w: 15, text: true },
     { key: 'hrsPerMo',      h: 'Hrs / month',       w: 12, num: true },
@@ -117,17 +125,36 @@
   const NAVY = 'FF25273A', WHITE = 'FFFFFFFF', GREY = 'FFF0EFEC', LOCK = 'FFE4E2DD';
 
   /* ---------- flatten one project into its sheet rows ---------- */
+  /** Relationship owner is stored as a leader id (like Lead PE) but older
+      records hold a raw name — show whichever resolves. */
+  function relDisplay(raw) {
+    if (!raw) return '';
+    const l = STORE().resolveLeader(raw);
+    return l ? l.displayName : String(raw);
+  }
+  /** Multi-value cells are "a; b; c" — semicolons, because commas appear
+      inside assumption text and email lists. */
+  const splitList = (v) => S(v).split(';').map(x => x.trim()).filter(Boolean);
+
   function projectRow(p) {
     const pj = p.project || {}, tl = p.timeline || {}, a = p.assumptions || {};
     let fee = 0;
     try { const f = STORE().projectFinancials(p, window.RATES_CATALOG); fee = (f && f.net) || 0; } catch (e) {}
     return {
       id: p.id, action: '',
-      name: pj.name || '', client: pj.client || '', status: pj.status || '', rating: pj.rating || '',
+      name: pj.name || '', client: pj.client || '', status: pj.status || '',
+      lossReason: pj.lossReason || '', rating: pj.rating || '',
       industry: pj.industry || '', projectType: pj.projectType || '',
+      projectSubtypes: (pj.projectSubtypes || []).join('; '),
       lead: pj.leadId ? (STORE().leaderDisplay(pj.leadId) || pj.lead || '') : (pj.lead || ''),
+      clientRelOwner: relDisplay(pj.clientRelOwner),
+      accessGrant: pj.accessGrant || '',
+      assumptionsList: (pj.assumptionsList || []).join('; '),
       location: pj.location || '', salesforceId: pj.salesforceId || '',
-      clientContact: pj.clientContact || '', clientRelOwner: pj.clientRelOwner || '',
+      clientContact: pj.clientContact || '',
+      proposalDate: pj.proposalDate || '', firstProposalDate: pj.firstProposalDate || '',
+      signedContractDate: pj.signedContractDate || '',
+      intakeSent: pj.intakeSent ? 'Y' : 'N',
       start: ymText(tl.startYear, tl.startMonth), end: ymText(tl.endYear, tl.endMonth),
       hrsPerMo: a.hrsPerMo == null ? '' : a.hrsPerMo,
       escalation: a.escalation == null ? '' : a.escalation,
@@ -184,6 +211,8 @@
     const lists = wb.addWorksheet('Lists');
     const listCols = [
       ['Status', st.STATUSES.slice()],
+      ['LossReason', st.LOST_REASONS.slice()],
+      ['Assumption', st.ASSUMPTION_LIBRARY.slice()],
       ['Rating', (st.RATINGS || []).map(r => (typeof r === 'string' ? r : (r.label || r.id || '')))],
       ['Industry', st.INDUSTRIES.slice()],
       ['ProjectType', st.PROJECT_TYPES.map(t => t.name)],
@@ -206,6 +235,24 @@
       const letter = lists.getColumn(col).letter;
       listRange[pair[0]] = pair[1].length ? `Lists!$${letter}$2:$${letter}$${pair[1].length + 1}` : null;
     });
+
+    /* Type sub-services live per project type, so a single-column dropdown
+       can't express them — this reference sheet is where you copy the exact
+       strings from (import validates against it). */
+    const subsWs = wb.addWorksheet('Type subs', { views: [{ state: 'frozen', ySplit: 1 }] });
+    subsWs.columns = [{ width: 38 }, { width: 52 }];
+    ['Project type', 'Sub-service (paste into the Projects sheet)'].forEach((h, i) => {
+      const c = subsWs.getRow(1).getCell(i + 1);
+      c.value = h; c.font = { bold: true, size: 10, color: { argb: WHITE } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+    });
+    let sr = 2;
+    st.PROJECT_TYPES.forEach(t => t.subs.forEach(sub => {
+      subsWs.getCell(sr, 1).value = t.name;
+      subsWs.getCell(sr, 2).value = sub;
+      sr++;
+    }));
+    subsWs.autoFilter = { from: 'A1', to: `B${sr - 1}` };
 
     /* Generic sheet writer: header styling, widths, locks, validation. */
     function sheet(name, cols, rows) {
@@ -400,12 +447,46 @@
         leader = st.resolveLeader(leadTxt);
         if (!leader) err('Projects', row._row, `Lead PE "${leadTxt}" is not a known revenue leader`);
       }
+      const lossReason = S(row.lossReason);
+      if (lossReason && !st.LOST_REASONS.includes(lossReason)) err('Projects', row._row, `Loss reason "${lossReason}" is not one of: ${st.LOST_REASONS.join(', ')}`);
+      // Sub-services must belong to the chosen project type — that's the whole
+      // point of the taxonomy, and a typo here is invisible everywhere else.
+      const subs = splitList(row.projectSubtypes);
+      if (subs.length) {
+        if (!ptype) err('Projects', row._row, 'Sub-services are set but Project type is blank — pick the type first');
+        else {
+          const valid = st.projectTypeSubs(ptype);
+          subs.forEach(s2 => { if (!valid.includes(s2)) err('Projects', row._row, `Sub-service "${s2}" isn't part of "${ptype}" — valid: ${valid.join(' · ')}`); });
+        }
+      }
+      // Access grant: emails only, normalised the same way the access wall reads them.
+      const rawAccess = S(row.accessGrant);
+      const emails = st.parseAccessEmails(rawAccess);
+      if (rawAccess) {
+        const junk = rawAccess.split(/[,;\n]+/).map(x => x.trim()).filter(x => x && !x.includes('@'));
+        if (junk.length) err('Projects', row._row, `Grant access needs email addresses — "${junk.join('", "')}" ${junk.length === 1 ? 'is not one' : 'are not'}`);
+      }
+      const relTxt = S(row.clientRelOwner);
+      let relOwner = null;
+      if (relTxt) {
+        relOwner = st.resolveLeader(relTxt);
+        if (!relOwner) err('Projects', row._row, `Relationship owner "${relTxt}" is not a known revenue leader`);
+      }
       setIf('name', S(row.name)); setIf('client', S(row.client));
       if (status || !isNew) setIf('status', status || pj.status || 'draft');
+      setIf('lossReason', lossReason);
       setIf('rating', S(row.rating)); setIf('industry', industry); setIf('projectType', ptype);
+      pj.projectSubtypes = subs;
       pj.leadId = leader ? leader.id : ''; pj.lead = leader ? leader.displayName : '';
+      pj.clientRelOwner = relOwner ? relOwner.id : (relTxt ? pj.clientRelOwner : '');
+      pj.accessGrant = emails.join(', ');
+      pj.assumptionsList = splitList(row.assumptionsList);
       setIf('location', S(row.location)); setIf('salesforceId', S(row.salesforceId));
-      setIf('clientContact', S(row.clientContact)); setIf('clientRelOwner', S(row.clientRelOwner));
+      setIf('clientContact', S(row.clientContact));
+      setIf('proposalDate', S(row.proposalDate));
+      setIf('firstProposalDate', S(row.firstProposalDate));
+      setIf('signedContractDate', S(row.signedContractDate));
+      pj.intakeSent = YESNO(row.intakeSent);
       setIf('notes', S(row.notes));
 
       const sYm = parseYm(row.start), eYm = parseYm(row.end);
@@ -515,6 +596,23 @@
         plan.push({ kind: 'create', record: next, key });
       } else {
         const diff = st.describeChanges(prev, next) || [];
+        // describeChanges covers the fields the Change Log cares about; these
+        // are the rest of the page, so the review shows EVERY edit you made.
+        const a0 = prev.project || {}, b0 = next.project || {};
+        [
+          ['status', 'Status'], ['location', 'Location'], ['clientContact', 'Client contact'],
+          ['signedContractDate', 'Signed contract date'], ['rating', 'Rating'],
+        ].forEach(([k, label]) => {
+          if (S(a0[k]) !== S(b0[k]) && !diff.some(d => d.field === label)) diff.push({ field: label, from: S(a0[k]) || '—', to: S(b0[k]) || '—' });
+        });
+        const relLbl = (v) => relDisplay(v) || '—';
+        if (S(a0.clientRelOwner) !== S(b0.clientRelOwner)) diff.push({ field: 'Relationship owner', from: relLbl(a0.clientRelOwner), to: relLbl(b0.clientRelOwner) });
+        const listLbl = (arr) => (arr && arr.length) ? arr.join('; ') : '—';
+        if (JSON.stringify(a0.projectSubtypes || []) !== JSON.stringify(b0.projectSubtypes || []))
+          diff.push({ field: 'Type sub-services', from: listLbl(a0.projectSubtypes), to: listLbl(b0.projectSubtypes) });
+        if (JSON.stringify(a0.assumptionsList || []) !== JSON.stringify(b0.assumptionsList || []))
+          diff.push({ field: 'Assumptions', from: listLbl(a0.assumptionsList), to: listLbl(b0.assumptionsList) });
+        if (!!a0.intakeSent !== !!b0.intakeSent) diff.push({ field: 'Intake sent', from: a0.intakeSent ? 'Y' : 'N', to: b0.intakeSent ? 'Y' : 'N' });
         const roleDelta = ((prev.roles || []).length !== (next.roles || []).length)
           ? [{ field: 'Roles', from: (prev.roles || []).length + '', to: (next.roles || []).length + '' }] : [];
         const rosterChanged = JSON.stringify((prev.roles || []).map(rolesKey)) !== JSON.stringify((next.roles || []).map(rolesKey));
