@@ -22,7 +22,7 @@
 
   /* Why a proposal was lost — captured on the record when status = 'lost',
      so win/loss analytics can answer "why do we lose?". */
-  const LOST_REASONS = ['Too expensive', 'Relationship', 'Incumbent', 'Scope', 'Procurement', 'Client cancelled', 'Internal / no-bid', 'No decision', 'Other'];
+  const BASE_LOST_REASONS = ['Too expensive', 'Relationship', 'Incumbent', 'Scope', 'Procurement', 'Client cancelled', 'Internal / no-bid', 'No decision', 'Other'];
 
   /* Standard proposal assumptions / exclusions — the conditions a fee is
      priced under. Captured as a checklist on the record so two proposals are
@@ -110,7 +110,7 @@
     (p.groups || []).forEach(g => serviceLinesOfGroup(g).forEach(s => set.add(s)));
     return [...set];
   }
-  const INDUSTRIES = [
+  const BASE_INDUSTRIES = [
     'Financial Services',
     'Law',
     'TAMI',
@@ -129,7 +129,7 @@
   /* Project Type — the service line / engagement type, distinct from the client's
      Industry. Each type has a bucket of representative sub-services shown once the
      type is selected. Drawn from the Savills PPM service taxonomy. */
-  const PROJECT_TYPES = [
+  const BASE_PROJECT_TYPES = [
     { name: 'Relocation & Migration', subs: ['Corporate relocations', 'Restacks', 'Occupancy changes', 'Employee moves', 'Headquarters transitions'] },
     { name: 'Workplace Transformation', subs: ['Change management', 'Workplace strategy', 'Hybrid work initiatives', 'Employee engagement and readiness programs', 'Organizational transformation'] },
     { name: 'Capital Projects & Construction', subs: ['Tenant fit-outs', 'Renovations', 'New office development', 'Construction oversight', "Owner's representation"] },
@@ -142,8 +142,61 @@
     { name: 'Development Management', subs: ['New development', 'Core & shell', "Owner's representation"] },
     { name: 'Cost Management', subs: ['Estimating', 'Cost planning & control', 'Change order management', 'Value engineering', 'Contingency management'] },
   ];
+  /* ===== Vocabulary =====
+     The built-in lists above are the floor, not the ceiling: a superuser can
+     extend them (today from the Bulk Editor's Lists sheet) and the additions
+     live on the shared db, so every dropdown in every browser picks them up
+     through the normal sync. Exposed as GETTERS on the public object, so the
+     ~30 call sites that read STORE.INDUSTRIES keep working unchanged. */
+  function readVocab() {
+    const v = (readDb() || {}).vocab || {};
+    return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [] };
+  }
+  function allIndustries() {
+    const extra = readVocab().industries.filter(x => x && !BASE_INDUSTRIES.includes(x));
+    return BASE_INDUSTRIES.concat(extra);
+  }
+  function allLostReasons() {
+    const extra = readVocab().lossReasons.filter(x => x && !BASE_LOST_REASONS.includes(x));
+    return BASE_LOST_REASONS.concat(extra);
+  }
+  /** Custom types append; a custom entry naming a built-in type ADDS its
+      sub-services to that type rather than replacing them. */
+  function allProjectTypes() {
+    const out = BASE_PROJECT_TYPES.map(t => ({ name: t.name, subs: t.subs.slice() }));
+    readVocab().projectTypes.forEach(ct => {
+      if (!ct || !ct.name) return;
+      const hit = out.find(t => t.name === ct.name);
+      if (hit) (ct.subs || []).forEach(s2 => { if (s2 && !hit.subs.includes(s2)) hit.subs.push(s2); });
+      else out.push({ name: ct.name, subs: (ct.subs || []).slice() });
+    });
+    return out;
+  }
+  /** Add to the vocabulary. Superuser only — this reshapes every dropdown in
+      the system. Additive by design: nothing already in use can be removed
+      out from under the projects that reference it. */
+  function addVocab(patch) {
+    if (!isSuperuser()) throw new Error('Only a superuser can extend the vocabulary lists.');
+    const db = readDb();
+    const v = db.vocab = db.vocab || { industries: [], projectTypes: [], lossReasons: [] };
+    v.industries = v.industries || []; v.projectTypes = v.projectTypes || []; v.lossReasons = v.lossReasons || [];
+    let added = 0;
+    (patch.industries || []).forEach(x => { if (x && !BASE_INDUSTRIES.includes(x) && !v.industries.includes(x)) { v.industries.push(x); added++; } });
+    (patch.lossReasons || []).forEach(x => { if (x && !BASE_LOST_REASONS.includes(x) && !v.lossReasons.includes(x)) { v.lossReasons.push(x); added++; } });
+    (patch.projectTypes || []).forEach(ct => {
+      if (!ct || !ct.name) return;
+      const base = BASE_PROJECT_TYPES.find(t => t.name === ct.name);
+      const subsNew = (ct.subs || []).filter(s2 => s2 && !(base ? base.subs : []).includes(s2));
+      let cur = v.projectTypes.find(t => t.name === ct.name);
+      if (!cur && !base) { cur = { name: ct.name, subs: [] }; v.projectTypes.push(cur); added++; }
+      if (!cur && base && subsNew.length) { cur = { name: ct.name, subs: [] }; v.projectTypes.push(cur); }
+      if (cur) subsNew.forEach(s2 => { if (!cur.subs.includes(s2)) { cur.subs.push(s2); added++; } });
+    });
+    if (added) writeDb(db);
+    return added;
+  }
   function projectTypeSubs(name) {
-    const t = PROJECT_TYPES.find(x => x.name === name);
+    const t = allProjectTypes().find(x => x.name === name);
     return t ? t.subs : [];
   }
 
@@ -2005,7 +2058,7 @@
   }
 
   window.UFC_Store = {
-    SCHEMA, STATUSES, STATUS_LABELS, LOST_REASONS, ASSUMPTION_LIBRARY, INDUSTRIES, PROJECT_TYPES, projectTypeSubs,
+    SCHEMA, STATUSES, STATUS_LABELS, ASSUMPTION_LIBRARY, projectTypeSubs, addVocab, readVocab,
     accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING,
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
@@ -2031,4 +2084,10 @@
     listBaselines, getBaseline, saveBaseline, deleteBaseline, baselineFromBudget, baselineGridForSlice,
     listScenarios, getScenario, saveScenario, deleteScenario,
   };
+  /* Vocabulary reads stay dynamic without touching a single call site. */
+  Object.defineProperties(window.UFC_Store, {
+    INDUSTRIES:    { get: allIndustries,   enumerable: true },
+    PROJECT_TYPES: { get: allProjectTypes, enumerable: true },
+    LOST_REASONS:  { get: allLostReasons,  enumerable: true },
+  });
 })();

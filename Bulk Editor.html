@@ -144,6 +144,7 @@
           <span class="stat"><b>${r.untouched.length}</b><span>Unchanged</span></span>
           <span class="stat"><b>${r.missing.length}</b><span>Not in workbook</span></span>
         </div>
+        ${r.vocabCount ? `<div class="msg ok"><b>${r.vocabCount} new list value${r.vocabCount === 1 ? '' : 's'}</b> picked up from the Lists / Type subs sheets — these become available in every dropdown across the system: ${[].concat(r.vocab.industries.map(x => 'Industry: ' + esc(x)), r.vocab.lossReasons.map(x => 'Loss reason: ' + esc(x)), r.vocab.projectTypes.map(t => 'Type: ' + esc(t.name) + (t.subs.length ? ' (+' + t.subs.length + ' sub-service' + (t.subs.length === 1 ? '' : 's') + ')' : ''))).slice(0, 10).join(' · ')}</div>` : ''}
         ${r.missing.length ? `<div class="msg warn"><b>${r.missing.length} project${r.missing.length === 1 ? '' : 's'} in the tool ${r.missing.length === 1 ? 'is' : 'are'} not in this workbook</b> — they are left exactly as they are: ${r.missing.slice(0, 6).map(m => esc(m.label)).join(' · ')}${r.missing.length > 6 ? ` · +${r.missing.length - 6} more` : ''}</div>` : ''}
         ${r.removes.length ? `<div class="msg err"><b>${r.removes.length} marked REMOVE</b> (soft delete, recoverable from Data Repair): ${r.removes.slice(0, 10).map(m => esc(m.label)).join(' · ')}${r.removes.length > 10 ? '…' : ''}</div>` : ''}
         ${r.creates.length ? `<div class="msg warn"><b>${r.creates.length} new project${r.creates.length === 1 ? '' : 's'}</b>: ${r.creates.slice(0, 10).map(m => esc(m.label)).join(' · ')}${r.creates.length > 10 ? '…' : ''}</div>` : ''}
@@ -162,7 +163,7 @@
       backupJson();
       ab.disabled = true; ab.textContent = 'Writing…';
       const res = BULK.apply(planned.plan);
-      setStatus(`Applied — <b>${res.updated}</b> updated · <b>${res.created}</b> created · <b>${res.removed}</b> removed.` +
+      setStatus(`Applied — <b>${res.updated}</b> updated · <b>${res.created}</b> created · <b>${res.removed}</b> removed${res.vocab ? ` · <b>${res.vocab}</b> list values added` : ''}.` +
         (res.failed.length ? ` <b>${res.failed.length} failed:</b> ${esc(res.failed.slice(0, 5).join(' · '))}` : ' Everything landed cleanly.'),
         res.failed.length ? 'err' : 'ok');
       parsed = null; planned = null; renderReview();
