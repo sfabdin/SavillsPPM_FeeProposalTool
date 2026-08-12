@@ -110,6 +110,18 @@
     $('#maint-off').disabled = !m;
   }
 
+  /** The lock only matters if it reaches other people — push it now instead
+      of waiting out the normal save debounce, and say whether it landed. */
+  async function flushToBox(msg) {
+    const el = $('#maint-state');
+    const Box = window.UFC_Box;
+    if (!(Box && Box.enabled && Box.pushNow)) return;
+    const prev = el.innerHTML;
+    el.innerHTML = prev + ' <span class="hint">· ' + esc(msg) + '</span>';
+    try { await Box.pushNow(); paintMaint(); el.innerHTML += ' <span class="hint" style="color:#1f7a44">synced ✓</span>'; }
+    catch (e) { paintMaint(); el.innerHTML += ' <span class="hint" style="color:#b3151b">sync failed — others still see the old state</span>'; }
+  }
+
   function backupJson() {
     const db = STORE.exportDb ? STORE.exportDb() : null;
     const blob = new Blob([JSON.stringify(db || {}, null, 2)], { type: 'application/json' });
@@ -144,7 +156,7 @@
           <span class="stat"><b>${r.untouched.length}</b><span>Unchanged</span></span>
           <span class="stat"><b>${r.missing.length}</b><span>Not in workbook</span></span>
         </div>
-        ${r.vocabCount ? `<div class="msg ok"><b>${r.vocabCount} new list value${r.vocabCount === 1 ? '' : 's'}</b> picked up from the Lists / Type subs sheets — these become available in every dropdown across the system: ${[].concat(r.vocab.industries.map(x => 'Industry: ' + esc(x)), r.vocab.lossReasons.map(x => 'Loss reason: ' + esc(x)), r.vocab.projectTypes.map(t => 'Type: ' + esc(t.name) + (t.subs.length ? ' (+' + t.subs.length + ' sub-service' + (t.subs.length === 1 ? '' : 's') + ')' : ''))).slice(0, 10).join(' · ')}</div>` : ''}
+        ${r.vocabCount ? `<div class="msg ok"><b>${r.vocabCount} new list value${r.vocabCount === 1 ? '' : 's'}</b> picked up from the Lists / Type subs sheets — these become available in every dropdown across the system: ${[].concat(r.vocab.industries.map(x => 'Industry: ' + esc(x)), r.vocab.lossReasons.map(x => 'Loss reason: ' + esc(x)), r.vocab.leaders.map(l => 'Revenue leader: ' + esc(l.displayName) + ' &lt;' + esc(l.username) + '&gt;' + (l.guessedEmail ? ' <b>(email derived — check it)</b>' : '')), r.vocab.projectTypes.map(t => 'Type: ' + esc(t.name) + (t.subs.length ? ' (+' + t.subs.length + ' sub-service' + (t.subs.length === 1 ? '' : 's') + ')' : ''))).slice(0, 10).join(' · ')}</div>` : ''}
         ${r.missing.length ? `<div class="msg warn"><b>${r.missing.length} project${r.missing.length === 1 ? '' : 's'} in the tool ${r.missing.length === 1 ? 'is' : 'are'} not in this workbook</b> — they are left exactly as they are: ${r.missing.slice(0, 6).map(m => esc(m.label)).join(' · ')}${r.missing.length > 6 ? ` · +${r.missing.length - 6} more` : ''}</div>` : ''}
         ${r.removes.length ? `<div class="msg err"><b>${r.removes.length} marked REMOVE</b> (soft delete, recoverable from Data Repair): ${r.removes.slice(0, 10).map(m => esc(m.label)).join(' · ')}${r.removes.length > 10 ? '…' : ''}</div>` : ''}
         ${r.creates.length ? `<div class="msg warn"><b>${r.creates.length} new project${r.creates.length === 1 ? '' : 's'}</b>: ${r.creates.slice(0, 10).map(m => esc(m.label)).join(' · ')}${r.creates.length > 10 ? '…' : ''}</div>` : ''}
@@ -195,8 +207,9 @@
       if (note === null) return;
       STORE.setMaintenance(true, note);
       paintMaint();
+      flushToBox('Maintenance ON — syncing the lock to everyone…');
     };
-    $('#maint-off').onclick = () => { STORE.setMaintenance(false); paintMaint(); };
+    $('#maint-off').onclick = () => { STORE.setMaintenance(false); paintMaint(); flushToBox('Maintenance OFF — syncing…'); };
 
     $('#export-btn').onclick = async () => {
       const b = $('#export-btn'), o = b.textContent;

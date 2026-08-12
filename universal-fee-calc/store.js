@@ -150,7 +150,7 @@
      ~30 call sites that read STORE.INDUSTRIES keep working unchanged. */
   function readVocab() {
     const v = (readDb() || {}).vocab || {};
-    return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [] };
+    return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [], leaders: v.leaders || [] };
   }
   function allIndustries() {
     const extra = readVocab().industries.filter(x => x && !BASE_INDUSTRIES.includes(x));
@@ -179,10 +179,16 @@
     if (!isSuperuser()) throw new Error('Only a superuser can extend the vocabulary lists.');
     const db = readDb();
     const v = db.vocab = db.vocab || { industries: [], projectTypes: [], lossReasons: [] };
-    v.industries = v.industries || []; v.projectTypes = v.projectTypes || []; v.lossReasons = v.lossReasons || [];
+    v.industries = v.industries || []; v.projectTypes = v.projectTypes || []; v.lossReasons = v.lossReasons || []; v.leaders = v.leaders || [];
     let added = 0;
     (patch.industries || []).forEach(x => { if (x && !BASE_INDUSTRIES.includes(x) && !v.industries.includes(x)) { v.industries.push(x); added++; } });
     (patch.lossReasons || []).forEach(x => { if (x && !BASE_LOST_REASONS.includes(x) && !v.lossReasons.includes(x)) { v.lossReasons.push(x); added++; } });
+    (patch.leaders || []).forEach(l => {
+      if (!l || !l.id || !l.displayName) return;
+      if (BASE_REVENUE_LEADERS.some(b => b.id === l.id) || v.leaders.some(x => x.id === l.id)) return;
+      v.leaders.push({ id: l.id, displayName: l.displayName, username: l.username || '', aliases: l.aliases || [l.displayName] });
+      added++;
+    });
     (patch.projectTypes || []).forEach(ct => {
       if (!ct || !ct.name) return;
       const base = BASE_PROJECT_TYPES.find(t => t.name === ct.name);
@@ -1897,7 +1903,7 @@
      username  → login / email / SID the access wall matches against
      aliases   → older free-text spellings, so existing records migrate
      ============================================================ */
-  const REVENUE_LEADERS = [
+  const BASE_REVENUE_LEADERS = [
     { id: 'acpeters',  displayName: 'Andrew Peters',    username: 'acpeters@savills.us',   aliases: ['Andrew Peters', 'A. Peters', 'Peters', 'AP'] },
     { id: 'bjosselson',displayName: 'Benay Josselson',  username: 'bjosselson@savills.us',  aliases: ['Benay Josselson', 'B. Josselson', 'Josselson', 'BLJ'] },
     { id: 'bking',     displayName: 'Brianna King',     username: 'bshepparding@savills.us',aliases: ['Brianna King', 'B. King', 'King', 'Brianna Sheppard King', 'BSK'] },
@@ -1914,15 +1920,22 @@
     { id: 'tmwilliams',displayName: 'Tonya Williams',   username: 'tmwilliams@savills.us',  aliases: ['Tonya Williams', 'T. Williams', 'Williams', 'TW'] },
     { id: 'zsargent',  displayName: 'Zac Sargent',      username: 'zsargent@savills.us',    aliases: ['Zac Sargent', 'Z. Sargent', 'Sargent', 'Zachary Sargent', 'ZS'] },
   ];
-  function leaderById(id) { return REVENUE_LEADERS.find(l => l.id === id) || null; }
+  /** Base directory plus any leader added later (Bulk Editor Lists sheet).
+      Custom entries carry the same shape, so ownership, impersonation and
+      every dropdown treat them identically. */
+  function allRevenueLeaders() {
+    const extra = (readVocab().leaders || []).filter(l => l && l.id && !BASE_REVENUE_LEADERS.some(b => b.id === l.id));
+    return BASE_REVENUE_LEADERS.concat(extra);
+  }
+  function leaderById(id) { return allRevenueLeaders().find(l => l.id === id) || null; }
   /** Resolve any stored value (id, displayName, alias, or username) to a leader. */
   function resolveLeader(value) {
     if (!value) return null;
     const v = String(value).trim();
     const vk = v.toLowerCase();
-    return REVENUE_LEADERS.find(l =>
+    return allRevenueLeaders().find(l =>
       l.id === v ||
-      l.username.toLowerCase() === vk ||
+      String(l.username || '').toLowerCase() === vk ||
       l.displayName.toLowerCase() === vk ||
       (l.aliases || []).some(a => a.toLowerCase() === vk)
     ) || null;
@@ -1997,7 +2010,7 @@
   /* People the SUPERUSER can impersonate: every leader + every admin (deduped). */
   function impersonationRoster() {
     const seen = new Set(); const list = [];
-    REVENUE_LEADERS.forEach(l => { const k = l.username.toLowerCase(); seen.add(k); list.push({ username: l.username, name: l.displayName, role: roleFor(l.username) }); });
+    allRevenueLeaders().forEach(l => { const k = String(l.username || '').toLowerCase(); if (k) seen.add(k); list.push({ username: l.username || '', name: l.displayName, role: roleFor(l.username || '') }); });
     ADMINS.forEach(email => { if (!seen.has(email)) { seen.add(email); list.push({ username: email, name: email, role: 'admin' }); } });
     return list.sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -2078,7 +2091,7 @@
     getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, getRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
     getMaintenance, setMaintenance, assertWritable,
-    REVENUE_LEADERS, leaderById, resolveLeader, leaderDisplay,
+    leaderById, resolveLeader, leaderDisplay,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,
     listBaselines, getBaseline, saveBaseline, deleteBaseline, baselineFromBudget, baselineGridForSlice,
@@ -2089,5 +2102,6 @@
     INDUSTRIES:    { get: allIndustries,   enumerable: true },
     PROJECT_TYPES: { get: allProjectTypes, enumerable: true },
     LOST_REASONS:  { get: allLostReasons,  enumerable: true },
+    REVENUE_LEADERS: { get: allRevenueLeaders, enumerable: true },
   });
 })();
