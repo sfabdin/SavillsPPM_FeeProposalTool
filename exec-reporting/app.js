@@ -110,7 +110,7 @@
   }
 
   function computeAll(asOf) {
-    DATA.tab2 = null; DATA.tab3 = null; DATA.delivery = null; DATA.tab4 = null;
+    DATA.tab2 = null; DATA.tab3 = null; DATA.delivery = null; DATA.tab4 = null; DATA.tab6 = null;
     DATA.staff = DATA.staffRaw ? CORE.mapStaff(DATA.staffRaw) : null;
     DATA.ratesMapped = DATA.rates ? CORE.mapRates(DATA.rates) : null;
     if (DATA.studioRaw && DATA.studioRaw.schemaVersion == null) DATA.studioRaw = Object.assign({ schemaVersion: 1 }, DATA.studioRaw);
@@ -171,12 +171,17 @@
 
   function renderTab() {
     const host = $('#exec-tab');
-    if (activeTab === 'pipeline') host.innerHTML = tabPipeline();
-    else if (activeTab === 'leaders') host.innerHTML = tabLeaders();
-    else if (activeTab === 'clients') host.innerHTML = tabClients();
-    else if (activeTab === 'clockify') host.innerHTML = tabClockify();
-    else if (activeTab === 'rates') host.innerHTML = tabRates();
-    else host.innerHTML = tabStub(activeTab);
+    let body;
+    if (activeTab === 'pipeline') body = tabPipeline();
+    else if (activeTab === 'leaders') body = tabLeaders();
+    else if (activeTab === 'clients') body = tabClients();
+    else if (activeTab === 'clockify') body = tabClockify();
+    else if (activeTab === 'rates') body = tabRates();
+    else if (activeTab === 'locations') body = tabLocations();
+    else if (activeTab === 'confidence') body = tabConfidence();
+    else if (activeTab === 'glossary') body = tabGlossary();
+    else body = tabStub(activeTab);
+    host.innerHTML = exportBar() + body;
     wireTab(host);
   }
 
@@ -339,7 +344,7 @@
         .map((b) => '<div style="width:' + ((b[1] / bandTotal) * 100) + '%;min-width:60px;background:' + b[3] + ';color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">' + b[0] + ': ' + b[1] + ' · ' + fm(b[2]) + '</div>').join('') +
       '</div>';
     const staleRows = p.stale.rows.map((r) =>
-      '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.client) + '</td><td class="num">R' + r.rating + '</td>' +
+      '<tr><td><a href="#" data-project="' + esc(r.projectId) + '" title="Open this deal\'s box score">' + esc(r.name) + '</a></td><td>' + esc(r.client) + '</td><td class="num">R' + r.rating + '</td>' +
       '<td class="num">' + fm(r.value) + '</td>' +
       '<td class="num">' + (r.days === null ? '<span style="color:var(--mut)">awaiting history</span>'
         : '<span class="' + (r.days >= 90 ? 'tone-bad' : r.days >= 30 ? 'tone-amber' : 'tone-good') + '">' + r.days + '</span>') + '</td></tr>').join('');
@@ -748,7 +753,7 @@
 
     // true margin by project
     const marginRows = d.margins.slice(0, 15).map((m2) =>
-      '<tr><td>' + esc(m2.name) + '</td><td>' + esc(m2.client) + '</td>' +
+      '<tr><td><a href="#" data-project="' + esc(m2.projectId) + '" title="Open this project\'s box score">' + esc(m2.name) + '</a></td><td>' + esc(m2.client) + '</td>' +
       '<td class="num">' + (m2.rating == null ? '-' : 'R' + m2.rating) + '</td>' +
       '<td class="num">' + Math.round(m2.hours).toLocaleString() + 'h</td><td class="num">' + m2.people + '</td>' +
       '<td class="num">' + fm(m2.cost) + '</td><td class="num">' + fm(m2.revenue) + '</td>' +
@@ -838,6 +843,219 @@
     return kpis + gridPanel + tpPanel;
   }
 
+  /* ---------------- TAB · Locations ---------------- */
+  const LOCFILTER = { rating: 'all', leader: 'all', region: 'all' };
+  function tabLocations() {
+    const rows = CORE.locationsData(DATA.mapped, DATA.overview.year);
+    const leaders = [...new Set(rows.map((r) => r.leader))].sort();
+    const filtered = rows.filter((r) => {
+      if (LOCFILTER.rating === 'budget' && !(r.rating != null && r.rating <= 4)) return false;
+      if (LOCFILTER.rating === 'long' && !(r.rating != null && r.rating >= 5)) return false;
+      if (LOCFILTER.leader !== 'all' && r.leader !== LOCFILTER.leader) return false;
+      if (LOCFILTER.region !== 'all' && CORE.REGIONS[LOCFILTER.region].indexOf(r.city) === -1) return false;
+      return true;
+    });
+    const byCity = new Map();
+    for (const r of filtered) {
+      const e = byCity.get(r.city) || { count: 0, value: 0, rows: [] };
+      e.count += 1; e.value += r.revenue; e.rows.push(r);
+      byCity.set(r.city, e);
+    }
+    // equirectangular projection over the continental-US box
+    const W = 940, H = 480;
+    const lat2y = (lat) => ((50.5 - lat) / (50.5 - 24)) * (H - 60) + 20;
+    const lng2x = (lng) => ((lng + 126) / (126 - 66)) * (W - 80) + 40;
+    const maxV = Math.max.apply(null, [...byCity.values()].map((e) => Math.abs(e.value)).concat([1]));
+    let dots = '';
+    for (const [ci, e] of [...byCity.entries()].sort((a, b) => b[1].value - a[1].value)) {
+      const [city, lat, lng] = CORE.CITIES[ci];
+      const x = lng2x(lng), y = lat2y(lat);
+      const r = 10 + Math.sqrt(Math.abs(e.value) / maxV) * 30;
+      const top = e.rows.slice().sort((a, b) => b.revenue - a.revenue).slice(0, 4).map((p) => p.name + ' (' + fm(p.revenue) + ')').join(' · ');
+      dots += '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="rgba(35,130,145,.55)" stroke="#16636f" stroke-width="1.5"><title>' + esc(city + ': ' + e.count + ' project' + (e.count > 1 ? 's' : '') + ' · ' + fm(e.value) + ' — ' + top) + '</title></circle>' +
+        '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">' + e.count + '</text>' +
+        '<text x="' + x + '" y="' + (y + r + 13) + '" text-anchor="middle" font-size="10" fill="#25273A" font-weight="700">' + esc(city) + ' · ' + fm(e.value) + '</text>';
+    }
+    const mapSvg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Projects by city (demo geography)" style="background:#f7f6f3;border:1px solid var(--hairline)">' + dots + '</svg>';
+
+    const sel = (id, label, opts, cur) =>
+      '<label style="font-size:11px;color:var(--mut);display:flex;gap:6px;align-items:center">' + label +
+      '<select data-locfilter="' + id + '" style="font:inherit;padding:4px 6px;border:1px solid var(--hairline)">' +
+      opts.map(([v, l]) => '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') +
+      '</select></label>';
+    const filters = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin:4px 0 10px">' +
+      sel('rating', 'Ratings', [['all', 'All'], ['budget', 'Budget (R1-4)'], ['long', 'Long shots (R5-7)']], LOCFILTER.rating) +
+      sel('leader', 'Leader', [['all', 'All']].concat(leaders.map((l) => [l, l])), LOCFILTER.leader) +
+      sel('region', 'Region', [['all', 'All'], ['northeast', 'Northeast'], ['south', 'South'], ['midwest', 'Midwest'], ['west', 'West']], LOCFILTER.region) +
+      '<span style="font-size:11px;color:var(--mut);align-self:center">' + filtered.length + ' of ' + rows.length + ' projects shown</span></div>';
+
+    const cityTable = '<table class="vtable"><thead><tr><th>City (demo)</th><th class="num">Projects</th><th class="num">' + DATA.overview.year + ' revenue</th><th>Largest project</th></tr></thead><tbody>' +
+      [...byCity.entries()].sort((a, b) => b[1].value - a[1].value).map(([ci, e]) => {
+        const big = e.rows.slice().sort((a, b) => b.revenue - a.revenue)[0];
+        return '<tr><td>' + esc(CORE.CITIES[ci][0]) + '</td><td class="num">' + e.count + '</td><td class="num">' + fm(e.value) + '</td><td>' + esc(big.name) + ' · ' + fm(big.revenue) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+
+    return '<div class="note" style="border-left:3px solid var(--amber-ink)"><b>The entire map is simulated geography.</b> Project location is not yet captured at intake, so cities come from a stable name-hash spread (the JPMC small-works programme spreads across 8 cities, mock parity). Real attributes, demo placement - the panel flips itself live when locations land.</div>' +
+      panel('Projects by city', { kind: 'demo', text: 'DEMO GEOGRAPHY' }, '',
+        'What it is: every project with ' + DATA.overview.year + ' revenue placed on a city cluster, sized by revenue, filterable by rating class, leader and region. Hover a cluster for its largest projects.',
+        filters + mapSvg + cityTable);
+  }
+
+  /* ---------------- TAB · Confidence (internal, no export) ---------------- */
+  function tabConfidence() {
+    const d = DATA.tab6 || (DATA.tab6 = CORE.tab6Data(DATA.mapped));
+    const kpis = '<div class="kpirow">' +
+      kpi('Overall coverage', Math.round(d.kpis.overall * 100) + '%', 'across ' + d.kpis.tracked + ' tracked fields', 'teal') +
+      kpi('Fields solid (80%+)', String(d.kpis.solid), 'reportable today', '') +
+      kpi('Fields filling (<50%)', String(d.kpis.filling), 'need intake pushes', '') +
+      kpi('Projects', String(d.total), 'whole live snapshot', 'navy') +
+      kpi('Audience', 'INTERNAL', 'no export on this tab', '') +
+      '</div>';
+    const rows = d.rows.map((r) => {
+      const colour = r.band === 'green' ? 'var(--good)' : r.band === 'amber' ? 'var(--amber-ink)' : 'var(--bad)';
+      return '<tr><td>' + esc(r.field) + '</td><td class="num">' + r.count + ' / ' + r.total + '</td>' +
+        '<td style="width:45%"><div class="barwrap" title="' + esc(r.field + ': ' + Math.round(r.pct * 100) + '% filled') + '"><div style="width:' + (r.pct * 100) + '%;background:' + colour + '"></div></div></td>' +
+        '<td class="num" style="color:' + colour + ';font-weight:700">' + Math.round(r.pct * 100) + '%</td></tr>';
+    }).join('');
+    return kpis + panel('Field-by-field coverage', { kind: 'live', text: 'LIVE · INTERNAL, NO EXPORT' }, esc(d.msg),
+      'What it is: for each field the reporting relies on, how many of the ' + d.total + ' live projects carry it - 80%+ green, 50-80% amber, under 50% red. Why we show it: every panel in this module is only as strong as these numbers, and pushing them up is a data-entry task with a name on it.',
+      '<table class="vtable"><thead><tr><th>Field</th><th class="num">Filled</th><th>Coverage</th><th class="num">%</th></tr></thead><tbody>' + rows + '</tbody></table>');
+  }
+
+  /* ---------------- TAB · Definitions ---------------- */
+  function tabGlossary() {
+    const entries = Object.values(CORE.GLOSSARY);
+    const half = Math.ceil(entries.length / 2);
+    const col = (list) => '<div>' + list.map((g) =>
+      '<div style="padding:9px 0;border-bottom:1px solid var(--hairline)"><div style="font-weight:700;font-size:13px;color:var(--teal-ink)">' + esc(g.term) + '</div><div style="font-size:12.5px;color:var(--mut);line-height:1.5">' + esc(g.def) + '</div></div>').join('') + '</div>';
+    return panel('Canonical definitions', { kind: 'live', text: 'LIVE' }, '',
+      'One definition per concept, the same wording everywhere it appears - panels, tooltips and exports never disagree with this page.',
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:26px">' + col(entries.slice(0, half)) + col(entries.slice(half)) + '</div>');
+  }
+
+  /* ---------------- Project box score (drill from any project link) ---------------- */
+  function renderBoxScore(pid) {
+    const host = $('#exec-tab');
+    const b = CORE.projectBoxScore(DATA.mapped, DATA.staff, DATA.ratesMapped && DATA.ratesMapped.ok ? DATA.ratesMapped : { rateGrid: [] }, pid, DATA.overview.year);
+    if (!b) { host.innerHTML = panel('Project not found', null, '', '', ''); return; }
+    const p = b.project;
+    const chips = ['R' + (p.rating == null ? '?' : p.rating), p.status || 'no status', p.salesforce_id ? 'P# ' + p.salesforce_id : 'P-number awaited', p.location || 'location not captured']
+      .map((c) => '<span class="dflag live" style="margin-right:6px">' + esc(String(c)) + '</span>').join('');
+    const yearBlocks = b.byYear.map((yb) => {
+      const maxM = Math.max.apply(null, yb.months.concat([1]));
+      const bars = yb.months.map((v, i) =>
+        '<div title="' + MON[i] + ' ' + yb.year + ': ' + fm(v) + '" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end"><div style="height:' + Math.max((v / maxM) * 70, v > 0 ? 2 : 0) + 'px;background:var(--teal)"></div><div style="font-size:8.5px;text-align:center;color:var(--mut)">' + MON[i] + '</div></div>').join('');
+      return '<div style="margin:8px 0"><b style="font-size:12px">' + yb.year + ' · ' + fm(yb.total) + '</b><div style="display:flex;gap:3px;height:88px;align-items:flex-end;border-bottom:1px solid var(--hairline);padding-bottom:2px">' + bars + '</div></div>';
+    }).join('');
+    const hist = b.history.length
+      ? '<table class="vtable"><thead><tr><th>When</th><th>Field</th><th>From</th><th>To</th><th>By</th><th></th></tr></thead><tbody>' +
+      b.history.slice(0, 20).map((h) =>
+        '<tr><td>' + esc(String(h.changed_at || '').slice(0, 10)) + '</td><td>' + esc(h.field) + '</td>' +
+        '<td style="color:var(--mut)">' + esc(String(h.old_value == null ? '-' : h.old_value).slice(0, 40)) + '</td>' +
+        '<td>' + esc(String(h.new_value == null ? '-' : h.new_value).slice(0, 40)) + '</td>' +
+        '<td>' + esc(h.actor || '-') + '</td>' +
+        '<td>' + (h.material ? '' : '<span style="color:var(--mut);font-size:10px">(admin edit)</span>') + '</td></tr>').join('') +
+      '</tbody></table>'
+      : '<div class="note">No recorded changes for this project yet - the upstream change log starts when a project is first edited.</div>';
+    const del = b.delivery
+      ? panel('Delivery effort', { kind: 'live', text: 'LIVE' }, '',
+        'Who worked it, at what cost, against its revenue. Cost = grid floor where the title maps, blended proxy elsewhere.',
+        '<div class="note">' + Math.round(b.delivery.hours).toLocaleString() + 'h logged · cost ' + fm(b.delivery.cost) + ' · revenue ' + fm(b.delivery.revenue) + ' · margin <b class="' + (b.delivery.margin >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(b.delivery.margin) + '</b></div>' +
+        '<table class="vtable"><thead><tr><th>Person</th><th>Title</th><th class="num">Hours</th><th class="num">Cost</th></tr></thead><tbody>' +
+        b.delivery.people.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title || '-') + '</td><td class="num">' + Math.round(x.hours).toLocaleString() + 'h</td><td class="num">' + fm(x.cost) + '</td></tr>').join('') + '</tbody></table>')
+      : panel('Delivery effort', { kind: 'demo', text: 'NO MAPPED HOURS' }, '', 'No Clockify hours are mapped to this project yet, so no delivery cost can be attributed. Honest absence, not zero.', '');
+    host.innerHTML =
+      '<div style="margin:10px 0"><button id="exec-back" style="font:inherit;border:1px solid var(--hairline);background:#fff;padding:6px 12px;cursor:pointer">← Back</button></div>' +
+      panel(esc(p.name), { kind: 'live', text: 'BOX SCORE' }, '',
+        '', '<div style="margin:4px 0 10px">' + chips + '</div>' +
+        '<div class="note"><b>' + esc(b.client) + '</b> · leader ' + esc(b.leader) + (p.updated_at ? ' · last saved ' + esc(String(p.updated_at).slice(0, 10)) : '') + '</div>' +
+        yearBlocks) +
+      panel('Movement history', { kind: 'live', text: 'LIVE' }, '',
+        'Every recorded change, newest first. Material moves (rating, roster, phases, timing, fee terms) reset the staleness clock; incidental edits are shown but marked.',
+        hist) + del;
+    const back = $('#exec-back');
+    if (back) back.addEventListener('click', renderTab);
+  }
+
+  /* ---------------- exports (ExcelJS, the tool's existing pattern) ---------------- */
+  function excelReady() {
+    if (window.ExcelJS) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+      s.onload = resolve; s.onerror = () => reject(new Error('ExcelJS failed to load'));
+      document.head.appendChild(s);
+    });
+  }
+  async function exportTab(kind) {
+    await excelReady();
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Savills PPM · Executive Reporting';
+    const NAVY = 'FF25273A', WHITE = 'FFFFFFFF';
+    const money = '#,##0;(#,##0)';
+    const sheet = (name, headers, rows) => {
+      const ws = wb.addWorksheet(name);
+      const hr = ws.addRow(headers);
+      hr.eachCell((c) => { c.font = { bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+      rows.forEach((r) => {
+        const row = ws.addRow(r);
+        row.eachCell((c, i) => { if (typeof r[i - 1] === 'number' && Math.abs(r[i - 1]) > 999) c.numFmt = money; });
+      });
+      ws.columns.forEach((col) => { col.width = 20; });
+      ws.addRow([]);
+      ws.addRow(['Confidential · Savills PPM Executive Reporting · generated ' + new Date().toISOString().slice(0, 10)]).font = { italic: true, size: 9 };
+      return ws;
+    };
+    const d = DATA.overview;
+    if (kind === 'pipeline') {
+      sheet('Overview', ['Measure', 'Value'], [
+        ['Annual budget', d.budget], ['Booked (R1)', d.booked], ['Projected (1-4)', d.projected],
+        ['Risk-weighted EV', d.weighted], ['All ratings total', d.total], ['Over / (under)', d.overUnder],
+      ]);
+      sheet('Rating mix', ['Rating', 'Meaning', 'Projects', 'Revenue', 'Risk-weighted', 'Feeds budget'],
+        d.tiers.map((t) => ['R' + t.rating, t.label, t.projects, t.revenue, t.feeds_budget ? t.weighted : null, t.feeds_budget ? 'Yes' : 'No']));
+      sheet('Top clients', ['Client', 'Booked R1', 'R2', 'R3-4', 'Projected', 'Long shots', 'Oct budget'],
+        DATA.panels.topClients.rows.concat([DATA.panels.topClients.other, DATA.panels.topClients.total])
+          .map((r) => [r.name, r.r1, r.r2, r.r34, r.projected, r.longShots, r.budget]));
+      sheet('Monthly', ['Month', 'R1', 'R2', 'R3-4', 'Total', 'Flat budget', 'Variance', 'Cumulative vs budget'],
+        DATA.panels.monthly.rows.map((r, i) => [MON[i], r.r1, r.r2, r.r34, r.total, r.flat, r.variance, r.cumVsBudget]));
+    } else if (kind === 'leaders') {
+      const t = tab2();
+      sheet('Leaders', ['Leader', 'Revenue', 'Booked R1', 'Projects', 'Ageing 30+ value'],
+        t.books.map((b) => [b.name, b.revenue, b.booked, b.projects, b.aging.amberRedValue]));
+    } else if (kind === 'clients') {
+      const t = tab3();
+      sheet('Clients', ['Client', 'Revenue', 'Share', 'Cumulative share'],
+        t.pareto.map((r) => [r.name, r.revenue, r.share, r.cumShare]));
+      sheet('Sectors', ['Sector', 'Revenue', 'Share'], t.donut.map((s) => [s.sector, s.revenue, s.share]));
+    } else if (kind === 'rates') {
+      const t = tab4();
+      if (t) sheet('Grades', ['Grade', 'Floor', 'Rack', 'Actual marker (demo)'], t.grades.map((g) => [g.name, g.floor, g.rack, g.actual]));
+      if (t) sheet('True profit', ['Client', 'Hours', 'Delivery cost', 'Invoiced', 'Profit'],
+        t.trueProfit.map((r) => [r.client, Math.round(r.hours), r.cost, r.invoiced, r.profit]));
+    } else if (kind === 'clockify') {
+      const t = delivery();
+      if (t) sheet('Margins', ['Project', 'Client', 'Rating', 'Hours', 'People', 'Cost', 'Revenue', 'Margin'],
+        t.margins.map((m2) => [m2.name, m2.client, m2.rating, Math.round(m2.hours), m2.people, m2.cost, m2.revenue, m2.margin]));
+      if (t) sheet('People', ['Person', 'Title', 'Hours', 'Billable share', 'Cost rate'],
+        t.people.map((p) => [p.name, p.title, Math.round(p.hours), p.billableShare, p.costPerHour]));
+    }
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Executive Reporting - ' + kind + ' - ' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  const EXPORTABLE = { pipeline: 1, leaders: 1, clients: 1, rates: 1, clockify: 1 };
+  function exportBar() {
+    if (!EXPORTABLE[activeTab]) return '';
+    return '<div style="display:flex;gap:8px;justify-content:flex-end;margin:6px 0">' +
+      '<button data-export="xlsx" style="font:inherit;font-size:12px;border:1px solid var(--hairline);background:#fff;padding:6px 12px;cursor:pointer">↓ Excel</button>' +
+      '<button data-export="pdf" style="font:inherit;font-size:12px;border:1px solid var(--hairline);background:#fff;padding:6px 12px;cursor:pointer">↓ PDF (print)</button></div>';
+  }
+
   /* ---------------- per-tab wiring ---------------- */
   function wireTab(host) {
     const cum = $('#mv-cum', host), run = $('#mv-run', host), mv = $('#mv-host', host);
@@ -845,6 +1063,18 @@
       cum.addEventListener('click', () => { cum.classList.add('on'); run.classList.remove('on'); mv.innerHTML = cumulativeChart(DATA.panels.monthly, DATA.overview.budget, DATA.panels.monthly.todayMonth); });
       run.addEventListener('click', () => { run.classList.add('on'); cum.classList.remove('on'); mv.innerHTML = runRateChart(DATA.panels.monthly); });
     }
+    host.querySelectorAll('[data-export]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.export === 'pdf') window.print();
+      else exportTab(activeTab).catch((e) => alert('Export failed: ' + (e && e.message)));
+    }));
+    host.querySelectorAll('[data-locfilter]').forEach((s) => s.addEventListener('change', () => {
+      LOCFILTER[s.dataset.locfilter] = s.value;
+      renderTab();
+    }));
+    host.querySelectorAll('a[data-project]').forEach((a) => a.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      renderBoxScore(a.dataset.project);
+    }));
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', main);

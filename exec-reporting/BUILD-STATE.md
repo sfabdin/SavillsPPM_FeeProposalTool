@@ -56,14 +56,29 @@ implementation. Never write to projects/rates/staff/studio from here.
   delivery engine. Box path pulls staff.json via UFC_Box.pullStaff();
   rates arrive through the page-local RATES_CATALOG shim at boot.
 
-## Next (in order)
+## Done - all tabs complete (harness 55/55)
 
-1. Locations (map without any CDN - vendored tiles impossible offline;
-   degrade honestly to region/city table with filters), Confidence
-   (coverage index), Glossary page, project box score drill.
-2. Client-side Excel/PDF exports; print pass.
-3. Update repo docs (Maintainers Runbook gains the module section);
-   then PR to main.
+- Locations: self-contained SVG city-cluster map (no Leaflet, no tiles,
+  no CDN), same stable-hash demo geography + JPMC 8-city spread as the
+  app, DEMO GEOGRAPHY banner, rating/leader/region filters, city table.
+- Confidence: 14-field coverage index, RAG bands, INTERNAL badge and
+  deliberately no export.
+- Definitions: all 16 canonical glossary terms, two columns.
+- Project box score: drill from any project link (staleness, margins),
+  chips + per-year monthly bars + movement history (material vs admin
+  edits) + delivery-effort block; Back returns to the tab.
+- Exports: per-tab Excel via ExcelJS from the same CDN the Bulk Editor
+  already uses (loaded on first click), confidentiality footer, and PDF
+  via the print pipeline. Confidence has no export by design.
+- Maintainers Runbook page table now documents the module and its gate.
+
+## Remaining before merge
+
+- KY's review of the PR; the Leaders tab still shows its two
+  port-in-progress panels (staff-cost planner, margin quadrant), which
+  land on review feedback or a follow-up branch.
+- After acceptance: retire the separate local app, export the Supabase
+  vintage snapshots to an archive, then close Supabase (KY's call).
 
 ## Watchpoints
 

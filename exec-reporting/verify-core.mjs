@@ -195,6 +195,40 @@ ck('rates tab: true-profit rows reconcile to the delivery engine', (() => {
   return sumH <= allH + 0.01 && t4.trueProfit.every((r) => near(r.profit, r.invoiced - r.cost, 0.01));
 })());
 
+// ---- Confidence / Locations / Glossary / Box score ----
+const t6 = CORE.tab6Data(m);
+ck('confidence: 14 tracked fields over the whole live snapshot',
+  t6.rows.length === 14 && t6.total === m.counts.projects);
+ck('confidence: monthly-revenue coverage equals distinct projects with rows', (() => {
+  const withRev = new Set(m.monthlyRevenue.map((r) => r.project_source_id));
+  const row = t6.rows.find((r) => r.field === 'Monthly revenue');
+  return row && row.count === withRev.size;
+})());
+const loc = CORE.locationsData(m, o.year);
+ck('locations: one row per project with year revenue, revenue conserved', (() => {
+  const yr = CORE.projectYearRevenue(m);
+  let n = 0, sum = 0;
+  for (const [, years] of yr) if (years.has(o.year)) { n += 1; sum += years.get(o.year) || 0; }
+  return loc.length === n && near(loc.reduce((a, r) => a + r.revenue, 0), sum);
+})());
+ck('locations: JPMorgan projects spread across the first 8 cities only',
+  loc.filter((r) => r.client === 'JPMorgan Chase').every((r) => r.city >= 0 && r.city < 8));
+ck('glossary carries all 16 canonical terms', Object.keys(CORE.GLOSSARY).length === 16, String(Object.keys(CORE.GLOSSARY).length));
+const pick = CORE.tab1Panels(m, s, o, Date.parse('2026-08-12T12:00:00-04:00')).stale.rows[0];
+const box = CORE.projectBoxScore(m, sf, rt, pick.projectId, o.year);
+ck('box score: year blocks reconcile to the project\'s own revenue', (() => {
+  if (!box) return false;
+  const yr = CORE.projectYearRevenue(m).get(pick.projectId) || new Map();
+  return box.byYear.every((yb) => near(yb.total, yr.get(yb.year) || 0));
+})());
+ck('box score: history newest-first', (() => {
+  if (!box) return false;
+  for (let i = 1; i < box.history.length; i++) {
+    if (String(box.history[i - 1].changed_at || '') < String(box.history[i].changed_at || '')) return false;
+  }
+  return true;
+})());
+
 console.log('');
 console.log(checks + ' checks, ' + (fails ? fails + ' FAILURES' : 'all passed'));
 if (m.notes.length) { console.log('mapper notes:'); m.notes.slice(0, 8).forEach((n) => console.log('  - ' + n)); }

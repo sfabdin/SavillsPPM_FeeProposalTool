@@ -1501,6 +1501,163 @@
     };
   }
 
+  /* ============================================================
+     GLOSSARY (verbatim), CONFIDENCE, LOCATIONS, BOX SCORE
+     ============================================================ */
+  const GLOSSARY = {
+    projected: { term: 'Projected (1-4)', def: 'Booked (R1) plus 90% accrued (R2) plus likely deals (R3-R4). The total that feeds the budget. Ratings 5-7 are excluded.' },
+    weights: { term: 'Risk weights', def: 'R1 counts 100%, R2 90%, R3 75%, R4 50%; ratings 5-7 count 0. The canonical ruling - the maths and the words never disagree.' },
+    ev: { term: 'Risk-weighted EV', def: 'Each deal\'s revenue multiplied by its rating weight, then summed. The honest expected value of the pipeline.' },
+    coverage: { term: 'Coverage of the gap', def: 'Remaining gap = budget minus booked. Face coverage = open pipeline (R2-4) divided by the gap; weighted coverage applies the rating weights first.' },
+    catchup: { term: 'Revised target (catch-up)', def: 'The flat monthly budget lifted by the cumulative over/under to date. It climbs when we are behind and falls when we are ahead.' },
+    staleness: { term: 'Staleness', def: 'Time since a deal\'s rating or value last changed: 0-30 days on track (green), 30-90 ageing (amber), 90+ stale (red). Booked (R1) is excluded.' },
+    hhi: { term: 'HHI', def: 'Herfindahl-Hirschman Index: the sum of squared client shares times 10,000. Under 1500 reads unconcentrated; over 2500 concentrated.' },
+    marginAfterStaff: { term: 'Margin after staff', def: 'Invoiced revenue minus modelled staff cost (hours times the blended $/hr from the cost grid), as a share of invoiced. Demo until Clockify hours land.' },
+    realisation: { term: 'Realisation', def: 'Where we bill, how much of the rack-to-floor band we capture. Principal and EVP are excluded (rarely charged out, below the floor).' },
+    accrued: { term: 'Accrued', def: 'Work performed that will be billed later. Revenue sits in the month the work was done, not the month it was invoiced.' },
+    billableShare: { term: 'Billable share', def: 'The portion of logged time spent on client project work, as opposed to business development, internal work or time off. Revenue only comes from the billable slice.' },
+    costFloor: { term: 'Cost floor', def: 'The lowest rate in a grade\'s band, used as the cost-of-delivery proxy for that grade. Where a person\'s job title is not yet mapped to a grade, a blended proxy is used instead and the panel says so.' },
+    trueMargin: { term: 'True margin', def: 'Project revenue minus the cost of the hours actually logged against it (hours times each person\'s cost rate). Directional until every job title is mapped to the rate grid.' },
+    bulkLogged: { term: 'Bulk-logged time', def: 'A person-month recording more hours against one code than a month contains - a remainder or auto-fill entry upstream rather than real effort. Shown unchanged and marked, never trimmed, and kept out of any published utilisation figure.' },
+    planVsActual: { term: 'Plan vs actual', def: 'Hours the staffing plan implies (allocation percentage times monthly capacity) set against hours actually logged. A large gap either way is worth a conversation.' },
+    realisedRate: { term: 'Realised rate', def: 'What an hour of delivery actually earns: revenue divided by the hours logged against it. Measured, not quoted, so it reflects discounts, write-offs and overruns as they really happened.' },
+  };
+
+  function tab6Data(mapped) {
+    const total = mapped.projects.length;
+    const withRoles = new Set(mapped.roles.map((r) => r.project_source_id));
+    const withRevenue = new Set(mapped.monthlyRevenue.map((r) => r.project_source_id));
+    const feeShareOn = new Set(mapped.assumptions.filter((a) => a.fee_share_enabled === true).map((a) => a.project_source_id));
+    const has = (v) => v !== null && v !== undefined && String(v).trim() !== '';
+    const defs = [
+      ['Client', (p) => has(p.raw_client)],
+      ['Revenue leader', (p) => has(p.leader_id)],
+      ['Likelihood rating', (p) => has(p.rating)],
+      ['Monthly revenue', (p) => withRevenue.has(p.source_id)],
+      ['Salesforce P-number', (p) => has(p.salesforce_id)],
+      ['Clockify ID', (p) => has(p.clockify_id)],
+      ['Project ID (365)', (p) => has(p.project_id_365)],
+      ['Industry', (p) => has(p.industry)],
+      ['Project type', (p) => has(p.project_type)],
+      ['Proposal date', (p) => has(p.proposal_date)],
+      ['Signed contract date', (p) => has(p.signed_contract_date)],
+      ['Location', (p) => has(p.location)],
+      ['Staffing roster', (p) => withRoles.has(p.source_id)],
+      ['Fee share configured', (p) => feeShareOn.has(p.source_id)],
+    ];
+    const bandOf = (pct) => (pct >= 0.8 ? 'green' : pct >= 0.5 ? 'amber' : 'red');
+    const rows = defs.map(([field, fn]) => {
+      const count = mapped.projects.filter(fn).length;
+      const pct = total > 0 ? count / total : 0;
+      return { field, count, total, pct, band: bandOf(pct) };
+    }).sort((a, b) => b.pct - a.pct);
+    const overall = rows.reduce((a, r) => a + r.pct, 0) / rows.length;
+    const solid = rows.filter((r) => r.band === 'green').length;
+    const filling = rows.filter((r) => r.band === 'red').length;
+    return {
+      total, rows,
+      kpis: { overall, tracked: rows.length, solid, filling },
+      msg: solid + ' of ' + rows.length + ' tracked fields are solid enough to report on; ' + filling + ' are still filling in.',
+    };
+  }
+
+  const CITIES = [
+    ['New York', 40.7128, -74.006], ['Boston', 42.3601, -71.0589], ['Philadelphia', 39.9526, -75.1652],
+    ['Washington DC', 38.9072, -77.0369], ['Chicago', 41.8781, -87.6298], ['Miami', 25.7617, -80.1918],
+    ['Dallas', 32.7767, -96.797], ['Denver', 39.7392, -104.9903], ['San Francisco', 37.7749, -122.4194],
+    ['Los Angeles', 34.0522, -118.2437], ['Seattle', 47.6062, -122.3321], ['Atlanta', 33.749, -84.388],
+  ];
+  const REGIONS = { northeast: [0, 1, 2, 3], south: [5, 6, 11], midwest: [4, 7], west: [8, 9, 10] };
+  function _hash31(s) {
+    let h = 0;
+    for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return h;
+  }
+  function cityFor(client, id) {
+    const jp = String(client || '').toLowerCase().indexOf('jpmorgan') !== -1;
+    const base = _hash31(jp ? id : client);
+    return base % (jp ? 8 : CITIES.length);
+  }
+  function locationsData(mapped, year) {
+    const yearRev = projectYearRevenue(mapped);
+    const rows = [];
+    for (const p of mapped.projects) {
+      const years = yearRev.get(p.source_id);
+      if (!years || !years.has(year)) continue;
+      const client = p.raw_client ? canonicalNameFor(p.raw_client) : UNNAMED_CLIENT;
+      rows.push({
+        id: p.source_id, name: p.name, client,
+        leader: p.leader_id ? leaderDisplay(p.leader_id) : 'Unassigned',
+        rating: p.rating, status: p.status, revenue: years.get(year) || 0,
+        city: cityFor(client, p.source_id),
+      });
+    }
+    return rows;
+  }
+
+  function projectBoxScore(mapped, staffMapped, ratesMapped, sourceId, year) {
+    const p = mapped.projects.find((x) => x.source_id === sourceId);
+    if (!p) return null;
+    const monthly = mapped.monthlyRevenue.filter((r) => r.project_source_id === sourceId && typeof r.amount === 'number');
+    const byYear = new Map();
+    for (const r of monthly) {
+      if (!byYear.has(r.year)) byYear.set(r.year, Array(12).fill(0));
+      byYear.get(r.year)[r.month - 1] += r.amount;
+    }
+    const history = mapped.activityChanges
+      .filter((c) => c.project_source_id === sourceId)
+      .sort((a, b) => String(b.changed_at || '').localeCompare(String(a.changed_at || '')));
+    let delivery = null;
+    if (staffMapped && staffMapped.ok) {
+      const titleMap = new Map();
+      for (const m2 of staffMapped.maps) {
+        if (m2.kind !== 'titles') continue;
+        if (m2.value && m2.value.titleId) titleMap.set(String(m2.key), { titleId: m2.value.titleId, tierId: m2.value.tierId || 'mid' });
+      }
+      const gridMap = new Map(((ratesMapped && ratesMapped.rateGrid) || []).map((g) => [String(g.title_id), g]));
+      const personBySource = new Map(staffMapped.people.map((x) => [String(x.source_id), x]));
+      const feeKeys = [];
+      for (const m2 of staffMapped.maps) {
+        if (m2.kind !== 'fee') continue;
+        const ids = (Array.isArray(m2.value) ? m2.value : [m2.value]).map(String);
+        if (ids.indexOf(sourceId) !== -1) feeKeys.push({ key: m2.key, share: ids.length });
+      }
+      if (feeKeys.length) {
+        const byPerson = new Map();
+        const byMonth = new Map();
+        let hours = 0, cost = 0;
+        for (const a of staffMapped.actuals) {
+          if (a.category !== 'billable') continue;
+          const fk = feeKeys.find((k) => k.key === a.clockify_project.trim().toLowerCase());
+          if (!fk) continue;
+          const share = Number(a.hours) / fk.share;
+          const person = personBySource.get(a.person_source_id);
+          const rate = costRateFor(titleMap, gridMap, person ? person.title : null);
+          hours += share; cost += share * rate.rate;
+          const e = byPerson.get(a.person_source_id) || { name: person ? person.name : a.person_source_id, title: person ? person.title : null, hours: 0, cost: 0 };
+          e.hours += share; e.cost += share * rate.rate;
+          byPerson.set(a.person_source_id, e);
+          byMonth.set(a.month, (byMonth.get(a.month) || 0) + share);
+        }
+        if (hours > 0) {
+          const rev = (projectYearRevenue(mapped).get(sourceId) || new Map()).get(year) || 0;
+          delivery = {
+            hours, cost, revenue: rev, margin: rev - cost,
+            people: [...byPerson.values()].sort((a, b) => b.hours - a.hours),
+            months: [...byMonth.entries()].map(([month, h]) => ({ month, hours: h })).sort((a, b) => a.month - b.month),
+          };
+        }
+      }
+    }
+    return {
+      project: p,
+      client: p.raw_client ? canonicalNameFor(p.raw_client) : UNNAMED_CLIENT,
+      leader: p.leader_id ? leaderDisplay(p.leader_id) : 'Unassigned',
+      byYear: [...byYear.entries()].sort((a, b) => a[0] - b[0]).map(([y, months]) => ({ year: y, months, total: months.reduce((a, b) => a + b, 0) })),
+      history, delivery,
+    };
+  }
+
   /* ---------------- public surface ---------------- */
   const CORE = {
     RATING_WEIGHTS, RATING_LABELS, BUDGET_RATINGS, isBudgetRating, weightFor, ratingFromStatus,
@@ -1514,6 +1671,7 @@
     sectorOf, programmeOf, demoIndustryOf, demoProjectTypeOf, tab2Data, tab3Data,
     CATEGORY_LABEL, categoriseProject, isBulkLogged, BULK_LOG_THRESHOLD, BLENDED_COST_PROXY,
     costRateFor, mapStaff, mapRates, HML_SPREAD, clockifyData, tab4Data,
+    GLOSSARY, tab6Data, CITIES, REGIONS, cityFor, locationsData, projectBoxScore,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = CORE;
