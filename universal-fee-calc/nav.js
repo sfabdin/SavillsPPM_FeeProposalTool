@@ -47,6 +47,11 @@
       desc: 'Scan-and-fix for known data damage — duplicates, stale renames, sparse months. Preview first, then repair.' },
     { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
       desc: 'Dry-run a new rate grid against every project to see what would change before committing it.' },
+    // ── Executive Reporting — leadership only. Gated on the sees-all-projects
+    //    list (store.js ADMINS), NOT the wider admin-tools role, and hidden
+    //    until identity confirms so it never flashes for anyone else. ──
+    { href: 'Executive Reporting.html',      label: 'Executive Reporting', group: 'Executive Reporting', exec: true,
+      desc: 'The leadership reporting suite — pipeline vs budget, clients, leaders, rates, delivery — read live from the shared data files. Restricted access.' },
     // ── Help ──
     { href: 'Getting Started.html',          label: 'Getting Started',     group: 'Help',
       desc: 'The 5-minute orientation — how the tools fit together and what you are expected to keep current.' },
@@ -87,6 +92,10 @@
   #ppm-nav-list a.pn-cta:hover{background:#ffe94d;}
   #ppm-nav-list a.pn-cta.here{background:${YEL};color:${NAVY};}
   #ppm-nav-list a.pn-cta.here::after{content:'';}
+  #ppm-nav-list a.pn-exec{margin:6px 22px 4px;padding:12px 16px;background:${TEAL};color:#fff;font-weight:800;letter-spacing:.04em;border-left:0;justify-content:center;}
+  #ppm-nav-list a.pn-exec:hover{background:#0a5f5e;}
+  #ppm-nav-list a.pn-exec.here{background:${TEAL};color:#fff;}
+  #ppm-nav-list a.pn-exec.here::after{content:'';}
   #ppm-nav-search{padding:12px 16px 4px;}
   #ppm-nav-search input{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid rgba(37,39,58,.25);font-size:13px;font-family:inherit;outline:none;}
   #ppm-nav-search input:focus{border-color:${TEAL};}
@@ -124,8 +133,10 @@
           inner += `<div class="pn-grp pn-subgrp" data-admin="${l.admin ? 1 : 0}">${l.sub}</div>`;
         }
         const cur = l.href.split('?')[0].toLowerCase() === here ? ' here' : '';   // ?mode=… entries still highlight on their page
-        const cls = (g === 'Help' ? 'pn-doc ' : '') + (l.sub ? 'pn-sub ' : '') + (l.cta ? 'pn-cta ' : '');
-        inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" class="${(cls + cur).trim()}" title="${l.desc || ''}">${l.label}</a>`;
+        const cls = (g === 'Help' ? 'pn-doc ' : '') + (l.sub ? 'pn-sub ' : '') + (l.cta ? 'pn-cta ' : '') + (l.exec ? 'pn-exec ' : '');
+        // exec entries start hidden (data-role-hidden) so they cannot flash
+        // before the identity check runs — fail closed, reveal on proof.
+        inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" data-exec="${l.exec ? 1 : 0}"${l.exec ? ' data-role-hidden="1" style="display:none"' : ''} class="${(cls + cur).trim()}" title="${l.desc || ''}">${l.label}</a>`;
       });
     });
     inner += `</div>`;
@@ -213,6 +224,11 @@
         const S = window.UFC_Store; if (!S || !S.getCurrentUser) return;
         const admin = S.isAdmin(S.getCurrentUser());
         panel.querySelectorAll('a[data-admin="1"]').forEach(a => { a.dataset.roleHidden = admin ? '0' : '1'; });
+        // Executive Reporting reveals ONLY for the sees-all-projects list
+        // (the store's rule for data visibility) — tool admins stay hidden.
+        let seesAll = false;
+        try { seesAll = !!(S.seesAllProjects && S.seesAllProjects(S.getCurrentUser())); } catch (e2) {}
+        panel.querySelectorAll('a[data-exec="1"]').forEach(a => { a.dataset.roleHidden = seesAll ? '0' : '1'; });
         applyFilter();
       } catch (e) {}
     }
