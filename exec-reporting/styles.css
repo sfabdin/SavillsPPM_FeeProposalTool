@@ -63,9 +63,18 @@ body.exec-page { margin: 0; background: var(--page); overflow-x: hidden; }
   .exec .two, .exec .split { grid-template-columns: 1fr; }
   .exec .kpirow { grid-template-columns: repeat(2, 1fr) !important; }
 }
+@media (max-width: 520px) {
+  .exec .kpirow { grid-template-columns: 1fr !important; }
+  .exec .wrap { padding: 0 12px 40px; }
+}
 /* Wide content scrolls inside its own box; the page itself never does. */
 .exec .tscroll { overflow-x: auto; max-width: 100%; }
 .exec .chartwrap { overflow-x: auto; max-width: 100%; }
+/* Bar lists use fixed label and value columns so the bars share a baseline.
+   Below their natural width they scroll as a block rather than squashing the
+   bars into meaninglessness or pushing the page sideways. */
+.exec .gridrows { overflow-x: auto; max-width: 100%; }
+.exec .gridrows > div { min-width: 430px; }
 
 /* ---- tables ---- */
 .exec table.vtable { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0 4px; }

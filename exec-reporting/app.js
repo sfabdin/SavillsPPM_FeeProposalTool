@@ -1,15 +1,24 @@
 /* ============================================================
    EXECUTIVE REPORTING · shell + renderers
    ------------------------------------------------------------
-   The user-facing layer. Boot order on this page:
-     1. UFC_Box.boot()  - the SAME boot every page runs: Box auth,
-        pull projects.json -> local store, identity -> access wall,
-        rates.json -> the page-local catalog shim below.
+   The user-facing layer. This page is a MODULE inside the fee
+   system and boots the same way every other page does:
+
+     1. boot.js has already run by the time this script acts. It
+        handles Box sign-in, pulls projects.json and studio.json
+        into the shared store, hydrates the real rate catalog,
+        sets identity for the access wall, migrates the local
+        cache, and starts the three-minute background refresh.
+        We simply wait on window.ufcReady, like Profitability and
+        the Staffing Matrix do. The sign-in, rate-card and error
+        screens are the house ones, not private copies.
      2. Gate: Store.seesAllProjects() only. Fail closed - anything
         short of a confirmed full-admin identity sees the access
         panel, never the numbers.
      3. Read-only data assembly through EXEC_CORE's pure mappers.
-        Opening the page IS the refresh: boot() always re-pulls.
+        Opening the page IS the refresh, and 'ufc:remote-updated'
+        re-renders it when a teammate saves while it sits open.
+
    This module never writes to projects/rates/staff/studio.
    ============================================================ */
 (function () {
@@ -18,11 +27,22 @@
   const $ = (sel, el) => (el || document).querySelector(sel);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  /* Page-local rates catalog shim: boot() hands the confidential grid to
-     window.RATES_CATALOG.hydrate if present. We keep it in memory only -
-     never in localStorage - matching the tool's own handling. */
+  /* The REAL rates-catalog.js is loaded by the page, so the confidential
+     grid hydrates into the app's own catalog exactly as it does elsewhere.
+     We wrap its hydrate to keep a reference for our own mapper, without
+     replacing it - a private shim here would have quietly bypassed the
+     catalog every other page relies on. Held in memory only, never in
+     localStorage, matching the tool's own handling. */
   const DATA = { rates: null, staff: null, projectsRaw: null, studioRaw: null, mapped: null, studio: null, overview: null, panels: null, notes: [] };
-  window.RATES_CATALOG = { hydrate: (payload) => { DATA.rates = payload; } };
+  (function wrapCatalog() {
+    const cat = window.RATES_CATALOG;
+    if (cat && typeof cat.hydrate === 'function') {
+      const original = cat.hydrate.bind(cat);
+      cat.hydrate = (payload) => { DATA.rates = payload; return original(payload); };
+    } else {
+      window.RATES_CATALOG = { hydrate: (payload) => { DATA.rates = payload; } };
+    }
+  })();
 
   const CORE = window.EXEC_CORE;
   const MON = CORE.MON;
@@ -30,8 +50,15 @@
   const fmf = CORE.fmtMoneyFull;
 
   /* ---------------- boot + gate ---------------- */
+  /* boot.js takes over the whole document when it needs to show sign-in, a
+     missing rate card or a start-up failure, which removes our container. In
+     that case the user is already looking at the right screen, so we stand
+     down rather than throwing into a page we no longer own. */
+  function rootOrNull() { return document.getElementById('exec-root'); }
+
   async function main() {
-    const root = $('#exec-root');
+    const root = rootOrNull();
+    if (!root) return;
 
     /* Dev-only fixtures mode: localhost + ?dev=fixtures&base=<url> renders the
        module from local JSON copies of the four files, so the build can be
@@ -60,27 +87,19 @@
       return;
     }
 
-    root.innerHTML = gateBox('Loading', 'Signing in to Box and pulling the latest data…', '');
-    let boot;
+    /* Wait for the shared boot. It owns sign-in, the rate card, the local
+       cache migration and the house error screens, so a failure there is
+       already on screen and this promise simply never resolves. */
+    root.innerHTML = gateBox('Loading', 'Pulling the latest data from Box…', '');
     try {
-      boot = await window.UFC_Box.boot();
+      if (window.ufcReady && window.ufcReady.then) await window.ufcReady;
     } catch (e) {
-      root.innerHTML = gateBox('Could not load', 'Box did not answer. Reload to retry.', esc(e && e.message));
+      if (rootOrNull()) rootOrNull().innerHTML = gateBox('Could not load', 'The app could not start. Reload to retry.', esc(e && e.message));
       return;
     }
-    if (!boot || !boot.ok) {
-      if (boot && boot.needsLogin) {
-        root.innerHTML = gateBox('Sign in required', 'Executive Reporting reads live data from Box. Sign in with your Savills Box account to continue.', '', '<button id="exec-login">Sign in with Box</button>');
-        $('#exec-login').addEventListener('click', () => window.UFC_Box.login());
-        return;
-      }
-      if (boot && boot.needsRates) {
-        root.innerHTML = gateBox('Data unavailable', 'The rate card could not be loaded from Box, so the tool cannot start. ' + esc(boot.error || ''), '');
-        return;
-      }
-      root.innerHTML = gateBox('Could not load', 'Box sign-in did not complete. Reload to retry.', '');
-      return;
-    }
+    // boot.js may have replaced the page while we waited (sign-in, rate card,
+    // start-up failure). If our container is gone, its screen is the right one.
+    if (!rootOrNull()) return;
 
     // ---- THE GATE. seesAllProjects only (store.js rule: every data-
     // visibility decision uses this, never isAdmin). Fail closed.
@@ -98,6 +117,16 @@
     try { DATA.staffRaw = await window.UFC_Box.pullStaff(); } catch (e) { DATA.staffRaw = null; }
     assemble();
     render(root);
+
+    /* boot.js polls Box every three minutes and fires this when a teammate's
+       save lands. Recompute and repaint on the current tab so a page left
+       open on a screen never quietly shows yesterday's numbers. */
+    document.addEventListener('ufc:remote-updated', () => {
+      try {
+        assemble();
+        render(root);
+      } catch (e) { /* a missed refresh just waits for the next tick */ }
+    });
   }
 
   /* ---------------- data assembly (read-only) ---------------- */
@@ -298,7 +327,7 @@
     const leaderLegend = '<div class="cap">Top 5 leaders coloured per tier, rest grouped as Other. Hover any segment for the leader and value.</div>';
     const leaderPanel = panel('Revenue by rating, split by leader', { kind: 'live', text: 'LIVE' }, '',
       'What it is: inside each likelihood tier, which revenue leaders own the revenue (top 5 coloured, the rest grouped as Other). Why we show it: it shows who is carrying firm revenue versus speculative revenue.',
-      leaderBars + leaderLegend);
+      '<div class="gridrows">' + leaderBars + '</div>' + leaderLegend);
 
     // Top 10 clients
     const clientRow = (r) => {
@@ -537,7 +566,7 @@
     }).join('');
     const scorecard = panel('Consolidated leader scorecard', { kind: 'live', text: 'LIVE' }, esc(d.scorecardMsg),
       'What it is: each revenue leader\'s ' + d.year + ' book - solid green is booked (R1), hatched is the full all-ratings book, with their open-pipeline ageing state on the right. Hover a row for the leader\'s top clients. Why we show it: it shows who is carrying firm revenue versus speculative revenue, and whose open deals are going quiet.',
-      bookRows);
+      '<div class="gridrows">' + bookRows + '</div>');
 
     const groupTable = (rows, label) =>
       '<table class="vtable"><thead><tr><th>' + label + '</th><th class="num">Revenue</th><th class="num">Booked (R1)</th><th class="num">Projects</th></tr></thead><tbody>' +
@@ -706,7 +735,7 @@
     return panel('Leader selection - scorecard, cost model and quadrant', { kind: 'live', text: 'LIVE + MANUAL INPUTS' }, '',
       'Pick one or more leaders and every figure below recomputes for that selection. The revenue and booked figures are live; profit and margin run on the manual cost grid until real hours land.',
       dropdown + kpi6 +
-      '<div class="two" style="margin-top:8px"><div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:4px">Revenue by leader (selection highlighted)</div>' + bars + '</div>' +
+      '<div class="two" style="margin-top:8px"><div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:4px">Revenue by leader (selection highlighted)</div><div class="gridrows">' + bars + '</div></div>' +
       '<div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:4px">Client list for the selection</div>' + clientTable + '</div></div>') +
       costPanel + quadrant;
   }
@@ -741,7 +770,7 @@
       '<div class="num" style="font-size:11px;color:var(--mut);text-align:right" title="cumulative share of revenue">' + Math.round(r.cumShare * 100) + '% cum</div></div>').join('');
     const paretoPanel = panel('Client concentration - top 10', { kind: 'live', text: 'LIVE' }, esc(d.paretoMsg),
       'What it is: the ten largest clients by ' + d.year + ' revenue (all ratings), each with its running cumulative share of the book. Why we show it: concentration is the standing leadership question, and the cumulative column answers "how few clients is the year really standing on".',
-      paretoRows);
+      '<div class="gridrows">' + paretoRows + '</div>');
 
     // Sector donut
     let angle = -Math.PI / 2;
@@ -968,7 +997,7 @@
         ? 'Those diamonds are now the real average contracted rate for that grade, taken from ' + d.contractedSamples + ' priced roles on real projects; a grade with no contracted role yet still shows a modelled marker, marked "modelled" in the row. '
         : 'No contracted rates are recorded yet, so every diamond is modelled. ') +
       'Red means below the cost floor. Legend: grey dot cost floor · navy dot rack · diamond contracted.',
-      rows);
+      '<div class="gridrows">' + rows + '</div>');
 
     const src = d.trueProfitSource;
     const tpRows = d.trueProfit.map((r) =>
@@ -1267,6 +1296,8 @@
     }));
   }
 
+  /* Same start convention as the app's other pages: run once the DOM exists;
+     main() then waits on window.ufcReady before touching any data. */
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', main);
   else main();
 })();
