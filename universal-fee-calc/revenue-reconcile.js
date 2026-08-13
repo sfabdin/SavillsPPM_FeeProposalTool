@@ -410,10 +410,12 @@
       for (let yy = first; yy <= last; yy++) o += `<option value="${yy}" ${yy === YEAR ? 'selected' : ''}>${yy}</option>`;
       return o;
     })();
+    const noInvoiceMonth = STORE.accrualsAwaitingInvoiceMonth(YEAR).length;
     const open = STORE.openCells(YEAR).length;
     const st = $('#year-status');
     if (!y) { st.className = 'p-status none'; st.textContent = 'No actuals'; }
     else if (open) { st.className = 'p-status open'; st.textContent = `${open} cell${open === 1 ? '' : 's'} unruled`; }
+    else if (noInvoiceMonth) { st.className = 'p-status open'; st.textContent = `${noInvoiceMonth} accrual${noInvoiceMonth === 1 ? '' : 's'} with no invoice month`; }
     else { st.className = 'p-status done'; st.textContent = 'Fully ruled'; }
     $('#year-meta').innerHTML = y
       ? `Through <b>${MONTHS[STORE.closedThrough(YEAR) - 1] || '—'}</b> · last updated ${new Date(y.updatedAt).toLocaleDateString()} by <b>${esc(y.updatedBy)}</b>`
@@ -737,12 +739,27 @@
         <span>Plan <b>${money(plan)}</b></span>
         <span class="${act - plan < 0 ? 'neg' : 'pos'}">Variance <b>${money(act - plan)}</b></span>
       </div>
+      ${(() => { const c = STORE.billingComposition(row, m);
+        return c.fromPriorAccruals ? `<div class="pop-comp">This month's <b>${money(c.billed)}</b> billed is
+          <b>${money(c.fromPriorAccruals)}</b> of earlier accruals settling plus <b>${money(c.ownMonth)}</b> earned and
+          invoiced in ${MONTHS[m - 1]}.</div>` : ''; })()}
       <div class="pop-list">
         ${STORE.DISPOSITIONS.map(d => `<button class="pop-opt ${cur === d.id ? 'on' : ''}" data-s="${d.id}">
           <span class="dot ${ST_CLASS[d.id]}"></span>${esc(d.label)}${sug === d.id && !cur ? '<em>suggested</em>' : ''}</button>`).join('')}
         <button class="pop-opt clear" data-s="">Clear status</button>
       </div>
-      <div class="pop-carry" ${cur === 'slip' ? '' : 'hidden'}>
+      <div class="pop-carry accrued-box" ${cur === 'accrued' ? '' : 'hidden'}>
+        <div class="pop-why">The work happened in ${MONTHS[m - 1]} — revenue and staffing <b>stay here</b>.
+          Only the invoice is later.</div>
+        <label>Invoice goes out in
+          <select class="bills-pick">
+            <option value="">— month —</option>
+            ${MONTHS.map((mn, i) => i + 1 > m ? `<option value="${i + 1}" ${(row.billsIn || {})[m] === i + 1 ? 'selected' : ''}>${mn}</option>` : '').join('')}
+          </select>
+        </label>
+      </div>
+      <div class="pop-carry slip-box" ${cur === 'slip' ? '' : 'hidden'}>
+        <div class="pop-why">The work did not happen — revenue, staffing and invoice <b>all move together</b>.</div>
         <label>Bills instead in
           <select class="carry-pick">
             <option value="">— month —</option>
@@ -766,6 +783,11 @@
       }
       closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
     }));
+    pop.querySelector('.bills-pick')?.addEventListener('change', (e) => {
+      // Invoice timing only — no slip is recorded, nothing on the project moves.
+      STORE.setCellStatus(YEAR, key, m, 'accrued', { billsIn: +e.target.value || null });
+      closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+    });
     pop.querySelector('.shift-btn')?.addEventListener('click', () => {
       const n = +pop.querySelector('.shift-btn').dataset.n;
       if (!confirm(`Move this project's whole schedule out by ${n} month${n === 1 ? '' : 's'}?\n\nPhase lengths stay the same; the start date and every month of staffing move with it, so effort and revenue stay in step.`)) return;
@@ -888,6 +910,7 @@
       acc: STORE.accruedOf(r, m),
       rec: STORE.cellRecognised(r, m),
       plan: planFor(r.pid, YEAR, m),
+      comp: STORE.billingComposition(r, m),
       status: (r.status || {})[m] || '',
     }));
   }
@@ -914,7 +937,8 @@
         <td class="l">${esc(x.row.client || '—')}</td>
         <td>${x.plan ? money(x.plan) : '—'}</td>
         <td class="new-col strong">${money(x.rec)}</td>
-        <td class="new-col">${x.billed ? money(x.billed) : '—'}</td>
+        <td class="new-col">${x.billed ? money(x.billed) : '—'}${x.comp && x.comp.fromPriorAccruals
+            ? `<div class="comp-note" title="Prior accruals settling in this month, plus what was earned and invoiced in it">${money(x.comp.fromPriorAccruals)} prior + ${money(x.comp.ownMonth)} own</div>` : ''}</td>
         <td class="new-col ${x.acc ? 'acc-cell' : ''}">${x.acc ? money(x.acc) : '—'}</td>
         <td class="${x.fee ? 'fee-cell' : ''}">${x.fee ? money(x.fee) : '—'}</td>
         <td class="${v < -0.5 ? 'neg' : v > 0.5 ? 'pos' : ''}">${Math.abs(v) > 0.5 ? money(v) : '—'}</td>
@@ -923,13 +947,23 @@
             <option value="">— pick a disposition —</option>
             ${STORE.DISPOSITIONS.map(d => `<option value="${d.id}" ${x.status === d.id ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}
           </select>
-          <span class="carry-wrap" ${x.status === 'slip' ? '' : 'hidden'}><span class="carry-lbl">bills in</span>
-            <select class="carry-pick" data-key="${esc(x.row.key)}" data-m="${x.m}" aria-label="Carry month">
+          <span class="carry-wrap" ${x.status === 'slip' ? '' : 'hidden'}><span class="carry-lbl">everything moves to</span>
+            <select class="carry-pick" data-key="${esc(x.row.key)}" data-m="${x.m}" aria-label="Month the work and billing move to">
               <option value="">— month —</option>
               ${MONTHS.map((mn, i) => i + 1 > x.m ? `<option value="${i + 1}" ${(x.row.carryTo || {})[x.m] === i + 1 ? 'selected' : ''}>${mn}</option>` : '').join('')}
             </select></span>
+          <span class="carry-wrap" ${x.status === 'accrued' ? '' : 'hidden'}><span class="carry-lbl">invoice goes out</span>
+            <select class="bills-pick" data-key="${esc(x.row.key)}" data-m="${x.m}" aria-label="Month the invoice goes out">
+              <option value="">— month —</option>
+              ${MONTHS.map((mn, i) => i + 1 > x.m ? `<option value="${i + 1}" ${(x.row.billsIn || {})[x.m] === i + 1 ? 'selected' : ''}>${mn}</option>` : '').join('')}
+            </select></span>
         </td></tr>`;
     });
+    const mc = STORE.monthBillingComposition(YEAR, m) || { fromPriorAccruals: 0, ownMonth: 0 };
+    $('#flash-comp').innerHTML = mc.fromPriorAccruals
+      ? `Of the <b>${money(mc.billed)}</b> invoiced in ${MONTHS_LONG[m - 1]}, <b>${money(mc.fromPriorAccruals)}</b> is
+         earlier accruals settling and <b>${money(mc.ownMonth)}</b> was earned and invoiced in the month itself.`
+      : '';
     h += `</tbody><tfoot><tr class="tot"><td class="l">Total</td><td></td><td>${money(tot.plan)}</td>
       <td class="new-col">${money(tot.rec)}</td><td class="new-col">${money(tot.billed)}</td>
       <td class="new-col">${money(tot.acc)}</td><td>${money(tot.fee)}</td>
@@ -941,6 +975,10 @@
       const row = STORE.getLedgerYear(YEAR).rows[key];
       if (prev === 'slip' && sel.value !== 'slip' && row.pid) { try { STORE.removeSlip(row.pid, { ledgerKey: key, fromYm: ymOf(YEAR, m) }); } catch (e) {} }
       buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+    }));
+    $$('#flash-table .bills-pick').forEach(sel => sel.addEventListener('change', () => {
+      STORE.setCellStatus(YEAR, sel.dataset.key, +sel.dataset.m, 'accrued', { billsIn: +sel.value || null });
+      buildBar(); kpis(); renderGrid(); renderFlash();
     }));
     $$('#flash-table .carry-pick').forEach(sel => sel.addEventListener('change', () => {
       const key = sel.dataset.key, m = +sel.dataset.m, to = +sel.value || null;

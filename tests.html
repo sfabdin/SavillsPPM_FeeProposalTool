@@ -729,6 +729,91 @@
     return (t1 && t1 >= t0) || 'the stamp did not move on edit';
   });
 
+  /* ---- two calendars: revenue where the work was, cash where the invoice went ---- */
+
+  test('Calendars · accrual', 'an accrual names its invoice month without moving anything', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrued: { 2: 12000 } })], { closeMonth: 2 });
+    S.setCellStatus(2026, 'A', 2, 'accrued', { billsIn: 4 });
+    const r = S.getLedgerYear(2026).rows.A;
+    if (r.billsIn[2] !== 4) return 'invoice month not recorded';
+    // revenue stays in February
+    if (!near(S.cellRecognised(r, 2), 12000)) return 'February revenue moved: ' + round(S.cellRecognised(r, 2));
+    if (S.cellRecognised(r, 4)) return 'revenue leaked into the invoice month';
+    return S.allOpenSlips().length === 0 || 'an accrual wrote a slip onto a project';
+  });
+
+  test('Calendars · accrual', 'settling an accrual does not recognise the revenue twice', () => {
+    // Feb accrues 12,000 and Mar 13,800, both invoiced in April's 37,800.
+    // The three months must total what was actually invoiced, not 63,600.
+    const r = lrow({ accrued: { 2: 12000, 3: 13800 }, billed: { 4: 37800 }, billsIn: { 2: 4, 3: 4 } });
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    if (!near(S.cellRecognised(r, 2), 12000)) return 'February ' + round(S.cellRecognised(r, 2));
+    if (!near(S.cellRecognised(r, 4), 12000)) return 'April should recognise only its own 12,000, got ' + round(S.cellRecognised(r, 4));
+    return eq(total, 37800, 'the year against what was invoiced');
+  });
+
+  test('Calendars · accrual', 'a promise the invoice did not keep settles nothing', () => {
+    // Feb accrued 12,000 promised for April; April billed only 5,000.
+    const r = lrow({ accrued: { 2: 12000 }, billed: { 4: 5000 }, billsIn: { 2: 4 } });
+    const c = S.billingComposition(r, 4);
+    if (!near(c.fromPriorAccruals, 5000)) return 'settled ' + round(c.fromPriorAccruals) + ', cannot exceed what was billed';
+    if (!near(c.outstanding, 7000)) return 'outstanding ' + round(c.outstanding);
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    return eq(total, 12000, 'the year — the unsettled part stays recognised in February');
+  });
+
+  test('Calendars · accrual', 'an accrual never invoiced still counts once', () => {
+    const r = lrow({ accrued: { 2: 12000 } });
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    return eq(total, 12000, 'recognised with no invoice yet');
+  });
+
+  test('Calendars · accrual', 'a billed month decomposes into prior accruals plus its own', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrued: { 2: 12000, 3: 13800 }, billed: { 4: 37800 } })], { closeMonth: 4 });
+    S.setCellStatus(2026, 'A', 2, 'accrued', { billsIn: 4 });
+    S.setCellStatus(2026, 'A', 3, 'accrued', { billsIn: 4 });
+    const c = S.billingComposition(S.getLedgerYear(2026).rows.A, 4);
+    if (!near(c.billed, 37800)) return 'billed ' + round(c.billed);
+    if (!near(c.fromPriorAccruals, 25800)) return 'prior accruals ' + round(c.fromPriorAccruals);
+    return eq(c.ownMonth, 12000, 'earned and invoiced in the month itself');
+  });
+
+  test('Calendars · accrual', 'with no invoice month promised, all of a month\'s billing reads as its own', () => {
+    const r = lrow({ billed: { 4: 37800 }, accrued: { 2: 12000 } });
+    const c = S.billingComposition(r, 4);
+    return (near(c.fromPriorAccruals, 0) && near(c.ownMonth, 37800)) || `${round(c.fromPriorAccruals)}/${round(c.ownMonth)}`;
+  });
+
+  test('Calendars · accrual', 'accruals with no invoice month are surfaced as open', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrued: { 2: 12000, 3: 5000 } })], { closeMonth: 3 });
+    S.setCellStatus(2026, 'A', 2, 'accrued', { billsIn: 4 });
+    S.setCellStatus(2026, 'A', 3, 'accrued');
+    const open = S.accrualsAwaitingInvoiceMonth(2026);
+    return (open.length === 1 && open[0].month === 3) || `${open.length} open, expected 1 (Mar)`;
+  });
+
+  test('Calendars · accrual', 'changing away from accrued drops the invoice promise', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrued: { 2: 12000 } })], { closeMonth: 2 });
+    S.setCellStatus(2026, 'A', 2, 'accrued', { billsIn: 4 });
+    S.setCellStatus(2026, 'A', 2, 'billed');
+    return !(S.getLedgerYear(2026).rows.A.billsIn || {})[2] || 'a stale invoice promise survived';
+  });
+
+  test('Calendars · slip', 'a slip moves the money — unlike an accrual, which does not', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    const g = () => { const m = {}; S.billingSeries(S.getProject(p.id), C).forEach(x => m[x.month] = x.net); return m; };
+    const jun = g()[6];
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-06', toYm: '2026-08', amount: jun });
+    const after = g();
+    return (near(after[6], 0) && after[8] > jun) || `Jun ${round(after[6])} / Aug ${round(after[8])}`;
+  });
+
   /* ---- every line needs a home on the forecast ---- */
 
   test('Ledger · mapping', 'a line with no project can become one, at the sheet\'s own figures', () => {
