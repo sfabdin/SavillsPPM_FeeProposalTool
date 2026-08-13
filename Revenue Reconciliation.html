@@ -154,6 +154,39 @@
   table.ws td.s-reclass { border-bottom:3px solid var(--st-reclass); }
   table.ws td.s-fee     { border-bottom:3px solid var(--st-fee); }
 
+  /* ---- coverage: does every line in the book have a home on Projections ---- */
+  .coverage { background:#fff; border:1px solid var(--hair-strong); padding:13px 16px; margin-bottom:16px; }
+  .coverage.off { border-left:5px solid var(--sav-red); background:#fdeaea; }
+  .coverage.ok { border-left:5px solid var(--st-billed); background:#e6f3ea; }
+  .coverage .cv-top { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .coverage .cv-t { font-family:var(--font-display); font-weight:900; font-size:12px; letter-spacing:.1em; text-transform:uppercase; }
+  .coverage.off .cv-t { color:var(--sav-red); } .coverage.ok .cv-t { color:#166b45; }
+  .coverage .cv-sub { font-family:var(--font-body); font-size:12px; color:var(--sav-navy); }
+  .coverage .cv-btn { margin-left:auto; font-family:var(--font-display); font-weight:700; font-size:10px;
+        letter-spacing:.1em; text-transform:uppercase; border:1px solid var(--sav-red); background:#fff;
+        color:var(--sav-red); padding:7px 12px; cursor:pointer; }
+  .coverage .cv-btn:hover { background:var(--sav-red); color:#fff; }
+  .coverage .cv-bar { height:6px; background:rgba(37,39,58,.12); margin-top:9px; }
+  .coverage .cv-bar span { display:block; height:6px; background:var(--st-billed); }
+  .coverage.off .cv-bar span { background:var(--sav-red); }
+  /* mapping affordances on the row */
+  .mapped { font-family:var(--font-body); font-size:9.5px; color:#166b45; }
+  .map-btn.unmapped { background:#fdeaea; border-color:rgba(206,24,30,.4); color:var(--sav-red); font-weight:700; }
+  .map-btn.unmapped:hover { background:var(--sav-red); color:#fff; }
+  .popover .pop-opt.create { background:var(--sav-yellow); font-weight:700; }
+  .popover .pop-opt.create:hover { background:#ffe94d; }
+  .popover .pop-opt.create em { background:transparent; color:var(--sav-navy); opacity:.7; }
+  /* disposition control in the month view */
+  #flash-table select.disp-pick { font-family:var(--font-body); font-size:11px; border:1px solid var(--hair-strong);
+        background:#fffdf2; color:var(--sav-navy); padding:5px 6px; min-width:190px; cursor:pointer; }
+  #flash-table select.disp-pick.set { background:#e6f3ea; border-color:var(--st-billed); font-weight:600; }
+  #flash-table .carry-wrap { display:inline-flex; align-items:center; gap:5px; margin-left:6px; }
+  #flash-table .carry-wrap[hidden] { display:none; }
+  #flash-table .carry-lbl { font-family:var(--font-body); font-size:10px; color:var(--sav-steel); }
+  #flash-table select.carry-pick { font-family:var(--font-body); font-size:11px; border:1px solid var(--hair-strong);
+        background:var(--sav-cream); padding:4px 6px; color:var(--sav-navy); }
+  table.ws td.l .wp-name { white-space:normal; }
+
   /* ---- collapsed grid: one figure per month, stripe says how it settled ---- */
   table.ws tr.prow { cursor:default; }
   table.ws tr.prow td.pcell { cursor:pointer; }
@@ -378,6 +411,8 @@
       <button class="btn danger" id="remove-year" hidden>Remove year</button>
     </span>
   </div>
+
+  <div class="coverage" id="coverage" hidden></div>
 
   <div class="kpis" id="kpis"></div>
 
