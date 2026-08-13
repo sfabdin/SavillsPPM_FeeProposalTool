@@ -768,7 +768,7 @@
       kpi('Top 5 share', d.kpis.top5Pct + '%', 'of all-ratings revenue', '') +
       kpi('Concentration (HHI)', String(d.kpis.hhi), d.kpis.hhi < 1500 ? 'low' : d.kpis.hhi < 2500 ? 'moderate' : 'high', '') +
       kpi('Clients', String(d.kpis.clients), 'with positive ' + d.year + ' revenue', '') +
-      kpi(d.year + ' revenue (all ratings)', fm(d.kpis.revenue), 'imported monthly grain', 'teal') +
+      kpi(d.year + ' revenue (all ratings)', fm(d.kpis.revenue), 'added up from the monthly figures', 'teal') +
       '</div>';
 
     const maxP = Math.max.apply(null, d.pareto.map((r) => r.revenue).concat([1]));
@@ -933,7 +933,7 @@
       '<td class="num">' + fm(m2.cost) + '</td><td class="num">' + fm(m2.revenue) + '</td>' +
       '<td class="num ' + (m2.margin >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(m2.margin) + (m2.marginPct == null ? '' : ' (' + Math.round(m2.marginPct) + '%)') + '</td></tr>').join('');
     const marginPanel = panel('True margin by project - revenue less delivery cost', { kind: 'live', text: 'LIVE' }, esc(d.marginMsg),
-      'What it is: for every project with mapped hours, its ' + d.window.label.slice(-4) + ' revenue against the cost of the time actually logged on it (cost = the rate grid\'s floor where the person\'s title maps, a blended proxy where it does not - the coverage panel says how much of the cost is grid-backed). Showing the 15 heaviest by hours.',
+      'What it is: for every project with mapped hours, its ' + d.window.label.slice(-4) + ' revenue against the cost of the time actually logged on it (cost = the rate grid\'s floor where the person\'s title maps, a flat rate where it does not - the coverage panel says how much of the cost is grid-backed). Showing the 15 heaviest by hours.',
       '<table class="vtable"><thead><tr><th>Project</th><th>Client</th><th class="num">Rating</th><th class="num">Hours</th><th class="num">People</th><th class="num">Delivery cost</th><th class="num">Revenue</th><th class="num">Margin</th></tr></thead><tbody>' + marginRows + '</tbody></table>');
 
     // client economics
@@ -954,7 +954,7 @@
       '<td class="num">' + Math.round(p.billableShare * 100) + '%</td>' +
       '<td class="num">' + fm(p.costPerHour) + (p.fromGrid ? '' : ' <span style="color:var(--mut)">(proxy)</span>') + '</td></tr>').join('');
     const pplPanel = panel('Effort by person', { kind: 'live', text: 'LIVE' }, '',
-      'What it is: the heaviest-logging people over the reported window, their billable share, and the cost rate applied to their hours (grid floor where the title maps, blended proxy elsewhere). Bulk-logged months are marked and left at their full value.',
+      'What it is: the heaviest-logging people over the reported window, their billable share, and the cost rate applied to their hours (grid floor where the title maps, a flat rate elsewhere). Bulk-logged months are marked and left at their full value.',
       '<table class="vtable"><thead><tr><th>Person</th><th>Title</th><th class="num">Hours</th><th class="num">Billable</th><th class="num">Cost rate</th></tr></thead><tbody>' + pplRows + '</tbody></table>');
 
     // coverage + reconciliation
@@ -1036,7 +1036,7 @@
       '',
       src && src.real
         ? 'Runs on the same engine as Delivery & Effort: real logged hours (' + src.hoursMappedPct + '% of billable hours mapped) costed at the grid floor where titles map (' + src.gridCostPct + '% grid-backed), against each client\'s revenue.'
-        : 'No mapped hours available - figures use the documented demo model ($185/hr revenue proxy, $140/hr blended cost) until staff.json maps land.',
+        : 'No mapped hours available - figures use the documented demo model ($185/hr revenue proxy, a flat $140/hr cost) until staff.json maps land.',
       '<table class="vtable"><thead><tr><th>Client</th><th class="num">Hours</th><th class="num">Delivery cost</th><th class="num">Invoiced</th><th class="num">True profit</th></tr></thead><tbody>' + tpRows + '</tbody></table>');
 
     return kpis + gridPanel + tpPanel;
@@ -1107,8 +1107,8 @@
     const banner = '<div class="note" style="border-left:3px solid ' + (pctReal >= 80 ? 'var(--good)' : 'var(--amber-ink)') + '">' +
       '<b>' + realN + ' of ' + rows.length + ' projects (' + pctReal + '%) are placed where they really are</b>, read from the location recorded against the project. ' +
       (unmatchedN ? unmatchedN + ' have a location written in a form that does not match a known city. ' : '') +
-      (scatteredN ? scatteredN + ' have no location recorded yet and are scattered so they stay visible; those pins are position-only and mean nothing geographically. ' : '') +
-      'The map becomes fully real as the location field is completed.</div>';
+      (scatteredN ? scatteredN + ' have no location recorded yet and are scattered so they stay visible; those pins represent real projects, but not their actual locations. ' : '') +
+      'The map gets more accurate as the location field is filled in.</div>';
     return banner +
       panel('Projects by city', pctReal >= 80 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: pctReal + '% REAL PLACEMENT' }, '',
         'What it is: every project with ' + DATA.overview.year + ' revenue placed on a city cluster, sized by revenue, filterable by rating class, leader and region. Hover a cluster for its largest projects and how many are really placed.',
@@ -1121,7 +1121,7 @@
     const kpis = '<div class="kpirow">' +
       kpi('Overall coverage', Math.round(d.kpis.overall * 100) + '%', 'across ' + d.kpis.tracked + ' tracked fields', 'teal') +
       kpi('Fields solid (80%+)', String(d.kpis.solid), 'reportable today', '') +
-      kpi('Fields filling (<50%)', String(d.kpis.filling), 'need intake pushes', '') +
+      kpi('Fields filling (<50%)', String(d.kpis.filling), 'still to be filled in', '') +
       kpi('Projects', String(d.total), 'whole live snapshot', 'navy') +
       kpi('Audience', 'INTERNAL', 'no export on this tab', '') +
       '</div>';
@@ -1143,7 +1143,7 @@
     const col = (list) => '<div>' + list.map((g) =>
       '<div style="padding:9px 0;border-bottom:1px solid var(--hairline)"><div style="font-weight:700;font-size:13px;color:var(--teal-ink)">' + esc(g.term) + '</div><div style="font-size:12.5px;color:var(--mut);line-height:1.5">' + esc(g.def) + '</div></div>').join('') + '</div>';
     return panel('Canonical definitions', { kind: 'live', text: 'LIVE' }, '',
-      'One definition per concept, the same wording everywhere it appears - panels, tooltips and exports never disagree with this page.',
+      'Every term means the same thing on every panel, tooltip and export.',
       '<div class="two" style="gap:26px">' + col(entries.slice(0, half)) + col(entries.slice(half)) + '</div>');
   }
 
@@ -1173,7 +1173,7 @@
       : '<div class="note">No recorded changes for this project yet - the upstream change log starts when a project is first edited.</div>';
     const del = b.delivery
       ? panel('Delivery effort', { kind: 'live', text: 'LIVE' }, '',
-        'Who worked it, at what cost, against its revenue. Cost = grid floor where the title maps, blended proxy elsewhere.',
+        'Who worked it, at what cost, against its revenue. Cost = grid floor where the title maps, a flat rate elsewhere.',
         '<div class="note">' + Math.round(b.delivery.hours).toLocaleString() + 'h logged · cost ' + fm(b.delivery.cost) + ' · revenue ' + fm(b.delivery.revenue) + ' · margin <b class="' + (b.delivery.margin >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(b.delivery.margin) + '</b></div>' +
         '<table class="vtable"><thead><tr><th>Person</th><th>Title</th><th class="num">Hours</th><th class="num">Cost</th></tr></thead><tbody>' +
         b.delivery.people.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title || '-') + '</td><td class="num">' + Math.round(x.hours).toLocaleString() + 'h</td><td class="num">' + fm(x.cost) + '</td></tr>').join('') + '</tbody></table>')

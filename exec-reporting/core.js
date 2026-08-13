@@ -1621,8 +1621,8 @@
      ============================================================ */
   const GLOSSARY = {
     projected: { term: 'Projected (1-4)', def: 'Booked (R1) plus 90% accrued (R2) plus likely deals (R3-R4). The total that feeds the budget. Ratings 5-7 are excluded.' },
-    weights: { term: 'Risk weights', def: 'R1 counts 100%, R2 90%, R3 75%, R4 50%; ratings 5-7 count 0. The canonical ruling - the maths and the words never disagree.' },
-    ev: { term: 'Risk-weighted EV', def: 'Each deal\'s revenue multiplied by its rating weight, then summed. The honest expected value of the pipeline.' },
+    weights: { term: 'Risk weights', def: 'R1 counts 100%, R2 90%, R3 75%, R4 50%; ratings 5-7 count 0.' },
+    ev: { term: 'Risk-weighted EV', def: 'Each deal\'s revenue multiplied by its rating weight, then summed. The expected value of the pipeline.' },
     coverage: { term: 'Coverage of the gap', def: 'Remaining gap = budget minus booked. Face coverage = open pipeline (R2-4) divided by the gap; weighted coverage applies the rating weights first.' },
     catchup: { term: 'Revised target (catch-up)', def: 'The flat monthly budget lifted by the cumulative over/under to date. It climbs when we are behind and falls when we are ahead.' },
     staleness: { term: 'Staleness', def: 'Time since a deal\'s rating or value last changed: 0-30 days on track (green), 30-90 ageing (amber), 90+ stale (red). Booked (R1) is excluded.' },
@@ -1631,11 +1631,11 @@
     realisation: { term: 'Realisation', def: 'Where we bill, how much of the rack-to-floor band we capture. Principal and EVP are excluded (rarely charged out, below the floor).' },
     accrued: { term: 'Accrued', def: 'Work performed that will be billed later. Revenue sits in the month the work was done, not the month it was invoiced.' },
     billableShare: { term: 'Billable share', def: 'The portion of logged time spent on client project work, as opposed to business development, internal work or time off. Revenue only comes from the billable slice.' },
-    costFloor: { term: 'Cost floor', def: 'The lowest rate in a grade\'s band, used as the cost-of-delivery proxy for that grade. Where a person\'s job title is not yet mapped to a grade, a blended proxy is used instead and the panel says so.' },
+    costFloor: { term: 'Cost floor', def: 'The lowest rate in a grade\'s band, used as the cost-of-delivery proxy for that grade. Where a person\'s job title is not yet mapped to a grade, a single flat rate is used instead and the panel says so.' },
     trueMargin: { term: 'True margin', def: 'Project revenue minus the cost of the hours actually logged against it (hours times each person\'s cost rate). Directional until every job title is mapped to the rate grid.' },
     bulkLogged: { term: 'Bulk-logged time', def: 'A person-month recording more hours against one code than a month contains - a remainder or auto-fill entry upstream rather than real effort. Shown unchanged and marked, left at its full value, and kept out of any published utilisation figure.' },
-    planVsActual: { term: 'Plan vs actual', def: 'Hours the staffing plan implies (allocation percentage times monthly capacity) set against hours actually logged. A large gap either way is worth a conversation.' },
-    realisedRate: { term: 'Realised rate', def: 'What an hour of delivery actually earns: revenue divided by the hours logged against it. Measured, not quoted, so it reflects discounts, write-offs and overruns as they really happened.' },
+    planVsActual: { term: 'Plan vs actual', def: 'Hours the staffing plan implies (allocation percentage times monthly capacity) set against hours actually logged. A large gap either way is worth looking into.' },
+    realisedRate: { term: 'Realised rate', def: 'What an hour of delivery actually earns: revenue divided by the hours logged against it. It comes from what we actually earned rather than what the rate card says, so it includes discounts, write-offs and overruns.' },
   };
 
   function tab6Data(mapped) {
