@@ -272,12 +272,13 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
   </div>
 
   <div class="matrix-scroll" id="matrix-scroll">
-    <div class="empty" id="empty" hidden>No projects yet. Build one in the calculator or ingest a proposal.</div>
+    <div class="empty" id="empty" hidden>No projects yet. <a href="Universal Fee Calculator.html">Build one in the calculator →</a> or <a href="Ingestion Studio.html">ingest a proposal →</a></div>
     <table class="proj" id="proj-table"></table>
   </div>
 
   <div class="foot">
     <strong>How this is built.</strong> &nbsp; Every project's monthly invoice is computed from its saved fee record — respecting each project's billing mode (by-phase or flatlined), discount, escalation and Rate Lock — and laid out by calendar month. Rows are sorted by the <strong>1–7 projection rating</strong>. <strong>Ratings 1–4 (Booked through 50–74%) are included in the monthly totals</strong> at full invoice value; <strong>ratings 5–7 are shown greyed and excluded</strong> from the totals. The <em>probability-weighted</em> line applies each rating's confidence (95/82/62/37/15%) to every project — a more conservative forecast. This is the first cut of the Phase 5 projections engine: one number, born in the fee matrix, flowing straight to the forecast.
+    <br><br><strong>Vocabulary.</strong> &nbsp; The monthly figure here is <strong>EARNED</strong> revenue — the month the work is performed, the month staffing is tied to. When revenue is <em>realized</em> (accrued) and when the invoice actually goes out are separate calendars, assigned per month on <a href="Revenue Reconciliation.html">Revenue Reconciliation</a>: <strong>ACCRUED</strong> is the month revenue is recognized; <strong>INVOICED</strong> is the month it bills out the door.
   </div>
 </div>
 
@@ -298,9 +299,10 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
   const fmtExact = (n) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   function fmtK(n) {
     if (!n) return '';
-    const k = n / 1000;
-    if (Math.abs(k) >= 1000) return '$' + (k / 1000).toFixed(1) + 'M';
-    return '$' + (Math.abs(k) >= 100 ? Math.round(k) : k.toFixed(1)) + 'K';
+    const k = Math.abs(n) / 1000;
+    const s = k >= 1000 ? '$' + (k / 1000).toFixed(1) + 'M'
+            : '$' + (k >= 100 ? Math.round(k) : k.toFixed(1)) + 'K';
+    return n < 0 ? '(' + s + ')' : s;      // finance convention: negatives in parens
   }
 
   let showExcluded = true;
@@ -617,7 +619,7 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
       <div class="kpi navy"><div class="k-lbl">Current month · ${cmLabel}</div><div class="k-val" title="${fmtExact(cmTotal)}">${fmtFull(cmTotal)}</div><div class="k-sub">Highlighted column in the grid</div></div>
       <div class="kpi"><div class="k-lbl">Booked · ${cy} (rated 1)</div><div class="k-val" title="${fmtExact(booked)}">${fmtFull(booked)}</div><div class="k-sub">Signed / active · Booked ${cy + 1} ${fmtFull(booked2027)}</div></div>
       <div class="kpi"><div class="k-lbl">Pipeline · ${cy} (rated 2–4)</div><div class="k-val" title="${fmtExact(pipeline14)}">${fmtFull(pipeline14)}</div><div class="k-sub">≥ 50% confidence</div></div>
-      <div class="kpi"><div class="k-lbl">Projected total (1–4) · ${cy}</div><div class="k-val" title="${fmtExact(total2026)}">${fmtFull(total2026)}</div><div class="k-sub">All ${cy} work-performed months</div></div>
+      <div class="kpi"><div class="k-lbl">Projected total (1–4) · ${cy}</div><div class="k-val" title="${fmtExact(total2026)}">${fmtFull(total2026)}</div><div class="k-sub">All ${cy} earned (work-performed) months</div></div>
       <div class="kpi"><div class="k-lbl">Probability-weighted · ${cy}</div><div class="k-val" title="${fmtExact(wt2026)}">${fmtFull(wt2026)}</div><div class="k-sub">All pursuits × confidence · incl. ${fmtFull(longshot)} long-shot</div></div>
     `;
 
@@ -974,11 +976,11 @@ Off by default so the page reads as clean invoice revenue. Turn on to see what g
   $('#show-pass')?.addEventListener('change', e => { showPass = e.target.checked; build(); });
   $('#xlsx-export')?.addEventListener('click', exportProjections);
   ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => {
-    $('#' + id)?.addEventListener('change', () => { $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.'; build(); });
+    $('#' + id)?.addEventListener('change', () => { $('#empty').innerHTML = 'No projects yet. <a href="Universal Fee Calculator.html">Build one in the calculator →</a> or <a href="Ingestion Studio.html">ingest a proposal →</a>'; build(); });
   });
   $('#clear-filters')?.addEventListener('click', () => {
     ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
-    $('#empty').textContent = 'No projects yet. Build one in the calculator or ingest a proposal.';
+    $('#empty').innerHTML = 'No projects yet. <a href="Universal Fee Calculator.html">Build one in the calculator →</a> or <a href="Ingestion Studio.html">ingest a proposal →</a>';
     build();
   });
   /* ---------- open slips banner ---------- */

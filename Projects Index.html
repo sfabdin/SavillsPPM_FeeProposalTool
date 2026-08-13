@@ -551,13 +551,15 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
   function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtMoney(n) {
     if (!n || Math.abs(n) < 0.5) return '$0';
-    if (Math.abs(n) >= 1e6) return '$' + (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M';
-    if (Math.abs(n) >= 1e3) return '$' + (n/1e3).toFixed(0) + 'K';
-    return '$' + Math.round(n).toLocaleString();
+    const a = Math.abs(n);
+    const s = a >= 1e6 ? '$' + (a/1e6).toFixed(1).replace(/\.0$/,'') + 'M'
+            : a >= 1e3 ? '$' + (a/1e3).toFixed(0) + 'K'
+            : '$' + Math.round(a).toLocaleString();
+    return n < 0 ? '(' + s + ')' : s;      // finance convention: negatives in parens
   }
   function fmtMoneyFull(n) {
     if (!n) return '$0';
-    return '$' + Math.round(n).toLocaleString();
+    return (n < 0 ? '($' : '$') + Math.abs(Math.round(n)).toLocaleString() + (n < 0 ? ')' : '');
   }
   function fmtDate(iso) {
     if (!iso) return '—';

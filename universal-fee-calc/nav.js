@@ -96,6 +96,12 @@
   #ppm-nav-search{padding:12px 16px 4px;}
   #ppm-nav-search input{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid rgba(37,39,58,.25);font-size:13px;font-family:inherit;outline:none;}
   #ppm-nav-search input:focus{border-color:${TEAL};}
+  #ppm-proj-hits{padding:0;}
+  #ppm-proj-hits .ph-grp{font-size:9.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#9aa0aa;padding:12px 22px 5px;}
+  #ppm-proj-hits a{display:block;padding:9px 22px;text-decoration:none;border-left:3px solid transparent;}
+  #ppm-proj-hits a:hover{background:#f4f2ef;border-left-color:${TEAL};}
+  #ppm-proj-hits .ph-n{font-size:13px;font-weight:700;color:${NAVY};}
+  #ppm-proj-hits .ph-m{font-size:11px;color:#79828C;margin-top:2px;}
   #ppm-nav-list .pn-grp.pn-docs{border-top:1px solid rgba(37,39,58,.12);margin-top:12px;padding-top:16px;}
   #ppm-nav-list a.pn-doc{font-weight:500;font-size:13px;color:#6a707c;}
   @media print{#ppm-nav-btn,#ppm-nav-ov,#ppm-nav-panel{display:none!important;}}
@@ -113,7 +119,7 @@
 
     const groups = [...new Set(LINKS.map(l => l.group))];
     let inner = `<div class="pn-head"><a class="pn-home" href="Fee Generator.html" title="Home — the Fee &amp; Revenue System landing page"><div class="pn-t">PPM · Fee &amp; Revenue System</div><div class="pn-s">Navigate</div></a><button class="pn-x" aria-label="Close">×</button></div>
-      <div id="ppm-nav-search"><input type="search" placeholder="Jump to a tool… (type to filter)" aria-label="Filter tools"></div><div id="ppm-nav-list">`;
+      <div id="ppm-nav-search"><input type="search" placeholder="Jump to a tool or project…" aria-label="Filter tools and search projects"></div><div id="ppm-proj-hits"></div><div id="ppm-nav-list">`;
     groups.forEach(g => {
       const adminGrp = ADMIN_GROUPS.includes(g);
       inner += `<div class="pn-grp${g === 'Help' ? ' pn-docs' : ''}"${adminGrp ? ' data-admin="1"' : ''}>${g}${adminGrp ? '<span class="pn-adm">admin only</span>' : ''}</div>`;
@@ -140,10 +146,47 @@
     panel.querySelector('.pn-x').addEventListener('click', close);
     document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
 
+    // Project search: match the user's visible projects by name / client /
+    // number / leader and offer them above the tool list. Respects the access
+    // wall — members only ever see their own book.
+    function projectHits(q) {
+      try {
+        const S = window.UFC_Store;
+        if (!S || !S.listProjects || q.length < 2) return [];
+        const vis = S.visibleProjects(S.listProjects(), S.getCurrentUser());
+        const score = (p) => {
+          const pj = p.project || {};
+          const hay = [pj.name, pj.client, pj.projectNumber, pj.code,
+                       S.leaderDisplay ? S.leaderDisplay(pj.leadId || pj.lead) : (pj.lead || '')]
+            .map(x => String(x || '').toLowerCase());
+          if (hay.some(x => x.startsWith(q))) return 2;
+          if (hay.some(x => x.includes(q))) return 1;
+          return 0;
+        };
+        return vis.map(p => ({ p, s: score(p) })).filter(x => x.s)
+          .sort((a, b) => b.s - a.s).slice(0, 8).map(x => x.p);
+      } catch (e) { return []; }
+    }
+    function paintProjectHits(q) {
+      const box = panel.querySelector('#ppm-proj-hits');
+      if (!box) return;
+      const hits = projectHits(q);
+      if (!hits.length) { box.innerHTML = ''; return; }
+      box.innerHTML = '<div class="ph-grp">Projects</div>' + hits.map(p => {
+        const pj = p.project || {};
+        const S = window.UFC_Store;
+        const lead = (S && S.leaderDisplay) ? S.leaderDisplay(pj.leadId || pj.lead) : (pj.lead || '');
+        const meta = [pj.client, pj.projectNumber || pj.code, lead].filter(Boolean).join(' · ');
+        return `<a href="Universal Fee Calculator.html?id=${encodeURIComponent(p.id)}" title="Open in the fee calculator">
+          <div class="ph-n">${esc(pj.name || 'Untitled')}</div>${meta ? `<div class="ph-m">${esc(meta)}</div>` : ''}</a>`;
+      }).join('');
+    }
+
     // Quick-search: filter links as you type; groups hide when emptied; Enter
     // opens the single remaining match.
     function applyFilter() {
       const q = search.value.trim().toLowerCase();
+      paintProjectHits(q);
       panel.querySelectorAll('#ppm-nav-list a').forEach(a => {
         const hidden = a.dataset.roleHidden === '1' || (q && !a.textContent.toLowerCase().includes(q));
         a.style.display = hidden ? 'none' : '';
@@ -165,7 +208,9 @@
     search.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       const vis = [...panel.querySelectorAll('#ppm-nav-list a')].filter(a => a.style.display !== 'none');
-      if (vis.length === 1) location.href = vis[0].href;
+      const proj = [...panel.querySelectorAll('#ppm-proj-hits a')];
+      if (vis.length === 1 && !proj.length) location.href = vis[0].href;
+      else if (proj.length && !vis.length) location.href = proj[0].href;   // best project match
     });
 
     // Hide admin-only items for non-admins once identity is known.

@@ -712,7 +712,7 @@
     $('#example-btn').addEventListener('click', loadExample);
     $('#parse-btn').addEventListener('click', () => {
       const rows = parseTable($('#src').value);
-      if (!rows.length) { alert('Could not find a roster table. Expect a header row with Name + Title/Role columns, pipe- or tab-delimited.'); return; }
+      if (!rows.length) { UFC_UI.toast('Could not find a roster table. Expect a header row with Name + Title/Role columns, pipe- or tab-delimited.'); return; }
       state.rows = rows; renderAll();
     });
     $('#extract-btn').addEventListener('click', runClaudeExtract);
