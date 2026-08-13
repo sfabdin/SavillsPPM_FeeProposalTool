@@ -1432,6 +1432,151 @@
     return out;
   }
 
+  /* ============================================================
+     ALLOCATION — every earned dollar gets an accrual month and an
+     invoice month, at the same amount
+     ------------------------------------------------------------
+     Left to float, accrual and billing double-count. Earn 45,000 in
+     January, accrue 45,000 in January, invoice 45,000 in January and
+     the naive sum is 90,000 for one month's work — the same trap at
+     three months' remove gives 135,000.
+
+     So allocation is the model, not a nicety. Each EARNED month's
+     amount is assigned:
+         alloc[earnedMonth] = { amount, accrueIn, invoiceIn }
+     accrueIn and invoiceIn may be the same month or different ones,
+     but the amount is one amount, spent once.
+
+     Revenue is realized on the ACCRUAL calendar — realized in month m
+     is the sum of allocations whose accrueIn is m. Same-month earn /
+     accrue / invoice therefore counts once by construction, not by a
+     subtraction that has to be remembered. The invoice calendar is
+     cash, and is reconciled separately against what the sheet says
+     actually went out.
+     ============================================================ */
+  const allocOf = (row) => (row && row.alloc) || {};
+  const hasAllocations = (row) => Object.keys(allocOf(row)).length > 0;
+  const allocAmount = (a) => (a && isFinite(+a.amount)) ? +a.amount : 0;
+
+  /** Realized in this month: everything whose ACCRUAL lands here. */
+  function allocatedAccruedIn(row, month) {
+    const a = allocOf(row);
+    let sum = 0;
+    Object.keys(a).forEach(e => { if (+a[e].accrueIn === +month) sum += allocAmount(a[e]); });
+    return sum;
+  }
+  /** What our story says should be invoiced in this month. */
+  function allocatedInvoicedIn(row, month) {
+    const a = allocOf(row);
+    let sum = 0;
+    Object.keys(a).forEach(e => { if (+a[e].invoiceIn === +month) sum += allocAmount(a[e]); });
+    return sum;
+  }
+  /** Still earned, still not invoiced, as at the end of `month`. */
+  function allocatedOutstandingAt(row, month) {
+    const a = allocOf(row);
+    let sum = 0;
+    Object.keys(a).forEach(e => {
+      const al = a[e];
+      if (+al.accrueIn <= +month && +al.invoiceIn > +month) sum += allocAmount(al);
+    });
+    return sum;
+  }
+
+  function setEarnedAllocation(year, key, earnedMonth, alloc) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can allocate revenue.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.alloc = row.alloc || {};
+    if (!alloc) delete row.alloc[earnedMonth];
+    else {
+      const amount = Number(alloc.amount) || 0;
+      const accrueIn = +alloc.accrueIn || +earnedMonth;
+      const invoiceIn = +alloc.invoiceIn || accrueIn;
+      if (accrueIn < 1 || accrueIn > 12 || invoiceIn < 1 || invoiceIn > 12) throw new Error('Months must be inside the year.');
+      if (invoiceIn < accrueIn) throw new Error('An invoice cannot go out before the revenue is accrued.');
+      if (!amount) delete row.alloc[earnedMonth];
+      else row.alloc[earnedMonth] = { amount, accrueIn, invoiceIn };
+    }
+    row.updatedAt = new Date().toISOString();
+    writeRevenue(rev);
+    return row;
+  }
+
+  /** Is every earned dollar spoken for? `earnedByMonth` comes from the caller
+      because the fee tool's schedule lives on the project, not the ledger. */
+  function allocationAudit(row, earnedByMonth) {
+    const a = allocOf(row);
+    const months = [];
+    let earnedTotal = 0, allocatedTotal = 0;
+    for (let m = 1; m <= 12; m++) {
+      const earned = Number((earnedByMonth || {})[m]) || 0;
+      const al = a[m];
+      const amount = allocAmount(al);
+      earnedTotal += earned; allocatedTotal += amount;
+      if (!earned && !amount) continue;
+      months.push({
+        month: m, earned, amount,
+        accrueIn: al ? +al.accrueIn : null, invoiceIn: al ? +al.invoiceIn : null,
+        ok: Math.abs(earned - amount) < 0.5 && !!al,
+        gap: Math.round((earned - amount) * 100) / 100,
+      });
+    }
+    return {
+      months,
+      earnedTotal: Math.round(earnedTotal * 100) / 100,
+      allocatedTotal: Math.round(allocatedTotal * 100) / 100,
+      gap: Math.round((earnedTotal - allocatedTotal) * 100) / 100,
+      complete: months.length > 0 && months.every(x => x.ok),
+      unallocated: months.filter(x => !x.ok),
+    };
+  }
+
+  /** Allocate every earned month in one action: accrue it in the month it was
+      earned, and invoice it in the first month at or after that where the
+      sheet actually shows billing — falling back to the earned month itself.
+      A starting point that is right most of the time and visibly wrong when
+      it is not, which is the only kind of default worth having here. */
+  function autoAllocate(year, key, earnedByMonth) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can allocate revenue.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.alloc = row.alloc || {};
+    let touched = 0;
+    Object.entries(earnedByMonth || {}).forEach(([m, amt]) => {
+      const earned = Number(amt) || 0, mm = +m;
+      if (!earned) return;
+      if (row.alloc[mm]) return;                       // a human already ruled on this month
+      let invoiceIn = mm;
+      for (let k = mm; k <= 12; k++) {
+        if (Math.abs(billedOf(row, k) + feeShareOf(row, k)) > 0.005) { invoiceIn = k; break; }
+      }
+      row.alloc[mm] = { amount: earned, accrueIn: mm, invoiceIn };
+      touched++;
+    });
+    if (touched) { row.updatedAt = new Date().toISOString(); writeRevenue(rev); }
+    return { row, touched };
+  }
+
+  /** Book-wide: earned revenue nobody has allocated. This is the number that
+      says whether the year can be trusted — an unallocated earned month is
+      revenue that will not be counted anywhere. */
+  function ledgerAllocationGaps(year, earnedLookup) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    let rows = 0, gapAmt = 0, gapMonths = 0;
+    Object.entries(y.rows || {}).forEach(([key, r]) => {
+      const audit = allocationAudit(r, (earnedLookup && earnedLookup(r)) || {});
+      if (!audit.months.length) return;
+      if (!audit.complete) { rows++; gapMonths += audit.unallocated.length; gapAmt += audit.gap; }
+    });
+    return { rows, gapMonths, gapAmt: Math.round(gapAmt * 100) / 100 };
+  }
+
   /** Recognised revenue for one project in one month.
 
       The settling term is what makes `billsIn` load-bearing rather than
@@ -1444,6 +1589,10 @@
       April recognises its own 12,000 and the three months foot exactly. */
   function cellRecognised(row, month) {
     if (!row) return 0;
+    // Allocated rows are realized on the accrual calendar, so a month that
+    // earns, accrues AND invoices the same dollars counts it once — by
+    // construction, not by a subtraction someone has to remember.
+    if (hasAllocations(row)) return allocatedAccruedIn(row, month) + feeShareOf(row, month);
     return billedOf(row, month) + feeShareOf(row, month) + accruedOf(row, month)
          - accrualSettling(row, month);
   }
@@ -2993,6 +3142,8 @@
     cellRecognised, cellHasValue, billedOf, accruedOf, feeShareOf, accrualCheck,
     accrualPromised, accrualSettling, billingComposition, monthBillingComposition, accrualsAwaitingInvoiceMonth,
     explainCell, setCellNote, cellNote, accrueAsEarned,
+    hasAllocations, allocOf, allocatedAccruedIn, allocatedInvoicedIn, allocatedOutstandingAt,
+    setEarnedAllocation, allocationAudit, autoAllocate, ledgerAllocationGaps,
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     computeFinancials, financialsInputsHash, restampFinancials,

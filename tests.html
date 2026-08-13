@@ -729,6 +729,92 @@
     return (t1 && t1 >= t0) || 'the stamp did not move on edit';
   });
 
+  /* ---- allocation: every earned dollar spent exactly once ---- */
+
+  const arow = (over) => Object.assign({ key: 'A', billed: {}, billedEdit: {}, feeShare: {},
+    accrued: {}, billsIn: {}, alloc: {} }, over || {});
+
+  test('Allocation · no double count', 'earned, accrued AND invoiced in the same month counts once', () => {
+    // The trap: 45,000 of work, three figures, one month.
+    const r = arow({ billed: { 1: 45000 }, alloc: { 1: { amount: 45000, accrueIn: 1, invoiceIn: 1 } } });
+    return eq(S.cellRecognised(r, 1), 45000, 'January realized');
+  });
+
+  test('Allocation · no double count', 'the three-month version totals the work, not three times it', () => {
+    const r = arow({ billed: { 3: 135000 }, alloc: {
+      1: { amount: 45000, accrueIn: 1, invoiceIn: 3 },
+      2: { amount: 45000, accrueIn: 2, invoiceIn: 3 },
+      3: { amount: 45000, accrueIn: 3, invoiceIn: 3 } } });
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    if (!near(S.cellRecognised(r, 3), 45000)) return 'March realized ' + round(S.cellRecognised(r, 3));
+    if (!near(S.allocatedInvoicedIn(r, 3), 135000)) return 'March invoice story ' + round(S.allocatedInvoicedIn(r, 3));
+    return eq(total, 135000, 'the year');
+  });
+
+  test('Allocation · no double count', 'realized follows the accrual month, not the invoice month', () => {
+    const r = arow({ billed: { 6: 20000 }, alloc: { 2: { amount: 20000, accrueIn: 2, invoiceIn: 6 } } });
+    if (!near(S.cellRecognised(r, 2), 20000)) return 'February ' + round(S.cellRecognised(r, 2));
+    return eq(S.cellRecognised(r, 6), 0, 'June — the invoice only settles what February already took');
+  });
+
+  test('Allocation · audit', 'an earned month with no allocation is reported as a gap', () => {
+    const r = arow({ alloc: { 1: { amount: 45000, accrueIn: 1, invoiceIn: 1 } } });
+    const a = S.allocationAudit(r, { 1: 45000, 2: 45000 });
+    if (a.complete) return 'reported complete with February unallocated';
+    if (a.unallocated.length !== 1 || a.unallocated[0].month !== 2) return JSON.stringify(a.unallocated);
+    return eq(a.gap, 45000, 'unallocated earned revenue');
+  });
+
+  test('Allocation · audit', 'an allocation for the wrong amount is a gap too', () => {
+    const r = arow({ alloc: { 1: { amount: 30000, accrueIn: 1, invoiceIn: 1 } } });
+    const a = S.allocationAudit(r, { 1: 45000 });
+    return (!a.complete && near(a.gap, 15000)) || `complete=${a.complete} gap=${round(a.gap)}`;
+  });
+
+  test('Allocation · audit', 'fully allocated reports complete', () => {
+    const r = arow({ alloc: { 1: { amount: 45000, accrueIn: 1, invoiceIn: 3 },
+                              2: { amount: 45000, accrueIn: 2, invoiceIn: 3 } } });
+    const a = S.allocationAudit(r, { 1: 45000, 2: 45000 });
+    return a.complete || JSON.stringify(a.unallocated);
+  });
+
+  test('Allocation · rules', 'an invoice cannot go out before the revenue is accrued', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 5: 1000 } })], { closeMonth: 5 });
+    try { S.setEarnedAllocation(2026, 'A', 5, { amount: 1000, accrueIn: 5, invoiceIn: 3 }); return 'accepted an invoice before the accrual'; }
+    catch (e) { return /before the revenue is accrued/i.test(e.message) || 'wrong error: ' + e.message; }
+  });
+
+  test('Allocation · auto', 'auto-allocate accrues in the earned month and invoices where the sheet bills', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 3: 135000 } })], { closeMonth: 3 });
+    S.autoAllocate(2026, 'A', { 1: 45000, 2: 45000, 3: 45000 });
+    const r = S.getLedgerYear(2026).rows.A;
+    const a = S.allocOf(r);
+    for (const m of [1, 2, 3]) {
+      if (!a[m] || !near(a[m].amount, 45000)) return `month ${m} not allocated`;
+      if (+a[m].accrueIn !== +m) return `month ${m} accrues in ${a[m].accrueIn}`;
+      if (+a[m].invoiceIn !== 3) return `month ${m} invoices in ${a[m].invoiceIn}, expected 3`;
+    }
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    return eq(total, 135000, 'the year after auto-allocating');
+  });
+
+  test('Allocation · auto', 'auto-allocate never overwrites a human decision', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 3: 45000 } })], { closeMonth: 3 });
+    S.setEarnedAllocation(2026, 'A', 1, { amount: 45000, accrueIn: 1, invoiceIn: 9 });
+    S.autoAllocate(2026, 'A', { 1: 45000 });
+    return +S.allocOf(S.getLedgerYear(2026).rows.A)[1].invoiceIn === 9 || 'the auto pass overwrote a human allocation';
+  });
+
+  test('Allocation · outstanding', 'accrued and not yet invoiced, as at a month', () => {
+    const r = arow({ alloc: { 1: { amount: 45000, accrueIn: 1, invoiceIn: 3 },
+                              2: { amount: 45000, accrueIn: 2, invoiceIn: 3 } } });
+    if (!near(S.allocatedOutstandingAt(r, 2), 90000)) return 'at Feb ' + round(S.allocatedOutstandingAt(r, 2));
+    return eq(S.allocatedOutstandingAt(r, 3), 0, 'at Mar, once the invoice goes out');
+  });
+
   /* ---- two calendars: revenue where the work was, cash where the invoice went ---- */
 
   test('Calendars · accrual', 'an accrual names its invoice month without moving anything', () => {
