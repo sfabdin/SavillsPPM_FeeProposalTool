@@ -1154,6 +1154,69 @@
     return y.rows[key];
   }
 
+  /** Create a project record FROM a ledger line, so a line in the billed book
+      that has no project can be given one without leaving the page.
+
+      The record carries no roster and no pricing — it is not a priced
+      proposal, it is a line in the billed book that needs a home on the
+      forecast. Its monthly figures come straight from the sheet and land in
+      monthlyOverrides, which is the mechanism Revenue Projections already
+      reads, so it shows up there immediately at exactly the figures Finance
+      reported. Someone can price it properly later; the point is that the
+      book reconciles today. */
+  function createProjectFromLedgerRow(year, key) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can create a project.');
+    const y = getLedgerYear(year);
+    const row = y && y.rows && y.rows[key];
+    if (!row) throw new Error('That line is no longer in the ledger.');
+    if (row.pid) throw new Error('That line is already mapped to a project.');
+
+    const months = [];
+    for (let m = 1; m <= 12; m++) if (cellHasValue(row, m)) months.push(m);
+    if (!months.length) throw new Error('That line has no figures to build a project from.');
+    const first = months[0], last = months[months.length - 1];
+
+    const overrides = {};
+    for (let m = first; m <= last; m++) overrides[year + '-' + m] = Math.round(cellRecognised(row, m) * 100) / 100;
+
+    const rec = {
+      id: 'proj_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      project: {
+        name: row.name || '(unnamed)', client: row.client || '',
+        projectId365: row.code || '', status: 'active', rating: 1,
+      },
+      timeline: { startMonth: first, startYear: +year, endMonth: last, endYear: +year },
+      phases: [{ id: 'p1', name: 'Delivery', length: last - first + 1 }],
+      groups: [{ id: 'core', name: 'Core' }],
+      roles: [],
+      assumptions: { hrsPerMo: 173.33, discount: 0, rateLock: false, escalation: 0, industryAdj: 0,
+                     catalogBaseYear: +year, feeShare: { enabled: false, pct: 0, mode: 'offtop' },
+                     feeBasis: 'fixed', nteCeiling: 0 },
+      monthlyOverrides: overrides,
+      source: { fromReconciliation: true, ledgerKey: key, ledgerYear: String(year), note: row.note || '' },
+    };
+    const saved = saveProject(rec);
+    setRowMatch(year, key, saved.id);
+    logActivity('project-from-ledger', saved.id, { year: String(year), key, months: months.length });
+    return saved;
+  }
+
+  /** How much of the billed book has a home on the forecast. This is the
+      number that says whether the reconciliation can be trusted as a
+      measure — an unmapped line is revenue nobody is being measured on. */
+  function ledgerCoverage(year) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    let mapped = 0, unmapped = 0, mappedAmt = 0, unmappedAmt = 0;
+    Object.values(y.rows || {}).forEach(r => {
+      let amt = 0;
+      for (let m = 1; m <= 12; m++) amt += cellRecognised(r, m);
+      if (r.pid) { mapped++; mappedAmt += amt; } else { unmapped++; unmappedAmt += amt; }
+    });
+    return { mapped, unmapped, total: mapped + unmapped, mappedAmt, unmappedAmt };
+  }
+
   function deleteLedgerYear(year) {
     if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can remove revenue actuals.');
     const rev = readRevenue();
@@ -2721,6 +2784,7 @@
     DISPOSITIONS, DISPOSITION_LABEL, LEDGER_FIRST_YEAR,
     ledgerYears, getLedgerYear, closedThrough, postLedgerYear, deleteLedgerYear,
     setCellStatus, setRowMatch, setCellAmount, spreadAccrual,
+    createProjectFromLedgerRow, ledgerCoverage,
     cellRecognised, cellHasValue, billedOf, accruedOf, feeShareOf, accrualCheck,
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,

@@ -729,6 +729,59 @@
     return (t1 && t1 >= t0) || 'the stamp did not move on edit';
   });
 
+  /* ---- every line needs a home on the forecast ---- */
+
+  test('Ledger · mapping', 'a line with no project can become one, at the sheet\'s own figures', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'P123', code: 'P123', name: 'Big Long Project Name From The Sheet',
+      client: 'Acme Holdings', billed: { 3: 10000, 4: 20000, 5: 20000 } })], { closeMonth: 5 });
+    const p = S.createProjectFromLedgerRow(2026, 'P123');
+    if (!p) return 'nothing created';
+    if (p.project.name !== 'Big Long Project Name From The Sheet') return 'name was not carried whole: ' + p.project.name;
+    if (p.project.projectId365 !== 'P123') return 'project code not carried';
+    const ser = S.billingSeries(S.getProject(p.id), C);
+    const g = (m) => (ser.find(x => x.month === m) || {}).net || 0;
+    if (!near(g(3), 10000) || !near(g(4), 20000)) return `series ${round(g(3))}/${round(g(4))}`;
+    return S.getLedgerYear(2026).rows.P123.pid === p.id || 'the line was not mapped to what it created';
+  });
+
+  test('Ledger · mapping', 'creating twice from one line is refused', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    S.createProjectFromLedgerRow(2026, 'A');
+    try { S.createProjectFromLedgerRow(2026, 'A'); return 'a duplicate project was created'; }
+    catch (e) { return /already mapped/i.test(e.message) || 'wrong error: ' + e.message; }
+  });
+
+  test('Ledger · mapping', 'a line with no figures cannot become a project', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'EMPTY' })], { closeMonth: 1 });
+    try { S.createProjectFromLedgerRow(2026, 'EMPTY'); return 'an empty line was accepted'; }
+    catch (e) { return /no figures/i.test(e.message) || 'wrong error: ' + e.message; }
+  });
+
+  test('Ledger · mapping', 'coverage counts the revenue nobody is measured on', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [
+      lrow({ key: 'A', billed: { 1: 10000 } }),
+      lrow({ key: 'B', billed: { 1: 25000 } }),
+    ], { closeMonth: 1 });
+    let c = S.ledgerCoverage(2026);
+    if (c.unmapped !== 2 || !near(c.unmappedAmt, 35000)) return `${c.unmapped} unmapped / ${round(c.unmappedAmt)}`;
+    S.createProjectFromLedgerRow(2026, 'A');
+    c = S.ledgerCoverage(2026);
+    return (c.mapped === 1 && c.unmapped === 1 && near(c.unmappedAmt, 25000)) || `after: ${c.mapped}/${c.unmapped}/${round(c.unmappedAmt)}`;
+  });
+
+  test('Ledger · mapping', 'a line can be remapped to a different project', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    S.setRowMatch(2026, 'A', 'proj_one');
+    S.setRowMatch(2026, 'A', 'proj_two');
+    const r = S.getLedgerYear(2026).rows.A;
+    return (r.pid === 'proj_two' && r.pidManual) || 'pid ' + r.pid;
+  });
+
   /* ---- workbook parser: the piece that breaks when Finance's file moves ---- */
   const P = window.UFC_ReconcileParse;
   const SHEET = [

@@ -61,6 +61,7 @@
   let FOCUS = 0;              // 0 = whole year, 1–12 = one month
   let PENDING = null;
   let SHOW_ZERO = false;
+  let ONLY_UNMAPPED = false;
 
   /* ============================================================
      1 · PARSE — one tab, every month it carries
@@ -253,7 +254,7 @@
 
   /** What the fee record says this project bills in this month — the figure
       the actual is reconciled against. Mirrors Revenue Projections. */
-  const _planCache = {};
+  let _planCache = {};
   function planFor(pid, year, month) {
     if (!pid) return 0;
     const ck = pid + '|' + year;
@@ -423,6 +424,30 @@
     $('#remove-year').hidden = !y;
   }
 
+  /** Every line in the sheet needs a home on Projections, or the book does
+      not reconcile. This is the running count of what still doesn't. */
+  function renderCoverage() {
+    const el = $('#coverage');
+    if (!el) return;
+    const c = STORE.ledgerCoverage(YEAR);
+    if (!c || !c.total) { el.hidden = true; return; }
+    el.hidden = false;
+    const pct = Math.round((c.mapped / c.total) * 100);
+    el.className = 'coverage ' + (c.unmapped ? 'off' : 'ok');
+    el.innerHTML = `
+      <div class="cv-top">
+        <span class="cv-t">${c.unmapped ? 'Unmapped revenue' : 'Every line has a home'}</span>
+        <span class="cv-sub">${c.mapped} of ${c.total} lines mapped to a project on Revenue Projections`
+      + (c.unmapped ? ` — <b>${c.unmapped} still without one, ${money(c.unmappedAmt)} of recognised revenue nobody is measured on</b>.` : ' — the billed book reconciles.')
+      + `</span>
+        ${c.unmapped ? '<button class="cv-btn" id="cv-jump">Show only unmapped</button>' : ''}
+      </div>
+      <div class="cv-bar"><span style="width:${pct}%"></span></div>`;
+    $('#cv-jump')?.addEventListener('click', () => { ONLY_UNMAPPED = !ONLY_UNMAPPED;
+      $('#cv-jump').textContent = ONLY_UNMAPPED ? 'Show all lines' : 'Show only unmapped';
+      renderGrid(); });
+  }
+
   function kpis() {
     const t = STORE.yearTotals(YEAR);
     if (!t) { $('#kpis').innerHTML = ''; return; }
@@ -467,7 +492,9 @@
   }
 
   function renderGrid() {
-    const rows = ledgerRows().filter(r => SHOW_ZERO || rowActive(r) || (r.children || []).some(rowActive));
+    const rows = ledgerRows()
+      .filter(r => SHOW_ZERO || rowActive(r) || (r.children || []).some(rowActive))
+      .filter(r => !ONLY_UNMAPPED || !r.pid);
     const t = $('#grid');
     if (!rows.length) { t.innerHTML = ''; $('#empty').hidden = false; return; }
     $('#empty').hidden = true;
@@ -492,9 +519,14 @@
       else {
         s += `<span class="chev">▸</span><div class="wp-name">${esc(r.name || '(unnamed)')}</div>`;
         s += `<div class="wp-meta">${esc(r.client || '—')}${r.code ? ' · ' + esc(r.code) : ''}`;
+        // Remap is always offered. The auto-matcher is a starting point, and a
+        // line quietly matched to the WRONG project is worse than an unmatched one.
+        const mp = r.pid ? (STORE.getProject(r.pid) || {}).project : null;
         s += r.pid
-          ? ` <a class="proj-link" href="Universal Fee Calculator.html?project=${encodeURIComponent(r.pid)}" title="Open in the calculator">open ↗</a>`
-          : ` <button class="map-btn" data-key="${esc(r.key)}">map to project…</button>`;
+          ? ` <span class="mapped" title="${esc((mp && mp.name) || '')}">→ ${esc((mp && mp.name) || 'project')}</span>`
+            + ` <button class="map-btn" data-key="${esc(r.key)}">change</button>`
+            + ` <a class="proj-link" href="Universal Fee Calculator.html?project=${encodeURIComponent(r.pid)}" title="Open in the calculator">open ↗</a>`
+          : ` <button class="map-btn unmapped" data-key="${esc(r.key)}">no home on projections — map or create</button>`;
         s += r.feeHint ? ' <span class="feehint">comment mentions a fee share</span>' : '';
         s += `</div>`;
       }
@@ -808,15 +840,20 @@
     const key = btn.dataset.key;
     const y = STORE.getLedgerYear(YEAR); const row = y.rows[key];
     const idx = projectIndex().sort((a, b) => (a.client + a.name).localeCompare(b.client + b.name));
+    let ytd = 0; for (let m = 1; m <= 12; m++) ytd += STORE.cellRecognised(row, m);
     const pop = document.createElement('div');
     pop.className = 'popover map';
     pop.innerHTML = `
-      <div class="pop-head">Map <b>${esc(row.name || '')}</b> to a project record</div>
-      <input class="map-search" type="search" placeholder="Search projects…" aria-label="Search projects">
+      <div class="pop-head">Give this line a home · <b>${esc(row.name || '')}</b></div>
+      <div class="pop-nums"><span>${esc(row.client || 'no client')}${row.code ? ' · ' + esc(row.code) : ''}</span>
+        <span>${YEAR} recognised <b>${money(ytd)}</b></span></div>
+      <button class="pop-opt create" data-create="1"><span class="dot new"></span>Create a new project from this line
+        <em>adds it to Projections</em></button>
+      <input class="map-search" type="search" placeholder="…or search existing projects" aria-label="Search projects">
       <div class="pop-list map-list">
-        ${idx.map(p => `<button class="pop-opt" data-pid="${p.id}"><span class="mp-n">${esc(p.name)}</span><span class="mp-c">${esc(p.client)}${p.code ? ' · ' + esc(p.code) : ''}</span></button>`).join('')}
+        ${idx.map(p => `<button class="pop-opt ${p.id === row.pid ? 'on' : ''}" data-pid="${p.id}"><span class="mp-n">${esc(p.name)}</span><span class="mp-c">${esc(p.client)}${p.code ? ' · ' + esc(p.code) : ''}</span></button>`).join('')}
       </div>
-      <button class="pop-opt clear" data-pid="">Leave unmatched</button>`;
+      <button class="pop-opt clear" data-pid="">Leave unmapped</button>`;
     document.body.appendChild(pop);
     const rect = btn.getBoundingClientRect();
     pop.style.top = (rect.bottom + window.scrollY + 4) + 'px';
@@ -828,8 +865,12 @@
     });
     search.focus();
     pop.querySelectorAll('.pop-opt').forEach(b => b.addEventListener('click', () => {
-      STORE.setRowMatch(YEAR, key, b.dataset.pid || null);
-      closeMenus(); kpis(); renderGrid();
+      try {
+        if (b.dataset.create) STORE.createProjectFromLedgerRow(YEAR, key);
+        else STORE.setRowMatch(YEAR, key, b.dataset.pid || null);
+      } catch (e) { alert(e.message); return; }
+      _planCache = {};
+      closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage();
     }));
   }
 
@@ -877,13 +918,36 @@
         <td class="new-col ${x.acc ? 'acc-cell' : ''}">${x.acc ? money(x.acc) : '—'}</td>
         <td class="${x.fee ? 'fee-cell' : ''}">${x.fee ? money(x.fee) : '—'}</td>
         <td class="${v < -0.5 ? 'neg' : v > 0.5 ? 'pos' : ''}">${Math.abs(v) > 0.5 ? money(v) : '—'}</td>
-        <td class="l new-col">${x.status ? `<span class="tag ${ST_CLASS[x.status]}">${esc(STORE.DISPOSITION_LABEL(x.status))}</span>` : '<span class="tag none">unruled</span>'}</td></tr>`;
+        <td class="l new-col"><select class="disp-pick ${x.status ? 'set' : ''}" data-key="${esc(x.row.key)}" data-m="${x.m}"
+              aria-label="Billing status for ${esc(x.row.name || '')}">
+            <option value="">— pick a disposition —</option>
+            ${STORE.DISPOSITIONS.map(d => `<option value="${d.id}" ${x.status === d.id ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}
+          </select>
+          <span class="carry-wrap" ${x.status === 'slip' ? '' : 'hidden'}><span class="carry-lbl">bills in</span>
+            <select class="carry-pick" data-key="${esc(x.row.key)}" data-m="${x.m}" aria-label="Carry month">
+              <option value="">— month —</option>
+              ${MONTHS.map((mn, i) => i + 1 > x.m ? `<option value="${i + 1}" ${(x.row.carryTo || {})[x.m] === i + 1 ? 'selected' : ''}>${mn}</option>` : '').join('')}
+            </select></span>
+        </td></tr>`;
     });
     h += `</tbody><tfoot><tr class="tot"><td class="l">Total</td><td></td><td>${money(tot.plan)}</td>
       <td class="new-col">${money(tot.rec)}</td><td class="new-col">${money(tot.billed)}</td>
       <td class="new-col">${money(tot.acc)}</td><td>${money(tot.fee)}</td>
       <td>${money(tot.rec - tot.plan)}</td><td class="new-col"></td></tr></tfoot>`;
     t.innerHTML = h;
+    $$('#flash-table .disp-pick').forEach(sel => sel.addEventListener('change', () => {
+      const key = sel.dataset.key, m = +sel.dataset.m, prev = (STORE.getLedgerYear(YEAR).rows[key].status || {})[m];
+      STORE.setCellStatus(YEAR, key, m, sel.value || null);
+      const row = STORE.getLedgerYear(YEAR).rows[key];
+      if (prev === 'slip' && sel.value !== 'slip' && row.pid) { try { STORE.removeSlip(row.pid, { ledgerKey: key, fromYm: ymOf(YEAR, m) }); } catch (e) {} }
+      buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+    }));
+    $$('#flash-table .carry-pick').forEach(sel => sel.addEventListener('change', () => {
+      const key = sel.dataset.key, m = +sel.dataset.m, to = +sel.value || null;
+      STORE.setCellStatus(YEAR, key, m, 'slip', { carryTo: to });
+      applySlipToProject(key, m, to);
+      buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+    }));
   }
 
   /* ============================================================
@@ -1099,7 +1163,7 @@
   /* ============================================================
      6 · BOOT
      ============================================================ */
-  function render() { buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+  function render() { buildBar(); renderCoverage(); kpis(); renderGrid(); renderFlash(); renderLeader();
     ['actual', 'plan', 'variance'].forEach(k => $('#mode-' + k).classList.toggle('on', MODE === k));
     $('#flash-card').hidden = !STORE.getLedgerYear(YEAR);
   }
