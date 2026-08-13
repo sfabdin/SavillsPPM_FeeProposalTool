@@ -973,6 +973,29 @@
      where billed is the manual correction if one exists, else the
      imported figure.
 
+     THE VOCABULARY (say these words on the page, not in code only)
+       EARNED    — what the fee tool says the work is worth in a month.
+                   The contract's own schedule, and the month the staffing
+                   grid is tied to. This is the anchor: effort, roster and
+                   earned revenue all sit in the same month.
+       ACCRUED   — earned revenue we have not invoiced yet. An accounting
+                   term for WHEN revenue is realized, not when the work
+                   happened; usually the earned month, sometimes not.
+       BILLED    — an invoice actually went out in that month.
+       REALIZED  — what the month is worth on the P&L:
+                     realized = accrued + billed for that month's own work
+                   A month's INVOICE total is a different number: it can
+                   carry earlier accruals finally going out.
+
+     Worked example, because this is where everyone trips:
+       Jan earned 45,000 → accrued 45,000, invoice due March
+       Feb earned 45,000 → accrued 45,000, invoice due March
+       Mar earned 45,000, and 135,000 is invoiced
+       March is NOT worth 135,000. It is 90,000 of January and February
+       finally going out plus 45,000 of its own — realized 45,000. The
+       billing sheet is right to say 135,000; the page's job is to
+       translate it, and to leave room for a human to say why.
+
      TWO CALENDARS, NOT ONE
      Revenue and cash do not move together, and the difference is the
      whole reason this page exists.
@@ -1313,6 +1336,85 @@
     });
     return t;
   }
+  const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const _m$ = (n) => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString();
+
+  /** The sentence the page writes for a cell, in the vocabulary above. It is
+      a starting point, not the last word: a human can replace it, and their
+      version is what exports. */
+  function explainCell(row, month, earned) {
+    if (!row) return '';
+    const c = billingComposition(row, month);
+    const acc = accruedOf(row, month);
+    const realized = cellRecognised(row, month);
+    const billsIn = (row.billsIn || {})[month];
+    const status = (row.status || {})[month];
+    const M = MONTH_ABBR[month - 1];
+    const parts = [];
+
+    if (earned) parts.push(`${_m$(earned)} earned in ${M}`);
+    if (c.fromPriorAccruals) {
+      const from = Object.keys(row.billsIn || {})
+        .filter(k => +row.billsIn[k] === +month && accruedOf(row, +k))
+        .map(k => MONTH_ABBR[+k - 1]);
+      parts.push(`${_m$(c.billed)} invoiced — ${_m$(c.fromPriorAccruals)} settling ${from.join(' and ') || 'earlier'} accruals`
+        + (c.ownMonth ? ` and ${_m$(c.ownMonth)} for ${M} itself` : ''));
+      if (c.outstanding) parts.push(`${_m$(c.outstanding)} promised for ${M} has not gone out`);
+    } else if (c.billed) {
+      parts.push(`${_m$(c.billed)} invoiced`);
+    }
+    if (acc) parts.push(`${_m$(acc)} accrued` + (billsIn ? `, invoice due ${MONTH_ABBR[billsIn - 1]}` : ', no invoice month set'));
+    if (status === 'slip') {
+      const to = (row.carryTo || {})[month];
+      parts.push(`neither billed nor accrued — the work moves${to ? ' to ' + MONTH_ABBR[to - 1] : ''}`);
+    }
+    if (!parts.length) return '';
+    return parts.join('. ') + `. Realized ${_m$(realized)}.`;
+  }
+
+  /** A human's own words for a cell. Overrides the generated sentence and is
+      what both exports carry. */
+  function setCellNote(year, key, month, text) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can annotate the book.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.notes = row.notes || {};
+    if (text && String(text).trim()) row.notes[month] = String(text).trim(); else delete row.notes[month];
+    row.updatedAt = new Date().toISOString();
+    writeRevenue(rev);
+    return row;
+  }
+  const cellNote = (row, month) => ((row && row.notes) || {})[month] || '';
+
+  /** Confirm the earned months: where the fee tool says work was earned and
+      no invoice went out, log it as accrued in that month. This is the
+      overwhelmingly common case and typing it project by project is how a
+      close takes a week. `earnedByMonth` comes from the caller because the
+      fee tool's schedule lives on the project, not in the ledger. */
+  function accrueAsEarned(year, key, earnedByMonth) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can edit revenue actuals.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.accrued = row.accrued || {}; row.status = row.status || {};
+    let touched = 0;
+    Object.entries(earnedByMonth || {}).forEach(([m, amt]) => {
+      const mm = +m, earned = Number(amt) || 0;
+      if (!earned) return;
+      const billed = billedOf(row, mm) + feeShareOf(row, mm);
+      if (Math.abs(billed) > 0.005) return;              // it invoiced — nothing to accrue
+      if (Math.abs(accruedOf(row, mm)) > 0.005) return;  // a human already put a figure here
+      row.accrued[mm] = earned;
+      if (!row.status[mm]) row.status[mm] = 'accrued';
+      touched++;
+    });
+    if (touched) { row.updatedAt = new Date().toISOString(); writeRevenue(rev); }
+    return { row, touched };
+  }
+
   /** Accrued revenue with no invoice month named — revenue recognised that
       nobody has said when we will actually bill for. */
   function accrualsAwaitingInvoiceMonth(year) {
@@ -2890,6 +2992,7 @@
     createProjectFromLedgerRow, ledgerCoverage,
     cellRecognised, cellHasValue, billedOf, accruedOf, feeShareOf, accrualCheck,
     accrualPromised, accrualSettling, billingComposition, monthBillingComposition, accrualsAwaitingInvoiceMonth,
+    explainCell, setCellNote, cellNote, accrueAsEarned,
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     computeFinancials, financialsInputsHash, restampFinancials,

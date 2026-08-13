@@ -481,9 +481,9 @@
     }
     const forecast = recClosed + planOpen;
     const cards = [
-      { l: 'Recognised YTD', v: compact(rec), s: FOCUS ? MONTHS[FOCUS - 1] + ', from the close file' : 'from the close file' },
-      { l: 'Billed YTD', v: compact(bil), s: 'invoices actually out the door' },
-      { l: 'Accrued, not billed', v: compact(acc), s: Math.abs(t.unallocated) < 1 ? 'earned, invoice still to go' : compact(t.unallocated) + ' still to place', cls: 'acc' },
+      { l: 'Realized YTD', v: compact(rec), s: 'accrued + billed for its own month' },
+      { l: 'Invoiced YTD', v: compact(bil), s: 'out the door — includes prior accruals settling' },
+      { l: 'Accrued (not yet invoiced)', v: compact(acc), s: Math.abs(t.unallocated) < 1 ? 'earned, invoice still to go' : compact(t.unallocated) + ' still to place', cls: 'acc' },
       { l: 'Slipped out of period', v: compact(-slip), s: 'not billed, not accrued', cls: 'neg' },
       { l: 'Written off', v: compact(wo), s: 'reversed, never billable', cls: 'neg' },
       { l: `${YEAR} forecast`, v: compact(forecast), s: `plan was ${compact(plan)}` + (Math.abs(forecast - plan) >= 1 ? ` — ${compact(forecast - plan)} after reconciliation` : ' — unchanged so far'), navy: true },
@@ -524,6 +524,7 @@
         // Remap is always offered. The auto-matcher is a starting point, and a
         // line quietly matched to the WRONG project is worse than an unmatched one.
         const mp = r.pid ? (STORE.getProject(r.pid) || {}).project : null;
+        s += r.pid ? ` <button class="acc-earned-btn" data-key="${esc(r.key)}" title="Where the fee tool says work was earned and no invoice went out, log it as accrued in that month">accrue as earned</button>` : '';
         s += r.pid
           ? ` <span class="mapped" title="${esc((mp && mp.name) || '')}">→ ${esc((mp && mp.name) || 'project')}</span>`
             + ` <button class="map-btn" data-key="${esc(r.key)}">change</button>`
@@ -573,8 +574,8 @@
         }
         return x + '<td class="num"></td><td class="acc-c"></td></tr>';
       };
-      s += lane('perf', 'Performed', 'contract schedule');
-      s += lane('acc', 'Accrued', 'P&amp;L');
+      s += lane('perf', 'Earned', 'fee tool · staffing month');
+      s += lane('acc', 'Accrued', 'earned, not yet invoiced');
       s += lane('bill', 'Billed', 'invoice out');
       if (r.note) s += `<tr class="lane-note lane-of-${ri}" hidden><td colspan="15">“${esc(r.note)}”</td></tr>`;
       return s;
@@ -591,11 +592,11 @@
     };
     const unalloc = flat.reduce((a, r) => { const c = STORE.accrualCheck(r); return a + (c.imported - c.allocated); }, 0);
     h += '</tbody><tfoot>';
-    h += lane('Of which accrued, not billed', 'lane-acc', (r, m) => STORE.accruedOf(r, m),
+    h += lane('Of which accrued (not yet invoiced)', 'lane-acc', (r, m) => STORE.accruedOf(r, m),
       `<div class="acc-n">${money(flat.reduce((a, r) => a + STORE.accrualCheck(r).imported, 0))}</div>
        <div class="acc-d">${Math.abs(unalloc) < 1 ? 'all allocated ✓' : money(Math.abs(unalloc)) + ' unallocated'}</div>`);
     h += lane('Billed (invoice out)', 'lane-bill', (r, m) => STORE.billedOf(r, m) + STORE.feeShareOf(r, m));
-    h += lane('Recognised revenue', '', (r, m) => STORE.cellRecognised(r, m));
+    h += lane('Realized revenue', '', (r, m) => STORE.cellRecognised(r, m));
     h += '</tfoot>';
     t.innerHTML = h;
     wireGrid();
@@ -638,6 +639,15 @@
     });
     $$('#grid .map-btn').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openMapMenu(b); }));
     $$('#grid .spread-btn').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openSpreadMenu(b); }));
+    $$('#grid .acc-earned-btn').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = b.dataset.key, row = STORE.getLedgerYear(YEAR).rows[key];
+      const earned = {};
+      for (let m = 1; m <= 12; m++) { const v = planFor(row.pid, YEAR, m); if (v) earned[m] = v; }
+      const res = STORE.accrueAsEarned(YEAR, key, earned);
+      if (!res || !res.touched) { alert('Nothing to accrue — every earned month here either invoiced or already carries a figure.'); return; }
+      buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+    }));
   }
 
   /* ---- "What changed on your projects" — the same reconciliation, written
@@ -925,9 +935,10 @@
        that did not exist before the ledger are highlighted, so it is obvious
        what this page added to a report people already knew. */
     let h = `<thead><tr><th class="l">Project</th><th class="l">Client</th>
-      <th>Projected<span class="sub">FEE TOOL</span></th>
-      <th class="new-col">Recognised</th><th class="new-col">Billed</th><th class="new-col">Accrued</th>
-      <th>Fee share</th><th>Variance</th><th class="l new-col">Disposition</th></tr></thead><tbody>`;
+      <th>Earned<span class="sub">FEE TOOL</span></th>
+      <th class="new-col">Realized</th><th class="new-col">Invoiced</th><th class="new-col">Accrued</th>
+      <th>Fee share</th><th>Variance</th><th class="l new-col">Disposition</th>
+      <th class="l new-col">What happened<span class="sub">EXPORTS WITH THE FILE</span></th></tr></thead><tbody>`;
     const tot = { plan: 0, billed: 0, fee: 0, acc: 0, rec: 0 };
     rows.sort((a, b) => Math.abs(b.rec) - Math.abs(a.rec)).forEach(x => {
       tot.plan += x.plan; tot.billed += x.billed; tot.fee += x.fee; tot.acc += x.acc; tot.rec += x.rec;
@@ -957,6 +968,12 @@
               <option value="">— month —</option>
               ${MONTHS.map((mn, i) => i + 1 > x.m ? `<option value="${i + 1}" ${(x.row.billsIn || {})[x.m] === i + 1 ? 'selected' : ''}>${mn}</option>` : '').join('')}
             </select></span>
+        </td>
+        <td class="l new-col note-cell">
+          <div class="note-auto">${esc(STORE.explainCell(x.row, x.m, x.plan))}</div>
+          <div class="note-edit" contenteditable="true" role="textbox" data-key="${esc(x.row.key)}" data-m="${x.m}"
+               data-ph="Write what actually happened — this is what exports"
+               aria-label="Commentary for ${esc(x.row.name || '')}">${esc(STORE.cellNote(x.row, x.m))}</div>
         </td></tr>`;
     });
     const mc = STORE.monthBillingComposition(YEAR, m) || { fromPriorAccruals: 0, ownMonth: 0 };
@@ -967,7 +984,7 @@
     h += `</tbody><tfoot><tr class="tot"><td class="l">Total</td><td></td><td>${money(tot.plan)}</td>
       <td class="new-col">${money(tot.rec)}</td><td class="new-col">${money(tot.billed)}</td>
       <td class="new-col">${money(tot.acc)}</td><td>${money(tot.fee)}</td>
-      <td>${money(tot.rec - tot.plan)}</td><td class="new-col"></td></tr></tfoot>`;
+      <td>${money(tot.rec - tot.plan)}</td><td class="new-col"></td><td class="new-col"></td></tr></tfoot>`;
     t.innerHTML = h;
     $$('#flash-table .disp-pick').forEach(sel => sel.addEventListener('change', () => {
       const key = sel.dataset.key, m = +sel.dataset.m, prev = (STORE.getLedgerYear(YEAR).rows[key].status || {})[m];
@@ -976,6 +993,14 @@
       if (prev === 'slip' && sel.value !== 'slip' && row.pid) { try { STORE.removeSlip(row.pid, { ledgerKey: key, fromYm: ymOf(YEAR, m) }); } catch (e) {} }
       buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
     }));
+    $$('#flash-table .note-edit').forEach(td => {
+      td.addEventListener('focus', () => { td.dataset.before = td.textContent.trim(); });
+      td.addEventListener('blur', () => {
+        const v = td.textContent.trim();
+        if (v === (td.dataset.before || '')) return;
+        STORE.setCellNote(YEAR, td.dataset.key, +td.dataset.m, v);
+      });
+    });
     $$('#flash-table .bills-pick').forEach(sel => sel.addEventListener('change', () => {
       STORE.setCellStatus(YEAR, sel.dataset.key, +sel.dataset.m, 'accrued', { billsIn: +sel.value || null });
       buildBar(); kpis(); renderGrid(); renderFlash();
@@ -1015,6 +1040,61 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
+  /** The vocabulary, in the file. Someone opening this three months from now
+      has no page to read it on. */
+  function xlGlossary(wb) {
+    const NAVY = 'FF25273A';
+    const ws = wb.addWorksheet('How to read this');
+    ws.mergeCells('A1:C1');
+    ws.getCell('A1').value = 'Revenue Reconciliation — what the words mean';
+    ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
+    ws.addRow([]);
+    const h = ws.addRow(['Term', 'Definition', 'Why it matters']);
+    h.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+    [
+      ['Earned', 'What the fee tool says the work is worth in that month — the contract’s own schedule.',
+       'The staffing grid is tied to this month. Effort, roster and earned revenue sit together.'],
+      ['Accrued', 'Earned revenue that has not been invoiced yet. An accounting term for WHEN revenue is realized.',
+       'Usually the month the work happened; sometimes not, which is why it is stated separately.'],
+      ['Invoiced', 'An invoice actually went out in that month.', 'It can carry earlier accruals finally going out, so it is not that month’s work.'],
+      ['Realized revenue', 'Accrued + billed for that month’s own work.', 'What the month is worth on the P&L. This is the number the year is measured on.'],
+      ['', '', ''],
+      ['Worked example', 'Jan earns 45,000 and accrues it, invoice due March. Feb the same. March earns 45,000 and 135,000 is invoiced.',
+       'March is NOT worth 135,000. It is 90,000 of Jan and Feb finally going out plus 45,000 of its own — realized 45,000.'],
+    ].forEach(r => { const row = ws.addRow(r); row.getCell(2).alignment = { wrapText: true, vertical: 'top' }; row.getCell(3).alignment = { wrapText: true, vertical: 'top' }; });
+    ws.columns = [{ width: 20 }, { width: 62 }, { width: 62 }];
+  }
+
+  /** Every line of commentary for the year, month by month — the written
+      record of why the numbers moved, which is the part a spreadsheet of
+      figures can never carry on its own. */
+  function xlCommentary(wb) {
+    const NAVY = 'FF25273A';
+    const fmt = '"$"#,##0;[Red]("$"#,##0)';
+    const ws = wb.addWorksheet('Commentary');
+    ws.mergeCells('A1:G1');
+    ws.getCell('A1').value = `${YEAR} — what happened, month by month`;
+    ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
+    ws.addRow([]);
+    const h = ws.addRow(['Month', 'Project', 'Client', 'Earned', 'Realized', 'Status', 'What happened']);
+    h.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+    const rows = ledgerRows();
+    const flat = []; rows.forEach(r => { flat.push(r); (r.children || []).forEach(f => flat.push(f)); });
+    for (let m = 1; m <= 12; m++) {
+      flat.forEach(r => {
+        const earned = planFor(r.pid, YEAR, m);
+        const note = STORE.cellNote(r, m) || STORE.explainCell(r, m, earned);
+        if (!note) return;
+        const row = ws.addRow([MONTHS[m - 1], r.name || '', r.client || '', earned || null,
+          STORE.cellRecognised(r, m) || null, STORE.DISPOSITION_LABEL((r.status || {})[m]) || 'unruled', note]);
+        row.getCell(4).numFmt = fmt; row.getCell(5).numFmt = fmt;
+        row.getCell(7).alignment = { wrapText: true, vertical: 'top' };
+      });
+    }
+    ws.columns = [{ width: 8 }, { width: 42 }, { width: 26 }, { width: 14 }, { width: 14 }, { width: 24 }, { width: 90 }];
+    ws.views = [{ state: 'frozen', ySplit: 3 }];
+  }
+
   /** Every unruled figure — carried by both exports, because "what is still
       open" is the question anyone receiving either one will ask. */
   function xlUnruled(wb) {
@@ -1095,6 +1175,8 @@
     rec.getCell(17).font = { bold: true, color: { argb: NAVY } };
     ws.columns = [{ width: 42 }, { width: 26 }, { width: 11 }, { width: 20 }, ...MONTHS.map(() => ({ width: 13 })), { width: 15 }, { width: 14 }, { width: 14 }];
     ws.views = [{ state: 'frozen', ySplit: 4, xSplit: 4 }];
+    xlCommentary(wb);
+    xlGlossary(wb);
     xlUnruled(wb);
     await xlSave(wb, `Savills PPM Reconciliation ${YEAR}.xlsx`);
   }
@@ -1117,7 +1199,7 @@
     ws.getCell('A2').value = `Actuals through ${MONTHS_LONG[STORE.closedThrough(YEAR) - 1] || '—'} · last updated ${new Date(y.updatedAt).toLocaleDateString()} by ${y.updatedBy} · exported ${new Date().toLocaleString()}`;
     ws.getCell('A2').font = { italic: true, size: 10, color: { argb: STEEL } };
     ws.addRow([]);
-    const head = ws.addRow(['Project', 'Client', 'Project #', 'Projected (fee tool)', 'Recognised', 'Billed', 'Accrued', 'Fee share', 'Variance vs projected', 'Billing status', 'Finance note']);
+    const head = ws.addRow(['Project', 'Client', 'Project #', 'Earned (fee tool)', 'Realized revenue', 'Invoiced', 'Accrued', 'Fee share', 'Variance vs earned', 'Billing status', 'What happened', 'Finance note (from the close file)']);
     head.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; c.alignment = { horizontal: 'center', wrapText: true }; });
     [1, 2, 3, 10, 11].forEach(i => head.getCell(i).alignment = { horizontal: 'left', wrapText: true });
     const tot = { plan: 0, billed: 0, fee: 0, acc: 0, rec: 0 };
@@ -1126,7 +1208,9 @@
       const v = x.rec - x.plan;
       const row = ws.addRow([(x.row.isFeeShare ? '    ' + feeLabel(x.fee) + ' — ' : '') + (x.row.name || ''),
         x.row.client || '', x.row.code || '', x.plan, x.rec, x.billed, x.acc, x.fee, v,
-        STORE.DISPOSITION_LABEL(x.status) || 'unruled', x.row.note || '']);
+        STORE.DISPOSITION_LABEL(x.status) || 'unruled',
+        STORE.cellNote(x.row, x.m) || STORE.explainCell(x.row, x.m, x.plan),
+        x.row.note || '']);
       [4, 5, 6, 7, 8, 9].forEach(i => row.getCell(i).numFmt = fmt);
       if (x.row.isFeeShare) row.eachCell(c => { c.font = { italic: true, color: { argb: RED } }; });
       row.getCell(5).font = { bold: true, color: { argb: NAVY } };
@@ -1134,14 +1218,16 @@
       if (x.fee) row.getCell(8).font = { color: { argb: RED } };
       if (Math.abs(v) > 0.5) row.getCell(9).font = { bold: true, color: { argb: v < 0 ? RED : GRN } };
       if (!x.status) row.getCell(10).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF0D8' } };
+      row.getCell(11).alignment = { wrapText: true, vertical: 'top' };
     });
-    const tr = ws.addRow(['TOTAL', '', '', tot.plan, tot.rec, tot.billed, tot.acc, tot.fee, tot.rec - tot.plan, '', '']);
+    const tr = ws.addRow(['TOTAL', '', '', tot.plan, tot.rec, tot.billed, tot.acc, tot.fee, tot.rec - tot.plan, '', '', '']);
     tr.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
     [4, 5, 6, 7, 8, 9].forEach(i => tr.getCell(i).numFmt = fmt);
     tr.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
     tr.getCell(5).font = { bold: true, color: { argb: NAVY } };
-    ws.columns = [{ width: 46 }, { width: 30 }, { width: 12 }, { width: 15 }, { width: 15 }, { width: 14 }, { width: 18 }, { width: 20 }, { width: 17 }, { width: 26 }, { width: 52 }];
+    ws.columns = [{ width: 46 }, { width: 30 }, { width: 12 }, { width: 16 }, { width: 16 }, { width: 15 }, { width: 14 }, { width: 12 }, { width: 17 }, { width: 26 }, { width: 74 }, { width: 46 }];
     ws.views = [{ state: 'frozen', ySplit: 4, xSplit: 1 }];
+    xlGlossary(wb);
 
     /* --- Sheet 2: the whole year, month by month, as reconciled --- */
     const gs = wb.addWorksheet(`${YEAR} by month`);
