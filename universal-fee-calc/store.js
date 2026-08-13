@@ -973,6 +973,26 @@
      where billed is the manual correction if one exists, else the
      imported figure.
 
+     TWO CALENDARS, NOT ONE
+     Revenue and cash do not move together, and the difference is the
+     whole reason this page exists.
+
+       ACCRUED — the work happened HERE. Revenue is recognised here and
+       the staffing stays here. Only the INVOICE is later, so an accrual
+       carries `billsIn`: the month its invoice goes out. Nothing about
+       the project moves.
+
+       SLIPPED — the work did not happen. Revenue, staffing and invoice
+       all move together, which is why a slip writes to the project and
+       offers a schedule shift, and an accrual does neither.
+
+     The consequence is that a month's BILLED figure is not that month's
+     work. It is prior accruals settling PLUS whatever was earned and
+     invoiced in the month itself — $37,800 billed in April can be
+     $25,800 of February and March finally going out, on top of April's
+     own $12,000. billingComposition() takes that apart, because a
+     number nobody can decompose is a number nobody trusts.
+
      PRIOR-YEAR REVERSALS ARE EXCLUDED. The close file's "Dec-<PY>
      Accruals Reversed" column is a whole-year opening adjustment about
      last year's work, not activity in any month of this one. It is read
@@ -1135,6 +1155,14 @@
     if (extra && 'carryTo' in extra) {
       if (extra.carryTo) row.carryTo[month] = extra.carryTo; else delete row.carryTo[month];
     }
+    // When an accrual's invoice month is set. Distinct from carryTo: this
+    // moves the invoice only, never the revenue or the work.
+    row.billsIn = row.billsIn || {};
+    if (extra && 'billsIn' in extra) {
+      if (extra.billsIn) row.billsIn[month] = extra.billsIn; else delete row.billsIn[month];
+    }
+    // A cell that stops being accrued has no invoice month to promise.
+    if (status !== 'accrued') delete row.billsIn[month];
     row.updatedAt = new Date().toISOString();          // row-level stamp drives the Box merge
     writeRevenue(rev);
     return row;
@@ -1237,10 +1265,85 @@
   const accruedOf = (row, month) => nnum(((row && row.accrued) || {})[month]);
   const feeShareOf = (row, month) => nnum(((row && row.feeShare) || {})[month]);
 
-  /** Recognised revenue for one project in one month. */
+  /** Accruals from earlier months PROMISED to this month's invoice. */
+  function accrualPromised(row, month) {
+    const bi = (row && row.billsIn) || {};
+    let sum = 0;
+    Object.keys(bi).forEach(k => { if (+bi[k] === +month) sum += accruedOf(row, +k); });
+    return sum;
+  }
+  /** How much of that promise actually SETTLED — capped at the money that
+      really went out. A promise is not an invoice: if February's accrual was
+      due to bill in April and April billed nothing, nothing settled, and the
+      revenue stays recognised in February where the work was. Reversing on the
+      promise alone would drive April negative for an invoice that never left
+      the building. */
+  function accrualSettling(row, month) {
+    const promised = accrualPromised(row, month);
+    if (promised <= 0) return promised;
+    const billed = billedOf(row, month) + feeShareOf(row, month);
+    return Math.max(0, Math.min(promised, billed));
+  }
+  /** Take a month's billing apart: what is prior accruals finally going out,
+      and what was earned and invoiced in the month itself. A month's billed
+      figure is NOT that month's work — $37,800 in April can be $25,800 of
+      February and March settling on top of April's own $12,000, and a number
+      nobody can decompose is a number nobody trusts. */
+  function billingComposition(row, month) {
+    const billed = billedOf(row, month) + feeShareOf(row, month);
+    const promised = accrualPromised(row, month);
+    const settling = accrualSettling(row, month);
+    return {
+      billed,
+      promised,
+      fromPriorAccruals: settling,
+      ownMonth: Math.round((billed - settling) * 100) / 100,
+      // Promised to this month's invoice and still not out the door.
+      outstanding: Math.round(Math.max(0, promised - settling) * 100) / 100,
+    };
+  }
+  /** The same decomposition across the whole book for one month. */
+  function monthBillingComposition(year, month) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    const t = { billed: 0, fromPriorAccruals: 0, ownMonth: 0 };
+    Object.values(y.rows || {}).forEach(r => {
+      const c = billingComposition(r, month);
+      t.billed += c.billed; t.fromPriorAccruals += c.fromPriorAccruals; t.ownMonth += c.ownMonth;
+    });
+    return t;
+  }
+  /** Accrued revenue with no invoice month named — revenue recognised that
+      nobody has said when we will actually bill for. */
+  function accrualsAwaitingInvoiceMonth(year) {
+    const y = getLedgerYear(year);
+    if (!y) return [];
+    const out = [];
+    Object.entries(y.rows || {}).forEach(([key, r]) => {
+      for (let m = 1; m <= 12; m++) {
+        if ((r.status || {})[m] !== 'accrued') continue;
+        if ((r.billsIn || {})[m]) continue;
+        const amt = accruedOf(r, m);
+        if (amt) out.push({ key, month: m, row: r, amount: amt });
+      }
+    });
+    return out;
+  }
+
+  /** Recognised revenue for one project in one month.
+
+      The settling term is what makes `billsIn` load-bearing rather than
+      decorative. An accrual is recognised in the month the work happened;
+      when its invoice finally goes out, that portion of the billing is
+      revenue we have ALREADY taken, so it has to come back out or the year
+      counts it twice. Feb accrues 12,000 and Mar 13,800, both promised for
+      April; April bills 37,800. Without the term April reads 37,800 and the
+      three months total 63,600 against 37,800 actually invoiced. With it,
+      April recognises its own 12,000 and the three months foot exactly. */
   function cellRecognised(row, month) {
     if (!row) return 0;
-    return billedOf(row, month) + feeShareOf(row, month) + accruedOf(row, month);
+    return billedOf(row, month) + feeShareOf(row, month) + accruedOf(row, month)
+         - accrualSettling(row, month);
   }
   /** Has anything at all happened in this cell? */
   const cellHasValue = (row, month) => !!(billedOf(row, month) || feeShareOf(row, month) || accruedOf(row, month));
@@ -2786,6 +2889,7 @@
     setCellStatus, setRowMatch, setCellAmount, spreadAccrual,
     createProjectFromLedgerRow, ledgerCoverage,
     cellRecognised, cellHasValue, billedOf, accruedOf, feeShareOf, accrualCheck,
+    accrualPromised, accrualSettling, billingComposition, monthBillingComposition, accrualsAwaitingInvoiceMonth,
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     computeFinancials, financialsInputsHash, restampFinancials,
