@@ -20,7 +20,7 @@ confidential rate grid (`rates.json`) is pulled from Box only after sign-in and 
 - `Revenue Projections.html` — monthly invoice matrix (reads the materialized
   billing series), broker split toggle, current-month marker, Excel export,
   **open revenue slips banner** (months Finance moved, shown red until reconciled)
-- `Revenue Studio.html` — budget/RF baselines vs. actuals, scenarios, waterfall,
+- (retired) Revenue Studio — replaced by Revenue Reconciliation for the monthly close;
   drill-down (bucket → client → project), Exec Report tab
 - `Benchmarking Dashboard.html` — rate spread + scope/assumptions comparison
 - `Proposal Analytics.html` — funnel, win/loss, discount analytics, health score,
@@ -34,7 +34,7 @@ confidential rate grid (`rates.json`) is pulled from Box only after sign-in and 
 - `Import Revenues.html` — bulk-import monthly billing (admin only)
 
 **Docs**
-- `Enterprise Migration Guide.html`, `Fee System Roadmap.html`, `Maintainers Runbook.html`
+- `Maintainers Runbook.html` (deployed) · `docs/` (repo-only: migration guide, roadmap, readiness report)
 
 ## Modules — `universal-fee-calc/`
 - `revenue-reconcile.js` — Revenue Reconciliation: close-workbook parser (columns
@@ -80,7 +80,7 @@ its file id is set in `box-adapter.js` config.
 ## Box files
 - `projects.json` — project records only. Nothing else is written here.
 - `rates.json` — the confidential rate grid (pulled post-login, never in this repo).
-- `studio.json` — Revenue Studio baselines + scenarios.
+- `studio.json` — retired Revenue Studio baselines + scenarios (kept in Box for the Budget/RF baseline decision; no page writes it).
 - `staff.json` — the living staffing matrix.
 - `revenue.json` — Revenue Reconciliation's actuals ledger, keyed by year then
   project. **Self-configuring**: with no file id set it is found by name in the

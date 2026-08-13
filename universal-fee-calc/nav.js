@@ -4,8 +4,8 @@
    Drop <script src="universal-fee-calc/nav.js"></script> on any
    page and it adds a fixed hamburger button + slide-out menu
    linking every tool. Highlights the current page. Admin-only
-   items (Revenue Studio) hide for non-admins once the data layer
-   reports identity; shown by default so it never blocks.
+   items hide for non-admins once the data layer reports
+   identity; shown by default so it never blocks.
    ============================================================ */
 (function () {
   'use strict';
@@ -30,8 +30,6 @@
       desc: 'Who is working on what and how loaded they are — allocations, bandwidth, and contract-vs-staffing checks.' },
     { href: 'Revenue Reconciliation.html',   label: 'Revenue Reconciliation', group: 'Operations', admin: true,
       desc: 'Finance-owned monthly close: import the actuals, reconcile billed vs accrued vs forecast per project, disposition every variance, and export the monthly flash.' },
-    { href: 'Revenue Studio.html',           label: 'Revenue Studio',      group: 'Operations', admin: true,
-      desc: 'Slice, compare, and shape revenue against frozen baselines — without touching project data.' },
     { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Operations', admin: true,
       desc: 'Revenue with Clockify burn (hours × cost rate) laid against it — margin per project, per month.' },
     { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Operations', admin: true,
@@ -53,11 +51,7 @@
     { href: 'Getting Started.html',          label: 'Getting Started',     group: 'Help',
       desc: 'The 5-minute orientation — how the tools fit together and what you are expected to keep current.' },
     { href: 'Maintainers Runbook.html',      label: 'Maintainer’s Runbook', group: 'Help',
-      desc: 'Deep technical reference — architecture, data flow, and the exact fee math.' },
-    { href: 'Enterprise Migration Guide.html', label: 'Migration Guide',   group: 'Help',
-      desc: 'How to move the system from Box + static pages onto enterprise infrastructure.' },
-    { href: 'Fee System Roadmap.html',       label: 'Development Roadmap', group: 'Help',
-      desc: 'Where the tool is going — what has shipped, what is in progress, and what is planned.' },
+      desc: 'Deep technical reference — architecture, data flow, and the exact fee math. The migration guide, roadmap and readiness report live in the repo under docs/.' },
   ];
   const ADMIN_GROUPS = ['Operations', 'Data Admin'];
   const NAVY = '#25273A', YEL = '#FFDF00', TEAL = '#0E7C7B';
