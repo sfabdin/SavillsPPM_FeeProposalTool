@@ -444,7 +444,15 @@
       + `</span>
         ${c.unmapped ? '<button class="cv-btn" id="cv-jump">Show only unmapped</button>' : ''}
       </div>
-      <div class="cv-bar"><span style="width:${pct}%"></span></div>`;
+      <div class="cv-bar"><span style="width:${pct}%"></span></div>`
+      + (() => {
+        const g = STORE.ledgerAllocationGaps(YEAR, (r) => { const e = {}; for (let m = 1; m <= 12; m++) { const v = planFor(r.pid, YEAR, m); if (v) e[m] = v; } return e; });
+        if (!g || !g.rows) return '';
+        return `<div class="cv-alloc">
+          <b>${g.gapMonths} earned month${g.gapMonths === 1 ? '' : 's'}</b> across ${g.rows} project${g.rows === 1 ? '' : 's'}
+          have no accrual and invoice month — <b>${money(g.gapAmt)}</b> of earned revenue that will not be counted.
+          Open a project and use <b>allocate earned</b>, or set the months by hand.</div>`;
+      })();
     $('#cv-jump')?.addEventListener('click', () => { ONLY_UNMAPPED = !ONLY_UNMAPPED;
       $('#cv-jump').textContent = ONLY_UNMAPPED ? 'Show all lines' : 'Show only unmapped';
       renderGrid(); });
@@ -524,7 +532,7 @@
         // Remap is always offered. The auto-matcher is a starting point, and a
         // line quietly matched to the WRONG project is worse than an unmatched one.
         const mp = r.pid ? (STORE.getProject(r.pid) || {}).project : null;
-        s += r.pid ? ` <button class="acc-earned-btn" data-key="${esc(r.key)}" title="Where the fee tool says work was earned and no invoice went out, log it as accrued in that month">accrue as earned</button>` : '';
+        s += r.pid ? ` <button class="acc-earned-btn" data-key="${esc(r.key)}" title="Give every earned month an accrual month and an invoice month, at the earned amount">allocate earned</button>` : '';
         s += r.pid
           ? ` <span class="mapped" title="${esc((mp && mp.name) || '')}">→ ${esc((mp && mp.name) || 'project')}</span>`
             + ` <button class="map-btn" data-key="${esc(r.key)}">change</button>`
@@ -557,6 +565,32 @@
 
       /* The three lanes — hidden until the row is opened. Billed and Accrued
          are typed into here; Tool writes a reconcilable plan adjustment. */
+      /* Every earned dollar needs an accrual month and an invoice month, at
+         the same amount. Without that, accrual and billing float free and a
+         month that earns, accrues and invoices the same work counts it twice. */
+      const allocLane = (r, ri) => {
+        const earned = {}; for (let m = 1; m <= 12; m++) { const v = planFor(r.pid, YEAR, m); if (v) earned[m] = v; }
+        const audit = STORE.allocationAudit(r, earned);
+        if (!audit.months.length) return '';
+        let x = `<tr class="lane lane-alloc lane-of-${ri}" hidden><td class="l">Allocation`
+          + `<span class="lane-hint">${audit.complete ? 'every earned dollar placed' : money(audit.gap) + ' unplaced'}</span></td>`;
+        for (let m = 1; m <= 12; m++) {
+          const row = audit.months.find(z => z.month === m);
+          const focus = FOCUS === m ? 'focus-c' : '';
+          if (!row) { x += `<td class="num zero ${focus}">—</td>`; continue; }
+          const opts = (sel) => MONTHS.map((mn, i) => `<option value="${i + 1}" ${+sel === i + 1 ? 'selected' : ''}>${mn}</option>`).join('');
+          x += `<td class="alloc-c ${row.ok ? 'ok' : 'gap'} ${focus}">
+              <div class="al-amt">${money(row.earned)}</div>
+              <div class="al-pair">
+                <label>acc<select class="al-acc" data-key="${esc(r.key)}" data-m="${m}" aria-label="Accrual month for ${MONTHS[m - 1]}">${opts(row.accrueIn || m)}</select></label>
+                <label>inv<select class="al-inv" data-key="${esc(r.key)}" data-m="${m}" aria-label="Invoice month for ${MONTHS[m - 1]}">${opts(row.invoiceIn || m)}</select></label>
+              </div>
+              ${row.ok ? '' : `<button class="al-fix" data-key="${esc(r.key)}" data-m="${m}" data-amt="${row.earned}">place ${money(row.earned)}</button>`}
+            </td>`;
+        }
+        return x + '<td class="num"></td><td class="acc-c"></td></tr>';
+      };
+
       const lane = (kind, label, hint) => {
         let x = `<tr class="lane lane-${kind} lane-of-${ri}" hidden><td class="l">${label}<span class="lane-hint">${hint}</span></td>`;
         for (let m = 1; m <= 12; m++) {
@@ -574,6 +608,7 @@
         }
         return x + '<td class="num"></td><td class="acc-c"></td></tr>';
       };
+      s += allocLane(r, ri);
       s += lane('perf', 'Earned', 'fee tool · staffing month');
       s += lane('acc', 'Accrued', 'earned, not yet invoiced');
       s += lane('bill', 'Billed', 'invoice out');
@@ -639,14 +674,36 @@
     });
     $$('#grid .map-btn').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openMapMenu(b); }));
     $$('#grid .spread-btn').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openSpreadMenu(b); }));
+    const reAlloc = () => { buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage(); };
+    $$('#grid .al-fix').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = b.dataset.key, m = +b.dataset.m;
+      const cur = STORE.allocOf(STORE.getLedgerYear(YEAR).rows[key])[m] || {};
+      try { STORE.setEarnedAllocation(YEAR, key, m, { amount: +b.dataset.amt, accrueIn: cur.accrueIn || m, invoiceIn: cur.invoiceIn || m }); }
+      catch (err) { alert(err.message); return; }
+      reAlloc();
+    }));
+    const pairChange = (sel, field) => {
+      const key = sel.dataset.key, m = +sel.dataset.m;
+      const row = STORE.getLedgerYear(YEAR).rows[key];
+      const cur = STORE.allocOf(row)[m];
+      const earned = planFor(row.pid, YEAR, m);
+      const next = { amount: cur ? cur.amount : earned, accrueIn: cur ? cur.accrueIn : m, invoiceIn: cur ? cur.invoiceIn : m };
+      next[field] = +sel.value;
+      if (field === 'accrueIn' && next.invoiceIn < next.accrueIn) next.invoiceIn = next.accrueIn;
+      try { STORE.setEarnedAllocation(YEAR, key, m, next); } catch (err) { alert(err.message); return; }
+      reAlloc();
+    };
+    $$('#grid .al-acc').forEach(sel => sel.addEventListener('change', () => pairChange(sel, 'accrueIn')));
+    $$('#grid .al-inv').forEach(sel => sel.addEventListener('change', () => pairChange(sel, 'invoiceIn')));
     $$('#grid .acc-earned-btn').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation();
       const key = b.dataset.key, row = STORE.getLedgerYear(YEAR).rows[key];
       const earned = {};
       for (let m = 1; m <= 12; m++) { const v = planFor(row.pid, YEAR, m); if (v) earned[m] = v; }
-      const res = STORE.accrueAsEarned(YEAR, key, earned);
-      if (!res || !res.touched) { alert('Nothing to accrue — every earned month here either invoiced or already carries a figure.'); return; }
-      buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+      const res = STORE.autoAllocate(YEAR, key, earned);
+      if (!res || !res.touched) { alert('Nothing to place — every earned month on this project is already allocated.'); return; }
+      buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage();
     }));
   }
 
@@ -1065,6 +1122,48 @@
     ws.columns = [{ width: 20 }, { width: 62 }, { width: 62 }];
   }
 
+  /** The allocation ledger: every earned month, the amount, where it accrues
+      and where it invoices. This is the audit trail behind "each earned dollar
+      counted exactly once" — without it the year's total is an assertion. */
+  function xlAllocation(wb) {
+    const NAVY = 'FF25273A', RED = 'FFCE181E', GRN = 'FF1F8A5B', YEL = 'FFFFDF00';
+    const fmt = '"$"#,##0;[Red]("$"#,##0)';
+    const ws = wb.addWorksheet('Allocation');
+    ws.mergeCells('A1:H1');
+    ws.getCell('A1').value = `${YEAR} — every earned month, its accrual month and its invoice month`;
+    ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
+    ws.mergeCells('A2:H2');
+    ws.getCell('A2').value = 'Revenue is realized in the ACCRUAL month. A month that earns, accrues and invoices the same work counts it once.';
+    ws.getCell('A2').font = { italic: true, size: 10, color: { argb: 'FF79828C' } };
+    ws.addRow([]);
+    const h = ws.addRow(['Project', 'Client', 'Earned in', 'Earned', 'Allocated', 'Accrues in', 'Invoices in', 'Status']);
+    h.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+    const rows = ledgerRows();
+    const flat = []; rows.forEach(r => { flat.push(r); (r.children || []).forEach(f => flat.push(f)); });
+    let earnedT = 0, allocT = 0;
+    flat.forEach(r => {
+      const earned = {}; for (let m = 1; m <= 12; m++) { const v = planFor(r.pid, YEAR, m); if (v) earned[m] = v; }
+      const audit = STORE.allocationAudit(r, earned);
+      audit.months.forEach(x => {
+        earnedT += x.earned; allocT += x.amount;
+        const row = ws.addRow([r.name || '', r.client || '', MONTHS[x.month - 1], x.earned || null, x.amount || null,
+          x.accrueIn ? MONTHS[x.accrueIn - 1] : '', x.invoiceIn ? MONTHS[x.invoiceIn - 1] : '',
+          x.ok ? 'placed' : (x.amount ? 'amount does not match earned' : 'NOT ALLOCATED')]);
+        row.getCell(4).numFmt = fmt; row.getCell(5).numFmt = fmt;
+        if (!x.ok) { row.getCell(8).font = { bold: true, color: { argb: RED } };
+                     row.getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEAEA' } }; }
+        else row.getCell(8).font = { color: { argb: GRN } };
+      });
+    });
+    const t = ws.addRow(['TOTAL', '', '', earnedT, allocT, '', '', Math.abs(earnedT - allocT) < 0.5 ? 'every earned dollar placed' : 'UNPLACED ' + Math.round(earnedT - allocT)]);
+    t.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+    t.getCell(4).numFmt = fmt; t.getCell(5).numFmt = fmt;
+    t.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
+    t.getCell(5).font = { bold: true, color: { argb: NAVY } };
+    ws.columns = [{ width: 42 }, { width: 26 }, { width: 11 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 12 }, { width: 30 }];
+    ws.views = [{ state: 'frozen', ySplit: 4 }];
+  }
+
   /** Every line of commentary for the year, month by month — the written
       record of why the numbers moved, which is the part a spreadsheet of
       figures can never carry on its own. */
@@ -1175,6 +1274,7 @@
     rec.getCell(17).font = { bold: true, color: { argb: NAVY } };
     ws.columns = [{ width: 42 }, { width: 26 }, { width: 11 }, { width: 20 }, ...MONTHS.map(() => ({ width: 13 })), { width: 15 }, { width: 14 }, { width: 14 }];
     ws.views = [{ state: 'frozen', ySplit: 4, xSplit: 4 }];
+    xlAllocation(wb);
     xlCommentary(wb);
     xlGlossary(wb);
     xlUnruled(wb);

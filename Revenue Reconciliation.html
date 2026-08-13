@@ -166,6 +166,24 @@
   .glossary .gl.eg { flex:1 1 100%; border-right:0; border-top:1px solid var(--hair);
                      background:#eef6f7; color:var(--sav-navy); }
   .glossary .gl.eg b { display:inline; color:var(--sav-navy); }
+  /* allocation lane */
+  table.ws tr.lane-alloc td.l { border-left:4px solid var(--sav-navy); }
+  table.ws td.alloc-c { padding:4px 6px; text-align:right; vertical-align:top; background:#f6f7fb; }
+  table.ws td.alloc-c.gap { background:#fdeaea; }
+  table.ws td.alloc-c.ok { background:#eef7f1; }
+  table.ws td.alloc-c .al-amt { font-weight:700; font-size:11px; font-variant-numeric:tabular-nums; }
+  table.ws td.alloc-c .al-pair { display:flex; gap:3px; justify-content:flex-end; margin-top:2px; }
+  table.ws td.alloc-c .al-pair label { font-family:var(--font-body); font-size:8.5px; color:var(--sav-steel);
+        display:inline-flex; align-items:center; gap:2px; }
+  table.ws td.alloc-c select { font-family:var(--font-body); font-size:9.5px; border:1px solid var(--hair-strong);
+        background:#fff; color:var(--sav-navy); padding:1px 2px; }
+  table.ws td.alloc-c .al-fix { display:block; width:100%; margin-top:3px; font-family:var(--font-display);
+        font-weight:700; font-size:8.5px; letter-spacing:.05em; text-transform:uppercase; border:0;
+        background:var(--sav-red); color:#fff; padding:2px 4px; cursor:pointer; }
+  .coverage .cv-alloc { margin-top:9px; padding-top:9px; border-top:1px solid rgba(37,39,58,.15);
+        font-family:var(--font-body); font-size:12px; color:var(--sav-navy); line-height:1.5; }
+  .coverage .cv-alloc b { font-family:var(--font-display); }
+
   /* commentary cell */
   .note-cell { min-width:280px; white-space:normal !important; vertical-align:top; }
   .note-auto { font-family:var(--font-body); font-size:10.5px; color:var(--sav-steel); line-height:1.45; }
@@ -453,7 +471,9 @@
     <span class="gl"><b>Earned</b> what the fee tool says the month is worth — the staffing grid is tied to this month</span>
     <span class="gl"><b>Accrued</b> earned but not yet invoiced — an accounting term for <em>when</em> revenue is realized</span>
     <span class="gl"><b>Invoiced</b> an invoice went out — it can carry earlier accruals finally settling</span>
-    <span class="gl strong"><b>Realized revenue</b> = accrued + billed for that month's own work</span>
+    <span class="gl"><b>Allocation</b> every earned dollar gets an accrual month and an invoice month, at the same
+      amount — same month or different, but spent once</span>
+    <span class="gl strong"><b>Realized revenue</b> follows the accrual month, so nothing is counted twice</span>
     <span class="gl eg">Jan earns 45K and accrues it, due March · Feb the same · March earns 45K and 135K is invoiced.
       March is <b>not</b> worth 135K — it is 90K of Jan and Feb going out plus 45K of its own. <b>Realized 45K.</b></span>
   </div>
