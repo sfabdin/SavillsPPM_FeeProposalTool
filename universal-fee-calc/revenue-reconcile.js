@@ -853,11 +853,17 @@
   function renderFlash() {
     const m = flashMonth();
     const rows = flashRows();
-    $('#flash-title').textContent = `Monthly flash · ${MONTHS[m - 1]} ${YEAR}`;
+    $('#flash-title').textContent = `Month view · ${MONTHS_LONG[m - 1]} ${YEAR}`;
     const t = $('#flash-table');
     if (!rows.length) { t.innerHTML = ''; return; }
-    let h = `<thead><tr><th class="l">Project</th><th class="l">Client</th><th>Plan</th><th>Billed gross</th>
-      <th>Fee share</th><th>Accrual Δ</th><th>Recognised</th><th>Variance</th><th class="l">Billing status</th></tr></thead><tbody>`;
+    /* The mockup's read, left to right: what the fee tool said, what we
+       recognised, and the two figures that make up the difference. The three
+       that did not exist before the ledger are highlighted, so it is obvious
+       what this page added to a report people already knew. */
+    let h = `<thead><tr><th class="l">Project</th><th class="l">Client</th>
+      <th>Projected<span class="sub">FEE TOOL</span></th>
+      <th class="new-col">Recognised</th><th class="new-col">Billed</th><th class="new-col">Accrued</th>
+      <th>Fee share</th><th>Variance</th><th class="l new-col">Disposition</th></tr></thead><tbody>`;
     const tot = { plan: 0, billed: 0, fee: 0, acc: 0, rec: 0 };
     rows.sort((a, b) => Math.abs(b.rec) - Math.abs(a.rec)).forEach(x => {
       tot.plan += x.plan; tot.billed += x.billed; tot.fee += x.fee; tot.acc += x.acc; tot.rec += x.rec;
@@ -865,22 +871,132 @@
       h += `<tr class="${x.row.isFeeShare ? 'fee-row' : ''}">
         <td class="l">${x.row.isFeeShare ? feeLabel(x.fee) + ' — ' : ''}${esc(x.row.name || '')}</td>
         <td class="l">${esc(x.row.client || '—')}</td>
-        <td>${x.plan ? money(x.plan) : '—'}</td><td>${x.billed ? money(x.billed) : '—'}</td>
+        <td>${x.plan ? money(x.plan) : '—'}</td>
+        <td class="new-col strong">${money(x.rec)}</td>
+        <td class="new-col">${x.billed ? money(x.billed) : '—'}</td>
+        <td class="new-col ${x.acc ? 'acc-cell' : ''}">${x.acc ? money(x.acc) : '—'}</td>
         <td class="${x.fee ? 'fee-cell' : ''}">${x.fee ? money(x.fee) : '—'}</td>
-        <td class="${x.acc ? 'acc-cell' : ''}">${x.acc ? money(x.acc) : '—'}</td>
-        <td class="strong">${money(x.rec)}</td>
         <td class="${v < -0.5 ? 'neg' : v > 0.5 ? 'pos' : ''}">${Math.abs(v) > 0.5 ? money(v) : '—'}</td>
-        <td class="l">${x.status ? `<span class="tag ${ST_CLASS[x.status]}">${esc(STORE.DISPOSITION_LABEL(x.status))}</span>` : '<span class="tag none">unruled</span>'}</td></tr>`;
+        <td class="l new-col">${x.status ? `<span class="tag ${ST_CLASS[x.status]}">${esc(STORE.DISPOSITION_LABEL(x.status))}</span>` : '<span class="tag none">unruled</span>'}</td></tr>`;
     });
     h += `</tbody><tfoot><tr class="tot"><td class="l">Total</td><td></td><td>${money(tot.plan)}</td>
-      <td>${money(tot.billed)}</td><td>${money(tot.fee)}</td><td>${money(tot.acc)}</td>
-      <td>${money(tot.rec)}</td><td>${money(tot.rec - tot.plan)}</td><td></td></tr></tfoot>`;
+      <td class="new-col">${money(tot.rec)}</td><td class="new-col">${money(tot.billed)}</td>
+      <td class="new-col">${money(tot.acc)}</td><td>${money(tot.fee)}</td>
+      <td>${money(tot.rec - tot.plan)}</td><td class="new-col"></td></tr></tfoot>`;
     t.innerHTML = h;
   }
 
   /* ============================================================
      5 · EXCEL
      ============================================================ */
+  function xlHead(ws, title, sub, span) {
+    const NAVY = 'FF25273A', STEEL = 'FF79828C';
+    ws.mergeCells('A1:' + span + '1');
+    ws.getCell('A1').value = title;
+    ws.getCell('A1').font = { bold: true, size: 15, color: { argb: NAVY } };
+    ws.mergeCells('A2:' + span + '2');
+    ws.getCell('A2').value = sub;
+    ws.getCell('A2').font = { italic: true, size: 10, color: { argb: STEEL } };
+    ws.addRow([]);
+  }
+  function xlBook() {
+    const wb = new (window.ExcelJS.Workbook)();
+    wb.creator = 'Savills PPM · Revenue Reconciliation';
+    return wb;
+  }
+  async function xlSave(wb, filename) {
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  /** Every unruled figure — carried by both exports, because "what is still
+      open" is the question anyone receiving either one will ask. */
+  function xlUnruled(wb) {
+    const NAVY = 'FF25273A', RED = 'FFCE181E', GRN = 'FF1F8A5B';
+    const fmt = '"$"#,##0;[Red]("$"#,##0)';
+    const open = STORE.openCells(YEAR);
+    const ex = wb.addWorksheet('Unruled');
+    ex.mergeCells('A1:F1');
+    ex.getCell('A1').value = open.length ? `${open.length} figure(s) with no billing status` : 'Every figure has a billing status.';
+    ex.getCell('A1').font = { bold: true, size: 13, color: { argb: open.length ? RED : GRN } };
+    ex.addRow([]);
+    const eh = ex.addRow(['Project', 'Client', 'Project #', 'Month', 'Recognised', 'Finance note']);
+    eh.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+    open.forEach(o => {
+      const r = ex.addRow([o.row.name || '', o.row.client || '', o.row.code || '', MONTHS[o.month - 1], o.recognised, o.row.note || '']);
+      r.getCell(5).numFmt = fmt;
+    });
+    ex.columns = [{ width: 44 }, { width: 28 }, { width: 12 }, { width: 9 }, { width: 16 }, { width: 56 }];
+  }
+
+  /** THE YEAR — every project across twelve months, with the three lanes
+      behind each one written out underneath it, because a spreadsheet cannot
+      expand a row on click. */
+  async function exportYear() {
+    if (typeof ExcelJS === 'undefined') { alert('Excel library not loaded — reload the page and try again.'); return; }
+    const y = STORE.getLedgerYear(YEAR);
+    if (!y) { alert('Nothing to export — no actuals posted for ' + YEAR + '.'); return; }
+    const NAVY = 'FF25273A', YEL = 'FFFFDF00', RED = 'FFCE181E', GRN = 'FF1F8A5B', AMB = 'FFC07A00', TEAL = 'FF1D6B78';
+    const fmt = '"$"#,##0;[Red]("$"#,##0)';
+    const wb = xlBook();
+    const ws = wb.addWorksheet(String(YEAR));
+    xlHead(ws, `Savills PPM — Revenue Reconciliation · ${YEAR}`,
+      `Actuals through ${MONTHS_LONG[STORE.closedThrough(YEAR) - 1] || '—'} · last updated ${new Date(y.updatedAt).toLocaleDateString()} by ${y.updatedBy} · exported ${new Date().toLocaleString()}`, 'R');
+    const head = ws.addRow(['Project', 'Client', 'Project #', 'Lane', ...MONTHS, 'Total', 'Plan', 'Variance']);
+    head.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; c.alignment = { horizontal: 'center' }; });
+    [1, 2, 3, 4].forEach(i => head.getCell(i).alignment = { horizontal: 'left' });
+
+    const rows = ledgerRows();
+    const flat = []; rows.forEach(r => { flat.push(r); (r.children || []).forEach(f => flat.push(f)); });
+    flat.forEach(r => {
+      const lanes = [
+        ['Recognised', (m) => STORE.cellRecognised(r, m), true],
+        ['Performed (plan)', (m) => planFor(r.pid, YEAR, m), false],
+        ['Accrued', (m) => STORE.accruedOf(r, m), false],
+        ['Billed', (m) => STORE.billedOf(r, m) + STORE.feeShareOf(r, m), false],
+      ];
+      lanes.forEach(([label, fn, isMain], li) => {
+        const cells = []; let tt = 0, pp = 0;
+        for (let m = 1; m <= 12; m++) { const v = fn(m); tt += v; pp += planFor(r.pid, YEAR, m); cells.push(v || null); }
+        const row = ws.addRow([
+          li === 0 ? (r.isFeeShare ? '    ' + feeLabel(Object.values(r.feeShare || {})[0] || 0) + ' — ' : '') + (r.name || '') : '',
+          li === 0 ? (r.client || '') : '', li === 0 ? (r.code || '') : '', label,
+          ...cells, tt, isMain ? pp : null, isMain ? tt - pp : null,
+        ]);
+        for (let i = 5; i <= 19; i++) row.getCell(i).numFmt = fmt;
+        if (isMain) {
+          row.eachCell(c => { c.font = { bold: true, color: { argb: NAVY } }; });
+          // The status on each month rides along as a cell note.
+          for (let m = 1; m <= 12; m++) { const st = (r.status || {})[m]; if (st) row.getCell(4 + m).note = STORE.DISPOSITION_LABEL(st); }
+        } else {
+          row.getCell(4).font = { italic: true, color: { argb: label === 'Accrued' ? AMB : label === 'Billed' ? GRN : TEAL } };
+        }
+        if (r.isFeeShare) row.eachCell(c => { c.font = { ...(c.font || {}), italic: true, color: { argb: RED } }; });
+      });
+    });
+
+    const t = STORE.yearTotals(YEAR);
+    const totRow = (label, arr, fill) => {
+      const row = ws.addRow(['', '', '', label, ...MONTHS.map((_, i) => arr[i + 1] || null), arr.reduce((a, b) => a + b, 0), null, null]);
+      row.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } }; });
+      for (let i = 5; i <= 17; i++) row.getCell(i).numFmt = fmt;
+      return row;
+    };
+    totRow('Of which accrued, not billed', t.accrued, 'FF3B3A34');
+    totRow('Billed (invoice out)', t.billed, 'FF2F3147');
+    const rec = totRow('RECOGNISED REVENUE', t.recognised, NAVY);
+    rec.getCell(17).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
+    rec.getCell(17).font = { bold: true, color: { argb: NAVY } };
+    ws.columns = [{ width: 42 }, { width: 26 }, { width: 11 }, { width: 20 }, ...MONTHS.map(() => ({ width: 13 })), { width: 15 }, { width: 14 }, { width: 14 }];
+    ws.views = [{ state: 'frozen', ySplit: 4, xSplit: 4 }];
+    xlUnruled(wb);
+    await xlSave(wb, `Savills PPM Reconciliation ${YEAR}.xlsx`);
+  }
+
   async function exportFlash() {
     if (typeof ExcelJS === 'undefined') { alert('Excel library not loaded — reload the page and try again.'); return; }
     const y = STORE.getLedgerYear(YEAR);
@@ -899,7 +1015,7 @@
     ws.getCell('A2').value = `Actuals through ${MONTHS_LONG[STORE.closedThrough(YEAR) - 1] || '—'} · last updated ${new Date(y.updatedAt).toLocaleDateString()} by ${y.updatedBy} · exported ${new Date().toLocaleString()}`;
     ws.getCell('A2').font = { italic: true, size: 10, color: { argb: STEEL } };
     ws.addRow([]);
-    const head = ws.addRow(['Project', 'Client', 'Project #', 'Plan', 'Billed gross', 'Fee share', 'Accrual movement', 'Recognised revenue', 'Variance vs plan', 'Billing status', 'Finance note']);
+    const head = ws.addRow(['Project', 'Client', 'Project #', 'Projected (fee tool)', 'Recognised', 'Billed', 'Accrued', 'Fee share', 'Variance vs projected', 'Billing status', 'Finance note']);
     head.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; c.alignment = { horizontal: 'center', wrapText: true }; });
     [1, 2, 3, 10, 11].forEach(i => head.getCell(i).alignment = { horizontal: 'left', wrapText: true });
     const tot = { plan: 0, billed: 0, fee: 0, acc: 0, rec: 0 };
@@ -907,21 +1023,21 @@
       tot.plan += x.plan; tot.billed += x.billed; tot.fee += x.fee; tot.acc += x.acc; tot.rec += x.rec;
       const v = x.rec - x.plan;
       const row = ws.addRow([(x.row.isFeeShare ? '    ' + feeLabel(x.fee) + ' — ' : '') + (x.row.name || ''),
-        x.row.client || '', x.row.code || '', x.plan, x.billed, x.fee, x.acc, x.rec, v,
+        x.row.client || '', x.row.code || '', x.plan, x.rec, x.billed, x.acc, x.fee, v,
         STORE.DISPOSITION_LABEL(x.status) || 'unruled', x.row.note || '']);
       [4, 5, 6, 7, 8, 9].forEach(i => row.getCell(i).numFmt = fmt);
       if (x.row.isFeeShare) row.eachCell(c => { c.font = { italic: true, color: { argb: RED } }; });
-      if (x.fee) row.getCell(6).font = { color: { argb: RED } };
+      row.getCell(5).font = { bold: true, color: { argb: NAVY } };
       if (x.acc) row.getCell(7).font = { color: { argb: AMB } };
-      row.getCell(8).font = { bold: true, color: { argb: NAVY } };
+      if (x.fee) row.getCell(8).font = { color: { argb: RED } };
       if (Math.abs(v) > 0.5) row.getCell(9).font = { bold: true, color: { argb: v < 0 ? RED : GRN } };
       if (!x.status) row.getCell(10).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF0D8' } };
     });
-    const tr = ws.addRow(['TOTAL', '', '', tot.plan, tot.billed, tot.fee, tot.acc, tot.rec, tot.rec - tot.plan, '', '']);
+    const tr = ws.addRow(['TOTAL', '', '', tot.plan, tot.rec, tot.billed, tot.acc, tot.fee, tot.rec - tot.plan, '', '']);
     tr.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
     [4, 5, 6, 7, 8, 9].forEach(i => tr.getCell(i).numFmt = fmt);
-    tr.getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
-    tr.getCell(8).font = { bold: true, color: { argb: NAVY } };
+    tr.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
+    tr.getCell(5).font = { bold: true, color: { argb: NAVY } };
     ws.columns = [{ width: 46 }, { width: 30 }, { width: 12 }, { width: 15 }, { width: 15 }, { width: 14 }, { width: 18 }, { width: 20 }, { width: 17 }, { width: 26 }, { width: 52 }];
     ws.views = [{ state: 'frozen', ySplit: 4, xSplit: 1 }];
 
@@ -975,7 +1091,7 @@
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `Savills PPM Flash ${YEAR}-${String(m).padStart(2, '0')}.xlsx`;
+    a.download = `Savills PPM Flash ${MONTHS[m - 1]} ${YEAR}.xlsx`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
@@ -1002,6 +1118,7 @@
     ['actual', 'plan', 'variance'].forEach(k => $('#mode-' + k).addEventListener('click', () => { MODE = k; render(); }));
     $('#show-zero').addEventListener('change', e => { SHOW_ZERO = e.target.checked; renderGrid(); });
     $('#flash-export').addEventListener('click', exportFlash);
+    $('#year-export').addEventListener('click', exportYear);
     $('#remove-year').addEventListener('click', () => {
       if (!confirm(`Remove all ${YEAR} actuals?\n\nThe figures and every billing status set against them are deleted.`)) return;
       STORE.deleteLedgerYear(YEAR); render();
