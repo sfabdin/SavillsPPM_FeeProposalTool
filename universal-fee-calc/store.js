@@ -2677,6 +2677,13 @@
     }
     p.scheduleShiftedAt = new Date().toISOString();
     p.updatedAt = p.scheduleShiftedAt;
+    // The named-people allocation matrix (staff.json) lives in its own store
+    // and does NOT move with the contract. Flag the project so the Staffing
+    // page offers a one-click "shift the allocations too" until a human
+    // applies or dismisses it. Repeated shifts accumulate.
+    const shiftBy = (getRealIdentity() || getCurrentUser() || {}).username || '';
+    const prevShift = p.staffingShiftPending;
+    p.staffingShiftPending = { months: (prevShift ? +prevShift.months || 0 : 0) + n, at: p.scheduleShiftedAt, by: shiftBy };
     // The frozen snapshot is now describing the wrong months — restamp it.
     const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
     if (catalog && catalog.hydrated) {
@@ -2686,6 +2693,19 @@
     writeDb(db);
     logActivity('schedule-shift', projectId, { months: n, start: st.year + '-' + st.month });
     return p;
+  }
+
+  /** Clear the "shift the staffing allocations too" flag — called by the
+      Staffing page after the allocations were moved, or dismissed. */
+  function clearStaffingShift(projectId) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can clear a staffing-shift flag.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p || !p.staffingShiftPending) return false;
+    delete p.staffingShiftPending;
+    p.updatedAt = new Date().toISOString();
+    writeDb(db);
+    return true;
   }
 
   /** THE canonical monthly billing series — what every page should read.
@@ -3182,7 +3202,7 @@
     isChangeOrder, childChangeOrders, approvedChangeOrders, createChangeOrder,
     importedBrokerSeries, reconcileImport,
     projectSlips, openSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
-    recordAdjustment, shiftSchedule, billingSeries,
+    recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries,
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,

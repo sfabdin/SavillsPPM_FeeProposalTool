@@ -1277,6 +1277,57 @@
     return out.sort((a, b) => b.totalNeedFteMo - a.totalNeedFteMo);
   }
 
+  /* ===== Schedule shifts — carrying the PEOPLE with the contract =====
+     When Reconciliation slips a project, shiftSchedule moves the contract
+     staffing (fteMonthly) and stamps `staffingShiftPending` on the project.
+     This store holds the NAMED-people allocations, so they don't move by
+     themselves — these three close that loop: list what's waiting, find the
+     rows, move them. The Staffing page surfaces it as a one-click banner. */
+
+  /** Every allocation row whose matrix project resolves to this fee project
+      (through the saved fee-link first, fuzzy match otherwise). */
+  function allocationsForFeeProject(feeProjectId) {
+    const byProject = {};   // resolve each distinct matrix name once
+    return listAllocations().filter(a => {
+      if (!a.project) return false;
+      const k = nkey(a.project);
+      if (byProject[k] === undefined)
+        byProject[k] = matchFeeProjects(a.project, a.client).some(l => l.id === feeProjectId);
+      return byProject[k];
+    });
+  }
+
+  /** Shift every allocation on a fee project by N months (start and end move
+      together, so row lengths are preserved). Returns how many rows moved. */
+  function shiftAllocationsForFeeProject(feeProjectId, months) {
+    const n = parseInt(months, 10);
+    if (!n) return 0;
+    const rows = allocationsForFeeProject(feeProjectId);
+    rows.forEach(a => {
+      if (a.start) a.start = ymAdd(a.start, n);
+      if (a.end) a.end = ymAdd(a.end, n);
+      saveAllocation(a);
+    });
+    return rows.length;
+  }
+
+  /** Projects whose schedule moved but whose people allocations haven't —
+      the Staffing page's worklist. */
+  function pendingContractShifts() {
+    try {
+      const S2 = window.UFC_Store;
+      if (!S2 || !S2.listProjects) return [];
+      return S2.listProjects().filter(p => p.staffingShiftPending).map(p => ({
+        id: p.id,
+        name: (p.project && p.project.name) || 'Untitled',
+        months: +p.staffingShiftPending.months || 0,
+        at: p.staffingShiftPending.at || '',
+        by: p.staffingShiftPending.by || '',
+        allocations: allocationsForFeeProject(p.id).length,
+      }));
+    } catch (e) { return []; }
+  }
+
   /** REVERSE bridge: fee projects with an EMPTY roster whose linked matrix
       project already carries allocations — propose seeding the fee-tool
       roster FROM the matrix. Booked (won/active) and pipeline statuses both
@@ -1790,6 +1841,7 @@
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
     unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
+    allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,

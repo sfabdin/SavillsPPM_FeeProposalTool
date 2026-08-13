@@ -1882,7 +1882,45 @@
       if (panel) panel.innerHTML = `<div class="empty" style="color:#8f2418"><b>This view hit an error:</b> ${esc(e.message)}<br><span class="vmini">${esc((e.stack || '').split('\n')[1] || '')}</span></div>`;
     }
   }
-  function renderAll() { buildIdentityBar(); renderCounts(); renderFreshness(); renderActive(); }
+  function renderAll() { buildIdentityBar(); renderCounts(); renderFreshness(); renderShiftBanner(); renderActive(); }
+
+  /* ---- Pending schedule shifts — the people must follow the contract ----
+     Reconciliation moved a project's schedule (and its contract staffing);
+     the named-people allocations here did not move with it. One click
+     applies the same shift to every allocation row on that project. */
+  function renderShiftBanner() {
+    let bar = $('#shift-pending-bar');
+    const pend = (S.pendingContractShifts ? S.pendingContractShifts() : [])
+      .filter(x => x.months);
+    if (!pend.length) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'shift-pending-bar';
+      bar.style.cssText = 'background:#fdeaea;border:1px solid var(--sav-red);border-left:5px solid var(--sav-red);padding:12px 16px;margin-bottom:14px;font-family:var(--font-body);font-size:12.5px;color:var(--sav-navy)';
+      const anchor = $('#fresh-strip');
+      if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(bar, anchor);
+      else document.querySelector('.controls')?.after(bar);
+    }
+    bar.innerHTML = '<strong style="font-family:var(--font-display);letter-spacing:.04em">SCHEDULES MOVED — allocations have not.</strong> '
+      + 'Reconciliation shifted these projects; their contract staffing moved with them, the named-people rows below did not.'
+      + pend.map(x => `<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span><b>${esc(x.name)}</b> moved ${x.months > 0 ? '+' : ''}${x.months} month${Math.abs(x.months) === 1 ? '' : 's'}${x.by ? ' · ' + esc(x.by) : ''}${x.at ? ' · ' + new Date(x.at).toLocaleDateString() : ''} · ${x.allocations} allocation row${x.allocations === 1 ? '' : 's'} here</span>
+          <button class="btn" data-shift-apply="${esc(x.id)}" data-n="${x.months}" style="background:var(--sav-navy);color:#fff">Shift ${x.allocations ? x.allocations + ' row' + (x.allocations === 1 ? '' : 's') : 'allocations'} ${x.months > 0 ? '+' : ''}${x.months}mo</button>
+          <button class="btn" data-shift-skip="${esc(x.id)}" title="Clear the flag without moving anything — the allocations were already right">Already handled</button>
+        </div>`).join('');
+    $$('#shift-pending-bar [data-shift-apply]').forEach(b => b.onclick = () => {
+      const n = +b.dataset.n;
+      let moved = 0;
+      try { moved = S.shiftAllocationsForFeeProject(b.dataset.shiftApply, n); window.UFC_Store.clearStaffingShift(b.dataset.shiftApply); }
+      catch (e) { UFC_UI.toast(e.message); return; }
+      toast(moved ? `${moved} allocation row${moved === 1 ? '' : 's'} moved ${n > 0 ? '+' : ''}${n} month${Math.abs(n) === 1 ? '' : 's'} — bandwidth reflects the new dates.` : 'No allocation rows found for that project — flag cleared.');
+      renderAll();
+    });
+    $$('#shift-pending-bar [data-shift-skip]').forEach(b => b.onclick = () => {
+      try { window.UFC_Store.clearStaffingShift(b.dataset.shiftSkip); } catch (e) { UFC_UI.toast(e.message); return; }
+      renderAll();
+    });
+  }
 
   function buildWindowOptions() {
     const sel = $('#win-start'); const now = new Date();

@@ -927,6 +927,7 @@
       const n = +pop.querySelector('.shift-btn').dataset.n;
       if (!confirm(`Move this project's whole schedule out by ${n} month${n === 1 ? '' : 's'}?\n\nPhase lengths stay the same; the start date and every month of staffing move with it, so effort and revenue stay in step.`)) return;
       try { STORE.shiftSchedule(pop.querySelector('.shift-btn').dataset.pid, n); } catch (e) { UFC_UI.toast(e.message); return; }
+      UFC_UI.toast(`Schedule and contract staffing moved +${n} month${n === 1 ? '' : 's'}. The Staffing & Bandwidth page will offer to move the named-people allocations the same way.`, 'ok');
       _planCache[row.pid + '|' + YEAR] = null; delete _planCache[row.pid + '|' + YEAR];
       closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash();
     });

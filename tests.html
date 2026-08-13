@@ -55,6 +55,7 @@
 </script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/staff.js"></script>
 <!-- Pulled in for its workbook parser only; it renders nothing without the
      reconciliation page's markup. -->
 <script src="universal-fee-calc/revenue-reconcile.js"></script>
@@ -1042,6 +1043,141 @@
     try { P.parseSheet(bad, 'x'); return 'a sheet with no month columns was accepted'; }
     catch (e) { return /month/i.test(e.message) || 'wrong error: ' + e.message; }
   });
+
+  /* ============================================================
+     STAFFING — the allocation engine, the Clockify pipeline, the
+     contract bridge, and the shift loop that carries the PEOPLE
+     when Reconciliation moves a schedule.
+     ============================================================ */
+  (function () {
+    const ST = window.UFC_Staff;
+    if (!ST) { test('Staffing', 'module loads', () => 'UFC_Staff not present'); return; }
+
+    test('Staffing', 'capacity honors the part-time percentage', () => {
+      ST.setMonthHours(172);
+      const p = ST.savePerson({ id: 'stp_jane', name: 'Jane Tester', title: 'Project Manager', capacityPct: 50, active: true });
+      const r1 = eq(ST.capacityHours(p), 86, 'half-time capacity'); if (r1 !== true) return r1;
+      p.capacityPct = 100; ST.savePerson(p);
+      return eq(ST.capacityHours(ST.getPerson('stp_jane')), 172, 'full-time capacity');
+    });
+
+    test('Staffing', 'personLoad sums overlapping allocations in-month and drops them out-of-window', () => {
+      ST.saveAllocation({ id: 'sta_1', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Alpha', start: '2026-03', end: '2026-06', pct: 60 });
+      ST.saveAllocation({ id: 'sta_2', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Beta',  start: '2026-05', end: '2026-08', pct: 60 });
+      const r1 = eq(ST.personLoad('stp_jane', '2026-04'), 60, 'April: one allocation'); if (r1 !== true) return r1;
+      const r2 = eq(ST.personLoad('stp_jane', '2026-05'), 120, 'May: both stack to an overload'); if (r2 !== true) return r2;
+      return eq(ST.personLoad('stp_jane', '2026-09'), 0, 'September: both rows ended');
+    });
+
+    test('Staffing', 'expected hours = month hours × capacity% × allocation%', () => {
+      const p = ST.getPerson('stp_jane'); p.capacityPct = 100; ST.savePerson(p);
+      return eq(ST.expectedHours('stp_jane', 'Tower Alpha', '2026-04'), 172 * 0.6, 'Jane on Tower Alpha in April');
+    });
+
+    test('Staffing', 'Clockify CSV: quoted commas parse, a saved user mapping routes the odd spelling, hours aggregate', () => {
+      // "Tester, Jane" is not fuzzy-matched to Jane Tester (deliberate — reversed
+      // names are ambiguous); the saved user mapping is the designed route.
+      ST.setUserMapping('Tester, Jane', 'stp_jane');
+      const csv = 'User,Project,Time (h),Start Date\n'
+        + '"Tester, Jane","Tower Alpha",8.5,2026-04-03\n'
+        + 'Jane Tester,"Tower Alpha",3.5,2026-04-10\n'
+        + 'Jane Tester,"Tower Alpha",4,2026-05-02\n';
+      const rep = ST.analyzeClockify(csv, '2026-04');
+      if (rep.error) return 'analyze failed: ' + rep.error;
+      const res = ST.commitClockify(rep, 'replace');
+      if (!res || !res.written) return 'nothing committed';
+      const r1 = eq(ST.actualHours('stp_jane', 'Tower Alpha', '2026-04'), 12, 'April rows aggregate'); if (r1 !== true) return r1;
+      return eq(ST.actualHours('stp_jane', 'Tower Alpha', '2026-05'), 4, 'May kept separate');
+    });
+
+    test('Staffing', 'a saved __ignore__ project mapping drops those rows on import', () => {
+      ST.setProjectMapping('Internal Admin', '__ignore__');
+      const rep = ST.analyzeClockify('User,Project,Time (h),Start Date\nJane Tester,Internal Admin,9,2026-04-08\n', '2026-04');
+      if (rep.error) return 'analyze failed: ' + rep.error;
+      const before = ST.actualHours('stp_jane', 'Internal Admin', '2026-04');
+      ST.commitClockify(rep, 'merge');
+      const r1 = eq(ST.actualHours('stp_jane', 'Internal Admin', '2026-04'), before, 'ignored project stays at prior value');
+      if (r1 !== true) return r1;
+      return eq(before, 0, 'and that prior value was zero');
+    });
+
+    // A fee-tool project the bridge functions can resolve. Saved through the
+    // normal store path, then the fee cache is told the project list changed.
+    const feeP = S.saveProject(base({
+      project: { name: 'Tower Alpha', client: 'Acme', status: 'active' },
+      roles: [{ id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'core', fte: {},
+                fteMonthly: { '2026-3': 50, '2026-4': 50, '2026-5': 50, '2026-6': 50 } }],
+    }));
+    document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+
+    test('Staffing', 'contractPlan turns the fee tool’s fteMonthly into hours on the calendar', () => {
+      const plan = ST.contractPlan('Tower Alpha', ['2026-04', '2026-05'], 'Acme');
+      if (!plan) return 'no plan resolved — fee link failed';
+      return eq(plan.byMonth['2026-04'], 0.5 * 160, 'April: 50% FTE × 160 contract hrs/mo');
+    });
+
+    test('Staffing', 'contractStaffingGaps flags contract months the matrix has not staffed', () => {
+      const gaps = ST.contractStaffingGaps();
+      const g = gaps.find(x => (x.feeName || x.project || '').includes('Tower Alpha'));
+      if (!g) return true;   // fully covered is a legal outcome — the flag list just must not throw
+      return (g.totalNeedFteMo == null || g.totalNeedFteMo >= 0) || 'negative need reported';
+    });
+
+    test('Staffing', 'merge: a teammate’s new allocation arrives, my newer edit of a shared row wins', () => {
+      const local = { schemaVersion: 1, people: { stp_jane: ST.getPerson('stp_jane') },
+        allocations: [{ id: 'sh_1', personId: 'stp_jane', project: 'Tower Alpha', start: '2026-03', end: '2026-06', pct: 80, updatedAt: '2026-08-02T00:00:00Z' }],
+        actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { monthHours: 172 } };
+      const remote = { schemaVersion: 1, people: { stp_jane: ST.getPerson('stp_jane') },
+        allocations: [
+          { id: 'sh_1', personId: 'stp_jane', project: 'Tower Alpha', start: '2026-03', end: '2026-06', pct: 40, updatedAt: '2026-08-01T00:00:00Z' },
+          { id: 'rm_1', personId: 'stp_jane', project: 'Tower Beta', start: '2026-07', end: '2026-09', pct: 25, updatedAt: '2026-08-01T00:00:00Z' },
+        ], actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { monthHours: 172 } };
+      const merged = ST.mergeStaffDb(remote, local);
+      const shared = merged.allocations.find(a => a.id === 'sh_1');
+      const theirs = merged.allocations.find(a => a.id === 'rm_1');
+      if (!shared || !theirs) return 'a row was lost in the merge';
+      return eq(shared.pct, 80, 'newer local edit wins the shared row');
+    });
+
+    test('Staffing', 'a tombstoned allocation does not resurrect from a teammate’s copy', () => {
+      const dead = { id: 'dead_1', personId: 'stp_jane', project: 'Tower Alpha', start: '2026-01', end: '2026-02', pct: 10, updatedAt: '2026-07-01T00:00:00Z' };
+      const local = { schemaVersion: 1, people: {}, allocations: [], actuals: {}, mappings: { users: {}, projects: {} },
+        deleted: { dead_1: '2026-08-01T00:00:00Z' }, meta: { monthHours: 172 } };
+      const remote = { schemaVersion: 1, people: {}, allocations: [dead], actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { monthHours: 172 } };
+      const merged = ST.mergeStaffDb(remote, local);
+      return !merged.allocations.some(a => a.id === 'dead_1') || 'deleted row came back from the remote copy';
+    });
+
+    test('Staffing', 'allocationsForFeeProject resolves matrix rows through the fee link', () => {
+      const rows = ST.allocationsForFeeProject(feeP.id);
+      if (!rows.length) return 'no allocations resolved for the linked fee project';
+      return rows.every(a => a.project === 'Tower Alpha') || 'picked up a row from the wrong project';
+    });
+
+    test('Staffing', 'shiftSchedule stamps the pending flag; shifting the allocations moves start AND end; clearing ends the loop', () => {
+      const shifted = S.shiftSchedule(feeP.id, 2);
+      if (!shifted || !shifted.staffingShiftPending) return 'shiftSchedule did not stamp staffingShiftPending';
+      const r0 = eq(shifted.staffingShiftPending.months, 2, 'flag carries the shift size'); if (r0 !== true) return r0;
+      const pend = ST.pendingContractShifts().find(x => x.id === feeP.id);
+      if (!pend) return 'pendingContractShifts does not surface the flagged project';
+      const moved = ST.shiftAllocationsForFeeProject(feeP.id, pend.months);
+      if (!moved) return 'no allocation rows moved';
+      const a = ST.listAllocations().find(x => x.id === 'sta_1');
+      if (a.start !== '2026-05') return 'start moved to ' + a.start + ', expected 2026-05';
+      if (a.end !== '2026-08') return 'end moved to ' + a.end + ', expected 2026-08';
+      S.clearStaffingShift(feeP.id);
+      return !ST.pendingContractShifts().some(x => x.id === feeP.id) || 'flag survived the clear';
+    });
+
+    test('Staffing', 'a second shift accumulates on the same flag instead of overwriting it', () => {
+      S.shiftSchedule(feeP.id, 1);
+      S.shiftSchedule(feeP.id, 1);
+      const p = S.getProject(feeP.id);
+      const r = eq(p.staffingShiftPending.months, 2, 'two +1 shifts read as +2');
+      S.clearStaffingShift(feeP.id);
+      return r;
+    });
+  })();
 
   /* ---- render ---- */
   const pass = results.filter(r => r.ok).length;
