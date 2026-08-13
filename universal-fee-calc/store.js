@@ -3125,7 +3125,18 @@
     return projects.filter(p => userOwnsProject(p, u));
   }
 
+  /* One formatting convention for money everywhere: $ with thousands
+     separators, negatives in parentheses (finance style), blanks as an
+     em-dash. Pages with dense grids may still compress to $K / $M — but
+     the sign convention must match this. */
+  function fmtMoney(n) {
+    if (n == null || isNaN(n)) return '—';
+    const s = '$' + Math.abs(Math.round(n)).toLocaleString();
+    return n < 0 ? '(' + s + ')' : s;
+  }
+
   window.UFC_Store = {
+    fmtMoney,
     SCHEMA, STATUSES, STATUS_LABELS, ASSUMPTION_LIBRARY, projectTypeSubs, addVocab, readVocab,
     accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING,

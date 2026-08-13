@@ -40,7 +40,10 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const money = (n) => (n == null || isNaN(n)) ? '—' : (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString();
+  // Finance convention: negatives in parentheses, blanks as an em-dash.
+  const money = (n) => (n == null || isNaN(n)) ? '—'
+    : n < 0 ? '($' + Math.abs(Math.round(n)).toLocaleString() + ')'
+    : '$' + Math.round(n).toLocaleString();
   const compact = (n) => {
     if (n == null || isNaN(n)) return '—';
     const a = Math.abs(n);
@@ -60,6 +63,7 @@
   let MODE = 'earned';        // which calendar the grid shows: earned | accrued | invoiced
   let LEADER = '';            // revenue leader filter
   let FOCUS = 0;              // 0 = whole year, 1–12 = one month
+  let NAV_NEXT = null;        // cell to re-focus after a keyboard commit re-renders
   let PENDING = null;
   let SHOW_ZERO = false;
   let ONLY_UNMAPPED = false;
@@ -700,19 +704,40 @@
     $$('#grid td.ed').forEach(td => {
       td.addEventListener('focus', () => { td.dataset.before = td.textContent.trim(); });
       td.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); td.blur(); }
+        // Spreadsheet motion: Enter/Tab commit and move to the next month in
+        // the same lane (Shift reverses); Esc puts the old figure back.
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          const m = +td.dataset.m + (e.shiftKey ? -1 : 1);
+          if (m >= 1 && m <= 12) NAV_NEXT = { key: td.dataset.key, m, f: td.dataset.f };
+          td.blur();
+        }
         else if (e.key === 'Escape') { td.textContent = td.dataset.before || ''; td.blur(); }
       });
       td.addEventListener('blur', () => {
-        const raw = td.textContent.replace(/[$,\s]/g, '').replace(/[−–—]/g, '-').trim();
-        if (raw === (td.dataset.before || '').replace(/[$,\s]/g, '')) return;
-        if (raw !== '' && isNaN(Number(raw))) { td.textContent = td.dataset.before || ''; return; }
-        const openKeys = $$('#grid tr.prow.open').map(x => x.dataset.i);
-        if (td.dataset.f === 'tool') adjustPlan(td.dataset.key, +td.dataset.m, raw === '' ? null : Number(raw));
-        else STORE.setCellAmount(YEAR, td.dataset.key, +td.dataset.m, td.dataset.f, raw === '' ? null : Number(raw));
-        buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
-        // keep whatever the user had open, open
-        openKeys.forEach(i => { const r = $(`#grid tr.prow[data-i="${i}"]`); if (r && !r.classList.contains('open')) r.querySelector('.pcell').click(); });
+        const raw = td.textContent.replace(/[$,\s()]/g, '').replace(/[−–—]/g, '-').trim();
+        const changed = raw !== (td.dataset.before || '').replace(/[$,\s()]/g, '')
+                     && !(raw !== '' && isNaN(Number(raw)));
+        if (raw !== '' && isNaN(Number(raw))) td.textContent = td.dataset.before || '';
+        if (changed) {
+          const openKeys = $$('#grid tr.prow.open').map(x => x.dataset.i);
+          if (td.dataset.f === 'tool') adjustPlan(td.dataset.key, +td.dataset.m, raw === '' ? null : Number(raw));
+          else STORE.setCellAmount(YEAR, td.dataset.key, +td.dataset.m, td.dataset.f, raw === '' ? null : Number(raw));
+          buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+          // keep whatever the user had open, open
+          openKeys.forEach(i => { const r = $(`#grid tr.prow[data-i="${i}"]`); if (r && !r.classList.contains('open')) r.querySelector('.pcell').click(); });
+        }
+        // land the caret in the next cell (the re-render replaced the DOM)
+        if (NAV_NEXT) {
+          const nxt = NAV_NEXT; NAV_NEXT = null;
+          setTimeout(() => {
+            const cell = $(`#grid td.ed[data-key="${CSS.escape(nxt.key)}"][data-m="${nxt.m}"][data-f="${nxt.f}"]`);
+            if (!cell) return;
+            cell.focus();
+            const sel = window.getSelection(), rng = document.createRange();
+            rng.selectNodeContents(cell); sel.removeAllRanges(); sel.addRange(rng);
+          }, 0);
+        }
       });
     });
     $$('#grid .map-btn').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openMapMenu(b); }));
@@ -723,7 +748,7 @@
       const key = b.dataset.key, m = +b.dataset.m;
       const cur = STORE.allocOf(STORE.getLedgerYear(YEAR).rows[key])[m] || {};
       try { STORE.setEarnedAllocation(YEAR, key, m, { amount: +b.dataset.amt, accrueIn: cur.accrueIn || m, invoiceIn: cur.invoiceIn || m }); }
-      catch (err) { alert(err.message); return; }
+      catch (err) { UFC_UI.toast(err.message); return; }
       reAlloc();
     }));
     const pairChange = (sel, field) => {
@@ -734,7 +759,7 @@
       const next = { amount: cur ? cur.amount : earned, accrueIn: cur ? cur.accrueIn : m, invoiceIn: cur ? cur.invoiceIn : m };
       next[field] = +sel.value;
       if (field === 'accrueIn' && next.invoiceIn < next.accrueIn) next.invoiceIn = next.accrueIn;
-      try { STORE.setEarnedAllocation(YEAR, key, m, next); } catch (err) { alert(err.message); return; }
+      try { STORE.setEarnedAllocation(YEAR, key, m, next); } catch (err) { UFC_UI.toast(err.message); return; }
       reAlloc();
     };
     $$('#grid .al-acc').forEach(sel => sel.addEventListener('change', () => pairChange(sel, 'accrueIn')));
@@ -745,7 +770,7 @@
       const earned = {};
       for (let m = 1; m <= 12; m++) { const v = planFor(row.pid, YEAR, m); if (v) earned[m] = v; }
       const res = STORE.autoAllocate(YEAR, key, earned);
-      if (!res || !res.touched) { alert('Nothing to place — every earned month on this project is already allocated.'); return; }
+      if (!res || !res.touched) { UFC_UI.toast('Nothing to place — every earned month on this project is already allocated.'); return; }
       buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage();
     }));
   }
@@ -822,7 +847,7 @@
     pop.querySelector('.sp-go').addEventListener('click', () => {
       const a = +pop.querySelector('.sp-from').value, b = +pop.querySelector('.sp-to').value;
       const amt = Number(String(pop.querySelector('.sp-amt').value).replace(/[$,\s]/g, ''));
-      try { STORE.spreadAccrual(YEAR, key, a, b, amt); } catch (err) { alert(err.message); return; }
+      try { STORE.spreadAccrual(YEAR, key, a, b, amt); } catch (err) { UFC_UI.toast(err.message); return; }
       closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash();
     });
   }
@@ -901,7 +926,7 @@
     pop.querySelector('.shift-btn')?.addEventListener('click', () => {
       const n = +pop.querySelector('.shift-btn').dataset.n;
       if (!confirm(`Move this project's whole schedule out by ${n} month${n === 1 ? '' : 's'}?\n\nPhase lengths stay the same; the start date and every month of staffing move with it, so effort and revenue stay in step.`)) return;
-      try { STORE.shiftSchedule(pop.querySelector('.shift-btn').dataset.pid, n); } catch (e) { alert(e.message); return; }
+      try { STORE.shiftSchedule(pop.querySelector('.shift-btn').dataset.pid, n); } catch (e) { UFC_UI.toast(e.message); return; }
       _planCache[row.pid + '|' + YEAR] = null; delete _planCache[row.pid + '|' + YEAR];
       closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash();
     });
@@ -922,7 +947,7 @@
       where you typed rather than compounding. */
   function adjustPlan(key, month, value) {
     const row = STORE.getLedgerYear(YEAR).rows[key];
-    if (!row || !row.pid) { alert('Map this line to a project first — there is no plan to change.'); return; }
+    if (!row || !row.pid) { UFC_UI.toast('Map this line to a project first — there is no plan to change.'); return; }
     const ym = ymOf(YEAR, month);
     const existing = (STORE.projectSlips(STORE.getProject(row.pid)) || [])
       .find(x => (x.kind || 'slip') === 'adjust' && x.ledgerKey === key && x.ym === ym);
@@ -939,7 +964,7 @@
         });
       }
       delete _planCache[row.pid + '|' + YEAR];
-    } catch (e) { alert(e.message); }
+    } catch (e) { UFC_UI.toast(e.message); }
   }
 
   /** A slip is the one thing on this page that writes into a project record:
@@ -950,7 +975,7 @@
     const row = STORE.getLedgerYear(YEAR).rows[key];
     if (!row) return;
     if (!row.pid) {
-      alert('This line is not mapped to a project yet, so there is no forecast to move.\n\nUse “map to project…” on the row first.');
+      UFC_UI.toast('This line is not mapped to a project yet, so there is no forecast to move.\n\nUse “map to project…” on the row first.');
       return;
     }
     if (!toMonth) { try { STORE.removeSlip(row.pid, { ledgerKey: key, fromYm: ymOf(YEAR, month) }); } catch (e) {} return; }
@@ -964,7 +989,7 @@
         note: `${MONTHS[month - 1]} ${YEAR} did not bill or accrue — moved to ${MONTHS[toMonth - 1]}`,
       });
       _planCache[row.pid + '|' + YEAR] = null; delete _planCache[row.pid + '|' + YEAR];
-    } catch (e) { alert(e.message); }
+    } catch (e) { UFC_UI.toast(e.message); }
   }
 
   function openMapMenu(btn) {
@@ -1000,7 +1025,7 @@
       try {
         if (b.dataset.create) STORE.createProjectFromLedgerRow(YEAR, key);
         else STORE.setRowMatch(YEAR, key, b.dataset.pid || null);
-      } catch (e) { alert(e.message); return; }
+      } catch (e) { UFC_UI.toast(e.message); return; }
       _planCache = {};
       closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage();
     }));
@@ -1265,9 +1290,9 @@
       behind each one written out underneath it, because a spreadsheet cannot
       expand a row on click. */
   async function exportYear() {
-    if (typeof ExcelJS === 'undefined') { alert('Excel library not loaded — reload the page and try again.'); return; }
+    if (typeof ExcelJS === 'undefined') { UFC_UI.toast('Excel library not loaded — reload the page and try again.'); return; }
     const y = STORE.getLedgerYear(YEAR);
-    if (!y) { alert('Nothing to export — no actuals posted for ' + YEAR + '.'); return; }
+    if (!y) { UFC_UI.toast('Nothing to export — no actuals posted for ' + YEAR + '.'); return; }
     const NAVY = 'FF25273A', YEL = 'FFFFDF00', RED = 'FFCE181E', GRN = 'FF1F8A5B', AMB = 'FFC07A00', TEAL = 'FF1D6B78';
     const fmt = '"$"#,##0;[Red]("$"#,##0)';
     const wb = xlBook();
@@ -1329,9 +1354,9 @@
   }
 
   async function exportFlash() {
-    if (typeof ExcelJS === 'undefined') { alert('Excel library not loaded — reload the page and try again.'); return; }
+    if (typeof ExcelJS === 'undefined') { UFC_UI.toast('Excel library not loaded — reload the page and try again.'); return; }
     const y = STORE.getLedgerYear(YEAR);
-    if (!y) { alert('Nothing to export — no actuals posted for ' + YEAR + '.'); return; }
+    if (!y) { UFC_UI.toast('Nothing to export — no actuals posted for ' + YEAR + '.'); return; }
     const m = flashMonth(), rows = flashRows();
     const NAVY = 'FF25273A', YEL = 'FFFFDF00', RED = 'FFCE181E', GRN = 'FF1F8A5B', AMB = 'FFC07A00', STEEL = 'FF79828C';
     const fmt = '"$"#,##0;[Red]("$"#,##0)';
@@ -1454,6 +1479,10 @@
     CATALOG = window.RATES_CATALOG;
     const years = STORE.ledgerYears();
     YEAR = years.length ? +years[years.length - 1] : Math.max(STORE.LEDGER_FIRST_YEAR, new Date().getFullYear());
+    // During the close, land on the month being closed: focus the latest
+    // month with posted actuals so the KPIs, the highlighted column and the
+    // month view all open on it. "Whole year" is one click away.
+    if (STORE.getLedgerYear(YEAR)) FOCUS = STORE.closedThrough(YEAR) || 0;
 
     $('#year-pick').addEventListener('change', e => {
       YEAR = +e.target.value; PENDING = null;

@@ -11,7 +11,9 @@
   // Parse ?id= from URL
   function getProjectIdFromUrl() {
     const params = new URLSearchParams(window.location.search);
-    return params.get('id');
+    // Accept every spelling the other pages link with — ?id= is canonical,
+    // but Reconciliation and the slips banner historically used ?project=.
+    return params.get('id') || params.get('project') || params.get('pid');
   }
   function setProjectIdInUrl(id) {
     const url = new URL(window.location);
@@ -283,7 +285,7 @@
         if ((r.fteMonthly[mk] || 0) <= 0) continue;
         const { y, m } = parseMk(mk); const ni = absIdx(y, m) + delta;
         if (ni < loT || ni > hiT) {
-          alert('That shift would push this scope past the project timeline. Extend the project dates first, then shift.');
+          UFC_UI.toast('That shift would push this scope past the project timeline. Extend the project dates first, then shift.');
           return;
         }
       }
@@ -1996,7 +1998,7 @@
     // Save the parent first so the contract baseline is current, then fork.
     saveToStore({ silent: true });
     const res = STORE.createChangeOrder(state.id);
-    if (!res || res.error) { alert(res && res.error || 'Could not create change order.'); return; }
+    if (!res || res.error) { UFC_UI.toast(res && res.error || 'Could not create change order.'); return; }
     window.location.search = '?id=' + encodeURIComponent(res.co.id);
   }
 
@@ -2004,7 +2006,7 @@
     if (!confirm('Approve this change order? Its figures freeze and roll into the revised contract.')) return;
     saveToStore({ silent: true });
     const res = STORE.approveChangeOrder(state.id);
-    if (!res || res.error) { alert(res && res.error || 'Could not approve.'); return; }
+    if (!res || res.error) { UFC_UI.toast(res && res.error || 'Could not approve.'); return; }
     window.location.reload();
   }
 
@@ -2012,7 +2014,7 @@
     if (!confirm('Restamp the booked contract to the current scope? This refreshes the frozen figures and clears the changed flag.')) return;
     saveToStore({ silent: true });
     const res = STORE.restampFinancials(state.id);
-    if (!res) { alert('Could not restamp — check that the project is priced.'); return; }
+    if (!res) { UFC_UI.toast('Could not restamp — check that the project is priced.'); return; }
     window.location.reload();
   }
 
@@ -3134,7 +3136,7 @@
 
   /* ----- Excel export ----- */
   async function exportExcel() {
-    if (typeof ExcelJS === 'undefined') { alert('Excel library failed to load.'); return; }
+    if (typeof ExcelJS === 'undefined') { UFC_UI.toast('Excel library failed to load.'); return; }
     const btn = $('#xlsx-btn');
     const orig = btn.textContent;
     btn.textContent = 'Building…';
@@ -3143,7 +3145,7 @@
       await window.UFC_buildAndDownloadExcel();
     } catch (e) {
       console.error(e);
-      alert('Excel export failed: ' + e.message);
+      UFC_UI.toast('Excel export failed: ' + e.message);
     } finally {
       btn.textContent = orig;
       btn.disabled = false;
@@ -3241,7 +3243,7 @@
     } catch (e) {
       if (e && e.code === 'STALE_WRITE') { showConflictBanner(e.remote); return; }
       console.error('Save failed', e);
-      alert('Save failed: ' + e.message);
+      UFC_UI.toast('Save failed: ' + e.message);
     }
   }
 
@@ -3374,7 +3376,7 @@
 
   function onSaveVersion() {
     if (!state.id) { saveToStore({ silent: true }); }
-    if (!state.id) { alert('Add a project name or a role first, then save a version.'); return; }
+    if (!state.id) { UFC_UI.toast('Add a project name or a role first, then save a version.'); return; }
     const label = prompt('Name this version (e.g. "Client counteroffer", "v2 after Kathy review"):', '');
     if (label === null) return;   // cancelled
     STORE.saveVersion(state.id, { label: label || '' });
