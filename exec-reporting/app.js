@@ -278,7 +278,7 @@
       '</tbody></table>';
     const bridgePanel = panel('Pipeline trending to the frozen annual budget', { kind: 'live', text: 'LIVE' },
       esc(d.bridgeMsg),
-      'What it is: how the pipeline builds from Booked up to the current Projected total (' + fm(d.projected) + '), shown next to the risk-weighted total (' + fm(d.weighted) + ', the sum of likelihood × $) and the frozen annual budget bar, with the gap to budget as its own coloured block. Why we show it: at face value the pipeline trends ' + (d.overUnder >= 0 ? 'slightly over' : 'under') + ' budget (' + (d.overUnder >= 0 ? '+' : '') + fm(d.overUnder) + '), but on a risk-weighted basis it is about ' + fm(Math.abs(d.weighted - d.budget)) + ' ' + (d.weighted - d.budget >= 0 ? 'over' : 'under') + ' - the more honest read - so we show both. The gap reads both ways (over or under).',
+      'What it is: how the pipeline builds from Booked up to the current Projected total (' + fm(d.projected) + '), shown next to the risk-weighted total (' + fm(d.weighted) + ', the sum of likelihood × $) and the frozen annual budget bar, with the gap to budget as its own coloured block. Why we show it: at face value the pipeline trends ' + (d.overUnder >= 0 ? 'slightly over' : 'under') + ' budget (' + (d.overUnder >= 0 ? '+' : '') + fm(d.overUnder) + '), but on a risk-weighted basis it is about ' + fm(Math.abs(d.weighted - d.budget)) + ' ' + (d.weighted - d.budget >= 0 ? 'over' : 'under') + ', which is the more realistic figure, so we show both. The gap reads both ways (over or under).',
       bridgeChart(d.booked, r2, r34, d.projected, d.weighted, d.budget) + coverage + varTable);
 
     // Rating mix
@@ -362,7 +362,7 @@
         'What it is: the full-year revenue figure as it stood at each frozen snapshot, split R1-R4, so you can watch revenue solidify up the chain as deals convert.',
         vintageChart(p.vintages, d.budget))
       : panel('Full year projection by revenue projection month', { kind: 'demo', text: 'AWAITING HISTORY' }, '',
-        'What it is: the full-year figure as it stood at each frozen monthly snapshot, split R1 (booked) through R4, so drift AND quality show together. The frozen history lives in monthly snapshots; none are in the shared data files yet, so this panel starts filling in from the next freeze. Nothing here is simulated.',
+        'What it is: the full-year figure as it stood at each frozen monthly snapshot, split R1 (booked) through R4, so you can see both how the number has moved and how much of it is firm. The frozen history lives in monthly snapshots; none are in the shared data files yet, so this panel starts filling in from the next freeze.',
         '<div class="note">No frozen snapshots in the data files yet. The panel populates itself from the first monthly freeze onward.</div>');
 
     // Staleness
@@ -379,7 +379,7 @@
       '<td class="num">' + (r.days === null ? '<span style="color:var(--mut)">awaiting history</span>'
         : '<span class="' + (r.days >= 90 ? 'tone-bad' : r.days >= 30 ? 'tone-amber' : 'tone-good') + '">' + r.days + '</span>') + '</td></tr>').join('');
     const stalePanel = panel('Pipeline staleness - how long since a deal last moved', { kind: 'live', text: 'LIVE' }, esc(p.stale.msg),
-      'What it is: for each not-yet-booked deal (R2-R4), the time since its rating or value last changed - graded 0-30 on track, 30-90 ageing, 90+ stale. Why we show it: deals only convert if they are actively worked, so a long stretch with no movement is an automatic nudge that a deal is stalling. Booked (R1) is set aside (it is won, not pipeline). Showing the 15 stalest; the change history began accruing ' + esc(p.stale.started) + '.',
+      'What it is: for each not-yet-booked deal (R2-R4), the time since its rating or value last changed - graded 0-30 on track, 30-90 ageing, 90+ stale. Why we show it: deals only convert if they are actively worked, so a long stretch with no movement is a warning that a deal may be stalling. Booked (R1) is set aside (it is won, not pipeline). Showing the 15 stalest; the change history began accruing ' + esc(p.stale.started) + '.',
       bandStrip +
       '<table class="vtable"><thead><tr><th>Project (stalest first)</th><th>Client</th><th class="num">Rating</th><th class="num">' + d.year + ' value</th><th class="num">Days since last move</th></tr></thead><tbody>' + staleRows + '</tbody></table>');
 
@@ -573,7 +573,7 @@
       rows.map((g) => '<tr><td>' + esc(g.key) + '</td><td class="num">' + fm(g.revenue) + '</td><td class="num">' + fm(g.booked) + '</td><td class="num">' + g.projects + '</td></tr>').join('') +
       '</tbody></table>';
     const covLine = (c, what) => 'This reads the real ' + what + ' recorded against each project. It is filled on ' +
-      c.filled + ' of ' + c.total + ' projects (' + Math.round(c.pct * 100) + '%); the rest are counted openly as not yet tagged rather than guessed into a bucket. The split sharpens by itself as the field gets completed.';
+      c.filled + ' of ' + c.total + ' projects (' + Math.round(c.pct * 100) + '%); the rest are shown as not yet tagged, rather than being put in a category we have guessed at. The split sharpens by itself as the field gets completed.';
     const covFlag = (c) => (c.pct >= 0.8 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: Math.round(c.pct * 100) + '% TAGGED' });
     const industryPanel = panel('Revenue by industry', covFlag(d.industryCoverage), '',
       covLine(d.industryCoverage, 'industry'),
@@ -590,11 +590,11 @@
         '<div style="font-size:12px" class="' + (filled ? '' : 'tone-neutral') + '">' + (filled ? fm(b.total) : 'awaited') + '</div></div>';
     }).join('');
     const rfPanel = panel('Budget and reforecast timeline', { kind: 'live', text: 'LIVE' }, '',
-      'What it is: the frozen annual budget and the reforecast milestones as they are submitted through the year. Open circles are milestones not yet submitted. Why we show it: the projection is always read against a named baseline, never a moving one.',
+      'What it is: the frozen annual budget and the reforecast milestones as they are submitted through the year. Open circles are milestones not yet submitted. Why we show it: the projection is always measured against one named baseline, fixed for the year.',
       '<div style="display:flex;align-items:flex-start;gap:8px;padding:12px 4px;border-top:2px solid var(--hairline)">' + rf + '</div>');
 
     const agingPanel = panel('Deal ageing by leader', { kind: 'live', text: 'LIVE' }, esc(d.agingMsg),
-      'What it is: each leader\'s open R2-R4 deals graded by time since the last material move (rating, roster, phases, timing, fee terms). Why we show it: stalling deals surface to their owner automatically instead of waiting to be chased.',
+      'What it is: each leader\'s open R2-R4 deals graded by time since the last material move (rating, roster, phases, timing, fee terms). Why we show it: deals with no recent movement are shown under the person responsible for them, so they don\'t get missed.',
       '<table class="vtable"><thead><tr><th>Leader</th><th class="num">0-30 on track</th><th class="num">30-90 ageing</th><th class="num">90+ stale</th><th class="num">Value ageing 30+</th></tr></thead><tbody>' +
       d.books.filter((b) => b.aging.green + b.aging.amber + b.aging.red > 0).map((b) =>
         '<tr><td>' + esc(b.name) + '</td><td class="num tone-good">' + b.aging.green + '</td>' +
@@ -610,7 +610,7 @@
     const snaps = d.snapshots || 0;
     const movementPanel = panel('Movement vs prior reporting period',
       snaps >= 2 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: 'AWAITING HISTORY' }, '',
-      'What it is: what changed since the last reporting period, by rating and by leader. The comparison lands automatically once two monthly snapshots exist. Nothing is fabricated in the meantime: reliability over completeness.',
+      'What it is: what changed since the last reporting period, by rating and by leader. The comparison lands automatically once two monthly snapshots exist. Until then, it stays empty rather than showing a comparison we can\'t support.',
       '<div class="note" style="border:1px dashed var(--hairline)">First comparison available after the next monthly snapshot (' + snaps + ' of 2 needed). Snapshots are captured in this app on the Revenue Projections page, under Monthly Flash.</div>');
 
     return kpis + scorecard + leadersInteractive(d) + agingPanel + movementPanel + rfPanel + industryPanel + typePanel;
@@ -739,7 +739,7 @@
     q += '<text x="14" y="' + (H / 2) + '" text-anchor="middle" font-size="10" fill="#79828C" transform="rotate(-90 14 ' + (H / 2) + ')">Margin after staff (%) →</text>';
     q += '</svg>';
     const quadrant = panel('Margin quadrant - invoiced × margin after staff', { kind: 'demo', text: 'DEMO DATA · hours modelled until real hours land' }, '',
-      'What it is: every client in the selection plotted by invoiced revenue against margin after modelled staff cost; bubble size is modelled hours. Green sits above the 20% target line, red is loss-making. Hover a bubble for the story.',
+      'What it is: every client in the selection plotted by invoiced revenue against margin after modelled staff cost; bubble size is modelled hours. Green sits above the 20% target line, red is loss-making. Hover a bubble for that client\'s figures.',
       q);
 
     return panel('Leader selection - scorecard, cost model and quadrant', { kind: 'live', text: 'LIVE + MANUAL INPUTS' }, '',
@@ -779,7 +779,7 @@
       '<div class="num" style="font-size:12px;font-weight:700;text-align:right">' + fm(r.revenue) + '</div>' +
       '<div class="num" style="font-size:11px;color:var(--mut);text-align:right" title="cumulative share of revenue">' + Math.round(r.cumShare * 100) + '% cum</div></div>').join('');
     const paretoPanel = panel('Client concentration - top 10', { kind: 'live', text: 'LIVE' }, esc(d.paretoMsg),
-      'What it is: the ten largest clients by ' + d.year + ' revenue (all ratings), each with its running cumulative share of the book. Why we show it: concentration is the standing leadership question, and the cumulative column answers "how few clients is the year really standing on".',
+      'What it is: the ten largest clients by ' + d.year + ' revenue (all ratings), each with its running cumulative share of the book. Why we show it: concentration is the standing leadership question, and the cumulative column shows how much of the year rests on a handful of clients.',
       '<div class="gridrows">' + paretoRows + '</div>');
 
     // Sector donut
@@ -858,7 +858,7 @@
       progRows);
 
     const rvb = panel('Reported vs billed', { kind: 'demo', text: 'NOT AVAILABLE' }, '',
-      '', '<div class="note" style="border-left:3px solid var(--bad)">Billed-versus-recognised cannot be shown from the shared data files: they carry projected and recognised revenue, not invoicing. This panel returns when a billing feed exists. Shown honestly rather than approximated.</div>');
+      '', '<div class="note" style="border-left:3px solid var(--bad)">Billed-versus-recognised cannot be shown from the shared data files: they carry projected and recognised revenue, not invoicing. This panel returns when a billing feed exists.</div>');
 
     return kpis + paretoPanel + donutPanel + stackPanel + moversPanel + progPanel + rvb;
   }
@@ -875,7 +875,7 @@
       kpi('Billable share', d.kpis.billableSharePct + '%', 'of all logged time', '') +
       kpi('Revenue per billable hour', d.kpis.revenuePerBillableHour ? fm(d.kpis.revenuePerBillableHour) : 'n/a', 'on mapped projects', 'navy') +
       kpi('People active', String(d.kpis.peopleActive), 'in the staffing directory', '') +
-      kpi('Bulk-logged rows', String(d.reconciliation.bulkLoggedRows), 'over ' + d.monthHours + 'h/mo · marked, never trimmed', '') +
+      kpi('Bulk-logged rows', String(d.reconciliation.bulkLoggedRows), 'over ' + d.monthHours + 'h/mo · marked and left at full value', '') +
       '</div>';
 
     // time mix by month
@@ -906,7 +906,7 @@
     // capacity
     const c = d.capacity;
     const capPanel = panel('Can we deliver what we are forecasting?', { kind: 'live', text: 'LIVE' }, esc(d.capacityMsg),
-      'What it is: the booked and accrued revenue (R1-R2) still to deliver this year, turned into implied hours at our realised revenue-per-hour, against the uncommitted billable capacity of the current team. Why we show it: a forecast we cannot staff is not a forecast.',
+      'What it is: the booked and accrued revenue (R1-R2) still to deliver this year, turned into implied hours at our realised revenue-per-hour, against the uncommitted billable capacity of the current team. Why we show it: this shows whether we have enough people available to deliver the forecast.',
       '<table class="vtable"><tbody>' +
       '<tr><td>Pipeline still to deliver (R1-R2, ' + c.monthLabels.join('/') + ')</td><td class="num">' + fm(c.pipelineRevenue) + '</td></tr>' +
       '<tr><td>Realised revenue per mapped billable hour</td><td class="num">' + fm(c.realisedRate) + '</td></tr>' +
@@ -922,7 +922,7 @@
       '<td class="num">' + r.projects + '</td><td class="num">' + Math.round(r.hours).toLocaleString() + 'h</td>' +
       '<td class="num">' + fm(r.cost) + '</td><td class="num">' + fm(r.revenue) + '</td></tr>').join('');
     const ratingPanel = panel('Effort against likelihood', { kind: 'live', text: 'LIVE' }, esc(d.ratingMsg),
-      'What it is: mapped delivery hours grouped by the project\'s likelihood rating. Why we show it: time spent on low-likelihood or unrated work is cost with no committed revenue behind it - visible here, invisible in either app alone.',
+      'What it is: mapped delivery hours grouped by the project\'s likelihood rating. Why we show it: time spent on low-likelihood or unrated work is cost with no committed revenue behind it. Neither app shows this on its own.',
       '<table class="vtable"><thead><tr><th>Rating</th><th>Feeds budget?</th><th class="num">Projects</th><th class="num">Hours</th><th class="num">Delivery cost</th><th class="num">' + d.window.label.slice(-4) + ' revenue</th></tr></thead><tbody>' + ratingRows + '</tbody></table>');
 
     // true margin by project
@@ -954,13 +954,13 @@
       '<td class="num">' + Math.round(p.billableShare * 100) + '%</td>' +
       '<td class="num">' + fm(p.costPerHour) + (p.fromGrid ? '' : ' <span style="color:var(--mut)">(proxy)</span>') + '</td></tr>').join('');
     const pplPanel = panel('Effort by person', { kind: 'live', text: 'LIVE' }, '',
-      'What it is: the heaviest-logging people over the reported window, their billable share, and the cost rate applied to their hours (grid floor where the title maps, blended proxy elsewhere). Bulk-logged months are marked, never trimmed.',
+      'What it is: the heaviest-logging people over the reported window, their billable share, and the cost rate applied to their hours (grid floor where the title maps, blended proxy elsewhere). Bulk-logged months are marked and left at their full value.',
       '<table class="vtable"><thead><tr><th>Person</th><th>Title</th><th class="num">Hours</th><th class="num">Billable</th><th class="num">Cost rate</th></tr></thead><tbody>' + pplRows + '</tbody></table>');
 
     // coverage + reconciliation
     const cov = d.coverage;
     const covPanel = panel('Coverage and reconciliation', { kind: 'live', text: 'LIVE' }, '',
-      'Everything above is only as good as the joins beneath it, so they are stated: how many hours reach a fee record, how much of the cost is rate-grid-backed, and how the totals tie back to the source.',
+      'These figures depend on how well the underlying data matches, so we show how many hours can be matched to a fee record, how much of the cost uses actual grade rates, and whether the totals match the source.',
       '<div class="note">' +
       Math.round(d.reconciliation.totalHours).toLocaleString() + 'h across ' + d.reconciliation.people + ' people and ' + d.reconciliation.clockifyProjects + ' Clockify projects, ' + esc(d.reconciliation.monthsCovered) + (d.reconciliation.importedAt ? ' · pulled into the source app ' + esc(String(d.reconciliation.importedAt)) : '') + '.<br>' +
       '<b>' + cov.hoursMappedPct + '%</b> of billable hours reach a fee record (' + cov.projectsCovered + ' projects) · <b>' + cov.gridCostPct + '%</b> of delivery cost is rate-grid-backed (' + cov.titlesMapped + ' of ' + cov.titlesTotal + ' titles mapped) · ' + cov.bulkLoggedRows + ' bulk-logged person-months marked.' +
@@ -1073,7 +1073,8 @@
       const realHere = e.rows.filter((p) => p.placed === 'real').length;
       const top = realHere + ' of ' + e.rows.length + ' really located · ' +
         e.rows.slice().sort((a, b) => b.revenue - a.revenue).slice(0, 4).map((p) => p.name + ' (' + fm(p.revenue) + ')').join(' · ');
-      dots += '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="rgba(35,130,145,.55)" stroke="#16636f" stroke-width="1.5"><title>' + esc(city + ': ' + e.count + ' project' + (e.count > 1 ? 's' : '') + ' · ' + fm(e.value) + ' — ' + top) + '</title></circle>' +
+      // (tooltip assembled below with middle dots throughout - no em dash)
+      dots += '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="rgba(35,130,145,.55)" stroke="#16636f" stroke-width="1.5"><title>' + esc(city + ': ' + e.count + ' project' + (e.count > 1 ? 's' : '') + ' · ' + fm(e.value) + ' · ' + top) + '</title></circle>' +
         '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">' + e.count + '</text>' +
         '<text x="' + x + '" y="' + (y + r + 13) + '" text-anchor="middle" font-size="10" fill="#25273A" font-weight="700">' + esc(city) + ' · ' + fm(e.value) + '</text>';
     }

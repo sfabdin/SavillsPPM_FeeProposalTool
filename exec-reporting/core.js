@@ -979,7 +979,7 @@
     const anyTracked = books.some((b) => b.aging.tracked);
     const agingValue = books.reduce((a, b) => a + b.aging.amberRedValue, 0);
     const agingMsg = anyTracked
-      ? fmtMoney(agingValue) + ' of open pipeline sits in deals ageing 30+ days - surfaced automatically to the owning leader.'
+      ? fmtMoney(agingValue) + ' of open pipeline sits in deals ageing 30+ days, shown under the leader responsible for them.'
       : 'No rating or value changes recorded yet - every leader\'s open pipeline reads on track today.';
 
     // RF timeline off the studio baselines: budget + reforecasts by kind/name.
@@ -1633,7 +1633,7 @@
     billableShare: { term: 'Billable share', def: 'The portion of logged time spent on client project work, as opposed to business development, internal work or time off. Revenue only comes from the billable slice.' },
     costFloor: { term: 'Cost floor', def: 'The lowest rate in a grade\'s band, used as the cost-of-delivery proxy for that grade. Where a person\'s job title is not yet mapped to a grade, a blended proxy is used instead and the panel says so.' },
     trueMargin: { term: 'True margin', def: 'Project revenue minus the cost of the hours actually logged against it (hours times each person\'s cost rate). Directional until every job title is mapped to the rate grid.' },
-    bulkLogged: { term: 'Bulk-logged time', def: 'A person-month recording more hours against one code than a month contains - a remainder or auto-fill entry upstream rather than real effort. Shown unchanged and marked, never trimmed, and kept out of any published utilisation figure.' },
+    bulkLogged: { term: 'Bulk-logged time', def: 'A person-month recording more hours against one code than a month contains - a remainder or auto-fill entry upstream rather than real effort. Shown unchanged and marked, left at its full value, and kept out of any published utilisation figure.' },
     planVsActual: { term: 'Plan vs actual', def: 'Hours the staffing plan implies (allocation percentage times monthly capacity) set against hours actually logged. A large gap either way is worth a conversation.' },
     realisedRate: { term: 'Realised rate', def: 'What an hour of delivery actually earns: revenue divided by the hours logged against it. Measured, not quoted, so it reflects discounts, write-offs and overruns as they really happened.' },
   };
