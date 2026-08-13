@@ -72,11 +72,20 @@ implementation. Never write to projects/rates/staff/studio from here.
   via the print pipeline. Confidence has no export by design.
 - Maintainers Runbook page table now documents the module and its gate.
 
+## Leaders interactive block - DONE (last port-in-progress item)
+
+- Leader multi-select recomputes the six-KPI scorecard, leader bars and
+  client list live; manual staff-cost grid (11 grades, round planning
+  defaults, NOT the rate card) recomputes blend/profit/margin on edit;
+  margin quadrant (bubbles = modelled hours, 20% placeholder target,
+  white-backed labels - no stroke halo, which doubles text in PDF).
+- Browser-proven: selection filters to a single book, a cost edit moves
+  the blended readout, 51 bubbles, zero console errors.
+
 ## Remaining before merge
 
-- KY's review of the PR; the Leaders tab still shows its two
-  port-in-progress panels (staff-cost planner, margin quadrant), which
-  land on review feedback or a follow-up branch.
+- KY's review of PR #77. Nothing on the page is marked port-in-progress
+  any more.
 - After acceptance: retire the separate local app, export the Supabase
   vintage snapshots to an archive, then close Supabase (KY's call).
 

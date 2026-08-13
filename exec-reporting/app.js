@@ -570,10 +570,141 @@
         '<td class="num">' + fm(b.aging.amberRedValue) + '</td></tr>').join('') +
       '</tbody></table>');
 
-    const pending = panel('Staff-cost planner and margin quadrant', { kind: 'demo', text: 'PORT IN PROGRESS' }, '',
-      'The manual staff-cost grid and the margin quadrant from the Part 2 app land in this branch before review. Nothing else on this tab depends on them.', '');
+    return kpis + scorecard + leadersInteractive(d) + agingPanel + rfPanel + industryPanel + typePanel;
+  }
 
-    return kpis + scorecard + agingPanel + rfPanel + industryPanel + typePanel + pending;
+  /* ---- Leaders interactive: selection scorecard + staff-cost grid + quadrant.
+     DEMO cost model, flagged on-panel: hours = revenue / $185 blended bill
+     rate; staff cost = hours x blended cost from the grade mix with a stable
+     per-client skew. Grade defaults are round planning figures, NOT the
+     confidential rate card. ---- */
+  const GRADES = [
+    { id: 'principal', name: 'Principal', mix: 0.02, def: 320 },
+    { id: 'evp', name: 'EVP', mix: 0.03, def: 300 },
+    { id: 'ed', name: 'Executive Director', mix: 0.06, def: 260 },
+    { id: 'sd', name: 'Senior Director', mix: 0.09, def: 230 },
+    { id: 'director', name: 'Director', mix: 0.15, def: 200 },
+    { id: 'assoc-dir', name: 'Associate Director', mix: 0.12, def: 175 },
+    { id: 'senior-pm', name: 'Senior PM', mix: 0.18, def: 155 },
+    { id: 'pm', name: 'PM', mix: 0.2, def: 135 },
+    { id: 'assistant-pm', name: 'Assistant PM', mix: 0.1, def: 110 },
+    { id: 'cost-control', name: 'Cost Control', mix: 0.03, def: 120 },
+    { id: 'proj-coord', name: 'Project Coordinator', mix: 0.02, def: 95 },
+  ];
+  const BILL_RATE = 185, TARGET_MARGIN = 0.2;
+  const LEAD_STATE = { sel: [], costs: null, open: false };
+  const _skew2 = (name) => {
+    let h = 0;
+    for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return 0.85 + ((h % 1000) / 1000) * 0.3;
+  };
+  function leadersModel(books) {
+    if (!LEAD_STATE.costs) LEAD_STATE.costs = Object.fromEntries(GRADES.map((g) => [g.id, g.def]));
+    const blendedCost = GRADES.reduce((a, g) => a + g.mix * (LEAD_STATE.costs[g.id] || 0), 0);
+    const active = LEAD_STATE.sel.length ? books.filter((b) => LEAD_STATE.sel.indexOf(b.id) !== -1) : books;
+    const clients = new Map();
+    let revenue = 0, booked = 0, projects = 0;
+    for (const b of active) {
+      revenue += b.revenue; booked += b.booked; projects += b.projects;
+      for (const c of b.clients) clients.set(c.name, (clients.get(c.name) || 0) + c.revenue);
+    }
+    const rows = [...clients.entries()].filter((e) => e[1] > 0).map(([name, inv]) => {
+      const hours = inv / BILL_RATE;
+      const staff = hours * blendedCost * _skew2(name);
+      return { name, inv, hours, staff, profit: inv - staff, margin: inv > 0 ? (inv - staff) / inv : 0 };
+    }).sort((a, b) => b.inv - a.inv);
+    const inv = rows.reduce((a, r) => a + r.inv, 0);
+    const staff = rows.reduce((a, r) => a + r.staff, 0);
+    return { rows, revenue, booked, projects, inv, staff, blendedCost, profit: inv - staff, blend: inv > 0 ? (inv - staff) / inv : 0 };
+  }
+  function leadersInteractive(d) {
+    const books = d.books;
+    const model = leadersModel(books);
+    const selLabel = LEAD_STATE.sel.length === 0 ? 'All (portfolio)'
+      : LEAD_STATE.sel.length === 1 ? (books.find((b) => b.id === LEAD_STATE.sel[0]) || {}).name
+      : LEAD_STATE.sel.length + ' combined';
+    const dropdown = '<div style="position:relative;display:inline-block" class="noprint">' +
+      '<button id="lead-dd" style="font:inherit;font-size:12px;font-weight:600;border:1px solid var(--hairline);background:#fff;padding:6px 12px;cursor:pointer">Revenue leader: ' + esc(selLabel) + ' ▾</button>' +
+      (LEAD_STATE.open
+        ? '<div style="position:absolute;z-index:40;margin-top:2px;max-height:280px;width:270px;overflow:auto;background:#fff;border:1px solid var(--hairline);box-shadow:0 4px 14px rgba(37,39,58,.12);padding:8px">' +
+        '<label style="display:flex;gap:8px;align-items:center;font-size:12px;padding:3px 2px"><input type="checkbox" data-leadsel="__all__"' + (LEAD_STATE.sel.length === 0 ? ' checked' : '') + '> All leaders (portfolio)</label>' +
+        books.map((b) => '<label style="display:flex;gap:8px;align-items:center;font-size:12px;padding:3px 2px"><input type="checkbox" data-leadsel="' + esc(b.id) + '"' + (LEAD_STATE.sel.indexOf(b.id) !== -1 ? ' checked' : '') + '> ' + esc(b.name) + ' · ' + fm(b.revenue) + '</label>').join('') +
+        '</div>' : '') +
+      '</div>';
+
+    const kpi6 = '<div class="kpirow" style="grid-template-columns:repeat(6,1fr)">' +
+      kpi('Revenue', fm(model.revenue), 'live for the selection', '') +
+      kpi('Booked (R1)', fm(model.booked), 'live', '') +
+      kpi('Projects', String(model.projects), 'live', '') +
+      kpi('Clients', String(model.rows.length), 'with revenue', '') +
+      kpi('Profit after staff', fm(model.profit), 'from the cost grid (demo)', '') +
+      kpi('Margin', Math.round(model.blend * 100) + '%', 'after staff cost (demo)', model.blend >= TARGET_MARGIN ? 'good' : '') +
+      '</div>';
+
+    const maxRev = Math.max.apply(null, books.map((b) => b.revenue).concat([1]));
+    const bars = books.map((b) => {
+      const inSel = LEAD_STATE.sel.length === 0 || LEAD_STATE.sel.indexOf(b.id) !== -1;
+      return '<div style="display:grid;grid-template-columns:140px 1fr 70px;gap:8px;align-items:center;margin:3px 0;font-size:11px">' +
+        '<span title="' + esc(b.name) + '" style="color:' + (inSel ? 'var(--ink)' : 'var(--mut)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + '</span>' +
+        '<div><div style="height:13px;min-width:2px;width:' + ((b.revenue / maxRev) * 100) + '%;background:' + (inSel ? 'var(--teal)' : 'rgba(37,39,58,.18)') + '"></div></div>' +
+        '<span class="num" style="color:var(--mut);text-align:right">' + fm(b.revenue) + '</span></div>';
+    }).join('');
+    const clientTable = '<table class="vtable"><thead><tr><th>Client</th><th class="num">Invoiced</th><th class="num">Profit (demo)</th><th class="num">Margin (demo)</th></tr></thead><tbody>' +
+      model.rows.slice(0, 9).map((r) =>
+        '<tr><td>' + esc(r.name) + '</td><td class="num">' + fm(r.inv) + '</td>' +
+        '<td class="num' + (r.profit >= 0 ? '' : ' tone-bad') + '">' + fm(r.profit) + '</td>' +
+        '<td class="num ' + (r.margin >= TARGET_MARGIN ? 'tone-good' : r.margin < 0 ? 'tone-bad' : '') + '">' + Math.round(r.margin * 100) + '%</td></tr>').join('') +
+      (model.rows.length > 9 ? '<tr><td colspan="4" class="cap">+' + (model.rows.length - 9) + ' more clients in this selection</td></tr>' : '') +
+      '</tbody></table>';
+
+    const gridInputs = GRADES.map((g) =>
+      '<label style="font-size:11px"><span style="display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)">' + esc(g.name) + ' · mix ' + Math.round(g.mix * 100) + '%</span>' +
+      '<input type="number" min="0" data-gradecost="' + g.id + '" value="' + (LEAD_STATE.costs[g.id]) + '" style="font:inherit;width:100%;margin-top:2px;padding:4px 8px;border:1px solid var(--hairline)"></label>').join('');
+    const costPanel = panel('Staff cost assumptions - $/hr by grade',
+      { kind: 'demo', text: 'MANUAL INPUT · not harvested from the data files' }, '',
+      'What it is: a what-if cost model - type a blended cost per hour for each staff grade and the profit, margin and quadrant recalculate. Why we show it: the data files hold no salary cost, so this models profitability now; the Delivery & Effort tab carries the real-hours version where Clockify maps exist. Hours are modelled at revenue ÷ $' + BILL_RATE + '/hr with a stable per-client staffing skew. Grade defaults are planning figures, not the confidential rate card.',
+      '<div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">' + gridInputs + '</div>' +
+      '<div class="msg" style="margin-top:12px">Blended cost ' + fm(model.blendedCost) + '/hr · blended margin ' + Math.round(model.blend * 100) + '% after staff · profit after staff ' + fm(model.profit) + ' on invoiced ' + fm(model.inv) + ' (staff cost ' + fm(model.staff) + ').</div>');
+
+    // quadrant
+    const W = 840, H = 340, PADL = 52, PADR = 16, PADT = 20, PADB = 40;
+    const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
+    const rows = model.rows;
+    const maxInv = Math.max.apply(null, rows.map((r) => r.inv).concat([1])) * 1.1;
+    const minM = Math.min.apply(null, rows.map((r) => r.margin).concat([0])) - 0.05;
+    const maxM = Math.max.apply(null, rows.map((r) => r.margin).concat([TARGET_MARGIN])) + 0.08;
+    const qx = (v) => PADL + (v / maxInv) * plotW;
+    const qy = (mv) => PADT + plotH - ((mv - minM) / (maxM - minM)) * plotH;
+    const maxH2 = Math.max.apply(null, rows.map((r) => r.hours).concat([1]));
+    let q = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Margin quadrant">';
+    q += '<line x1="' + PADL + '" x2="' + (W - PADR) + '" y1="' + qy(TARGET_MARGIN) + '" y2="' + qy(TARGET_MARGIN) + '" stroke="#8a6a09" stroke-dasharray="6 4"/>';
+    q += '<text x="' + (PADL + 2) + '" y="' + (qy(TARGET_MARGIN) - 5) + '" font-size="10" fill="#8a6a09">Target 20% (placeholder - MG to finalise)</text>';
+    q += '<line x1="' + PADL + '" x2="' + (W - PADR) + '" y1="' + qy(0) + '" y2="' + qy(0) + '" stroke="rgba(37,39,58,.25)"/>';
+    for (const r of rows) {
+      const fill = r.margin >= TARGET_MARGIN ? 'rgba(31,122,68,.55)' : r.margin < 0 ? 'rgba(179,21,27,.55)' : 'rgba(35,130,145,.5)';
+      q += '<circle cx="' + qx(r.inv) + '" cy="' + qy(r.margin) + '" r="' + (4 + (r.hours / maxH2) * 16) + '" fill="' + fill + '" stroke="#25273A" stroke-width="0.6"><title>' + esc(r.name + ': invoiced ' + fm(r.inv) + ' · margin after staff ' + Math.round(r.margin * 100) + '% · ' + Math.round(r.hours).toLocaleString() + ' modelled hours · ' + (r.margin >= TARGET_MARGIN ? 'above target' : r.margin < 0 ? 'loss-making' : 'below target')) + '</title></circle>';
+    }
+    rows.slice(0, 8).forEach((r, i) => {
+      const lbl = r.name.length > 14 ? r.name.slice(0, 13) + '…' : r.name;
+      const lx = qx(r.inv), ly = qy(r.margin) - (10 + (i % 3) * 9);
+      const w2 = lbl.length * 5.4 + 6;
+      q += '<rect x="' + (lx - w2 / 2) + '" y="' + (ly - 8.5) + '" width="' + w2 + '" height="11" fill="#fff" opacity=".82" rx="2"/>';
+      q += '<text x="' + lx + '" y="' + ly + '" text-anchor="middle" font-size="9.5" fill="#25273A">' + esc(lbl) + '</text>';
+    });
+    q += '<text x="' + PADL + '" y="' + (PADT + 2) + '" font-size="10.5" fill="#25273A" font-weight="700">Blended margin ' + Math.round(model.blend * 100) + '% · profit after staff ' + fm(model.profit) + ' · invoiced ' + fm(model.inv) + ' · staff cost ' + fm(model.staff) + '</text>';
+    q += '<text x="' + (W / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#79828C">Invoiced ($) →</text>';
+    q += '<text x="14" y="' + (H / 2) + '" text-anchor="middle" font-size="10" fill="#79828C" transform="rotate(-90 14 ' + (H / 2) + ')">Margin after staff (%) →</text>';
+    q += '</svg>';
+    const quadrant = panel('Margin quadrant - invoiced × margin after staff', { kind: 'demo', text: 'DEMO DATA · hours modelled until real hours land' }, '',
+      'What it is: every client in the selection plotted by invoiced revenue against margin after modelled staff cost; bubble size is modelled hours. Green sits above the 20% target line, red is loss-making. Hover a bubble for the story.',
+      q);
+
+    return panel('Leader selection - scorecard, cost model and quadrant', { kind: 'live', text: 'LIVE + MANUAL INPUTS' }, '',
+      'Pick one or more leaders and every figure below recomputes for that selection. The revenue and booked figures are live; profit and margin run on the manual cost grid until real hours land.',
+      dropdown + kpi6 +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:8px"><div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:4px">Revenue by leader (selection highlighted)</div>' + bars + '</div>' +
+      '<div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:4px">Client list for the selection</div>' + clientTable + '</div></div>') +
+      costPanel + quadrant;
   }
 
   /* ---------------- TAB 3 · Clients ---------------- */
@@ -1074,6 +1205,19 @@
     host.querySelectorAll('a[data-project]').forEach((a) => a.addEventListener('click', (ev) => {
       ev.preventDefault();
       renderBoxScore(a.dataset.project);
+    }));
+    const dd = $('#lead-dd', host);
+    if (dd) dd.addEventListener('click', () => { LEAD_STATE.open = !LEAD_STATE.open; renderTab(); });
+    host.querySelectorAll('[data-leadsel]').forEach((c) => c.addEventListener('change', () => {
+      const id = c.dataset.leadsel;
+      if (id === '__all__') LEAD_STATE.sel = [];
+      else if (c.checked) LEAD_STATE.sel.push(id);
+      else LEAD_STATE.sel = LEAD_STATE.sel.filter((x) => x !== id);
+      renderTab();
+    }));
+    host.querySelectorAll('[data-gradecost]').forEach((inp) => inp.addEventListener('change', () => {
+      LEAD_STATE.costs[inp.dataset.gradecost] = Math.max(Number(inp.value) || 0, 0);
+      renderTab();
     }));
   }
 
