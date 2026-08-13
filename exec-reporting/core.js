@@ -836,6 +836,15 @@
   };
   const demoIndustryOf = (c) => DEMO_INDUSTRY[c] || 'Other / untagged';
   const demoProjectTypeOf = (c) => DEMO_TYPE[c] || 'Project & Dev Mgmt';
+  /** Projects whose real tag has not been entered yet. Counted openly. */
+  const NOT_TAGGED = 'Not yet tagged';
+
+  /** Coverage of a real field, so a panel can state how complete it is. */
+  function fieldCoverage(projects, pick) {
+    let filled = 0;
+    for (const p of projects) if (nullIfBlank(pick(p))) filled += 1;
+    return { filled, total: projects.length, pct: projects.length ? filled / projects.length : 0 };
+  }
 
   /* ============================================================
      TAB 2 · LEADERS (port of lib/queries/leaders-tab.ts)
@@ -891,7 +900,14 @@
         else book.aging.green += 1;
       }
 
-      for (const [map, key] of [[byIndustry, demoIndustryOf(display)], [byType, demoProjectTypeOf(display)]]) {
+      // Industry and project type are REAL fields in the data aggregator app.
+      // Read them; never invent them. Untagged projects are counted as
+      // untagged rather than guessed into a bucket, so the panel's coverage
+      // is honest and improves by itself as the fields get filled in.
+      for (const [map, key] of [
+        [byIndustry, nullIfBlank(p.industry) || NOT_TAGGED],
+        [byType, nullIfBlank(p.project_type) || NOT_TAGGED],
+      ]) {
         const g = map.get(key) || { key, revenue: 0, booked: 0, projects: 0 };
         g.revenue += rev; g.projects += 1;
         if (p.rating === 1) g.booked += rev;
@@ -931,6 +947,8 @@
       books, scorecardMsg,
       byIndustry: [...byIndustry.values()].sort((a, b) => b.revenue - a.revenue),
       byType: [...byType.values()].sort((a, b) => b.revenue - a.revenue),
+      industryCoverage: fieldCoverage(mapped.projects, (p) => p.industry),
+      typeCoverage: fieldCoverage(mapped.projects, (p) => p.project_type),
       baselines, agingMsg,
       snapshots: mapped.flashSnapshots.length,
     };
@@ -1069,17 +1087,36 @@
   const BULK_LOG_THRESHOLD = 172;
   const isBulkLogged = (hours, monthHours) => hours > (monthHours == null ? BULK_LOG_THRESHOLD : monthHours);
   const BLENDED_COST_PROXY = 140;
-  function costRateFor(titleMap, gridMap, personTitle) {
+  /* Cost per hour for a person, from the rate card's cost floors.
+     The card already carries three cost figures per grade (high / mid /
+     low), so a band is chosen, never averaged away.
+
+     BAND PRECEDENCE, so KY's per-person banding works the moment the
+     upstream app carries it, with no change here:
+       1. the person's own band  (person.band / person.tierId / person.tier)
+       2. the band on their job title's mapping
+       3. mid
+     A person at the top of their band therefore costs what the grade
+     above nearly costs, which is the intent. */
+  function costRateFor(titleMap, gridMap, personTitle, person) {
     const mapped = personTitle ? titleMap.get(String(personTitle).trim().toLowerCase()) : undefined;
     if (mapped) {
       const row = gridMap.get(mapped.titleId);
       if (row) {
+        const personBand = person && nullIfBlank(person.band || person.tierId || person.tier);
+        const band = (personBand ? String(personBand).trim().toLowerCase() : null) || mapped.tierId || 'mid';
         const byTier = { high: row.floor_high, mid: row.floor_mid, low: row.floor_low };
-        const picked = byTier[mapped.tierId] != null ? byTier[mapped.tierId] : row.floor_mid;
-        if (typeof picked === 'number' && picked > 0) return { rate: picked, fromGrid: true, basis: mapped.titleId + '/' + mapped.tierId + ' floor' };
+        const picked = byTier[band] != null ? byTier[band] : row.floor_mid;
+        if (typeof picked === 'number' && picked > 0) {
+          return {
+            rate: picked, fromGrid: true,
+            basis: mapped.titleId + '/' + band + ' cost floor',
+            bandSource: personBand ? 'person' : 'title',
+          };
+        }
       }
     }
-    return { rate: BLENDED_COST_PROXY, fromGrid: false, basis: 'blended proxy' };
+    return { rate: BLENDED_COST_PROXY, fromGrid: false, basis: 'blended proxy', bandSource: 'none' };
   }
 
   const KNOWN_STAFF_SCHEMA_VERSION = 1;
@@ -1108,6 +1145,10 @@
         title: nullIfBlank(p.title),
         capacity_pct: num(p.capacityPct),
         active: p.active !== false,
+        // Per-person pay band, once the upstream app carries it. Read under
+        // any of the three plausible names so it works on arrival without a
+        // change here; null today, which falls back to the title's band.
+        band: nullIfBlank(p.band) || nullIfBlank(p.tierId) || nullIfBlank(p.tier),
       });
     }
     for (const a of raw.allocations || []) {
@@ -1215,7 +1256,7 @@
       });
     }
     const costOf = new Map();
-    for (const p of staffMapped.people) costOf.set(String(p.source_id), costRateFor(titleMap, gridMap, p.title));
+    for (const p of staffMapped.people) costOf.set(String(p.source_id), costRateFor(titleMap, gridMap, p.title, p));
 
     // ---- time mix + per person ----
     const monthMap = new Map();
@@ -1442,16 +1483,36 @@
     return (h % 1000) / 1000;
   }
   function tab4Data(ratesMapped, mapped, delivery, year) {
+    // What we ACTUALLY contracted, per grade, from the roles on real projects.
+    // Where a grade has contracted rates we show the measured average; where
+    // it has none we fall back to the modelled marker and say which is which,
+    // so a real number is never mistaken for a modelled one.
+    const contracted = new Map();
+    for (const r of mapped.roles) {
+      const rate = Number(r.contracted_rate);
+      if (!r.title_id || !Number.isFinite(rate) || rate <= 0) continue;
+      const e = contracted.get(r.title_id) || { sum: 0, n: 0 };
+      e.sum += rate; e.n += 1;
+      contracted.set(r.title_id, e);
+    }
     const grades = ratesMapped.rateGrid
       .filter((g) => typeof g.rack === 'number' && typeof g.floor_mid === 'number')
       .sort((a, b) => b.rack - a.rack)
       .map((g) => {
         const rack = Number(g.rack), floor = Number(g.floor_mid);
         const excluded = g.title_id === 'principal' || g.title_id === 'evp';
-        const actual = excluded
-          ? Math.round(rack * (0.2 + _skew(g.title_id) * 0.2))
-          : Math.round(floor + (rack - floor) * (0.25 + _skew(g.title_id) * 0.55));
-        return { id: g.title_id, name: g.name, rack, floor, actual, belowFloor: actual < floor, excluded };
+        const real = contracted.get(g.title_id);
+        const actual = real
+          ? Math.round(real.sum / real.n)
+          : (excluded
+            ? Math.round(rack * (0.2 + _skew(g.title_id) * 0.2))
+            : Math.round(floor + (rack - floor) * (0.25 + _skew(g.title_id) * 0.55)));
+        return {
+          id: g.title_id, name: g.name, rack, floor, actual,
+          floorHigh: g.floor_high, floorLow: g.floor_low,
+          measured: !!real, samples: real ? real.n : 0,
+          belowFloor: actual < floor, excluded,
+        };
       });
     const included = grades.filter((g) => !g.excluded);
     const realisation = included.length
@@ -1496,6 +1557,8 @@
         avgFloorDisc, realisation,
       },
       trueProfitSource,
+      measuredGrades: grades.filter((g) => g.measured).length,
+      contractedSamples: grades.reduce((a, g) => a + g.samples, 0),
       msg: 'Where we bill, we capture ' + Math.round(realisation * 100) + '% of the rack-to-floor band - Principal and EVP are rarely charged out at all (markers below the floor).',
       trueProfit,
     };
@@ -1578,6 +1641,32 @@
     const base = _hash31(jp ? id : client);
     return base % (jp ? 8 : CITIES.length);
   }
+
+  /* The REAL location field is free text ("Houston", "Miami, Florida",
+     "One Vanderbilt Ave, New York, NY 10017"), so match it to a known city
+     by name and by state abbreviation. A project whose location is filled
+     is placed where it really is; one that is blank is scattered and
+     labelled as such, never silently mixed in with the real ones. */
+  const STATE_CITY = {
+    ny: 0, ma: 1, pa: 2, dc: 3, il: 4, fl: 5, tx: 6, co: 7, ca: 8, wa: 10, ga: 11,
+  };
+  function resolveCity(locationText) {
+    const t = String(locationText || '').trim().toLowerCase();
+    if (!t) return null;
+    for (let i = 0; i < CITIES.length; i++) {
+      if (t.indexOf(CITIES[i][0].toLowerCase()) !== -1) return i;
+    }
+    // "Menlo Park, CA" style: fall back to the state, then to its main city.
+    const st = t.match(/,\s*([a-z]{2})\b|\b(california|texas|florida|illinois|washington|georgia|colorado|massachusetts|pennsylvania)\b/);
+    if (st) {
+      const key = (st[1] || '').toLowerCase();
+      if (key && STATE_CITY[key] != null) return STATE_CITY[key];
+      const long = { california: 8, texas: 6, florida: 5, illinois: 4, washington: 10, georgia: 11, colorado: 7, massachusetts: 1, pennsylvania: 2 };
+      if (st[2] && long[st[2]] != null) return long[st[2]];
+    }
+    return null;
+  }
+
   function locationsData(mapped, year) {
     const yearRev = projectYearRevenue(mapped);
     const rows = [];
@@ -1585,11 +1674,14 @@
       const years = yearRev.get(p.source_id);
       if (!years || !years.has(year)) continue;
       const client = p.raw_client ? canonicalNameFor(p.raw_client) : UNNAMED_CLIENT;
+      const real = resolveCity(p.location);
       rows.push({
         id: p.source_id, name: p.name, client,
         leader: p.leader_id ? leaderDisplay(p.leader_id) : 'Unassigned',
         rating: p.rating, status: p.status, revenue: years.get(year) || 0,
-        city: cityFor(client, p.source_id),
+        location: p.location || null,
+        placed: real != null ? 'real' : (nullIfBlank(p.location) ? 'unmatched' : 'scattered'),
+        city: real != null ? real : cityFor(client, p.source_id),
       });
     }
     return rows;
@@ -1632,7 +1724,7 @@
           if (!fk) continue;
           const share = Number(a.hours) / fk.share;
           const person = personBySource.get(a.person_source_id);
-          const rate = costRateFor(titleMap, gridMap, person ? person.title : null);
+          const rate = costRateFor(titleMap, gridMap, person ? person.title : null, person);
           hours += share; cost += share * rate.rate;
           const e = byPerson.get(a.person_source_id) || { name: person ? person.name : a.person_source_id, title: person ? person.title : null, hours: 0, cost: 0 };
           e.hours += share; e.cost += share * rate.rate;

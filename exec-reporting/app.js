@@ -543,11 +543,14 @@
       '<table class="vtable"><thead><tr><th>' + label + '</th><th class="num">Revenue</th><th class="num">Booked (R1)</th><th class="num">Projects</th></tr></thead><tbody>' +
       rows.map((g) => '<tr><td>' + esc(g.key) + '</td><td class="num">' + fm(g.revenue) + '</td><td class="num">' + fm(g.booked) + '</td><td class="num">' + g.projects + '</td></tr>').join('') +
       '</tbody></table>';
-    const industryPanel = panel('Revenue by industry', { kind: 'demo', text: 'DEMO CLASSIFICATION' }, '',
-      'Industry tags exist on only a handful of source records, so this grouping runs on the app-side demo map until the intake fields land. The dollars are real; the classification is illustrative.',
+    const covLine = (c, what) => 'This reads the real ' + what + ' recorded against each project. It is filled on ' +
+      c.filled + ' of ' + c.total + ' projects (' + Math.round(c.pct * 100) + '%); the rest are counted openly as not yet tagged rather than guessed into a bucket. The split sharpens by itself as the field gets completed.';
+    const covFlag = (c) => (c.pct >= 0.8 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: Math.round(c.pct * 100) + '% TAGGED' });
+    const industryPanel = panel('Revenue by industry', covFlag(d.industryCoverage), '',
+      covLine(d.industryCoverage, 'industry'),
       groupTable(d.byIndustry, 'Industry'));
-    const typePanel = panel('Revenue by project type', { kind: 'demo', text: 'DEMO CLASSIFICATION' }, '',
-      'Same basis as the industry panel: real dollars, demo classification until tagged at intake.',
+    const typePanel = panel('Revenue by project type', covFlag(d.typeCoverage), '',
+      covLine(d.typeCoverage, 'project type'),
       groupTable(d.byType, 'Project type'));
 
     const rf = d.baselines.map((b) => {
@@ -953,10 +956,18 @@
         '<div style="position:absolute;top:4px;left:' + pctF + '%;width:8px;height:8px;border-radius:50%;background:#9aa6b2"></div>' +
         '<div style="position:absolute;top:4px;left:' + pctR + '%;width:8px;height:8px;border-radius:50%;background:#16263b"></div>' +
         '<div style="position:absolute;top:2px;left:' + pctA + '%;width:10px;height:10px;transform:rotate(45deg);background:' + (g.belowFloor ? 'var(--bad)' : 'var(--teal)') + '"></div></div>' +
-        '<div class="num" style="font-size:11px;color:var(--mut)">' + fm(g.floor) + ' → ' + fm(g.rack) + ' · <b style="color:' + (g.belowFloor ? 'var(--bad)' : 'var(--ink)') + '">' + fm(g.actual) + '</b></div></div>';
+        '<div class="num" style="font-size:11px;color:var(--mut)">' + fm(g.floor) + ' → ' + fm(g.rack) + ' · <b style="color:' + (g.belowFloor ? 'var(--bad)' : 'var(--ink)') + '">' + fm(g.actual) + '</b>' +
+        (g.measured ? ' <span class="tone-good" title="average of ' + g.samples + ' contracted role' + (g.samples > 1 ? 's' : '') + '">measured</span>' : ' <span style="color:var(--mut)">modelled</span>') +
+        '</div></div>';
     }).join('');
-    const gridPanel = panel('Rack, floor and where billing actually lands', { kind: 'demo', text: 'ACTUAL MARKERS · DEMO' }, esc(d.msg),
-      'What it is: each grade\'s cost floor (grey dot) to rack rate (navy dot), with a diamond marking where billing lands in the band - red when below the floor. The floor-to-rack lines are the real confidential card; the actual-billed markers stay a stable demo model until per-project billed rates land. Legend: grey dot floor · navy dot rack · diamond actual (red = below floor).',
+    const gridPanel = panel('Rack, cost floor and where we actually contract',
+      d.measuredGrades > 0 ? { kind: 'live', text: d.measuredGrades + ' OF ' + d.grades.length + ' GRADES MEASURED' } : { kind: 'demo', text: 'MODELLED MARKERS' },
+      esc(d.msg),
+      'What it is: each grade\'s cost floor (grey dot) to rack rate (navy dot), with a diamond where we actually contract. ' +
+      (d.measuredGrades > 0
+        ? 'Those diamonds are now the real average contracted rate for that grade, taken from ' + d.contractedSamples + ' priced roles on real projects; a grade with no contracted role yet still shows a modelled marker, marked "modelled" in the row. '
+        : 'No contracted rates are recorded yet, so every diamond is modelled. ') +
+      'Red means below the cost floor. Legend: grey dot cost floor · navy dot rack · diamond contracted.',
       rows);
 
     const src = d.trueProfitSource;
@@ -1003,7 +1014,9 @@
       const [city, lat, lng] = CORE.CITIES[ci];
       const x = lng2x(lng), y = lat2y(lat);
       const r = 10 + Math.sqrt(Math.abs(e.value) / maxV) * 30;
-      const top = e.rows.slice().sort((a, b) => b.revenue - a.revenue).slice(0, 4).map((p) => p.name + ' (' + fm(p.revenue) + ')').join(' · ');
+      const realHere = e.rows.filter((p) => p.placed === 'real').length;
+      const top = realHere + ' of ' + e.rows.length + ' really located · ' +
+        e.rows.slice().sort((a, b) => b.revenue - a.revenue).slice(0, 4).map((p) => p.name + ' (' + fm(p.revenue) + ')').join(' · ');
       dots += '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="rgba(35,130,145,.55)" stroke="#16636f" stroke-width="1.5"><title>' + esc(city + ': ' + e.count + ' project' + (e.count > 1 ? 's' : '') + ' · ' + fm(e.value) + ' — ' + top) + '</title></circle>' +
         '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">' + e.count + '</text>' +
         '<text x="' + x + '" y="' + (y + r + 13) + '" text-anchor="middle" font-size="10" fill="#25273A" font-weight="700">' + esc(city) + ' · ' + fm(e.value) + '</text>';
@@ -1021,15 +1034,27 @@
       sel('region', 'Region', [['all', 'All'], ['northeast', 'Northeast'], ['south', 'South'], ['midwest', 'Midwest'], ['west', 'West']], LOCFILTER.region) +
       '<span style="font-size:11px;color:var(--mut);align-self:center">' + filtered.length + ' of ' + rows.length + ' projects shown</span></div>';
 
-    const cityTable = '<table class="vtable"><thead><tr><th>City (demo)</th><th class="num">Projects</th><th class="num">' + DATA.overview.year + ' revenue</th><th>Largest project</th></tr></thead><tbody>' +
+    const cityTable = '<table class="vtable"><thead><tr><th>City</th><th class="num">Projects</th><th class="num">Really located</th><th class="num">' + DATA.overview.year + ' revenue</th><th>Largest project</th></tr></thead><tbody>' +
       [...byCity.entries()].sort((a, b) => b[1].value - a[1].value).map(([ci, e]) => {
         const big = e.rows.slice().sort((a, b) => b.revenue - a.revenue)[0];
-        return '<tr><td>' + esc(CORE.CITIES[ci][0]) + '</td><td class="num">' + e.count + '</td><td class="num">' + fm(e.value) + '</td><td>' + esc(big.name) + ' · ' + fm(big.revenue) + '</td></tr>';
+        const realHere = e.rows.filter((p) => p.placed === 'real').length;
+        return '<tr><td>' + esc(CORE.CITIES[ci][0]) + '</td><td class="num">' + e.count + '</td>' +
+          '<td class="num ' + (realHere === e.count ? 'tone-good' : realHere ? '' : 'tone-neutral') + '">' + realHere + '</td>' +
+          '<td class="num">' + fm(e.value) + '</td><td>' + esc(big.name) + ' · ' + fm(big.revenue) + '</td></tr>';
       }).join('') + '</tbody></table>';
 
-    return '<div class="note" style="border-left:3px solid var(--amber-ink)"><b>The entire map is simulated geography.</b> Project location is not yet captured at intake, so cities come from a stable name-hash spread (the JPMC small-works programme spreads across 8 cities, mock parity). Real attributes, demo placement - the panel flips itself live when locations land.</div>' +
-      panel('Projects by city', { kind: 'demo', text: 'DEMO GEOGRAPHY' }, '',
-        'What it is: every project with ' + DATA.overview.year + ' revenue placed on a city cluster, sized by revenue, filterable by rating class, leader and region. Hover a cluster for its largest projects.',
+    const realN = rows.filter((r) => r.placed === 'real').length;
+    const unmatchedN = rows.filter((r) => r.placed === 'unmatched').length;
+    const scatteredN = rows.filter((r) => r.placed === 'scattered').length;
+    const pctReal = rows.length ? Math.round((realN / rows.length) * 100) : 0;
+    const banner = '<div class="note" style="border-left:3px solid ' + (pctReal >= 80 ? 'var(--good)' : 'var(--amber-ink)') + '">' +
+      '<b>' + realN + ' of ' + rows.length + ' projects (' + pctReal + '%) are placed where they really are</b>, read from the location recorded against the project. ' +
+      (unmatchedN ? unmatchedN + ' have a location written in a form that does not match a known city. ' : '') +
+      (scatteredN ? scatteredN + ' have no location recorded yet and are scattered so they stay visible; those pins are position-only and mean nothing geographically. ' : '') +
+      'The map becomes fully real as the location field is completed.</div>';
+    return banner +
+      panel('Projects by city', pctReal >= 80 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: pctReal + '% REAL PLACEMENT' }, '',
+        'What it is: every project with ' + DATA.overview.year + ' revenue placed on a city cluster, sized by revenue, filterable by rating class, leader and region. Hover a cluster for its largest projects and how many are really placed.',
         filters + mapSvg + cityTable);
   }
 

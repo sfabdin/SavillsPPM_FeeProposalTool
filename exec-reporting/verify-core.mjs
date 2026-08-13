@@ -229,6 +229,50 @@ ck('box score: history newest-first', (() => {
   return true;
 })());
 
+// ---- reads the REAL fields, never an invented map ----
+ck('leaders: industry groups come from the real field, untagged counted openly', (() => {
+  // Compare against projects that CARRY year revenue: a project with no
+  // revenue this year correctly never reaches a revenue-by-industry chart.
+  const yr = CORE.projectYearRevenue(m);
+  const withRev = m.projects.filter((p) => { const y = yr.get(p.source_id); return y && y.has(o.year); });
+  const real = new Set(withRev.map((p) => p.industry).filter(Boolean));
+  const keys = new Set(t2.byIndustry.map((g) => g.key));
+  for (const r of real) if (!keys.has(r)) return false;          // every real value present
+  for (const k of keys) if (k !== 'Not yet tagged' && !real.has(k)) return false;  // nothing invented
+  return keys.has('Not yet tagged') === withRev.some((p) => !p.industry);
+})());
+ck('leaders: project-type groups likewise, and coverage is reported', (() => {
+  const real = new Set(m.projects.map((p) => p.project_type).filter(Boolean));
+  const keys = new Set(t2.byType.map((g) => g.key));
+  for (const k of keys) if (k !== 'Not yet tagged' && !real.has(k)) return false;
+  return t2.typeCoverage.total === m.counts.projects && t2.typeCoverage.filled > 0;
+})());
+ck('leaders: group revenue still sums to the whole year book',
+  near(t2.byIndustry.reduce((a, g) => a + g.revenue, 0), t2.kpis.revenue)
+  && near(t2.byType.reduce((a, g) => a + g.revenue, 0), t2.kpis.revenue));
+ck('locations: projects with a real location are placed by it, not scattered', (() => {
+  const withLoc = loc.filter((r) => r.location);
+  const placed = withLoc.filter((r) => r.placed === 'real');
+  return placed.length > 0 && loc.every((r) => ['real', 'unmatched', 'scattered'].includes(r.placed));
+})());
+ck('locations: a known city string resolves to that city, not a hash', (() => {
+  const ny = loc.find((r) => r.location && /new york/i.test(r.location));
+  return !ny || CORE.CITIES[ny.city][0] === 'New York';
+})());
+ck('rates: contracted rates are measured from real roles where they exist',
+  t4.measuredGrades > 0 && t4.contractedSamples > 0
+  && t4.grades.filter((g) => g.measured).every((g) => g.actual > 0));
+ck('cost band: person band overrides the title band when present', (() => {
+  const titleMap = new Map([['project manager', { titleId: 'pm', tierId: 'low' }]]);
+  const gridMap = new Map([['pm', { floor_high: 138, floor_mid: 125, floor_low: 109 }]]);
+  const byTitle = CORE.costRateFor(titleMap, gridMap, 'Project Manager', { name: 'x' });
+  const byPerson = CORE.costRateFor(titleMap, gridMap, 'Project Manager', { name: 'y', band: 'high' });
+  return byTitle.rate === 109 && byTitle.bandSource === 'title'
+    && byPerson.rate === 138 && byPerson.bandSource === 'person';
+})());
+ck('cost band: the rate card already carries three cost figures per grade',
+  rt.rateGrid.every((g) => g.floor_high != null && g.floor_mid != null && g.floor_low != null));
+
 console.log('');
 console.log(checks + ' checks, ' + (fails ? fails + ' FAILURES' : 'all passed'));
 if (m.notes.length) { console.log('mapper notes:'); m.notes.slice(0, 8).forEach((n) => console.log('  - ' + n)); }
