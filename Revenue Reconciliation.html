@@ -166,6 +166,16 @@
   .glossary .gl.eg { flex:1 1 100%; border-right:0; border-top:1px solid var(--hair);
                      background:#eef6f7; color:var(--sav-navy); }
   .glossary .gl.eg b { display:inline; color:var(--sav-navy); }
+  .mode-label { font-family:var(--font-body); font-size:11px; color:var(--sav-steel); font-style:italic; }
+  #leader-pick { font-family:var(--font-body); font-size:12px; border:1px solid var(--hair-strong);
+        background:var(--sav-cream); color:var(--sav-navy); padding:6px 8px; min-width:170px; cursor:pointer; }
+  #leader-pick.active { background:var(--sav-yellow); border-color:var(--sav-navy); font-weight:600; }
+  table.ws .wp-lead { color:var(--sav-teal); font-weight:600; }
+  table.ws td.lead-c { font-size:11px; color:var(--sav-teal); }
+  table.ws td.unassigned-c { background:#fdeaea !important; color:var(--sav-red); font-weight:700; }
+  table.ws tfoot tr.lane-unassigned td { background:var(--sav-red); color:#fff; font-size:11.5px; font-weight:800; bottom:0; }
+  table.ws tfoot tr.lane-unassigned td.l { background:var(--sav-red); color:#fff; }
+
   /* allocation lane */
   table.ws tr.lane-alloc td.l { border-left:4px solid var(--sav-navy); }
   table.ws td.alloc-c { padding:4px 6px; text-align:right; vertical-align:top; background:#f6f7fb; }
@@ -265,10 +275,11 @@
   table.ws td.acc-c.off .acc-n, table.ws td.acc-c.off .acc-d { color:#8a5a00; }
   table.ws th.focus-h { background:var(--sav-teal) !important; }
   table.ws td.focus-c { box-shadow:inset 2px 0 0 var(--sav-teal), inset -2px 0 0 var(--sav-teal); }
-  table.ws tfoot tr.lane-acc td { background:#3b3a34; font-size:11.5px; font-weight:700; bottom:66px; color:#f2c56b; }
+  table.ws tfoot tr.lane-acc td { background:#3b3a34; font-size:11.5px; font-weight:700; bottom:99px; color:#f2c56b; }
   table.ws tfoot tr.lane-acc td.l { background:#3b3a34; color:#f2c56b; }
-  table.ws tfoot tr.lane-bill td { background:#2f3147; font-size:11.5px; font-weight:700; bottom:33px; }
+  table.ws tfoot tr.lane-bill td { background:#2f3147; font-size:11.5px; font-weight:700; bottom:66px; }
   table.ws tfoot tr.lane-bill td.l { background:#2f3147; color:rgba(255,255,255,.85); }
+  table.ws tfoot tr.tot:not(.lane-acc):not(.lane-bill):not(.lane-unassigned) td { bottom:33px; }
   .spread-btn { font-family:var(--font-display); font-weight:700; font-size:9px; letter-spacing:.06em;
         text-transform:uppercase; border:0; background:var(--sav-yellow); color:var(--sav-navy);
         padding:3px 8px; margin-top:3px; cursor:pointer; }
@@ -508,11 +519,14 @@
   <div class="ws-head">
     <h2>Recognised revenue, by project and month</h2>
     <span class="modebar">
-      <button class="btn sm on" id="mode-actual">Actual</button>
-      <button class="btn sm" id="mode-plan">Plan</button>
-      <button class="btn sm" id="mode-variance">Variance</button>
+      <button class="btn sm on" id="mode-earned">Earned</button>
+      <button class="btn sm" id="mode-accrued">Accrued</button>
+      <button class="btn sm" id="mode-invoiced">Invoiced</button>
     </span>
-    <label class="ctl-toggle"><input type="checkbox" id="show-zero"> Show projects with no activity</label>
+    <span class="mode-label" id="mode-label"></span>
+    <select id="leader-pick" aria-label="Revenue leader"></select>
+    <label class="ctl-toggle"><input type="checkbox" id="only-unassigned"> Only unassigned</label>
+    <label class="ctl-toggle"><input type="checkbox" id="show-zero"> No activity</label>
     <button class="btn sm" id="year-export">⤓ Export the year</button>
     <div class="legend">
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-unruled)"></span>No status yet</span>
