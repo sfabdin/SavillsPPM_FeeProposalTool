@@ -47,6 +47,12 @@
   const CORE = window.EXEC_CORE;
   const MON = CORE.MON;
   const fm = CORE.fmtMoney;
+  /** ISO timestamp -> "10 Aug 2026". Raw machine timestamps stay out of the page. */
+  const fmtDay = (iso) => {
+    const d2 = new Date(iso);
+    return isNaN(d2) ? String(iso)
+      : d2.getUTCDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d2.getUTCMonth()] + ' ' + d2.getUTCFullYear();
+  };
   const fmf = CORE.fmtMoneyFull;
 
   /* ---------------- boot + gate ---------------- */
@@ -175,7 +181,7 @@
   function render(root, dev) {
     if (!DATA.mapped || !DATA.mapped.ok) {
       root.innerHTML = gateBox('The data files have changed shape',
-        'The projects file could not be read the way the data aggregator app normally writes it. Nothing is guessed at in this situation.',
+        'The projects file could not be read the way the fee system normally writes it, so nothing is shown.',
         esc(DATA.notes.join(' · ')));
       return;
     }
@@ -338,12 +344,12 @@
         '<td class="num" style="color:var(--mut);background:rgba(37,39,58,.04)">' + fm(r.longShots) + '</td>' +
         '<td class="num">' + (r.budget === null || r.budget === 0 ? '-' : fm(r.budget)) + '</td>' +
         '<td class="num">' + (vsBudget === null
-          ? (r.projected > 0 ? '<span class="tone-good">+' + fm(r.projected) + ' incremental</span>' : '-')
+          ? (r.projected > 0 ? '<span class="tone-good">+' + fm(r.projected) + ' new</span>' : '-')
           : arrowCell(vsBudget)) + '</td></tr>';
     };
     const tc = p.topClients;
     const topPanel = panel('Top 10 clients by projected revenue', { kind: 'live', text: 'LIVE' }, esc(p.topMsg),
-      'What it is: the top 10 clients ranked by projected revenue (ratings 1-4, the money that counts toward budget), split across the likelihood tiers, totalled, and compared to each client\'s annual budget line. Long-shot revenue (ratings 5-7) sits in its own grey column - visible, but kept out of every number we count. Why we show it: to see who is ahead of or behind plan - and clients that were not in the October budget show their full projected as positive incremental.',
+      'What it is: the top 10 clients ranked by projected revenue (ratings 1-4, the money that counts toward budget), split across the likelihood tiers, totalled, and compared to each client\'s annual budget line. Long-shot revenue (ratings 5-7) sits in its own grey column - visible, but kept out of every number we count. Why we show it: to see who is ahead of or behind plan - and clients that were not in the October budget count as new revenue on top of it.',
       '<table class="vtable"><thead><tr><th>Client</th><th class="num">Booked (R1)</th><th class="num">90% (R2)</th><th class="num">Likely (R3-4)</th><th class="num">Projected (1-4)</th><th class="num" style="color:var(--mut)">Long shots (R5-7)</th><th class="num">Oct budget</th><th class="num">vs budget</th></tr></thead><tbody>' +
       tc.rows.map(clientRow).join('') + clientRow(tc.other) +
       '<tr class="total"><td>' + esc(tc.total.name) + '</td><td class="num">' + fm(tc.total.r1) + '</td><td class="num">' + fm(tc.total.r2) + '</td><td class="num">' + fm(tc.total.r34) + '</td><td class="num">' + fm(tc.total.projected) + '</td><td class="num" style="color:var(--mut)">' + fm(tc.total.longShots) + '</td><td class="num">' + fm(tc.total.budget || 0) + '</td><td></td></tr>' +
@@ -351,7 +357,7 @@
 
     // Monthly tracking (toggle: cumulative | run-rate)
     const monthlyPanel = panel('Booked and projected, tracking to budget by month', { kind: 'live', text: 'LIVE' }, esc(p.monthly.msg),
-      'What it is: two ways to watch the year unfold against budget. Cumulative to budget shows booked and projected revenue climbing toward the annual budget line. Monthly run-rate shows each month by rating against a flat budget line (' + fm(p.monthly.flat) + '/mo) plus a revised target (red): the flat budget lifted by the cumulative over/under to date, so a bar reaching the red line means we are fully caught up. Each bar prints its total and a star shows the month\'s over/under vs budget. Why we show it: to answer "how far behind or ahead are we cumulatively, and what would it take to get whole?"',
+      'What it is: two ways to watch the year unfold against budget. Cumulative to budget shows booked and projected revenue climbing toward the annual budget line. Monthly run-rate shows each month by rating against a flat budget line (' + fm(p.monthly.flat) + '/mo) plus a revised target (red): the flat budget lifted by the cumulative over/under to date, so a bar reaching the red line means we are fully caught up. Each bar prints its total and a star shows the month\'s over/under vs budget. Why we show it: to answer "how far behind or ahead are we cumulatively, and what would it take to catch up fully?"',
       '<div class="tabbar" style="border-bottom:1px solid var(--hairline);margin:6px 0"><button id="mv-cum" class="on">Cumulative to budget</button><button id="mv-run">Monthly run-rate</button></div>' +
       '<div id="mv-host">' + cumulativeChart(p.monthly, d.budget, p.monthly.todayMonth) + '</div>' +
       monthlyTable(p.monthly));
@@ -543,7 +549,7 @@
     const kpis = '<div class="kpirow">' +
       kpi(d.year + ' revenue (all ratings)', fm(d.kpis.revenue), 'every project with ' + d.year + ' revenue', 'teal') +
       kpi('Booked (R1)', fm(d.kpis.booked), 'firm revenue', '') +
-      kpi('Projects', String(d.kpis.projects), 'whole snapshot', '') +
+      kpi('Projects', String(d.kpis.projects), 'all live projects', '') +
       kpi('Revenue leaders', String(d.kpis.leaders), 'with ' + d.year + ' revenue', '') +
       kpi('Clients', String(d.kpis.clients), 'with positive revenue', 'navy') +
       '</div>';
@@ -573,7 +579,7 @@
       rows.map((g) => '<tr><td>' + esc(g.key) + '</td><td class="num">' + fm(g.revenue) + '</td><td class="num">' + fm(g.booked) + '</td><td class="num">' + g.projects + '</td></tr>').join('') +
       '</tbody></table>';
     const covLine = (c, what) => 'This reads the real ' + what + ' recorded against each project. It is filled on ' +
-      c.filled + ' of ' + c.total + ' projects (' + Math.round(c.pct * 100) + '%); the rest are shown as not yet tagged, rather than being put in a category we have guessed at. The split sharpens by itself as the field gets completed.';
+      c.filled + ' of ' + c.total + ' projects (' + Math.round(c.pct * 100) + '%); the rest are shown as not yet tagged, rather than being put in a category we have guessed at. The split gets more complete as the field is filled in.';
     const covFlag = (c) => (c.pct >= 0.8 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: Math.round(c.pct * 100) + '% TAGGED' });
     const industryPanel = panel('Revenue by industry', covFlag(d.industryCoverage), '',
       covLine(d.industryCoverage, 'industry'),
@@ -607,11 +613,16 @@
        to compare against; the shared files carry none yet, so this states the
        honest position rather than inventing a comparison. It fills itself in
        once the monthly capture has been run twice. */
+    /* The side-by-side comparison is not built yet, so this stays flagged
+       AWAITING HISTORY even once two snapshots exist - a LIVE flag over a
+       waiting note would be a false promise. */
     const snaps = d.snapshots || 0;
     const movementPanel = panel('Movement vs prior reporting period',
-      snaps >= 2 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: 'AWAITING HISTORY' }, '',
-      'What it is: what changed since the last reporting period, by rating and by leader. The comparison lands automatically once two monthly snapshots exist. Until then, it stays empty rather than showing a comparison we can\'t support.',
-      '<div class="note" style="border:1px dashed var(--hairline)">First comparison available after the next monthly snapshot (' + snaps + ' of 2 needed). Snapshots are captured in this app on the Revenue Projections page, under Monthly Flash.</div>');
+      { kind: 'demo', text: 'AWAITING HISTORY' }, '',
+      'What it is: what changed since the last reporting period, by rating and by leader. It needs two frozen monthly snapshots to compare. Until then, it stays empty rather than showing a comparison we can\'t support.',
+      snaps < 2
+        ? '<div class="note" style="border:1px dashed var(--hairline)">First comparison available after the next monthly snapshot (' + snaps + ' of 2 needed). Snapshots are captured in this app on the Revenue Projections page, under Monthly Flash.</div>'
+        : '<div class="note" style="border:1px dashed var(--hairline)">' + snaps + ' snapshots are stored. The comparison view is the next build step for this panel.</div>');
 
     return kpis + scorecard + leadersInteractive(d) + agingPanel + movementPanel + rfPanel + industryPanel + typePanel;
   }
@@ -705,7 +716,7 @@
       '<input type="number" min="0" data-gradecost="' + g.id + '" value="' + (LEAD_STATE.costs[g.id]) + '" style="font:inherit;width:100%;margin-top:2px;padding:4px 8px;border:1px solid var(--hairline)"></label>').join('');
     const costPanel = panel('Staff cost assumptions - $/hr by grade',
       { kind: 'demo', text: 'MANUAL INPUT · not harvested from the data files' }, '',
-      'What it is: a what-if cost model - type a blended cost per hour for each staff grade and the profit, margin and quadrant recalculate. Why we show it: the data files hold no salary cost, so this models profitability now; the Delivery & Effort tab carries the real-hours version where Clockify maps exist. Hours are modelled at revenue ÷ $' + BILL_RATE + '/hr with a stable per-client staffing skew. Grade defaults are planning figures, not the confidential rate card.',
+      'What it is: a what-if cost model - type a blended cost per hour for each staff grade and the profit, margin and quadrant recalculate. Why we show it: the data files hold no salary cost, so this models profitability now; the Delivery & Effort tab carries the real-hours version where Clockify maps exist. Hours are modelled at revenue ÷ $' + BILL_RATE + '/hr with a fixed staffing pattern per client. Grade defaults are planning figures, not the confidential rate card.',
       '<div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">' + gridInputs + '</div>' +
       '<div class="msg" style="margin-top:12px">Blended cost ' + fm(model.blendedCost) + '/hr · blended margin ' + Math.round(model.blend * 100) + '% after staff · profit after staff ' + fm(model.profit) + ' on invoiced ' + fm(model.inv) + ' (staff cost ' + fm(model.staff) + ').</div>');
 
@@ -799,8 +810,8 @@
       '<span style="flex:1">' + esc(s.sector) + '</span>' +
       '<span style="color:var(--mut)">' + Math.round(s.share * 100) + '%</span>' +
       '<span style="font-weight:700;min-width:70px;text-align:right">' + fm(s.revenue) + '</span></div>').join('');
-    const donutPanel = panel('Revenue by sector', { kind: 'demo', text: 'SEEDED CLASSIFICATION' }, esc(d.sectorMsg),
-      'What it is: ' + d.year + ' revenue by client sector. The classification is the app-side seed map (keyword based); the curated corrections made in the database app\'s Client Admin are not in the shared files, so treat slices as directional. Hover a slice for its top clients.',
+    const donutPanel = panel('Revenue by sector', { kind: 'demo', text: 'KEYWORD GUESS' }, esc(d.sectorMsg),
+      'What it is: ' + d.year + ' revenue by client sector. The sectors come from a built-in keyword guess; the corrections made in the fee system\'s Client Admin are not in the shared files, so treat the slices as a guide, not exact. Hover a slice for its top clients.',
       '<div class="split">' +
       '<svg viewBox="0 0 210 210" width="210" role="img" aria-label="Revenue by sector">' + slices + '</svg>' +
       '<div>' + legend + '</div></div>');
@@ -834,8 +845,8 @@
       stack += '<text x="' + (bx + bw / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#5f6a78">' + MON[mth - 1] + '</text>';
     }
     stack += '</svg>';
-    const stackPanel = panel('Sector mix, month by month', { kind: 'demo', text: 'SEEDED CLASSIFICATION' }, '',
-      'What it is: each month\'s revenue stacked by sector (top six sectors, rest folded into Other). Months after ' + MON[d.lastActual - 1] + ' render lighter - they are projection, not yet firm. Hover a segment for its share of the month.',
+    const stackPanel = panel('Sector mix, month by month', { kind: 'demo', text: 'KEYWORD GUESS' }, '',
+      'What it is: each month\'s revenue stacked by sector (top six sectors, rest folded into Other). Months after ' + MON[d.lastActual - 1] + ' are shown lighter - they are projections, not yet firm. Hover a segment for its share of the month.',
       stack);
 
     // Movers
@@ -854,7 +865,7 @@
       '<details style="border-bottom:1px solid var(--hairline);padding:5px 0"><summary style="cursor:pointer;font-size:13px"><b>' + esc(pr.client) + '</b> · ' + esc(pr.programme) + ' <span style="float:right;font-weight:700">' + fm(pr.revenue) + '</span></summary>' +
       '<table class="vtable" style="margin:6px 0 4px">' + pr.projects.map((pj) => '<tr><td style="font-size:12px">' + esc(pj.name) + '</td><td class="num" style="font-size:12px">' + fm(pj.revenue) + '</td></tr>').join('') + '</table></details>').join('');
     const progPanel = panel('Programme drill-down - top clients', { kind: 'demo', text: 'DEMO GROUPING' }, '',
-      'What it is: the top clients\' revenue grouped into project families by name matching. The live rule becomes the programme name and shared Salesforce number once captured at intake; name matching is the documented placeholder. Expand a row for the projects inside it.',
+      'What it is: the top clients\' revenue grouped into project families by name matching. Once the programme name and Salesforce number are captured when projects are set up, grouping will use those; until then, projects are grouped by matching names. Expand a row for the projects inside it.',
       progRows);
 
     const rvb = panel('Reported vs billed', { kind: 'demo', text: 'NOT AVAILABLE' }, '',
@@ -900,7 +911,7 @@
     });
     mixSvg += '</svg>';
     const mixPanel = panel('Where the time goes, month by month', { kind: 'live', text: 'LIVE' }, esc(d.msg),
-      'What it is: every logged hour split three ways - billable project work (green), Macro / business development (amber), time off (grey). Why we show it: the split reproduces the data aggregator app\'s own chart, so the two tools cannot quietly disagree. Legend: green billable · amber internal/BD · grey time off.',
+      'What it is: every logged hour split three ways - billable project work (green), Macro / business development (amber), time off (grey). Why we show it: the split reproduces the fee system\'s own chart, so the two tools cannot quietly disagree. Legend: green billable · amber internal/BD · grey time off.',
       mixSvg);
 
     // capacity
@@ -962,8 +973,8 @@
     const covPanel = panel('Coverage and reconciliation', { kind: 'live', text: 'LIVE' }, '',
       'These figures depend on how well the underlying data matches, so we show how many hours can be matched to a fee record, how much of the cost uses actual grade rates, and whether the totals match the source.',
       '<div class="note">' +
-      Math.round(d.reconciliation.totalHours).toLocaleString() + 'h across ' + d.reconciliation.people + ' people and ' + d.reconciliation.clockifyProjects + ' Clockify projects, ' + esc(d.reconciliation.monthsCovered) + (d.reconciliation.importedAt ? ' · pulled into the source app ' + esc(String(d.reconciliation.importedAt)) : '') + '.<br>' +
-      '<b>' + cov.hoursMappedPct + '%</b> of billable hours reach a fee record (' + cov.projectsCovered + ' projects) · <b>' + cov.gridCostPct + '%</b> of delivery cost is rate-grid-backed (' + cov.titlesMapped + ' of ' + cov.titlesTotal + ' titles mapped) · ' + cov.bulkLoggedRows + ' bulk-logged person-months marked.' +
+      Math.round(d.reconciliation.totalHours).toLocaleString() + 'h across ' + d.reconciliation.people + ' people and ' + d.reconciliation.clockifyProjects + ' Clockify projects, ' + esc(d.reconciliation.monthsCovered) + (d.reconciliation.importedAt ? ' · pulled into the fee system ' + esc(fmtDay(d.reconciliation.importedAt)) : '') + '.<br>' +
+      '<b>' + cov.hoursMappedPct + '%</b> of billable hours can be matched to a fee record (' + cov.projectsCovered + ' projects) · <b>' + cov.gridCostPct + '%</b> of delivery cost is rate-grid-backed (' + cov.titlesMapped + ' of ' + cov.titlesTotal + ' titles mapped) · ' + cov.bulkLoggedRows + ' bulk-logged person-months marked.' +
       (cov.unmappedTop.length ? '<br>Heaviest unmapped Clockify projects: ' + cov.unmappedTop.slice(0, 5).map((u) => esc(u.name) + ' (' + Math.round(u.hours).toLocaleString() + 'h)').join(' · ') + '.' : '') +
       '</div>');
 
@@ -1021,7 +1032,7 @@
       esc(d.msg),
       'What it is: each grade\'s cost floor (grey dot) to rack rate (navy dot), with a diamond where we actually contract. ' +
       (d.measuredGrades > 0
-        ? 'Those diamonds are now the real average contracted rate for that grade, taken from ' + d.contractedSamples + ' priced roles on real projects; a grade with no contracted role yet still shows a modelled marker, marked "modelled" in the row. '
+        ? 'Those diamonds show the average contracted rate for that grade, taken from ' + d.contractedSamples + ' priced roles on real projects; a grade with no contracted role yet still shows a modelled marker, marked "modelled" in the row. '
         : 'No contracted rates are recorded yet, so every diamond is modelled. ') +
       'Red means below the cost floor. Legend: grey dot cost floor · navy dot rack · diamond contracted.',
       '<div class="gridrows">' + rows + '</div>');
@@ -1035,8 +1046,8 @@
       src && src.real ? { kind: 'live', text: 'PART-LIVE · real hours' } : { kind: 'demo', text: 'DEMO MODEL' },
       '',
       src && src.real
-        ? 'Runs on the same engine as Delivery & Effort: real logged hours (' + src.hoursMappedPct + '% of billable hours mapped) costed at the grid floor where titles map (' + src.gridCostPct + '% grid-backed), against each client\'s revenue.'
-        : 'No mapped hours available - figures use the documented demo model ($185/hr revenue proxy, a flat $140/hr cost) until staff.json maps land.',
+        ? 'Uses the same calculation as Delivery & Effort: real logged hours (' + src.hoursMappedPct + '% of billable hours mapped) costed at the grid floor where titles map (' + src.gridCostPct + '% grid-backed), against each client\'s revenue.'
+        : 'No mapped hours available - figures use the demo model ($185/hr revenue proxy, a flat $140/hr cost) until staff.json maps land.',
       '<table class="vtable"><thead><tr><th>Client</th><th class="num">Hours</th><th class="num">Delivery cost</th><th class="num">Invoiced</th><th class="num">True profit</th></tr></thead><tbody>' + tpRows + '</tbody></table>');
 
     return kpis + gridPanel + tpPanel;
@@ -1078,7 +1089,7 @@
         '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">' + e.count + '</text>' +
         '<text x="' + x + '" y="' + (y + r + 13) + '" text-anchor="middle" font-size="10" fill="#25273A" font-weight="700">' + esc(city) + ' · ' + fm(e.value) + '</text>';
     }
-    const mapSvg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Projects by city (demo geography)" style="background:#f7f6f3;border:1px solid var(--hairline)">' + dots + '</svg>';
+    const mapSvg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Projects by city (simplified map)" style="background:#f7f6f3;border:1px solid var(--hairline)">' + dots + '</svg>';
 
     const sel = (id, label, opts, cur) =>
       '<label style="font-size:11px;color:var(--mut);display:flex;gap:6px;align-items:center">' + label +
@@ -1122,7 +1133,7 @@
       kpi('Overall coverage', Math.round(d.kpis.overall * 100) + '%', 'across ' + d.kpis.tracked + ' tracked fields', 'teal') +
       kpi('Fields solid (80%+)', String(d.kpis.solid), 'reportable today', '') +
       kpi('Fields filling (<50%)', String(d.kpis.filling), 'still to be filled in', '') +
-      kpi('Projects', String(d.total), 'whole live snapshot', 'navy') +
+      kpi('Projects', String(d.total), 'all live projects', 'navy') +
       kpi('Audience', 'INTERNAL', 'no export on this tab', '') +
       '</div>';
     const rows = d.rows.map((r) => {
@@ -1177,7 +1188,7 @@
         '<div class="note">' + Math.round(b.delivery.hours).toLocaleString() + 'h logged · cost ' + fm(b.delivery.cost) + ' · revenue ' + fm(b.delivery.revenue) + ' · margin <b class="' + (b.delivery.margin >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(b.delivery.margin) + '</b></div>' +
         '<table class="vtable"><thead><tr><th>Person</th><th>Title</th><th class="num">Hours</th><th class="num">Cost</th></tr></thead><tbody>' +
         b.delivery.people.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title || '-') + '</td><td class="num">' + Math.round(x.hours).toLocaleString() + 'h</td><td class="num">' + fm(x.cost) + '</td></tr>').join('') + '</tbody></table>')
-      : panel('Delivery effort', { kind: 'demo', text: 'NO MAPPED HOURS' }, '', 'No Clockify hours are mapped to this project yet, so no delivery cost can be attributed. Honest absence, not zero.', '');
+      : panel('Delivery effort', { kind: 'demo', text: 'NO MAPPED HOURS' }, '', 'No Clockify hours are mapped to this project yet, so no delivery cost can be attributed.', '');
     host.innerHTML =
       '<div style="margin:10px 0"><button id="exec-back" style="font:inherit;border:1px solid var(--hairline);background:#fff;padding:6px 12px;cursor:pointer">← Back</button></div>' +
       panel(esc(p.name), { kind: 'live', text: 'BOX SCORE' }, '',

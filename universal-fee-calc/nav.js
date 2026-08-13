@@ -47,11 +47,11 @@
       desc: 'Scan-and-fix for known data damage — duplicates, stale renames, sparse months. Preview first, then repair.' },
     { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
       desc: 'Dry-run a new rate grid against every project to see what would change before committing it.' },
-    // ── Executive Reporting — leadership only. Gated on the sees-all-projects
+    // ── Executive Reporting - leadership only. Gated on the sees-all-projects
     //    list (store.js ADMINS), NOT the wider admin-tools role, and hidden
     //    until identity confirms so it never flashes for anyone else. ──
     { href: 'Executive Reporting.html',      label: 'Executive Reporting', group: 'Executive Reporting', exec: true,
-      desc: 'The leadership reporting suite — pipeline vs budget, clients, leaders, rates, delivery — read live from the shared data files. Restricted access.' },
+      desc: 'Pipeline against budget, clients, leaders, rates and delivery, read live from the shared data files. Restricted access.' },
     // ── Help ──
     { href: 'Getting Started.html',          label: 'Getting Started',     group: 'Help',
       desc: 'The 5-minute orientation — how the tools fit together and what you are expected to keep current.' },
@@ -135,7 +135,7 @@
         const cur = l.href.split('?')[0].toLowerCase() === here ? ' here' : '';   // ?mode=… entries still highlight on their page
         const cls = (g === 'Help' ? 'pn-doc ' : '') + (l.sub ? 'pn-sub ' : '') + (l.cta ? 'pn-cta ' : '') + (l.exec ? 'pn-exec ' : '');
         // exec entries start hidden (data-role-hidden) so they cannot flash
-        // before the identity check runs — fail closed, reveal on proof.
+        // before the identity check runs - fail closed, reveal on proof.
         inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" data-exec="${l.exec ? 1 : 0}"${l.exec ? ' data-role-hidden="1" style="display:none"' : ''} class="${(cls + cur).trim()}" title="${l.desc || ''}">${l.label}</a>`;
       });
     });
@@ -225,7 +225,7 @@
         const admin = S.isAdmin(S.getCurrentUser());
         panel.querySelectorAll('a[data-admin="1"]').forEach(a => { a.dataset.roleHidden = admin ? '0' : '1'; });
         // Executive Reporting reveals ONLY for the sees-all-projects list
-        // (the store's rule for data visibility) — tool admins stay hidden.
+        // (the store's rule for data visibility) - tool admins stay hidden.
         let seesAll = false;
         try { seesAll = !!(S.seesAllProjects && S.seesAllProjects(S.getCurrentUser())); } catch (e2) {}
         panel.querySelectorAll('a[data-exec="1"]').forEach(a => { a.dataset.roleHidden = seesAll ? '0' : '1'; });

@@ -97,3 +97,22 @@ implementation. Never write to projects/rates/staff/studio from here.
   script in the browser and via eval in the Node harness.
 - financial-analysis-2 keeps accruing DB-side monthly vintages; Box files
   carry none yet, so the vintage panel shows its awaiting state by design.
+
+## 13 Aug 2026 - plain-language pass + two robustness fixes (v=20260813f)
+
+KY ran three language audits over the module and approved a full list of
+rewrites. All applied: no em dashes anywhere in module files, no
+developer vocabulary on screen (render/engine/seed/grain), one name for
+the other tool ("the fee system"), the at-risk cost line now uses the
+house money formatter, and the capacity message says plainly when the
+team is overbooked instead of flooring free hours to zero.
+
+Code fixes in the same commit:
+- rates.json mapper moved to shape-over-version (the last strict version
+  check left; same failure mode that zeroed the budget when studio.json
+  went to v2 on launch day).
+- Movement vs prior panel can no longer flag LIVE while the comparison
+  view is unbuilt.
+
+Harness: 73 checks, all passing. The MG margin-target placeholder stays
+by KY's ruling.

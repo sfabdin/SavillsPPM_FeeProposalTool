@@ -9,7 +9,7 @@
 
    READ-ONLY BY DESIGN. This module consumes the four Box files
    (projects.json, rates.json, staff.json, studio.json) exactly
-   as the data aggregator app writes them, and never writes any
+   as the fee system writes them, and never writes any
    of them. Shape over version: a newer schemaVersion whose
    shape still parses is accepted with a loud note; a genuinely
    unreadable shape is refused with an error, never guessed at.
@@ -221,7 +221,7 @@
     const shape = shapeIsUsable(projectsObj);
     if (!shape.ok) {
       return Object.assign(empty, {
-        error: 'projects.json schemaVersion ' + raw.schemaVersion + ': ' + shape.reason + '. Refusing to guess - the mapper needs updating.',
+        error: 'projects.json schemaVersion ' + raw.schemaVersion + ': ' + shape.reason + '. No figures are shown until this module is updated to read the new format.',
       });
     }
     if (!Number.isFinite(version)) {
@@ -463,7 +463,7 @@
     const shape = studioShapeIsUsable(raw);
     if (!shape.ok) {
       return Object.assign(empty, {
-        error: 'studio.json schemaVersion ' + raw.schemaVersion + ': ' + shape.reason + '. Refusing to guess - the mapper needs updating.',
+        error: 'studio.json schemaVersion ' + raw.schemaVersion + ': ' + shape.reason + '. No figures are shown until this module is updated to read the new format.',
       });
     }
     if (!Number.isFinite(version)) {
@@ -614,10 +614,10 @@
     const shortfall = gap - openWeighted;
 
     const bridgeMsg = shortfall > 0
-      ? 'We still need ' + fmtMoney(gap) + ' to hit budget. At realistic odds on open deals, we are about ' + fmtMoney(shortfall) + ' short.'
-      : 'We still need ' + fmtMoney(gap) + ' to hit budget - and at realistic odds on open deals, the pipeline covers the gap.';
+      ? 'We still need ' + fmtMoney(gap) + ' to hit budget. Adjusted for how likely each deal is, we are about ' + fmtMoney(shortfall) + ' short.'
+      : 'We still need ' + fmtMoney(gap) + ' to hit budget - and adjusted for how likely each deal is, the pipeline covers the gap.';
     const bookedPct = projected > 0 ? Math.round((booked / projected) * 100) : 0;
-    const mixMsg = bookedPct + '% of projected revenue is already booked - ' + fmtMoney(openFace) + ' rides on the open pipeline.';
+    const mixMsg = bookedPct + '% of projected revenue is already booked - ' + fmtMoney(openFace) + ' is still open, not yet won.';
 
     return {
       year,
@@ -755,7 +755,7 @@
     const lastActual = Math.min(todayMonth - 1, 12);
     const ytdVar = monthRows.slice(0, Math.max(lastActual, 0)).reduce((a, r) => a + r.variance, 0);
     const posLabel = lastActual === 6 ? 'Half-year position' : 'Position after ' + (MON[lastActual - 1] || '-');
-    const monthlyMsg = posLabel + ': ' + fmtMoney(Math.abs(ytdVar)) + ' ' + (ytdVar < 0 ? 'behind' : 'ahead of') + ' the flat budget pace after ' + (MON[lastActual - 1] || '-') + '.';
+    const monthlyMsg = posLabel + ': ' + fmtMoney(Math.abs(ytdVar)) + ' ' + (ytdVar < 0 ? 'behind' : 'ahead of') + ' the flat budget pace.';
 
     // ---- Full-year projection by vintage (frozen snapshots, if any) ----
     const snapRows = new Map();
@@ -952,7 +952,7 @@
         else book.aging.green += 1;
       }
 
-      // Industry and project type are REAL fields in the data aggregator app.
+      // Industry and project type are REAL fields in the fee system.
       // Read them; never invent them. Untagged projects are counted as
       // untagged rather than guessed into a bucket, so the panel's coverage
       // is honest and improves by itself as the fields get filled in.
@@ -1246,12 +1246,32 @@
   }
 
   const HML_SPREAD = 0.1;
+
+  /** Highest rates.json schemaVersion this mapper was written against. */
+  const KNOWN_RATES_SCHEMA_VERSION = 1;
+
+  /* SHAPE OVER VERSION, the same rule as projects.json and studio.json.
+     This was the last mapper with a strict version check - the exact way
+     the budget silently vanished the day studio.json moved to v2. The
+     mapper needs a grid[] whose entries carry an id; a newer version that
+     still has that is read, with a loud note. */
   function mapRates(raw) {
     const notes = [];
     const empty = { ok: false, counts: {}, notes, rateGrid: [] };
     if (!raw || typeof raw !== 'object') return Object.assign(empty, { error: 'rates.json is not an object' });
-    if (raw.schemaVersion !== 1) return Object.assign(empty, { error: 'Unsupported rates.json schemaVersion: ' + raw.schemaVersion + ' (expected 1). Refusing to guess.' });
-    if (!Array.isArray(raw.grid)) return Object.assign(empty, { error: 'rates.json has no grid[]' });
+    if (!Array.isArray(raw.grid)) {
+      return Object.assign(empty, { error: 'rates.json schemaVersion ' + raw.schemaVersion + ': no readable grid[]. No figures are shown until this module is updated to read the new format.' });
+    }
+    if (raw.grid.length > 0 && !raw.grid.some((g) => g && g.id)) {
+      return Object.assign(empty, { error: 'rates.json schemaVersion ' + raw.schemaVersion + ': no grid entry carries an id. No figures are shown until this module is updated to read the new format.' });
+    }
+    const ratesVersion = Number(raw.schemaVersion);
+    if (!Number.isFinite(ratesVersion)) {
+      notes.push('rates.json carries no schemaVersion - read anyway because the shape parses.');
+    } else if (ratesVersion > KNOWN_RATES_SCHEMA_VERSION) {
+      notes.push('rates.json is schemaVersion ' + ratesVersion + ', newer than the ' + KNOWN_RATES_SCHEMA_VERSION +
+        ' this mapper was written for. The shape still parses so it has been read.');
+    }
     const out = Object.assign(empty, { ok: true });
     for (const g of raw.grid) {
       if (!g || !g.id) { notes.push('Grid entry without id skipped'); continue; }
@@ -1512,15 +1532,20 @@
         bulkLoggedRows: bulkRows,
         unmappedTop: [...unmapped.entries()].map(([name, hours]) => ({ name, hours })).sort((a, b) => b.hours - a.hours).slice(0, 8),
       },
-      msg: Math.round(total).toLocaleString() + ' hours logged across ' + perPerson.size + ' people - ' + (total > 0 ? Math.round((billable / total) * 100) : 0) + '% billable. These totals tie to the data aggregator app\'s own Clockify chart.',
+      msg: Math.round(total).toLocaleString() + ' hours logged across ' + perPerson.size + ' people - ' + (total > 0 ? Math.round((billable / total) * 100) : 0) + '% billable. These totals tie to the fee system\'s own Clockify chart.',
       marginMsg: negatives.length > 0
         ? negatives.length + ' project' + (negatives.length > 1 ? 's cost' : ' costs') + ' more in delivery time than ' + (negatives.length > 1 ? 'they earn' : 'it earns') + ' - ' + negatives.slice(0, 2).map((n) => n.name).join(', ') + (negatives.length > 2 ? ' and ' + (negatives.length - 2) + ' more' : '') + '.'
         : 'Every mapped project earns more than its delivery time costs.',
+      /* When free capacity is negative the team is overbooked: flooring it to
+         zero for display made the arithmetic look broken (26k needed, 0 free,
+         47k gap) and hid the overcommitment. Say it plainly instead. */
       capacityMsg: capacity.shortfall > 0
-        ? 'Delivering the booked and accrued pipeline for the rest of ' + year + ' implies about ' + Math.round(capacity.impliedHours).toLocaleString() + ' hours of work; roughly ' + Math.round(Math.max(capacity.freeCapacity, 0)).toLocaleString() + ' hours are uncommitted - a gap of about ' + Math.round(capacity.shortfall).toLocaleString() + ' hours.'
+        ? (capacity.freeCapacity <= 0
+          ? 'Delivering the booked and accrued pipeline for the rest of ' + year + ' implies about ' + Math.round(capacity.impliedHours).toLocaleString() + ' hours of work; the team is already committed beyond its capacity, so the gap is about ' + Math.round(capacity.shortfall).toLocaleString() + ' hours.'
+          : 'Delivering the booked and accrued pipeline for the rest of ' + year + ' implies about ' + Math.round(capacity.impliedHours).toLocaleString() + ' hours of work; roughly ' + Math.round(capacity.freeCapacity).toLocaleString() + ' hours are uncommitted - a gap of about ' + Math.round(capacity.shortfall).toLocaleString() + ' hours.')
         : 'Delivering the booked and accrued pipeline for the rest of ' + year + ' implies about ' + Math.round(capacity.impliedHours).toLocaleString() + ' hours; about ' + Math.round(capacity.freeCapacity).toLocaleString() + ' are uncommitted, so capacity covers the forecast.',
       ratingMsg: atRiskHours > 0
-        ? Math.round(atRiskHours).toLocaleString() + ' hours of delivery time - about ' + Math.round(atRiskCost).toLocaleString() + ' dollars of cost - has gone into work rated 75% or less, or not rated at all.'
+        ? Math.round(atRiskHours).toLocaleString() + ' hours of delivery time - about ' + fmtMoney(atRiskCost) + ' of cost - has gone into work rated 75% or less, or not rated at all.'
         : 'All attributable delivery time sits on booked or highly likely work.',
       clientMsg,
     };

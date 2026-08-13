@@ -312,6 +312,18 @@ ck('delivery: margin-by-leader data exists and reconciles to the project margins
 })());
 ck('leaders: the snapshot count needed by movement-vs-prior is reported',
   typeof t2.snapshots === 'number');
+ck('rates.json: a newer schemaVersion whose shape parses is accepted', (() => {
+  const v2 = JSON.parse(JSON.stringify(ratesRaw));
+  v2.schemaVersion = 2;
+  const r = CORE.mapRates(v2);
+  return r.ok && r.rateGrid.length === rt.rateGrid.length
+    && r.notes.some((n) => n.indexOf('schemaVersion 2') !== -1);
+})(), 'the strict version check here was the same failure mode that zeroed the budget');
+ck('rates.json: an unreadable shape is still refused, not guessed at',
+  CORE.mapRates({ schemaVersion: 2, grid: 'nope' }).ok === false
+  && CORE.mapRates({ schemaVersion: 2, grid: [{ name: 'no id' }] }).ok === false);
+ck('delivery: the at-risk cost line uses the house money format',
+  dv.ratingMsg.indexOf(' dollars') === -1);
 
 console.log('');
 console.log(checks + ' checks, ' + (fails ? fails + ' FAILURES' : 'all passed'));
