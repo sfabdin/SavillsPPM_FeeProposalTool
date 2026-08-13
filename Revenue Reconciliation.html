@@ -271,6 +271,12 @@
                 font-size:12px; color:var(--sav-navy); cursor:pointer; }
   .ctl-toggle input { width:15px; height:15px; accent-color:var(--sav-navy); }
   .ws-head .legend .hint { font-style:italic; }
+  /* The columns the ledger added to a report people already knew. */
+  table.ws th.new-col { background:var(--sav-yellow) !important; color:var(--sav-navy) !important; }
+  table.ws th.new-col .sub { color:var(--sav-navy); opacity:.65; }
+  table.ws td.new-col { background:rgba(255,223,0,.10); }
+  table.ws tfoot tr.tot td.new-col { background:#3b3a34; color:var(--sav-yellow); }
+  table.ws th .sub { display:block; font-size:7.5px; font-weight:800; letter-spacing:.08em; margin-top:2px; }
   .map-btn { font-family:var(--font-body); font-size:9.5px; border:1px solid var(--hair-strong);
              background:var(--sav-cream); color:var(--sav-navy); padding:1px 6px; cursor:pointer; }
   .map-btn:hover { background:var(--sav-yellow); }
@@ -408,6 +414,7 @@
       <button class="btn sm" id="mode-variance">Variance</button>
     </span>
     <label class="ctl-toggle"><input type="checkbox" id="show-zero"> Show projects with no activity</label>
+    <button class="btn sm" id="year-export">⤓ Export the year</button>
     <div class="legend">
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-unruled)"></span>No status yet</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-reclass)"></span>Reclass</span>
@@ -438,17 +445,18 @@
   </section>
 
   <section class="card" id="flash-card" hidden>
-    <h2 id="flash-title">Monthly flash</h2>
+    <h2 id="flash-title">Month view</h2>
     <div class="cbody">
       <p class="intro">
-        One month, ready to send — recognised revenue with the billing, fee-share and accrual detail behind it.
-        Use <b>Month</b> above to pick which. The Excel export carries three tabs: this flash, the whole year by
-        project and month with each status as a cell note, and anything still unruled.
+        One month, project by project: what the <b>fee tool</b> projected, what was <b>recognised</b>, and the
+        <b>billed</b> and <b>accrued</b> figures that make up the difference. The three columns the ledger added are
+        highlighted. Pick the month below; it also drives the highlighted column in the year grid above.
+        Both views export: <b>this month</b> as a flash, or <b>the year</b> with all four lanes written out per project.
       </p>
       <div class="frow">
         <label for="focus-pick">Month</label>
         <select id="focus-pick" aria-label="Month focus"></select>
-        <button class="btn btn-primary" id="flash-export">⤓ Export flash (Excel)</button>
+        <button class="btn btn-primary" id="flash-export">⤓ Export this month</button>
       </div>
       <div class="ws-scroll" style="max-height:52vh; margin-top:12px;"><table class="ws" id="flash-table"></table></div>
     </div>
