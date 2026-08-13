@@ -151,7 +151,8 @@
      ~30 call sites that read STORE.INDUSTRIES keep working unchanged. */
   function readVocab() {
     const v = (readDb() || {}).vocab || {};
-    return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [], leaders: v.leaders || [] };
+    return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [], leaders: v.leaders || [],
+             admins: v.admins || [], toolAdmins: v.toolAdmins || [] };
   }
   function allIndustries() {
     const extra = readVocab().industries.filter(x => x && !BASE_INDUSTRIES.includes(x));
@@ -199,6 +200,16 @@
       if (!cur && base && subsNew.length) { cur = { name: ct.name, subs: [] }; v.projectTypes.push(cur); }
       if (cur) subsNew.forEach(s2 => { if (!cur.subs.includes(s2)) { cur.subs.push(s2); added++; } });
     });
+    // Admin grants — an email in `admins` gets the full book, one in
+    // `toolAdmins` gets the admin tools with member-scoped visibility.
+    // Data change, not a deploy: syncs to every browser with the db.
+    v.admins = v.admins || []; v.toolAdmins = v.toolAdmins || [];
+    const addEmail = (list, x, already) => {
+      const k = String(x || '').trim().toLowerCase();
+      if (k && k.includes('@') && !already.has(k) && !list.includes(k)) { list.push(k); added++; }
+    };
+    (patch.admins || []).forEach(x => addEmail(v.admins, x, ADMINS));
+    (patch.toolAdmins || []).forEach(x => addEmail(v.toolAdmins, x, TOOL_ADMINS));
     if (added) writeDb(db);
     return added;
   }
@@ -2897,7 +2908,7 @@
   /* ------------------------------------------------------------
      TOOL ADMINS — admin TOOLS, member PROJECT ACCESS.
      These logins get the admin-only tools (Staffing & Bandwidth,
-     Revenue Studio, Profitability, Ingestion, Data Repair, …) but
+     Revenue Reconciliation, Profitability, Ingestion, Data Repair, …) but
      their project visibility is unchanged: they still see only the
      projects they lead / own / are granted, exactly like a member.
      Use this for people who run an operational function without
@@ -2924,9 +2935,16 @@
     'kyerou@savills.us',
   ]);
 
+  /* Admins added through the synced vocabulary (Bulk Editor → Lists sheet, or
+     addVocab from the console) — so granting admin is a data change that syncs
+     to everyone, not a code deploy. The hardcoded sets above stay as the
+     bootstrap floor; these extend them. */
+  function vocabAdmins()     { try { return new Set(readVocab().admins.map(s => String(s).trim().toLowerCase())); } catch (e) { return new Set(); } }
+  function vocabToolAdmins() { try { return new Set(readVocab().toolAdmins.map(s => String(s).trim().toLowerCase())); } catch (e) { return new Set(); } }
+
   function roleFor(login) {
     const k = String(login || '').trim().toLowerCase();
-    return (ADMINS.has(k) || TOOL_ADMINS.has(k)) ? 'admin' : 'member';
+    return (ADMINS.has(k) || TOOL_ADMINS.has(k) || vocabAdmins().has(k) || vocabToolAdmins().has(k)) ? 'admin' : 'member';
   }
   /** TRUE only for people who may see EVERY project. Tool admins are role
       'admin' (so the admin tools open for them) but are NOT here — their
@@ -2934,7 +2952,8 @@
       use this, never isAdmin(). */
   function seesAllProjects(user) {
     const u = user || getCurrentUser();
-    return ADMINS.has(String(u.username || '').trim().toLowerCase());
+    const k = String(u.username || '').trim().toLowerCase();
+    return ADMINS.has(k) || vocabAdmins().has(k);   // tool admins stay member-scoped
   }
 
   /* ============================================================

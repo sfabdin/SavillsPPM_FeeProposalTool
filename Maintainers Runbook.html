@@ -143,7 +143,7 @@
   </div>
 
   <h2><span class="n">1</span> What it is</h2>
-  <p class="lead">A multi-page internal app that builds, prices, stores, and reports on client fee proposals. A user assembles a project team (roles &times; tiers &times; monthly allocation), the app prices it against a confidential rate grid with escalation, rate-lock and discount logic, produces a formula-driven Excel proposal, and saves the project to a shared database. That database feeds a projects index, revenue projections, the Revenue Studio (budget vs. trending), proposal analytics, benchmarking, change orders, and downstream reporting (Power BI / Clockify).</p>
+  <p class="lead">A multi-page internal app that builds, prices, stores, and reports on client fee proposals. A user assembles a project team (roles &times; tiers &times; monthly allocation), the app prices it against a confidential rate grid with escalation, rate-lock and discount logic, produces a formula-driven Excel proposal, and saves the project to a shared database. That database feeds a projects index, revenue projections, Revenue Reconciliation (the monthly close), proposal analytics, benchmarking, change orders, and downstream reporting (Power BI / Clockify).</p>
 
   <p>It is <strong>not</strong> a framework app — no build step, no <code>npm install</code> to run it, no React. It is plain HTML, CSS and vanilla JavaScript served as static files, plus two small serverless functions. A developer can open any file and read it directly. That simplicity is deliberate and worth preserving.</p>
 
@@ -160,7 +160,7 @@
     <tr><td class="k">Universal Fee Calculator.html</td><td>The core tool — build and price a proposal (Fixed Fee or NTE); allocation entered as % FTE or hours; broker fee share (off-invoice or on-top); version history; change orders; autosave; Excel export; Salesforce intake. Imported historical projects get an "Imported vs. calculated" reconciliation panel with a <strong>pre-calculate</strong> option that solves contracted rates backing into the imported totals (preview + confirm; never flips the reconciled flag itself).</td></tr>
     <tr><td class="k">Revenue Reconciliation.html</td><td>Admin/Finance only. The monthly close: import the actuals workbook (<em>Revenue by Month by Client</em>), reconcile each project's billed / fee share / accrual movement against the forecast, disposition every variance, and export the monthly flash to Excel. Recognised = billed + fee share + (closing accrual − opening accrual); prior-year reversals are read to foot the parse and then discarded, so YTD here deliberately differs from the file's Reported Revenue. One calendar year at a time, 2026 forward.</td></tr>
     <tr><td class="k">Revenue Projections.html</td><td>Pipeline / revenue forecast across projects, by month and quarter, read from the stored billing series. Broker-split toggle, current-month marker, flash snapshots. Exports to Excel exactly as viewed.</td></tr>
-    <tr><td class="k">Revenue Studio.html</td><td>Budget vs. trending. 2026 Budget / RF1 baselines, drill-down (bucket → client → project), stacked monthly chart with target + trending lines, pipeline waterfall, exec report tab, per-leader views. Admins + revenue leaders only.</td></tr>
+    <tr><td class="k">(retired) Revenue Studio</td><td>Removed August 2026 — the monthly close moved to Revenue Reconciliation. Its Box file <code>studio.json</code> (Budget / RF1 baselines, scenarios) is kept and still syncs, pending the decision on surfacing the Budget baseline inside Reconciliation.</td></tr>
     <tr><td class="k">Proposal Analytics.html</td><td>Win/loss hit rates with lost reasons, discount analytics, proposal funnel, client profiles, health score.</td></tr>
     <tr><td class="k">Import Revenues.html</td><td><strong>Moved.</strong> Now a redirect stub into <code>Ingestion Studio.html?mode=bulk</code> — the bulk revenue import lives inside Ingestion Studio, which diffs the workbook against existing records and lets the admin pick exactly which projects land (re-imports no longer duplicate).</td></tr>
     <tr><td class="k">Ingestion Studio.html</td><td><strong>Admin-only.</strong> Import a historical proposal (PDF/text) via Claude into a structured record. Also hosts the bulk revenue-workbook import (<code>?mode=bulk</code>) with diff-and-select.</td></tr>
@@ -174,7 +174,7 @@
     <tr><td class="k">Data Repair.html</td><td><strong>Admin-only.</strong> Scan-and-fix for known staffing-data damage: straggler renamed rows, exact duplicates, edited twins, stale bridge rows, duplicate person records (merged with tombstones so they can't resurrect on merge), sparse seeded months zero-filled. Preview-first; also surfaces a "needs human review" list it deliberately won't auto-fix.</td></tr>
     <tr><td class="k">Getting Started.html</td><td>The revenue-leader orientation — flow, expectations, glossary. Linked from the one-time welcome banner (<code>first-run.js</code>) on the pages leaders land on.</td></tr>
     <tr><td class="k">tests.html</td><td>Regression suite — 24 assertions on the pricing engine and data layer, run against an in-memory store (never touches real data). <strong>Run before every deploy.</strong></td></tr>
-    <tr><td class="k">Enterprise&nbsp;Migration&nbsp;Guide.html<br>Fee System Roadmap.html<br>Maintainers Runbook.html</td><td>Internal reference docs (this is one of them — not part of the app runtime).</td></tr>
+    <tr><td class="k">Maintainers Runbook.html<br>docs/ (repo only)</td><td>Internal reference docs. This runbook ships with the app; the migration guide, roadmap and readiness report live in the repo's <code>docs/</code> folder and are not deployed.</td></tr>
   </table>
   <p>Every page carries a shared hamburger navigation (<code>nav.js</code>); admin-only links are hidden from non-admins.</p>
 
@@ -184,7 +184,6 @@
 ├── Projects Index.html
 ├── Universal Fee Calculator.html
 ├── Revenue Projections.html
-├── Revenue Studio.html
 ├── Proposal Analytics.html
 ├── Import Revenues.html          <span class="c">← admin-only</span>
 ├── Ingestion Studio.html
@@ -215,7 +214,6 @@
 │   ├── app.js                    <span class="c">the calculator engine + UI</span>
 │   ├── intake.js                 <span class="c">Salesforce intake email + drift detection</span>
 │   ├── export-excel.js           <span class="c">the Excel export (live formulas)</span>
-│   ├── revenue-studio.js / studio.css  <span class="c">Revenue Studio</span>
 │   ├── proposal-analytics.js     <span class="c">Proposal Analytics</span>
 │   ├── staff.js / staffing-page.js  <span class="c">staffing matrix data layer + page (bridge, aliases, rename healing)</span>
 │   ├── staffing-export.js        <span class="c">3-sheet static Excel snapshot of the matrix</span>
@@ -225,7 +223,6 @@
 │   ├── smallworks-data.js        <span class="c">small-works pass-through seed</span>
 │   ├── guide.js                  <span class="c">the ⓘ inline help markers</span>
 │   ├── doc-page.js               <span class="c">print/paged shell used by the guides</span>
-│   ├── import-revenues.js        <span class="c">admin bulk import</span>
 │   ├── ingest.js / bench*.js     <span class="c">Ingestion + Benchmarking</span>
 │   └── styles.css
 │
@@ -238,7 +235,7 @@
    rates.json      <span class="c">the PPM rate grid (rack rates, cost floors, discounts)</span>
    projects.json   <span class="c">all saved projects, incl. frozen $ snapshots on booked records</span>
    staff.json      <span class="c">living staffing matrix — allocations, notes, Clockify actuals, mappings</span>
-   studio.json     <span class="c">Revenue Studio baselines + scenarios</span></div>
+   studio.json     <span class="c">retired Revenue Studio baselines + scenarios (kept; see the retired-tools row)</span></div>
 
   <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 1 / 7</span></div>
 </div>
@@ -276,15 +273,16 @@
   <h2><span class="n">6</span> Access &amp; permissions</h2>
   <p>Sign-in is Box OAuth — no Box login, no app. The deployed page is a shell until a valid Box token loads the data. Once in, visibility is <strong>fail-closed</strong>:</p>
   <ul>
-    <li><strong>Admins</strong> (<code>ADMINS</code> in <code>store.js</code>) get the admin tools <em>and</em> see every project.</li>
-    <li><strong>Tool admins</strong> (<code>TOOL_ADMINS</code>) get the admin tools but keep <em>member</em> project access — they still see only what they lead / own / are granted. For people who run an operational function without needing the whole firm's fee book.</li>
+    <li><strong>Admins</strong> (<code>ADMINS</code> in <code>store.js</code>, plus any email in the synced vocabulary's <code>admins</code> list) get the admin tools <em>and</em> see every project.</li>
+    <li><strong>Tool admins</strong> (<code>TOOL_ADMINS</code>, plus the vocabulary's <code>toolAdmins</code> list) get the admin tools but keep <em>member</em> project access — they still see only what they lead / own / are granted. For people who run an operational function without needing the whole firm's fee book.</li>
+    <li><strong>Granting admin without a deploy:</strong> a superuser runs <code>UFC_Store.addVocab({ admins: ['name@savills.us'] })</code> (or <code>toolAdmins: […]</code>) in the browser console on any page. The grant is stored in the shared database, syncs to Box like any other edit, and takes effect for that person on their next page load. The hardcoded sets in <code>store.js</code> remain the bootstrap floor — removals still require a deploy, which is deliberate (fail-closed).</li>
     <li><strong>Everyone else</strong> sees only the projects they lead or own.</li>
     <li><strong>An unrecognized login sees nothing</strong> until explicitly added.</li>
   </ul>
   <p>Two functions, two jobs — mixing them up is the easy way to leak data:</p>
   <ul>
     <li><code>isAdmin(user)</code> → <strong>may they open this TOOL?</strong> True for admins and tool admins. Use it for page gates and nav links.</li>
-    <li><code>seesAllProjects(user)</code> → <strong>may they see EVERY project's data?</strong> True for <code>ADMINS</code> only. Every data-visibility decision must use this — <code>visibleProjects</code>, the calculator's access wall, Change Log scope, Revenue Studio's full view, Proposal Analytics.</li>
+    <li><code>seesAllProjects(user)</code> → <strong>may they see EVERY project's data?</strong> True for <code>ADMINS</code> only. Every data-visibility decision must use this — <code>visibleProjects</code>, the calculator's access wall, Change Log scope, Proposal Analytics.</li>
   </ul>
   <p>To grant or revoke access, edit <code>ADMINS</code> / <code>TOOL_ADMINS</code> near the identity block in <code>store.js</code>. Per-user extra visibility (e.g. every project carrying a "Change Management" group) lives in <code>GROUP_ACCESS</code>. Super-users (<code>SUPERUSERS</code>) get a hidden "Viewing as" switch to preview anyone's restricted view — no one else can.</p>
   <div class="box warn">
@@ -565,7 +563,7 @@
   </ul>
 
   <h2><span class="n">16</span> Future work, in priority order</h2>
-  <p class="lead">The forward plan is maintained in the <a href="Fee System Roadmap.html">Development Roadmap</a>; the items below are the standing technical debts regardless of which product direction wins.</p>
+  <p class="lead">The forward plan is maintained in the Development Roadmap (repo: <code>docs/Fee System Roadmap.html</code>); the items below are the standing technical debts regardless of which product direction wins.</p>
   <ol>
     <li><strong>Server-side per-user filtering</strong> — the only way to let someone in while truly hiding other projects. Returns just the caller's records from a serverless endpoint.</li>
     <li><strong>Server auth (service account) for the reporting pull</strong> — so Power BI reads the data with no human logged in.</li>
