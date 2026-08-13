@@ -1,5 +1,6 @@
-# Dependencies
+# Dependencies (the plain `node_modules` also catches a symlinked one)
 node_modules/
+node_modules
 
 # Vercel
 .vercel/
