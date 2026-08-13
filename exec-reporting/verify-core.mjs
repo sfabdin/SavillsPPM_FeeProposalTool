@@ -273,6 +273,33 @@ ck('cost band: person band overrides the title band when present', (() => {
 ck('cost band: the rate card already carries three cost figures per grade',
   rt.rateGrid.every((g) => g.floor_high != null && g.floor_mid != null && g.floor_low != null));
 
+// ---- regressions from the first live Box run (13 Aug) ----
+ck('studio.json: the production schemaVersion 2 is accepted, same baselines', (() => {
+  const v2 = JSON.parse(JSON.stringify(studio));
+  v2.schemaVersion = 2;                       // production moved to 2; shape unchanged
+  const r = CORE.mapStudio(v2);
+  return r.ok && r.baselines.length === s.baselines.length && !r.error;
+})(), 'a strict version check zeroed the budget on the live run');
+ck('studio.json: a version beyond the known one is read but flagged loudly', (() => {
+  const v9 = JSON.parse(JSON.stringify(studio));
+  v9.schemaVersion = 9;
+  const r = CORE.mapStudio(v9);
+  return r.ok && r.notes.some((n) => n.indexOf('schemaVersion 9') !== -1);
+})());
+ck('studio.json: an unreadable shape is still refused, not guessed at', (() => {
+  const broken = { schemaVersion: 2, baselines: { a: { id: 'a', name: 'x' } } };
+  return CORE.mapStudio(broken).ok === false;
+})());
+ck('year: the budget year wins when it carries revenue', o.year === 2026);
+ck('year: with no budget, the CURRENT year wins over a stray future year', (() => {
+  const noBudget = { ok: true, baselines: [], baselineLines: [], scenarios: [] };
+  const y = CORE.pipelineOverview(m, noBudget).year;
+  const years = new Set();
+  for (const [, ys] of CORE.projectYearRevenue(m)) for (const k of ys.keys()) years.add(k);
+  const now = new Date().getFullYear();
+  return years.has(now) ? y === now : y !== Math.max(...years) || years.size === 1;
+})());
+
 console.log('');
 console.log(checks + ' checks, ' + (fails ? fails + ' FAILURES' : 'all passed'));
 if (m.notes.length) { console.log('mapper notes:'); m.notes.slice(0, 8).forEach((n) => console.log('  - ' + n)); }

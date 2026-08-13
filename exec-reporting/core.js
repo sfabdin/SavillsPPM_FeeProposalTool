@@ -434,12 +434,43 @@
   /* ============================================================
      MAPPER: studio.json -> baselines (budget) + scenarios
      ============================================================ */
+  /** Highest studio.json schemaVersion this mapper was written against. */
+  const KNOWN_STUDIO_SCHEMA_VERSION = 2;
+
+  /* SHAPE OVER VERSION (KY ruling, 30 July, applied to projects.json and now
+     here too). A strict version check refused the live file the day it moved
+     to v2 and silently left the report with no budget, which then picked a
+     stray year. Judge what the mapper actually depends on: baselines that
+     carry a usable total or a client breakdown. A newer version whose shape
+     still parses is read, with a loud note; only a genuinely unreadable
+     shape is refused. */
+  function studioShapeIsUsable(raw) {
+    const bls = Object.values(raw.baselines || {});
+    if (bls.length === 0) return { ok: true };
+    const usable = bls.filter((b) => b && typeof b === 'object'
+      && (typeof b.total === 'number' || b.byClient || b.byMonth));
+    if (usable.length === 0) {
+      return { ok: false, reason: 'no baseline carries a total, a client breakdown or a monthly breakdown' };
+    }
+    return { ok: true };
+  }
+
   function mapStudio(raw) {
     const notes = [];
     const empty = { ok: false, counts: {}, notes, baselines: [], baselineLines: [], scenarios: [] };
     if (!raw || typeof raw !== 'object') return Object.assign(empty, { error: 'studio.json is not an object' });
-    if (raw.schemaVersion !== 1) {
-      return Object.assign(empty, { error: 'Unsupported studio.json schemaVersion: ' + raw.schemaVersion + ' (expected 1). Refusing to guess.' });
+    const version = Number(raw.schemaVersion);
+    const shape = studioShapeIsUsable(raw);
+    if (!shape.ok) {
+      return Object.assign(empty, {
+        error: 'studio.json schemaVersion ' + raw.schemaVersion + ': ' + shape.reason + '. Refusing to guess - the mapper needs updating.',
+      });
+    }
+    if (!Number.isFinite(version)) {
+      notes.push('studio.json carries no schemaVersion - proceeding because the shape parses.');
+    } else if (version > KNOWN_STUDIO_SCHEMA_VERSION) {
+      notes.push('studio.json is schemaVersion ' + version + ', newer than the ' + KNOWN_STUDIO_SCHEMA_VERSION +
+        ' this mapper was written for. The shape still parses so it has been read.');
     }
     const out = Object.assign(empty, { ok: true });
     let order = 0;
@@ -521,11 +552,32 @@
       }
     }
 
+    /* Which year this report is about. The budget's year wins, because every
+       comparison is against it. Without one, prefer the year we are actually
+       in; only then fall back to the year carrying the most revenue.
+       NEVER "the latest year with any revenue" - a handful of dollars booked
+       into a future year would otherwise become the headline, which is what
+       happened live when the budget failed to load and the report jumped to
+       2028 on a $2.4m tail. */
     const budgetRow = budgetBaseline(studioMapped);
     const years = [...yearsSeen].sort((a, b) => a - b);
-    const year = budgetRow && budgetRow.year != null && years.indexOf(budgetRow.year) !== -1
-      ? budgetRow.year
-      : (years.length ? years[years.length - 1] : new Date().getFullYear());
+    const thisYear = new Date().getFullYear();
+    let year;
+    if (budgetRow && budgetRow.year != null && years.indexOf(budgetRow.year) !== -1) {
+      year = budgetRow.year;
+    } else if (years.indexOf(thisYear) !== -1) {
+      year = thisYear;
+    } else if (years.length) {
+      let best = years[0], bestVal = -Infinity;
+      for (const y of years) {
+        let v = 0;
+        for (const [, ys] of yearRev) v += ys.get(y) || 0;
+        if (v > bestVal) { bestVal = v; best = y; }
+      }
+      year = best;
+    } else {
+      year = thisYear;
+    }
 
     // Counts cover every project per rating, whatever year its revenue sits in.
     const countByRating = new Map();
