@@ -42,12 +42,16 @@
       root.innerHTML = gateBox('Dev fixtures', 'Loading local fixture files…', '');
       try {
         const base = qp.get('base') || 'fixtures';
-        const [pj, st] = await Promise.all([
+        const [pj, st, sf, rt] = await Promise.all([
           fetch(base + '/projects.json').then((r) => r.json()),
           fetch(base + '/studio.json').then((r) => r.json()),
+          fetch(base + '/staff.json').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+          fetch(base + '/rates.json').then((r) => (r.ok ? r.json() : null)).catch(() => null),
         ]);
         DATA.projectsRaw = pj;
         DATA.studioRaw = st;
+        DATA.staffRaw = sf;
+        DATA.rates = rt;
         computeAll('DEV FIXTURES · local files, not Box');
         render(root, true);
       } catch (e) {
@@ -89,6 +93,9 @@
       return;
     }
 
+    // staff.json rides the same read-only adapter; a failure only greys the
+    // delivery surfaces, never the page.
+    try { DATA.staffRaw = await window.UFC_Box.pullStaff(); } catch (e) { DATA.staffRaw = null; }
     assemble();
     render(root);
   }
@@ -103,7 +110,9 @@
   }
 
   function computeAll(asOf) {
-    DATA.tab2 = null; DATA.tab3 = null;
+    DATA.tab2 = null; DATA.tab3 = null; DATA.delivery = null; DATA.tab4 = null;
+    DATA.staff = DATA.staffRaw ? CORE.mapStaff(DATA.staffRaw) : null;
+    DATA.ratesMapped = DATA.rates ? CORE.mapRates(DATA.rates) : null;
     if (DATA.studioRaw && DATA.studioRaw.schemaVersion == null) DATA.studioRaw = Object.assign({ schemaVersion: 1 }, DATA.studioRaw);
     DATA.mapped = CORE.mapProjects(DATA.projectsRaw);
     DATA.studio = CORE.mapStudio(DATA.studioRaw);
@@ -165,12 +174,25 @@
     if (activeTab === 'pipeline') host.innerHTML = tabPipeline();
     else if (activeTab === 'leaders') host.innerHTML = tabLeaders();
     else if (activeTab === 'clients') host.innerHTML = tabClients();
+    else if (activeTab === 'clockify') host.innerHTML = tabClockify();
+    else if (activeTab === 'rates') host.innerHTML = tabRates();
     else host.innerHTML = tabStub(activeTab);
     wireTab(host);
   }
 
   const tab2 = () => (DATA.tab2 || (DATA.tab2 = CORE.tab2Data(DATA.mapped, DATA.studio.ok ? DATA.studio : { baselines: [], baselineLines: [], scenarios: [] }, DATA.overview)));
   const tab3 = () => (DATA.tab3 || (DATA.tab3 = CORE.tab3Data(DATA.mapped, DATA.overview.year)));
+  const delivery = () => {
+    if (DATA.delivery) return DATA.delivery;
+    if (!DATA.staff || !DATA.staff.ok) return null;
+    const rm = DATA.ratesMapped && DATA.ratesMapped.ok ? DATA.ratesMapped : { rateGrid: [] };
+    return (DATA.delivery = CORE.clockifyData(DATA.staff, DATA.mapped, rm, DATA.overview.year));
+  };
+  const tab4 = () => {
+    if (DATA.tab4) return DATA.tab4;
+    if (!DATA.ratesMapped || !DATA.ratesMapped.ok) return null;
+    return (DATA.tab4 = CORE.tab4Data(DATA.ratesMapped, DATA.mapped, delivery(), DATA.overview.year));
+  };
 
   function tabStub(key) {
     const t = TABS.find((x) => x.key === key);
@@ -660,6 +682,160 @@
       '', '<div class="note" style="border-left:3px solid var(--bad)">Billed-versus-recognised cannot be shown from the shared data files: they carry projected and recognised revenue, not invoicing. This panel returns when a billing feed exists. Shown honestly rather than approximated.</div>');
 
     return kpis + paretoPanel + donutPanel + stackPanel + moversPanel + progPanel + rvb;
+  }
+
+  /* ---------------- TAB · Delivery & Effort ---------------- */
+  function tabClockify() {
+    const d = delivery();
+    if (!d) {
+      return panel('Delivery & Effort', { kind: 'demo', text: 'DATA UNAVAILABLE' }, '',
+        'staff.json could not be read from Box, so the delivery surfaces cannot render. Everything else on this page is unaffected. Reload to retry.', '');
+    }
+    const kpis = '<div class="kpirow">' +
+      kpi('Hours logged (' + d.window.label + ')', Math.round(d.kpis.hoursYtd).toLocaleString() + 'h', d.reconciliation.people + ' people · ' + d.reconciliation.clockifyProjects + ' Clockify projects', 'teal') +
+      kpi('Billable share', d.kpis.billableSharePct + '%', 'of all logged time', '') +
+      kpi('Revenue per billable hour', d.kpis.revenuePerBillableHour ? fm(d.kpis.revenuePerBillableHour) : 'n/a', 'on mapped projects', 'navy') +
+      kpi('People active', String(d.kpis.peopleActive), 'in the staffing directory', '') +
+      kpi('Bulk-logged rows', String(d.reconciliation.bulkLoggedRows), 'over ' + d.monthHours + 'h/mo · marked, never trimmed', '') +
+      '</div>';
+
+    // time mix by month
+    const maxM = Math.max.apply(null, d.months.map((m2) => m2.billable + m2.internal + m2.timeOff).concat([1]));
+    const W = 940, H = 210, L = 58, R = 16, T = 16, B = 30;
+    const plotW = W - L - R, plotH = H - T - B;
+    const y = (v) => T + plotH - (v / (maxM * 1.1)) * plotH;
+    const bw = (plotW / Math.max(d.months.length, 1)) * 0.58;
+    let mixSvg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Time mix by month">';
+    d.months.forEach((m2, i) => {
+      const bx = L + ((i + 0.5) / d.months.length) * plotW - bw / 2;
+      let base = 0;
+      [['billable', 'var(--r1)', 'Billable'], ['internal', '#8a6a09', 'Macro / BD'], ['timeOff', '#9ca3af', 'Time off']].forEach(([k, colour, lbl]) => {
+        const v = m2[k];
+        if (v <= 0) return;
+        mixSvg += '<rect x="' + bx + '" y="' + y(base + v) + '" width="' + bw + '" height="' + Math.max(y(base) - y(base + v), 0.5) + '" fill="' + colour + '"><title>' + MON[m2.month - 1] + ' ' + m2.year + ' ' + lbl + ': ' + Math.round(v).toLocaleString() + 'h</title></rect>';
+        base += v;
+      });
+      const tot = m2.billable + m2.internal + m2.timeOff;
+      mixSvg += '<text x="' + (bx + bw / 2) + '" y="' + (y(tot) - 4) + '" text-anchor="middle" font-size="9" font-weight="700" fill="#25273A">' + Math.round(tot / 100) / 10 + 'k</text>';
+      mixSvg += '<text x="' + (bx + bw / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#5f6a78">' + MON[m2.month - 1] + '</text>';
+    });
+    mixSvg += '</svg>';
+    const mixPanel = panel('Where the time goes, month by month', { kind: 'live', text: 'LIVE' }, esc(d.msg),
+      'What it is: every logged hour split three ways - billable project work (green), Macro / business development (amber), time off (grey). Why we show it: the split reproduces the data aggregator app\'s own chart, so the two tools cannot quietly disagree. Legend: green billable · amber internal/BD · grey time off.',
+      mixSvg);
+
+    // capacity
+    const c = d.capacity;
+    const capPanel = panel('Can we deliver what we are forecasting?', { kind: 'live', text: 'LIVE' }, esc(d.capacityMsg),
+      'What it is: the booked and accrued revenue (R1-R2) still to deliver this year, turned into implied hours at our realised revenue-per-hour, against the uncommitted billable capacity of the current team. Why we show it: a forecast we cannot staff is not a forecast.',
+      '<table class="vtable"><tbody>' +
+      '<tr><td>Pipeline still to deliver (R1-R2, ' + c.monthLabels.join('/') + ')</td><td class="num">' + fm(c.pipelineRevenue) + '</td></tr>' +
+      '<tr><td>Realised revenue per mapped billable hour</td><td class="num">' + fm(c.realisedRate) + '</td></tr>' +
+      '<tr><td>Implied delivery hours</td><td class="num">' + Math.round(c.impliedHours).toLocaleString() + 'h</td></tr>' +
+      '<tr><td>Billable capacity, months remaining (' + d.kpis.peopleActive + ' people × ' + d.monthHours + 'h × ' + c.monthsRemaining + 'mo × historic billable share)</td><td class="num">' + Math.round(c.billableCapacity).toLocaleString() + 'h</td></tr>' +
+      '<tr><td>Already committed in the staffing plan</td><td class="num">' + Math.round(c.committedHours).toLocaleString() + 'h</td></tr>' +
+      '<tr class="total"><td>Free capacity vs implied need</td><td class="num ' + (c.shortfall > 0 ? 'tone-bad' : 'tone-good') + '">' + Math.round(c.freeCapacity).toLocaleString() + 'h vs ' + Math.round(c.impliedHours).toLocaleString() + 'h</td></tr>' +
+      '</tbody></table>');
+
+    // effort vs likelihood
+    const ratingRows = d.byRating.map((r) =>
+      '<tr><td>' + esc(r.label) + '</td><td>' + (r.feedsBudget ? 'Yes' : 'No') + '</td>' +
+      '<td class="num">' + r.projects + '</td><td class="num">' + Math.round(r.hours).toLocaleString() + 'h</td>' +
+      '<td class="num">' + fm(r.cost) + '</td><td class="num">' + fm(r.revenue) + '</td></tr>').join('');
+    const ratingPanel = panel('Effort against likelihood', { kind: 'live', text: 'LIVE' }, esc(d.ratingMsg),
+      'What it is: mapped delivery hours grouped by the project\'s likelihood rating. Why we show it: time spent on low-likelihood or unrated work is cost with no committed revenue behind it - visible here, invisible in either app alone.',
+      '<table class="vtable"><thead><tr><th>Rating</th><th>Feeds budget?</th><th class="num">Projects</th><th class="num">Hours</th><th class="num">Delivery cost</th><th class="num">' + d.window.label.slice(-4) + ' revenue</th></tr></thead><tbody>' + ratingRows + '</tbody></table>');
+
+    // true margin by project
+    const marginRows = d.margins.slice(0, 15).map((m2) =>
+      '<tr><td>' + esc(m2.name) + '</td><td>' + esc(m2.client) + '</td>' +
+      '<td class="num">' + (m2.rating == null ? '-' : 'R' + m2.rating) + '</td>' +
+      '<td class="num">' + Math.round(m2.hours).toLocaleString() + 'h</td><td class="num">' + m2.people + '</td>' +
+      '<td class="num">' + fm(m2.cost) + '</td><td class="num">' + fm(m2.revenue) + '</td>' +
+      '<td class="num ' + (m2.margin >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(m2.margin) + (m2.marginPct == null ? '' : ' (' + Math.round(m2.marginPct) + '%)') + '</td></tr>').join('');
+    const marginPanel = panel('True margin by project - revenue less delivery cost', { kind: 'live', text: 'LIVE' }, esc(d.marginMsg),
+      'What it is: for every project with mapped hours, its ' + d.window.label.slice(-4) + ' revenue against the cost of the time actually logged on it (cost = the rate grid\'s floor where the person\'s title maps, a blended proxy where it does not - the coverage panel says how much of the cost is grid-backed). Showing the 15 heaviest by hours.',
+      '<table class="vtable"><thead><tr><th>Project</th><th>Client</th><th class="num">Rating</th><th class="num">Hours</th><th class="num">People</th><th class="num">Delivery cost</th><th class="num">Revenue</th><th class="num">Margin</th></tr></thead><tbody>' + marginRows + '</tbody></table>');
+
+    // client economics
+    const cliRows = d.clientEconomics.slice(0, 10).map((r) =>
+      '<tr><td>' + esc(r.client) + '</td><td class="num">' + fm(r.revenue) + '</td>' +
+      '<td class="num">' + Math.round(r.revenueShare * 100) + '%</td>' +
+      '<td class="num ' + (r.profit >= 0 ? '' : 'tone-bad') + '">' + fm(r.profit) + '</td>' +
+      '<td class="num">' + Math.round(r.profitShare * 100) + '%</td>' +
+      '<td class="num">' + (r.marginPct == null ? '-' : Math.round(r.marginPct) + '%') + '</td></tr>').join('');
+    const cliPanel = panel('Client economics - revenue share vs profit share', { kind: 'live', text: 'LIVE' }, esc(d.clientMsg),
+      'What it is: each client\'s share of attributable revenue next to its share of profit after delivery cost. Why we show it: the biggest client is not automatically the most valuable one.',
+      '<table class="vtable"><thead><tr><th>Client</th><th class="num">Revenue</th><th class="num">Rev share</th><th class="num">Profit</th><th class="num">Profit share</th><th class="num">Margin</th></tr></thead><tbody>' + cliRows + '</tbody></table>');
+
+    // people
+    const pplRows = d.people.slice(0, 15).map((p) =>
+      '<tr><td>' + esc(p.name) + (p.bulkLogged ? ' <span class="dflag demo" title="carries a bulk-logged month, over ' + d.monthHours + 'h">BULK</span>' : '') + '</td>' +
+      '<td>' + esc(p.title || '-') + '</td><td class="num">' + Math.round(p.hours).toLocaleString() + 'h</td>' +
+      '<td class="num">' + Math.round(p.billableShare * 100) + '%</td>' +
+      '<td class="num">' + fm(p.costPerHour) + (p.fromGrid ? '' : ' <span style="color:var(--mut)">(proxy)</span>') + '</td></tr>').join('');
+    const pplPanel = panel('Effort by person', { kind: 'live', text: 'LIVE' }, '',
+      'What it is: the heaviest-logging people over the reported window, their billable share, and the cost rate applied to their hours (grid floor where the title maps, blended proxy elsewhere). Bulk-logged months are marked, never trimmed.',
+      '<table class="vtable"><thead><tr><th>Person</th><th>Title</th><th class="num">Hours</th><th class="num">Billable</th><th class="num">Cost rate</th></tr></thead><tbody>' + pplRows + '</tbody></table>');
+
+    // coverage + reconciliation
+    const cov = d.coverage;
+    const covPanel = panel('Coverage and reconciliation', { kind: 'live', text: 'LIVE' }, '',
+      'Everything above is only as good as the joins beneath it, so they are stated: how many hours reach a fee record, how much of the cost is rate-grid-backed, and how the totals tie back to the source.',
+      '<div class="note">' +
+      Math.round(d.reconciliation.totalHours).toLocaleString() + 'h across ' + d.reconciliation.people + ' people and ' + d.reconciliation.clockifyProjects + ' Clockify projects, ' + esc(d.reconciliation.monthsCovered) + (d.reconciliation.importedAt ? ' · pulled into the source app ' + esc(String(d.reconciliation.importedAt)) : '') + '.<br>' +
+      '<b>' + cov.hoursMappedPct + '%</b> of billable hours reach a fee record (' + cov.projectsCovered + ' projects) · <b>' + cov.gridCostPct + '%</b> of delivery cost is rate-grid-backed (' + cov.titlesMapped + ' of ' + cov.titlesTotal + ' titles mapped) · ' + cov.bulkLoggedRows + ' bulk-logged person-months marked.' +
+      (cov.unmappedTop.length ? '<br>Heaviest unmapped Clockify projects: ' + cov.unmappedTop.slice(0, 5).map((u) => esc(u.name) + ' (' + Math.round(u.hours).toLocaleString() + 'h)').join(' · ') + '.' : '') +
+      '</div>');
+
+    return kpis + mixPanel + capPanel + ratingPanel + marginPanel + cliPanel + pplPanel + covPanel;
+  }
+
+  /* ---------------- TAB · Rates ---------------- */
+  function tabRates() {
+    const d = tab4();
+    if (!d) {
+      return panel('Rates & Profitability', { kind: 'demo', text: 'DATA UNAVAILABLE' }, '',
+        'The confidential rate card could not be read from Box, so this tab cannot render. Reload to retry.', '');
+    }
+    const kpis = '<div class="kpirow">' +
+      kpi('Grades on the card', String(d.kpis.grades), 'rate families', '') +
+      kpi('Rack range', d.kpis.rackRange, 'per hour', 'navy') +
+      kpi('Avg floor discount', Math.round(d.kpis.avgFloorDisc * 100) + '%', 'rack to cost floor', '') +
+      kpi('Realisation', Math.round(d.kpis.realisation * 100) + '%', 'of the rack-to-floor band · excl. Principal/EVP', 'teal') +
+      '</div>';
+
+    // dumbbell: floor -> rack per grade, actual marker
+    const maxRate = Math.max.apply(null, d.grades.map((g) => g.rack).concat([1]));
+    const rows = d.grades.map((g) => {
+      const pctF = (g.floor / maxRate) * 100, pctR = (g.rack / maxRate) * 100, pctA = (g.actual / maxRate) * 100;
+      return '<div style="display:grid;grid-template-columns:170px 1fr 150px;gap:10px;align-items:center;margin:7px 0">' +
+        '<div style="font-size:12px;font-weight:600">' + esc(g.name) + (g.excluded ? ' <span style="color:var(--mut);font-size:10px">excl.</span>' : '') + '</div>' +
+        '<div style="position:relative;height:16px" title="' + esc(g.name + ': floor ' + fm(g.floor) + ' · rack ' + fm(g.rack) + ' · actual-billed marker ' + fm(g.actual) + (g.belowFloor ? ' (below floor)' : '')) + '">' +
+        '<div style="position:absolute;top:7px;left:' + pctF + '%;width:' + Math.max(pctR - pctF, 0.5) + '%;height:3px;background:var(--hairline)"></div>' +
+        '<div style="position:absolute;top:4px;left:' + pctF + '%;width:8px;height:8px;border-radius:50%;background:#9aa6b2"></div>' +
+        '<div style="position:absolute;top:4px;left:' + pctR + '%;width:8px;height:8px;border-radius:50%;background:#16263b"></div>' +
+        '<div style="position:absolute;top:2px;left:' + pctA + '%;width:10px;height:10px;transform:rotate(45deg);background:' + (g.belowFloor ? 'var(--bad)' : 'var(--teal)') + '"></div></div>' +
+        '<div class="num" style="font-size:11px;color:var(--mut)">' + fm(g.floor) + ' → ' + fm(g.rack) + ' · <b style="color:' + (g.belowFloor ? 'var(--bad)' : 'var(--ink)') + '">' + fm(g.actual) + '</b></div></div>';
+    }).join('');
+    const gridPanel = panel('Rack, floor and where billing actually lands', { kind: 'demo', text: 'ACTUAL MARKERS · DEMO' }, esc(d.msg),
+      'What it is: each grade\'s cost floor (grey dot) to rack rate (navy dot), with a diamond marking where billing lands in the band - red when below the floor. The floor-to-rack lines are the real confidential card; the actual-billed markers stay a stable demo model until per-project billed rates land. Legend: grey dot floor · navy dot rack · diamond actual (red = below floor).',
+      rows);
+
+    const src = d.trueProfitSource;
+    const tpRows = d.trueProfit.map((r) =>
+      '<tr><td>' + esc(r.client) + '</td><td class="num">' + Math.round(r.hours).toLocaleString() + 'h</td>' +
+      '<td class="num">' + fm(r.cost) + '</td><td class="num">' + fm(r.invoiced) + '</td>' +
+      '<td class="num ' + (r.profit >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(r.profit) + '</td></tr>').join('');
+    const tpPanel = panel('True profit by client - revenue less delivery cost',
+      src && src.real ? { kind: 'live', text: 'PART-LIVE · real hours' } : { kind: 'demo', text: 'DEMO MODEL' },
+      '',
+      src && src.real
+        ? 'Runs on the same engine as Delivery & Effort: real logged hours (' + src.hoursMappedPct + '% of billable hours mapped) costed at the grid floor where titles map (' + src.gridCostPct + '% grid-backed), against each client\'s revenue.'
+        : 'No mapped hours available - figures use the documented demo model ($185/hr revenue proxy, $140/hr blended cost) until staff.json maps land.',
+      '<table class="vtable"><thead><tr><th>Client</th><th class="num">Hours</th><th class="num">Delivery cost</th><th class="num">Invoiced</th><th class="num">True profit</th></tr></thead><tbody>' + tpRows + '</tbody></table>');
+
+    return kpis + gridPanel + tpPanel;
   }
 
   /* ---------------- per-tab wiring ---------------- */

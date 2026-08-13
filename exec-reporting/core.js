@@ -1054,6 +1054,453 @@
     };
   }
 
+  /* ============================================================
+     EFFORT DOMAIN + STAFF / RATES MAPPERS (verbatim ports)
+     ============================================================ */
+  const CATEGORY_LABEL = { billable: 'Billable project work', internal: 'Macro / business development', time_off: 'Time off' };
+  const TIME_OFF_RE = /(time\s*off|pto|vacation|holiday|sick|bereave|parental|jury)/i;
+  const INTERNAL_RE = /(macro|business\s*development|non-?billable|internal|admin|training|overhead|recruit|marketing)/i;
+  function categoriseProject(name) {
+    const n = String(name == null ? '' : name);
+    if (TIME_OFF_RE.test(n)) return 'time_off';
+    if (INTERNAL_RE.test(n)) return 'internal';
+    return 'billable';
+  }
+  const BULK_LOG_THRESHOLD = 172;
+  const isBulkLogged = (hours, monthHours) => hours > (monthHours == null ? BULK_LOG_THRESHOLD : monthHours);
+  const BLENDED_COST_PROXY = 140;
+  function costRateFor(titleMap, gridMap, personTitle) {
+    const mapped = personTitle ? titleMap.get(String(personTitle).trim().toLowerCase()) : undefined;
+    if (mapped) {
+      const row = gridMap.get(mapped.titleId);
+      if (row) {
+        const byTier = { high: row.floor_high, mid: row.floor_mid, low: row.floor_low };
+        const picked = byTier[mapped.tierId] != null ? byTier[mapped.tierId] : row.floor_mid;
+        if (typeof picked === 'number' && picked > 0) return { rate: picked, fromGrid: true, basis: mapped.titleId + '/' + mapped.tierId + ' floor' };
+      }
+    }
+    return { rate: BLENDED_COST_PROXY, fromGrid: false, basis: 'blended proxy' };
+  }
+
+  const KNOWN_STAFF_SCHEMA_VERSION = 1;
+  function mapStaff(raw) {
+    const notes = [];
+    const empty = { ok: false, counts: {}, notes, people: [], allocations: [], actuals: [], maps: [], meta: [],
+      hoursByCategory: { billable: 0, internal: 0, time_off: 0 } };
+    if (!raw || typeof raw !== 'object') return Object.assign(empty, { error: 'staff.json is not an object' });
+    const peopleObj = raw.people;
+    if (!peopleObj || typeof peopleObj !== 'object') return Object.assign(empty, { error: 'staff.json has no people map - the shape has changed fundamentally.' });
+    const sample = Object.values(peopleObj).slice(0, 20);
+    if (!sample.some((p) => p && typeof p === 'object' && nullIfBlank(p.name))) {
+      return Object.assign(empty, { error: 'no person record carries a name - the shape has changed fundamentally.' });
+    }
+    const version = Number(raw.schemaVersion);
+    if (Number.isFinite(version) && version > KNOWN_STAFF_SCHEMA_VERSION) {
+      notes.push('staff.json is schemaVersion ' + version + ', newer than the ' + KNOWN_STAFF_SCHEMA_VERSION + ' this mapper was written for. The shape still parses so it has been read.');
+    }
+    const out = Object.assign(empty, { ok: true });
+    const num = (v) => { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
+
+    for (const [key, p] of Object.entries(peopleObj)) {
+      out.people.push({
+        source_id: nullIfBlank(p.id) || key,
+        name: nullIfBlank(p.name) || key,
+        title: nullIfBlank(p.title),
+        capacity_pct: num(p.capacityPct),
+        active: p.active !== false,
+      });
+    }
+    for (const a of raw.allocations || []) {
+      const sourceId = nullIfBlank(a.id);
+      if (!sourceId) continue;
+      const start = splitYearMonth(String(a.start == null ? '' : a.start));
+      const end = splitYearMonth(String(a.end == null ? '' : a.end));
+      out.allocations.push({
+        source_id: sourceId,
+        person_source_id: nullIfBlank(a.personId),
+        project_label: nullIfBlank(a.project),
+        client_label: nullIfBlank(a.client),
+        pct: num(a.pct),
+        start_year: start ? start.year : null, start_month: start ? start.month : null,
+        end_year: end ? end.year : null, end_month: end ? end.month : null,
+      });
+    }
+    let malformed = 0, bulk = 0;
+    for (const [key, hoursAny] of Object.entries(raw.actuals || {})) {
+      const hours = num(hoursAny);
+      if (hours === null) continue;
+      const parts = String(key).split('|');
+      if (parts.length !== 3) { malformed += 1; continue; }
+      const ym = splitYearMonth(parts[2]);
+      if (!ym) { malformed += 1; continue; }
+      const category = categoriseProject(parts[1]);
+      out.hoursByCategory[category] += hours;
+      if (isBulkLogged(hours)) bulk += 1;
+      out.actuals.push({ person_source_id: parts[0], clockify_project: parts[1], year: ym.year, month: ym.month, hours, category });
+    }
+    if (malformed > 0) notes.push(malformed + ' actuals key(s) were malformed and skipped.');
+    for (const [kind, entries] of Object.entries(raw.mappings || {})) {
+      if (!entries || typeof entries !== 'object') continue;
+      for (const [k, v] of Object.entries(entries)) out.maps.push({ kind, key: String(k).trim().toLowerCase(), value: v == null ? null : v });
+    }
+    for (const [k, v] of Object.entries(raw.meta || {})) out.meta.push({ key: k, value: v == null ? null : v });
+    out.counts = {
+      people: out.people.length, allocations: out.allocations.length, actuals: out.actuals.length,
+      maps: out.maps.length, total_hours: Math.round(out.hoursByCategory.billable + out.hoursByCategory.internal + out.hoursByCategory.time_off),
+      bulk_logged_rows: bulk,
+    };
+    return out;
+  }
+
+  const HML_SPREAD = 0.1;
+  function mapRates(raw) {
+    const notes = [];
+    const empty = { ok: false, counts: {}, notes, rateGrid: [] };
+    if (!raw || typeof raw !== 'object') return Object.assign(empty, { error: 'rates.json is not an object' });
+    if (raw.schemaVersion !== 1) return Object.assign(empty, { error: 'Unsupported rates.json schemaVersion: ' + raw.schemaVersion + ' (expected 1). Refusing to guess.' });
+    if (!Array.isArray(raw.grid)) return Object.assign(empty, { error: 'rates.json has no grid[]' });
+    const out = Object.assign(empty, { ok: true });
+    for (const g of raw.grid) {
+      if (!g || !g.id) { notes.push('Grid entry without id skipped'); continue; }
+      out.rateGrid.push({
+        title_id: g.id, name: g.name || g.id, grade_group: g.group || null,
+        rack: g.rack != null ? g.rack : null,
+        floor_high: g.floor ? (g.floor.high != null ? g.floor.high : null) : null,
+        floor_mid: g.floor ? (g.floor.mid != null ? g.floor.mid : null) : null,
+        floor_low: g.floor ? (g.floor.low != null ? g.floor.low : null) : null,
+        target_disc: g.targetDisc != null ? g.targetDisc : null,
+        base_year: raw.baseYear != null ? raw.baseYear : null,
+      });
+    }
+    out.counts = { rate_grid: out.rateGrid.length };
+    return out;
+  }
+
+  /* ============================================================
+     DELIVERY ENGINE (port of lib/queries/clockify-tab.ts)
+     The one hours x cost x revenue join every delivery surface uses.
+     ============================================================ */
+  function clockifyData(staffMapped, mapped, ratesMapped, year) {
+    const metaVal = (k, dflt) => {
+      const row = staffMapped.meta.find((x) => x.key === k);
+      return row && row.value != null ? row.value : dflt;
+    };
+    const monthHours = Number(metaVal('monthHours', 172));
+    const importedAt = metaVal('clockifyImportedAt', null);
+
+    const personBySource = new Map(staffMapped.people.map((p) => [String(p.source_id), p]));
+    const titleMap = new Map();
+    for (const m2 of staffMapped.maps) {
+      if (m2.kind !== 'titles') continue;
+      const v = m2.value;
+      if (v && v.titleId) titleMap.set(String(m2.key), { titleId: v.titleId, tierId: v.tierId || 'mid' });
+    }
+    const gridMap = new Map(ratesMapped.rateGrid.map((g) => [String(g.title_id), g]));
+    const projMeta = new Map(mapped.projects.map((p) => [p.source_id, p]));
+    const feeMap = new Map();
+    for (const m2 of staffMapped.maps) {
+      if (m2.kind !== 'fee') continue;
+      const ids = (Array.isArray(m2.value) ? m2.value : [m2.value]).map((v) => String(v)).filter((v) => projMeta.has(v));
+      if (ids.length > 0) feeMap.set(String(m2.key), ids);
+    }
+    const yearRev = projectYearRevenue(mapped);
+    const revByProject = new Map();
+    for (const [pid, years] of yearRev) {
+      if (!years.has(year)) continue;
+      const p = projMeta.get(pid);
+      revByProject.set(pid, {
+        name: p ? p.name : '(unknown)',
+        client: p && p.raw_client ? canonicalNameFor(p.raw_client) : UNNAMED_CLIENT,
+        revenue: years.get(year) || 0,
+      });
+    }
+    const costOf = new Map();
+    for (const p of staffMapped.people) costOf.set(String(p.source_id), costRateFor(titleMap, gridMap, p.title));
+
+    // ---- time mix + per person ----
+    const monthMap = new Map();
+    const perPerson = new Map();
+    const personMonth = new Map();
+    const clockifyProjects = new Set();
+    let billable = 0, internal = 0, timeOff = 0;
+    for (const a of staffMapped.actuals) {
+      const hours = Number(a.hours);
+      clockifyProjects.add(a.clockify_project);
+      const mk = a.year + '-' + a.month;
+      const m2 = monthMap.get(mk) || { year: a.year, month: a.month, billable: 0, internal: 0, timeOff: 0 };
+      if (a.category === 'billable') { m2.billable += hours; billable += hours; }
+      else if (a.category === 'internal') { m2.internal += hours; internal += hours; }
+      else { m2.timeOff += hours; timeOff += hours; }
+      monthMap.set(mk, m2);
+      const person = personBySource.get(a.person_source_id);
+      const rate = costOf.get(a.person_source_id) || { rate: BLENDED_COST_PROXY, fromGrid: false };
+      const row = perPerson.get(a.person_source_id) || {
+        id: a.person_source_id, name: person ? person.name : a.person_source_id,
+        title: person ? person.title : null, hours: 0, billable: 0, billableShare: 0,
+        bulkLogged: false, costPerHour: rate.rate, fromGrid: rate.fromGrid,
+      };
+      row.hours += hours;
+      if (a.category === 'billable') row.billable += hours;
+      if (isBulkLogged(hours, monthHours)) row.bulkLogged = true;
+      perPerson.set(a.person_source_id, row);
+      const pmk = a.person_source_id + '|' + a.month;
+      personMonth.set(pmk, (personMonth.get(pmk) || 0) + hours);
+    }
+    const total = billable + internal + timeOff;
+    for (const r of perPerson.values()) r.billableShare = r.hours > 0 ? r.billable / r.hours : 0;
+
+    const monthTotals = new Map();
+    for (const a of staffMapped.actuals) if (a.year === year) monthTotals.set(a.month, (monthTotals.get(a.month) || 0) + Number(a.hours));
+    const busiest = Math.max.apply(null, [...monthTotals.values()].concat([0]));
+    const reported = [...monthTotals.entries()].filter((e) => busiest > 0 && e[1] >= busiest * 0.1).map((e) => e[0]).sort((a, b) => a - b);
+    const windowStart = reported[0] || 1;
+    const windowEnd = reported[reported.length - 1] || 12;
+
+    // ---- per-project margin ----
+    const acc = new Map();
+    const unmapped = new Map();
+    let mappedHours = 0;
+    for (const a of staffMapped.actuals) {
+      if (a.category !== 'billable') continue;
+      const targets = feeMap.get(a.clockify_project.trim().toLowerCase());
+      const hours = Number(a.hours);
+      if (!targets || targets.length === 0) { unmapped.set(a.clockify_project, (unmapped.get(a.clockify_project) || 0) + hours); continue; }
+      mappedHours += hours;
+      const share = hours / targets.length;
+      const rate = costOf.get(a.person_source_id) || { rate: BLENDED_COST_PROXY, fromGrid: false };
+      for (const pid of targets) {
+        const e = acc.get(pid) || { hours: 0, cost: 0, gridCost: 0, people: new Set() };
+        e.hours += share; e.cost += share * rate.rate;
+        if (rate.fromGrid) e.gridCost += share * rate.rate;
+        e.people.add(a.person_source_id);
+        acc.set(pid, e);
+      }
+    }
+    const margins = [];
+    for (const [pid, e] of acc) {
+      const rev = revByProject.get(pid);
+      const pm = projMeta.get(pid);
+      const revenue = rev ? rev.revenue : 0;
+      margins.push({
+        projectId: pid,
+        name: rev ? rev.name : '(not in this year\'s pipeline)',
+        client: rev ? rev.client : (pm && pm.raw_client ? canonicalNameFor(pm.raw_client) : UNNAMED_CLIENT),
+        leaderId: pm ? pm.leader_id : null,
+        rating: pm ? pm.rating : null,
+        hours: e.hours, people: e.people.size, cost: e.cost, revenue,
+        margin: revenue - e.cost,
+        marginPct: revenue > 0 ? ((revenue - e.cost) / revenue) * 100 : null,
+        realisedRate: e.hours > 0 && revenue > 0 ? revenue / e.hours : null,
+        gridShare: e.cost > 0 ? e.gridCost / e.cost : 0,
+      });
+    }
+    margins.sort((a, b) => b.hours - a.hours);
+
+    // ---- effort vs likelihood ----
+    const ratingAgg = new Map();
+    for (const m2 of margins) {
+      const key = m2.rating === null ? 'none' : String(m2.rating);
+      const row = ratingAgg.get(key) || {
+        rating: m2.rating,
+        label: m2.rating === null ? 'No rating yet' : 'R' + m2.rating + ' · ' + RATING_LABELS[m2.rating],
+        feedsBudget: m2.rating !== null && isBudgetRating(m2.rating),
+        hours: 0, cost: 0, revenue: 0, projects: 0,
+      };
+      row.hours += m2.hours; row.cost += m2.cost; row.revenue += m2.revenue; row.projects += 1;
+      ratingAgg.set(key, row);
+    }
+    const byRating = [...ratingAgg.values()].sort((a, b) => ((a.rating == null ? 99 : a.rating) - (b.rating == null ? 99 : b.rating)));
+    const atRisk = byRating.filter((r) => r.rating === null || r.rating >= 3);
+    const atRiskHours = atRisk.reduce((a, r) => a + r.hours, 0);
+    const atRiskCost = atRisk.reduce((a, r) => a + r.cost, 0);
+
+    // ---- margin by leader ----
+    const leaderAgg = new Map();
+    for (const m2 of margins) {
+      const id = m2.leaderId || 'unassigned';
+      const row = leaderAgg.get(id) || { id, name: m2.leaderId ? leaderDisplay(m2.leaderId) : 'Unassigned', hours: 0, cost: 0, revenue: 0, margin: 0, marginPct: null, projects: 0 };
+      row.hours += m2.hours; row.cost += m2.cost; row.revenue += m2.revenue; row.projects += 1;
+      leaderAgg.set(id, row);
+    }
+    const byLeader = [...leaderAgg.values()].map((r) => Object.assign({}, r, {
+      margin: r.revenue - r.cost,
+      marginPct: r.revenue > 0 ? ((r.revenue - r.cost) / r.revenue) * 100 : null,
+    })).sort((a, b) => b.revenue - a.revenue);
+
+    // ---- client economics ----
+    const clientAgg = new Map();
+    for (const m2 of margins) {
+      const e = clientAgg.get(m2.client) || { revenue: 0, cost: 0, hours: 0 };
+      e.revenue += m2.revenue; e.cost += m2.cost; e.hours += m2.hours;
+      clientAgg.set(m2.client, e);
+    }
+    const totRev = [...clientAgg.values()].reduce((a, e) => a + e.revenue, 0);
+    const totProfit = [...clientAgg.values()].reduce((a, e) => a + Math.max(e.revenue - e.cost, 0), 0);
+    const clientEconomics = [...clientAgg.entries()].map(([client, e]) => ({
+      client, revenue: e.revenue, hours: e.hours,
+      revenueShare: totRev > 0 ? e.revenue / totRev : 0,
+      profit: e.revenue - e.cost,
+      profitShare: totProfit > 0 ? Math.max(e.revenue - e.cost, 0) / totProfit : 0,
+      marginPct: e.revenue > 0 ? ((e.revenue - e.cost) / e.revenue) * 100 : null,
+    })).filter((r) => r.revenue > 0 || r.hours > 0).sort((a, b) => b.revenue - a.revenue);
+
+    // ---- capacity vs pipeline ----
+    const realisedRate = mappedHours > 0 ? margins.reduce((a, m2) => a + m2.revenue, 0) / mappedHours : 0;
+    const nowMonth = Math.min(Math.max(windowEnd, 1), 12);
+    const monthsRemaining = Math.max(0, 12 - nowMonth);
+    const monthLabels = Array.from({ length: monthsRemaining }, (_, i) => MON[nowMonth + i]);
+    let pipelineRevenue = 0;
+    for (const r of mapped.monthlyRevenue) {
+      if (r.year !== year || r.month <= nowMonth || typeof r.amount !== 'number') continue;
+      const pm = projMeta.get(r.project_source_id);
+      const rt = pm ? pm.rating : null;
+      if (rt === 1 || rt === 2) pipelineRevenue += r.amount;
+    }
+    const activePeople = staffMapped.people.filter((p) => p.active !== false).length;
+    const grossCapacity = activePeople * monthHours * monthsRemaining;
+    const billableShareHist = total > 0 ? billable / total : 0.64;
+    const billableCapacity = grossCapacity * billableShareHist;
+    let committedHours = 0;
+    for (const al of staffMapped.allocations) {
+      if (!al.pct) continue;
+      const s = Math.max((al.start_year == null ? year : al.start_year) === year ? (al.start_month == null ? 1 : al.start_month) : (al.start_year == null ? year : al.start_year) < year ? 1 : 13, nowMonth + 1);
+      const e = Math.min((al.end_year == null ? year : al.end_year) === year ? (al.end_month == null ? 12 : al.end_month) : (al.end_year == null ? year : al.end_year) > year ? 12 : 0, 12);
+      const months2 = Math.max(0, e - s + 1);
+      committedHours += months2 * monthHours * (Number(al.pct) / 100);
+    }
+    const impliedHours = realisedRate > 0 ? pipelineRevenue / realisedRate : 0;
+    const freeCapacity = billableCapacity - committedHours;
+    const capacity = {
+      monthsRemaining, monthLabels, pipelineRevenue, impliedHours, realisedRate,
+      grossCapacity, billableCapacity, committedHours, freeCapacity,
+      shortfall: impliedHours - freeCapacity,
+    };
+
+    // ---- coverage ----
+    const titlesInUse = new Set(staffMapped.people.filter((p) => p.active !== false)
+      .map((p) => String(p.title == null ? '' : p.title).trim().toLowerCase()).filter(Boolean));
+    const titlesMapped = [...titlesInUse].filter((t) => titleMap.has(t)).length;
+    const costedTotal = margins.reduce((a, m2) => a + m2.cost, 0);
+    const gridTotal = margins.reduce((a, m2) => a + m2.cost * m2.gridShare, 0);
+    const bulkRows = [...personMonth.values()].filter((h) => isBulkLogged(h, monthHours)).length;
+    const months = [...monthMap.values()].sort((a, b) => a.year - b.year || a.month - b.month);
+    const negatives = margins.filter((m2) => m2.marginPct !== null && m2.marginPct < 0);
+
+    const byRevenue = clientEconomics.slice().sort((a, b) => b.revenue - a.revenue)[0];
+    const byProfit = clientEconomics.slice().sort((a, b) => b.profit - a.profit)[0];
+    const clientMsg = byRevenue && byProfit
+      ? (byRevenue.client !== byProfit.client
+        ? byRevenue.client + ' is our largest client by revenue (' + Math.round(byRevenue.revenueShare * 100) + '%), but ' + byProfit.client + ' contributes the most profit after delivery cost.'
+        : byRevenue.client + ' leads on both revenue and profit after delivery cost - ' + Math.round(byRevenue.revenueShare * 100) + '% of attributable revenue at a ' + Math.round(byRevenue.marginPct || 0) + '% margin.')
+      : 'No client has both revenue and logged hours yet.';
+
+    return {
+      monthHours, months,
+      mix: { billable, internal, timeOff, total },
+      reconciliation: {
+        totalHours: total, people: perPerson.size, clockifyProjects: clockifyProjects.size,
+        monthsCovered: MON[windowStart - 1] + '-' + MON[windowEnd - 1] + ' ' + year,
+        importedAt, bulkLoggedRows: bulkRows,
+      },
+      kpis: {
+        hoursYtd: total,
+        billableSharePct: total > 0 ? Math.round((billable / total) * 100) : 0,
+        revenuePerBillableHour: realisedRate > 0 ? realisedRate : null,
+        peopleActive: activePeople,
+      },
+      capacity, byRating, byLeader, clientEconomics, margins,
+      people: [...perPerson.values()].sort((a, b) => b.hours - a.hours),
+      window: { startMonth: windowStart, endMonth: windowEnd, label: MON[windowStart - 1] + '-' + MON[windowEnd - 1] + ' ' + year },
+      coverage: {
+        titlesMapped, titlesTotal: titlesInUse.size,
+        hoursMappedPct: billable > 0 ? Math.round((mappedHours / billable) * 100) : 0,
+        gridCostPct: costedTotal > 0 ? Math.round((gridTotal / costedTotal) * 100) : 0,
+        projectsCovered: margins.length, projectsTotal: mapped.projects.length,
+        bulkLoggedRows: bulkRows,
+        unmappedTop: [...unmapped.entries()].map(([name, hours]) => ({ name, hours })).sort((a, b) => b.hours - a.hours).slice(0, 8),
+      },
+      msg: Math.round(total).toLocaleString() + ' hours logged across ' + perPerson.size + ' people - ' + (total > 0 ? Math.round((billable / total) * 100) : 0) + '% billable. These totals tie to the data aggregator app\'s own Clockify chart.',
+      marginMsg: negatives.length > 0
+        ? negatives.length + ' project' + (negatives.length > 1 ? 's cost' : ' costs') + ' more in delivery time than ' + (negatives.length > 1 ? 'they earn' : 'it earns') + ' - ' + negatives.slice(0, 2).map((n) => n.name).join(', ') + (negatives.length > 2 ? ' and ' + (negatives.length - 2) + ' more' : '') + '.'
+        : 'Every mapped project earns more than its delivery time costs.',
+      capacityMsg: capacity.shortfall > 0
+        ? 'Delivering the booked and accrued pipeline for the rest of ' + year + ' implies about ' + Math.round(capacity.impliedHours).toLocaleString() + ' hours of work; roughly ' + Math.round(Math.max(capacity.freeCapacity, 0)).toLocaleString() + ' hours are uncommitted - a gap of about ' + Math.round(capacity.shortfall).toLocaleString() + ' hours.'
+        : 'Delivering the booked and accrued pipeline for the rest of ' + year + ' implies about ' + Math.round(capacity.impliedHours).toLocaleString() + ' hours; about ' + Math.round(capacity.freeCapacity).toLocaleString() + ' are uncommitted, so capacity covers the forecast.',
+      ratingMsg: atRiskHours > 0
+        ? Math.round(atRiskHours).toLocaleString() + ' hours of delivery time - about ' + Math.round(atRiskCost).toLocaleString() + ' dollars of cost - has gone into work rated 75% or less, or not rated at all.'
+        : 'All attributable delivery time sits on booked or highly likely work.',
+      clientMsg,
+    };
+  }
+
+  /* ============================================================
+     TAB 4 · RATES (port of lib/queries/rates-tab.ts)
+     ============================================================ */
+  function _skew(s) {
+    let h = 0;
+    for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return (h % 1000) / 1000;
+  }
+  function tab4Data(ratesMapped, mapped, delivery, year) {
+    const grades = ratesMapped.rateGrid
+      .filter((g) => typeof g.rack === 'number' && typeof g.floor_mid === 'number')
+      .sort((a, b) => b.rack - a.rack)
+      .map((g) => {
+        const rack = Number(g.rack), floor = Number(g.floor_mid);
+        const excluded = g.title_id === 'principal' || g.title_id === 'evp';
+        const actual = excluded
+          ? Math.round(rack * (0.2 + _skew(g.title_id) * 0.2))
+          : Math.round(floor + (rack - floor) * (0.25 + _skew(g.title_id) * 0.55));
+        return { id: g.title_id, name: g.name, rack, floor, actual, belowFloor: actual < floor, excluded };
+      });
+    const included = grades.filter((g) => !g.excluded);
+    const realisation = included.length
+      ? included.reduce((a, g) => a + (g.actual - g.floor) / (g.rack - g.floor), 0) / included.length
+      : 0;
+    const racks = grades.map((g) => g.rack);
+    const avgFloorDisc = grades.length ? grades.reduce((a, g) => a + (1 - g.floor / g.rack), 0) / grades.length : 0;
+
+    let trueProfit, trueProfitSource = null;
+    if (delivery && delivery.margins.length > 0) {
+      const byClientReal = new Map();
+      for (const m2 of delivery.margins) {
+        const e = byClientReal.get(m2.client) || { hours: 0, cost: 0, invoiced: 0 };
+        e.hours += m2.hours; e.cost += m2.cost; e.invoiced += m2.revenue;
+        byClientReal.set(m2.client, e);
+      }
+      trueProfit = [...byClientReal.entries()].sort((a, b) => b[1].hours - a[1].hours).slice(0, 8)
+        .map(([client, e]) => ({ client, hours: e.hours, cost: e.cost, invoiced: e.invoiced, profit: e.invoiced - e.cost }));
+      trueProfitSource = { real: true, clients: byClientReal.size, hoursMappedPct: delivery.coverage.hoursMappedPct, gridCostPct: delivery.coverage.gridCostPct };
+    } else {
+      const yearRev = projectYearRevenue(mapped);
+      const byClient = new Map();
+      for (const [pid, years] of yearRev) {
+        if (!years.has(year)) continue;
+        const p = mapped.projects.find((x) => x.source_id === pid);
+        const name = p && p.raw_client ? canonicalNameFor(p.raw_client) : UNNAMED_CLIENT;
+        byClient.set(name, (byClient.get(name) || 0) + (years.get(year) || 0));
+      }
+      const blendedCost = BLENDED_COST_PROXY;
+      trueProfit = [...byClient.entries()].filter((e) => e[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, 8)
+        .map(([client, invoiced]) => {
+          const hours = invoiced / 185;
+          const cost = hours * blendedCost * (0.85 + _skew(client) * 0.3);
+          return { client, hours, cost, invoiced, profit: invoiced - cost };
+        });
+    }
+    return {
+      grades,
+      kpis: {
+        grades: grades.length,
+        rackRange: fmtMoney(Math.min.apply(null, racks)) + '-' + fmtMoney(Math.max.apply(null, racks)),
+        avgFloorDisc, realisation,
+      },
+      trueProfitSource,
+      msg: 'Where we bill, we capture ' + Math.round(realisation * 100) + '% of the rack-to-floor band - Principal and EVP are rarely charged out at all (markers below the floor).',
+      trueProfit,
+    };
+  }
+
   /* ---------------- public surface ---------------- */
   const CORE = {
     RATING_WEIGHTS, RATING_LABELS, BUDGET_RATINGS, isBudgetRating, weightFor, ratingFromStatus,
@@ -1065,6 +1512,8 @@
     projectYearRevenue, budgetBaseline, pipelineOverview,
     UNNAMED_CLIENT, canonicalNameFor, resolvedMonthly, tab1Panels, MON,
     sectorOf, programmeOf, demoIndustryOf, demoProjectTypeOf, tab2Data, tab3Data,
+    CATEGORY_LABEL, categoriseProject, isBulkLogged, BULK_LOG_THRESHOLD, BLENDED_COST_PROXY,
+    costRateFor, mapStaff, mapRates, HML_SPREAD, clockifyData, tab4Data,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = CORE;

@@ -156,6 +156,45 @@ ck('tab3: donut shares cover the positive book', (() => {
 ck('tab3: month totals sum to the revenue KPI', near(t3.monthTotals.reduce((a, b) => a + b, 0), t3.kpis.revenue));
 ck('tab3: top client is JPMorgan Chase here too', t3.kpis.topClientName === 'JPMorgan Chase', t3.kpis.topClientName);
 
+// ---- Delivery engine + Rates ----
+const staffRaw = JSON.parse(readFileSync(join(FIXTURES, 'staff.json'), 'utf8'));
+const ratesRaw = JSON.parse(readFileSync(join(FIXTURES, 'rates.json'), 'utf8'));
+const sf = CORE.mapStaff(staffRaw);
+const rt = CORE.mapRates(ratesRaw);
+ck('staff.json maps ok', sf.ok, sf.error);
+ck('rates.json maps ok (11 grade families)', rt.ok && rt.counts.rate_grid === 11, JSON.stringify(rt.counts));
+ck('staff counts: 82 people / 253 allocations / 2,357 actuals',
+  sf.counts.people === 82 && sf.counts.allocations === 253 && sf.counts.actuals === 2357, JSON.stringify(sf.counts));
+ck('staff hours total ~85,803h', Math.abs(sf.counts.total_hours - 85803) <= 1, String(sf.counts.total_hours));
+
+const dv = CORE.clockifyData(sf, m, rt, o.year);
+ck('delivery mix ties to the mapper categories to the hour',
+  near(dv.mix.total, sf.hoursByCategory.billable + sf.hoursByCategory.internal + sf.hoursByCategory.time_off, 0.01));
+ck('delivery mix is 64/24/11 (billable/internal/time off)', (() => {
+  const pct = (v) => Math.round((v / dv.mix.total) * 100);
+  return pct(dv.mix.billable) === 64 && pct(dv.mix.internal) === 24 && pct(dv.mix.timeOff) === 11;
+})(), Math.round((dv.mix.billable / dv.mix.total) * 100) + '/' + Math.round((dv.mix.internal / dv.mix.total) * 100) + '/' + Math.round((dv.mix.timeOff / dv.mix.total) * 100));
+ck('53 projects carry mapped hours; 82% of billable hours join a fee record',
+  dv.margins.length === 53 && dv.coverage.hoursMappedPct === 82,
+  dv.margins.length + ' projects, ' + dv.coverage.hoursMappedPct + '%');
+ck('10 projects cost more in delivery time than they earn',
+  dv.margins.filter((x) => x.marginPct !== null && x.marginPct < 0).length === 10,
+  String(dv.margins.filter((x) => x.marginPct !== null && x.marginPct < 0).length));
+ck('realised revenue per billable hour ~ $354',
+  Math.abs((dv.kpis.revenuePerBillableHour || 0) - 354) < 1, String(dv.kpis.revenuePerBillableHour));
+ck('margin identity holds on every project row',
+  dv.margins.every((x) => near(x.margin, x.revenue - x.cost, 0.01)));
+
+const t4 = CORE.tab4Data(rt, m, dv, o.year);
+ck('rates tab: 11 grades, realisation within (0,1), true profit is real-hours-backed',
+  t4.grades.length === 11 && t4.kpis.realisation > 0 && t4.kpis.realisation < 1
+  && t4.trueProfitSource && t4.trueProfitSource.real === true);
+ck('rates tab: true-profit rows reconcile to the delivery engine', (() => {
+  const sumH = t4.trueProfit.reduce((a, r) => a + r.hours, 0);
+  const allH = dv.margins.reduce((a, r) => a + r.hours, 0);
+  return sumH <= allH + 0.01 && t4.trueProfit.every((r) => near(r.profit, r.invoiced - r.cost, 0.01));
+})());
+
 console.log('');
 console.log(checks + ' checks, ' + (fails ? fails + ' FAILURES' : 'all passed'));
 if (m.notes.length) { console.log('mapper notes:'); m.notes.slice(0, 8).forEach((n) => console.log('  - ' + n)); }

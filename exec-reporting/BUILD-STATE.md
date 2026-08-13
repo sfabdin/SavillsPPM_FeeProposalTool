@@ -35,19 +35,35 @@ implementation. Never write to projects/rates/staff/studio from here.
   Browser-proven: hidden with no identity, visible for kyerou, hidden for
   bjosselson (tool admin), matching the store's data-visibility rule.
 
+## Done since (harness now 48/48)
+
+- Leaders tab: KPI row, scorecard (booked-vs-book bars, top clients on
+  hover, per-leader ageing), deal-ageing table, RF timeline from studio
+  baselines, industry/type DEMO panels. Staff-cost planner + margin
+  quadrant still marked port-in-progress.
+- Clients tab: KPIs (top client/top-5/HHI), pareto with cumulative
+  shares, sector donut + month stack (SEEDED CLASSIFICATION flags - the
+  curated sector edits lived in the database app), MoM movers, programme
+  drill (DEMO GROUPING), reported-vs-billed honest NOT AVAILABLE.
+- Delivery & Effort: full clockifyData port. Fixture-proven identical to
+  the app's validated findings: 85,803h / 64-24-11 mix / 53 mapped
+  projects / 82% billable hours joined / 10 negative-margin projects /
+  $354 per billable hour. Panels: time mix by month, capacity vs
+  pipeline, effort vs likelihood, true margin by project, client
+  economics, effort by person, coverage + reconciliation.
+- Rates: grade KPIs, floor-to-rack dumbbell with demo actual markers
+  (flagged), true-profit by client running PART-LIVE on the same
+  delivery engine. Box path pulls staff.json via UFC_Box.pullStaff();
+  rates arrive through the page-local RATES_CATALOG shim at boot.
+
 ## Next (in order)
 
-1. Leaders tab (scorecard, staff-cost grid manual inputs, margin quadrant,
-   RF timeline, aging/movement provenance states).
-2. Clients tab (concentration, programme drill, sector donut + by-month,
-   MoM movers).
-3. Rates tab (role-gated already by page gate; grid KPIs, dumbbell,
-   true-profit via staff hours when staff.json wired).
-4. Delivery & Effort tab (pullStaff(); time mix, true margin, plan vs
-   actual, effort by person; effort.ts port).
-5. Locations (map without Leaflet CDN - port bundled approach or degrade
-   to the table), Confidence (coverage index), Glossary, project box score.
-6. Client-side Excel/PDF exports; print pass; then PR to main.
+1. Locations (map without any CDN - vendored tiles impossible offline;
+   degrade honestly to region/city table with filters), Confidence
+   (coverage index), Glossary page, project box score drill.
+2. Client-side Excel/PDF exports; print pass.
+3. Update repo docs (Maintainers Runbook gains the module section);
+   then PR to main.
 
 ## Watchpoints
 
