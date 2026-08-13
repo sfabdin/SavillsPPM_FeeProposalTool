@@ -154,6 +154,30 @@
   table.ws td.s-reclass { border-bottom:3px solid var(--st-reclass); }
   table.ws td.s-fee     { border-bottom:3px solid var(--st-fee); }
 
+  /* ---- the vocabulary, said out loud ---- */
+  .glossary { display:flex; gap:0; flex-wrap:wrap; background:#fff; border:1px solid var(--hair-strong);
+              margin-bottom:16px; }
+  .glossary .gl { flex:1 1 200px; padding:11px 14px; border-right:1px solid var(--hair);
+                  font-family:var(--font-body); font-size:11px; line-height:1.5; color:var(--sav-steel); }
+  .glossary .gl b { font-family:var(--font-display); color:var(--sav-navy); display:block; font-size:11px;
+                    letter-spacing:.04em; margin-bottom:2px; }
+  .glossary .gl.strong { background:var(--sav-navy); color:#fff; }
+  .glossary .gl.strong b { color:var(--sav-yellow); }
+  .glossary .gl.eg { flex:1 1 100%; border-right:0; border-top:1px solid var(--hair);
+                     background:#eef6f7; color:var(--sav-navy); }
+  .glossary .gl.eg b { display:inline; color:var(--sav-navy); }
+  /* commentary cell */
+  .note-cell { min-width:280px; white-space:normal !important; vertical-align:top; }
+  .note-auto { font-family:var(--font-body); font-size:10.5px; color:var(--sav-steel); line-height:1.45; }
+  .note-edit { font-family:var(--font-body); font-size:11px; color:var(--sav-navy); line-height:1.45;
+               margin-top:4px; padding:4px 6px; border:1px dashed var(--hair-strong); min-height:20px; cursor:text; }
+  .note-edit:empty::before { content:attr(data-ph); color:#b3b8c2; font-style:italic; }
+  .note-edit:focus { outline:0; border-style:solid; border-color:var(--sav-navy); background:#fffdf2; }
+  .acc-earned-btn { font-family:var(--font-display); font-weight:700; font-size:9px; letter-spacing:.06em;
+        text-transform:uppercase; border:1px solid var(--st-accrued); background:#fdf6e6; color:#8a5a00;
+        padding:1px 6px; cursor:pointer; }
+  .acc-earned-btn:hover { background:var(--st-accrued); color:#fff; }
+
   /* ---- coverage: does every line in the book have a home on Projections ---- */
   .coverage { background:#fff; border:1px solid var(--hair-strong); padding:13px 16px; margin-bottom:16px; }
   .coverage.off { border-left:5px solid var(--sav-red); background:#fdeaea; }
@@ -424,6 +448,15 @@
   </div>
 
   <div class="coverage" id="coverage" hidden></div>
+
+  <div class="glossary">
+    <span class="gl"><b>Earned</b> what the fee tool says the month is worth — the staffing grid is tied to this month</span>
+    <span class="gl"><b>Accrued</b> earned but not yet invoiced — an accounting term for <em>when</em> revenue is realized</span>
+    <span class="gl"><b>Invoiced</b> an invoice went out — it can carry earlier accruals finally settling</span>
+    <span class="gl strong"><b>Realized revenue</b> = accrued + billed for that month's own work</span>
+    <span class="gl eg">Jan earns 45K and accrues it, due March · Feb the same · March earns 45K and 135K is invoiced.
+      March is <b>not</b> worth 135K — it is 90K of Jan and Feb going out plus 45K of its own. <b>Realized 45K.</b></span>
+  </div>
 
   <div class="kpis" id="kpis"></div>
 
