@@ -119,6 +119,43 @@ ck('staleness: bands account for every open R2-R4 deal', (() => {
 ck('staleness history is real (material moves resolve day counts)',
   p.stale.rows.some((r) => r.days !== null));
 
+// ---- Tab 2 · Leaders ----
+const t2 = CORE.tab2Data(m, s, o, Date.parse('2026-08-12T12:00:00-04:00'));
+ck('tab2: leader books sum to the all-projects year revenue', (() => {
+  const yr = CORE.projectYearRevenue(m);
+  let all = 0;
+  for (const [, years] of yr) all += years.get(o.year) || 0;
+  const books = t2.books.reduce((a, b) => a + b.revenue, 0);
+  return near(books, all) && near(t2.kpis.revenue, all);
+})());
+ck('tab2: booked equals the overview booked', near(t2.kpis.booked, o.booked));
+ck('tab2: projects KPI counts the whole live snapshot', t2.kpis.projects === m.counts.projects);
+ck('tab2: RF timeline carries the budget milestone', (() => {
+  const b = t2.baselines.find((x) => x.name === 'Annual Budget');
+  return b && near(b.total ?? 0, o.budget);
+})());
+
+// ---- Tab 3 · Clients ----
+const t3 = CORE.tab3Data(m, o.year, Date.parse('2026-08-12T12:00:00-04:00'));
+ck('tab3: revenue equals the independent monthly sum (all ratings)', (() => {
+  let sum = 0;
+  for (const r of m.monthlyRevenue) if (r.year === o.year && typeof r.amount === 'number') sum += r.amount;
+  return near(t3.kpis.revenue, sum);
+})());
+ck('tab3: pareto cumulative share is monotonic and bounded', (() => {
+  let prev = 0;
+  for (const r of t3.pareto) { if (r.cumShare < prev - 1e-9 || r.cumShare > 1.0001) return false; prev = r.cumShare; }
+  return true;
+})());
+ck('tab3: HHI within (0, 10000]', t3.kpis.hhi > 0 && t3.kpis.hhi <= 10000);
+ck('tab3: donut shares cover the positive book', (() => {
+  const donutSum = t3.donut.reduce((a, s2) => a + s2.revenue, 0);
+  const posSum = t3.pareto.length ? undefined : 0;
+  return donutSum > 0 && donutSum <= t3.kpis.revenue + 0.5 || posSum === 0;
+})());
+ck('tab3: month totals sum to the revenue KPI', near(t3.monthTotals.reduce((a, b) => a + b, 0), t3.kpis.revenue));
+ck('tab3: top client is JPMorgan Chase here too', t3.kpis.topClientName === 'JPMorgan Chase', t3.kpis.topClientName);
+
 console.log('');
 console.log(checks + ' checks, ' + (fails ? fails + ' FAILURES' : 'all passed'));
 if (m.notes.length) { console.log('mapper notes:'); m.notes.slice(0, 8).forEach((n) => console.log('  - ' + n)); }

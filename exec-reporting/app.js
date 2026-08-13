@@ -103,6 +103,7 @@
   }
 
   function computeAll(asOf) {
+    DATA.tab2 = null; DATA.tab3 = null;
     if (DATA.studioRaw && DATA.studioRaw.schemaVersion == null) DATA.studioRaw = Object.assign({ schemaVersion: 1 }, DATA.studioRaw);
     DATA.mapped = CORE.mapProjects(DATA.projectsRaw);
     DATA.studio = CORE.mapStudio(DATA.studioRaw);
@@ -162,9 +163,14 @@
   function renderTab() {
     const host = $('#exec-tab');
     if (activeTab === 'pipeline') host.innerHTML = tabPipeline();
+    else if (activeTab === 'leaders') host.innerHTML = tabLeaders();
+    else if (activeTab === 'clients') host.innerHTML = tabClients();
     else host.innerHTML = tabStub(activeTab);
     wireTab(host);
   }
+
+  const tab2 = () => (DATA.tab2 || (DATA.tab2 = CORE.tab2Data(DATA.mapped, DATA.studio.ok ? DATA.studio : { baselines: [], baselineLines: [], scenarios: [] }, DATA.overview)));
+  const tab3 = () => (DATA.tab3 || (DATA.tab3 = CORE.tab3Data(DATA.mapped, DATA.overview.year)));
 
   function tabStub(key) {
     const t = TABS.find((x) => x.key === key);
@@ -472,6 +478,188 @@
     });
     s += '</svg>';
     return s;
+  }
+
+  /* ---------------- TAB 2 · Leaders ---------------- */
+  function tabLeaders() {
+    const d = tab2();
+    const kpis = '<div class="kpirow">' +
+      kpi(d.year + ' revenue (all ratings)', fm(d.kpis.revenue), 'every project with ' + d.year + ' revenue', 'teal') +
+      kpi('Booked (R1)', fm(d.kpis.booked), 'firm revenue', '') +
+      kpi('Projects', String(d.kpis.projects), 'whole snapshot', '') +
+      kpi('Revenue leaders', String(d.kpis.leaders), 'with ' + d.year + ' revenue', '') +
+      kpi('Clients', String(d.kpis.clients), 'with positive revenue', 'navy') +
+      '</div>';
+
+    const maxRev = Math.max.apply(null, d.books.map((b) => b.revenue).concat([1]));
+    const bookRows = d.books.map((b) => {
+      const w = Math.max((b.revenue / maxRev) * 100, 0);
+      const bw2 = b.revenue > 0 ? Math.max((b.booked / maxRev) * 100, 0) : 0;
+      const clientTip = b.clients.slice(0, 5).map((c) => c.name + ': ' + fm(c.revenue)).join(' · ');
+      const aging = b.aging.amber + b.aging.red > 0
+        ? '<span class="tone-amber">' + (b.aging.amber + b.aging.red) + ' ageing · ' + fm(b.aging.amberRedValue) + '</span>'
+        : '<span class="tone-good">on track</span>';
+      return '<div style="display:grid;grid-template-columns:150px 1fr 110px 150px;gap:10px;align-items:center;margin:6px 0" title="' + esc(clientTip) + '">' +
+        '<div style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + '</div>' +
+        '<div style="position:relative;height:16px;border:1px solid var(--hairline);background:#fff">' +
+        '<div class="hatch" style="position:absolute;top:0;bottom:0;left:0;width:' + w + '%;background:rgba(31,138,76,.15)"></div>' +
+        '<div style="position:absolute;top:0;bottom:0;left:0;width:' + bw2 + '%;background:var(--r1)"></div></div>' +
+        '<div class="num" style="font-size:12px;font-weight:700;text-align:right">' + fm(b.revenue) + '</div>' +
+        '<div style="font-size:11px;text-align:right">' + aging + '</div></div>';
+    }).join('');
+    const scorecard = panel('Consolidated leader scorecard', { kind: 'live', text: 'LIVE' }, esc(d.scorecardMsg),
+      'What it is: each revenue leader\'s ' + d.year + ' book - solid green is booked (R1), hatched is the full all-ratings book, with their open-pipeline ageing state on the right. Hover a row for the leader\'s top clients. Why we show it: it shows who is carrying firm revenue versus speculative revenue, and whose open deals are going quiet.',
+      bookRows);
+
+    const groupTable = (rows, label) =>
+      '<table class="vtable"><thead><tr><th>' + label + '</th><th class="num">Revenue</th><th class="num">Booked (R1)</th><th class="num">Projects</th></tr></thead><tbody>' +
+      rows.map((g) => '<tr><td>' + esc(g.key) + '</td><td class="num">' + fm(g.revenue) + '</td><td class="num">' + fm(g.booked) + '</td><td class="num">' + g.projects + '</td></tr>').join('') +
+      '</tbody></table>';
+    const industryPanel = panel('Revenue by industry', { kind: 'demo', text: 'DEMO CLASSIFICATION' }, '',
+      'Industry tags exist on only a handful of source records, so this grouping runs on the app-side demo map until the intake fields land. The dollars are real; the classification is illustrative.',
+      groupTable(d.byIndustry, 'Industry'));
+    const typePanel = panel('Revenue by project type', { kind: 'demo', text: 'DEMO CLASSIFICATION' }, '',
+      'Same basis as the industry panel: real dollars, demo classification until tagged at intake.',
+      groupTable(d.byType, 'Project type'));
+
+    const rf = d.baselines.map((b) => {
+      const filled = b.total != null;
+      return '<div style="text-align:center;flex:1">' +
+        '<div style="width:16px;height:16px;border-radius:50%;margin:0 auto 6px;border:2px solid ' + (filled ? 'var(--teal)' : 'var(--mut)') + ';background:' + (filled ? 'var(--teal)' : '#fff') + '"></div>' +
+        '<div style="font-size:11px;font-weight:700">' + esc(b.name) + '</div>' +
+        '<div style="font-size:12px" class="' + (filled ? '' : 'tone-neutral') + '">' + (filled ? fm(b.total) : 'awaited') + '</div></div>';
+    }).join('');
+    const rfPanel = panel('Budget and reforecast timeline', { kind: 'live', text: 'LIVE' }, '',
+      'What it is: the frozen annual budget and the reforecast milestones as they are submitted through the year. Open circles are milestones not yet submitted. Why we show it: the projection is always read against a named baseline, never a moving one.',
+      '<div style="display:flex;align-items:flex-start;gap:8px;padding:12px 4px;border-top:2px solid var(--hairline)">' + rf + '</div>');
+
+    const agingPanel = panel('Deal ageing by leader', { kind: 'live', text: 'LIVE' }, esc(d.agingMsg),
+      'What it is: each leader\'s open R2-R4 deals graded by time since the last material move (rating, roster, phases, timing, fee terms). Why we show it: stalling deals surface to their owner automatically instead of waiting to be chased.',
+      '<table class="vtable"><thead><tr><th>Leader</th><th class="num">0-30 on track</th><th class="num">30-90 ageing</th><th class="num">90+ stale</th><th class="num">Value ageing 30+</th></tr></thead><tbody>' +
+      d.books.filter((b) => b.aging.green + b.aging.amber + b.aging.red > 0).map((b) =>
+        '<tr><td>' + esc(b.name) + '</td><td class="num tone-good">' + b.aging.green + '</td>' +
+        '<td class="num' + (b.aging.amber ? ' tone-amber' : '') + '">' + b.aging.amber + '</td>' +
+        '<td class="num' + (b.aging.red ? ' tone-bad' : '') + '">' + b.aging.red + '</td>' +
+        '<td class="num">' + fm(b.aging.amberRedValue) + '</td></tr>').join('') +
+      '</tbody></table>');
+
+    const pending = panel('Staff-cost planner and margin quadrant', { kind: 'demo', text: 'PORT IN PROGRESS' }, '',
+      'The manual staff-cost grid and the margin quadrant from the Part 2 app land in this branch before review. Nothing else on this tab depends on them.', '');
+
+    return kpis + scorecard + agingPanel + rfPanel + industryPanel + typePanel + pending;
+  }
+
+  /* ---------------- TAB 3 · Clients ---------------- */
+  const SECTOR_COLOURS = {
+    'Banking & Capital Markets': '#1d4ed8', 'Insurance': '#0891b2', 'Asset & Wealth Management': '#0d9488',
+    'Legal': '#7c3aed', 'Professional Services & Consulting': '#c026d3', 'Technology & Software': '#2563eb',
+    'Telecommunications': '#0ea5e9', 'Media & Entertainment': '#db2777', 'Aerospace & Defense': '#475569',
+    'Travel & Transportation': '#f59e0b', 'Energy & Utilities': '#ca8a04', 'Healthcare & Life Sciences': '#16a34a',
+    'Consumer & Retail': '#ea580c', 'Real Estate': '#9a3412', 'Public Sector & Education': '#4f46e5',
+    'Nonprofit & Associations': '#65a30d', 'Unclassified': '#9ca3af', 'Other': '#9ca3af', 'Excluded': '#d1d5db',
+  };
+  const sectorColour = (s) => SECTOR_COLOURS[s] || '#9ca3af';
+
+  function tabClients() {
+    const d = tab3();
+    const kpis = '<div class="kpirow">' +
+      kpi('Top client', d.kpis.topClientPct + '%', esc(d.kpis.topClientName), 'navy') +
+      kpi('Top 5 share', d.kpis.top5Pct + '%', 'of all-ratings revenue', '') +
+      kpi('Concentration (HHI)', String(d.kpis.hhi), d.kpis.hhi < 1500 ? 'low' : d.kpis.hhi < 2500 ? 'moderate' : 'high', '') +
+      kpi('Clients', String(d.kpis.clients), 'with positive ' + d.year + ' revenue', '') +
+      kpi(d.year + ' revenue (all ratings)', fm(d.kpis.revenue), 'imported monthly grain', 'teal') +
+      '</div>';
+
+    const maxP = Math.max.apply(null, d.pareto.map((r) => r.revenue).concat([1]));
+    const paretoRows = d.pareto.map((r) =>
+      '<div style="display:grid;grid-template-columns:170px 1fr 90px 70px;gap:10px;align-items:center;margin:5px 0">' +
+      '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.name) + '">' + esc(r.name) + '</div>' +
+      '<div style="position:relative;height:14px;border:1px solid var(--hairline)"><div style="position:absolute;inset:0;width:' + ((r.revenue / maxP) * 100) + '%;background:var(--teal)"></div></div>' +
+      '<div class="num" style="font-size:12px;font-weight:700;text-align:right">' + fm(r.revenue) + '</div>' +
+      '<div class="num" style="font-size:11px;color:var(--mut);text-align:right" title="cumulative share of revenue">' + Math.round(r.cumShare * 100) + '% cum</div></div>').join('');
+    const paretoPanel = panel('Client concentration - top 10', { kind: 'live', text: 'LIVE' }, esc(d.paretoMsg),
+      'What it is: the ten largest clients by ' + d.year + ' revenue (all ratings), each with its running cumulative share of the book. Why we show it: concentration is the standing leadership question, and the cumulative column answers "how few clients is the year really standing on".',
+      paretoRows);
+
+    // Sector donut
+    let angle = -Math.PI / 2;
+    const cx = 105, cy = 105, R = 88, r0 = 52;
+    const slices = d.donut.map((s) => {
+      const sweep = s.share * 2 * Math.PI;
+      const a0 = angle, a1 = angle + sweep;
+      angle = a1;
+      const big = sweep > Math.PI ? 1 : 0;
+      const p = (a, rad) => (cx + rad * Math.cos(a)).toFixed(2) + ' ' + (cy + rad * Math.sin(a)).toFixed(2);
+      return '<path d="M ' + p(a0, R) + ' A ' + R + ' ' + R + ' 0 ' + big + ' 1 ' + p(a1, R) + ' L ' + p(a1, r0) + ' A ' + r0 + ' ' + r0 + ' 0 ' + big + ' 0 ' + p(a0, r0) + ' Z" fill="' + sectorColour(s.sector) + '"><title>' + esc(s.sector + ': ' + fm(s.revenue) + ' (' + Math.round(s.share * 100) + '%) · ' + (s.topClients.length ? 'top: ' + s.topClients.join(', ') : '')) + '</title></path>';
+    }).join('');
+    const legend = d.donut.slice(0, 8).map((s) =>
+      '<div style="display:flex;gap:8px;align-items:center;font-size:11.5px;padding:2px 0">' +
+      '<span style="width:10px;height:10px;background:' + sectorColour(s.sector) + ';flex:none"></span>' +
+      '<span style="flex:1">' + esc(s.sector) + '</span>' +
+      '<span style="color:var(--mut)">' + Math.round(s.share * 100) + '%</span>' +
+      '<span style="font-weight:700;min-width:70px;text-align:right">' + fm(s.revenue) + '</span></div>').join('');
+    const donutPanel = panel('Revenue by sector', { kind: 'demo', text: 'SEEDED CLASSIFICATION' }, esc(d.sectorMsg),
+      'What it is: ' + d.year + ' revenue by client sector. The classification is the app-side seed map (keyword based); the curated corrections made in the database app\'s Client Admin are not in the shared files, so treat slices as directional. Hover a slice for its top clients.',
+      '<div style="display:grid;grid-template-columns:220px 1fr;gap:20px;align-items:center">' +
+      '<svg viewBox="0 0 210 210" width="210" role="img" aria-label="Revenue by sector">' + slices + '</svg>' +
+      '<div>' + legend + '</div></div>');
+
+    // Sector by month stack
+    const stackSectors = d.topSectors.concat(d.sectorMonths.some((x) => x.sector === 'Other') ? ['Other'] : []);
+    const byMonthSector = new Map();
+    for (const x of d.sectorMonths) byMonthSector.set(x.sector + '|' + x.month, x.revenue);
+    const maxMonth = Math.max.apply(null, d.monthTotals.concat([1]));
+    const W = 940, H = 220, L = 58, Rr = 16, T = 16, B = 30;
+    const plotW = W - L - Rr, plotH = H - T - B;
+    const y = (v) => T + plotH - (v / (maxMonth * 1.12)) * plotH;
+    const bw = (plotW / 12) * 0.58;
+    let stack = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Sector by month">';
+    for (let g = 0; g <= 4; g++) {
+      const gv = (maxMonth * 1.12 * g) / 4;
+      stack += '<line x1="' + L + '" y1="' + y(gv) + '" x2="' + (W - Rr) + '" y2="' + y(gv) + '" stroke="rgba(37,39,58,.10)"/>' +
+        '<text x="' + (L - 6) + '" y="' + (y(gv) + 3.5) + '" text-anchor="end" font-size="10" fill="#5f6a78">' + fm(gv) + '</text>';
+    }
+    for (let mth = 1; mth <= 12; mth++) {
+      const bx = L + ((mth - 0.5) / 12) * plotW - bw / 2;
+      let base = 0;
+      for (const s of stackSectors) {
+        const v = byMonthSector.get(s + '|' + mth) || 0;
+        if (v <= 0) continue;
+        const isPast = mth <= d.lastActual;
+        stack += '<rect x="' + bx + '" y="' + y(base + v) + '" width="' + bw + '" height="' + Math.max(y(base) - y(base + v), 0.5) + '" fill="' + sectorColour(s) + '"' + (isPast ? '' : ' opacity="0.55"') + '><title>' + esc(MON[mth - 1] + ' ' + s + ': ' + fm(v) + ' (' + (d.monthTotals[mth - 1] > 0 ? Math.round((v / d.monthTotals[mth - 1]) * 100) : 0) + '% of month)') + '</title></rect>';
+        base += v;
+      }
+      if (d.monthTotals[mth - 1] > 0) stack += '<text x="' + (bx + bw / 2) + '" y="' + (y(d.monthTotals[mth - 1]) - 4) + '" text-anchor="middle" font-size="9" font-weight="700" fill="#25273A">' + fm(d.monthTotals[mth - 1]) + '</text>';
+      stack += '<text x="' + (bx + bw / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#5f6a78">' + MON[mth - 1] + '</text>';
+    }
+    stack += '</svg>';
+    const stackPanel = panel('Sector mix, month by month', { kind: 'demo', text: 'SEEDED CLASSIFICATION' }, '',
+      'What it is: each month\'s revenue stacked by sector (top six sectors, rest folded into Other). Months after ' + MON[d.lastActual - 1] + ' render lighter - they are projection, not yet firm. Hover a segment for its share of the month.',
+      stack);
+
+    // Movers
+    const moverTable = (rows, label) =>
+      '<div><div style="font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:4px 0">' + label + '</div>' +
+      '<table class="vtable"><thead><tr><th>Client</th><th class="num">' + esc(d.movers.prevMonth) + '</th><th class="num">' + esc(d.movers.month) + '</th><th class="num">Change</th></tr></thead><tbody>' +
+      rows.map((r) => '<tr><td>' + esc(r.name) + '</td><td class="num">' + fm(r.prev) + '</td><td class="num">' + fm(r.cur) + '</td>' +
+        '<td class="num ' + (r.delta >= 0 ? 'tone-good' : 'tone-bad') + '">' + (r.delta >= 0 ? '+' : '-') + fm(Math.abs(r.delta)) + '</td></tr>').join('') +
+      '</tbody></table></div>';
+    const moversPanel = panel('Month-on-month movers - ' + esc(d.movers.month) + ' vs ' + esc(d.movers.prevMonth), { kind: 'live', text: 'LIVE' }, '',
+      'What it is: the clients whose month went up or down the most between the two latest reporting months. Why we show it: the month-on-month story names who moved, not just that the total moved.',
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">' + moverTable(d.movers.gainers, 'Largest gains') + moverTable(d.movers.drops, 'Largest drops') + '</div>');
+
+    // Programme drill
+    const progRows = d.programmes.map((pr) =>
+      '<details style="border-bottom:1px solid var(--hairline);padding:5px 0"><summary style="cursor:pointer;font-size:13px"><b>' + esc(pr.client) + '</b> · ' + esc(pr.programme) + ' <span style="float:right;font-weight:700">' + fm(pr.revenue) + '</span></summary>' +
+      '<table class="vtable" style="margin:6px 0 4px">' + pr.projects.map((pj) => '<tr><td style="font-size:12px">' + esc(pj.name) + '</td><td class="num" style="font-size:12px">' + fm(pj.revenue) + '</td></tr>').join('') + '</table></details>').join('');
+    const progPanel = panel('Programme drill-down - top clients', { kind: 'demo', text: 'DEMO GROUPING' }, '',
+      'What it is: the top clients\' revenue grouped into project families by name matching. The live rule becomes the programme name and shared Salesforce number once captured at intake; name matching is the documented placeholder. Expand a row for the projects inside it.',
+      progRows);
+
+    const rvb = panel('Reported vs billed', { kind: 'demo', text: 'NOT AVAILABLE' }, '',
+      '', '<div class="note" style="border-left:3px solid var(--bad)">Billed-versus-recognised cannot be shown from the shared data files: they carry projected and recognised revenue, not invoicing. This panel returns when a billing feed exists. Shown honestly rather than approximated.</div>');
+
+    return kpis + paretoPanel + donutPanel + stackPanel + moversPanel + progPanel + rvb;
   }
 
   /* ---------------- per-tab wiring ---------------- */

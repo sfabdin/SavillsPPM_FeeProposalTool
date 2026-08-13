@@ -776,6 +776,284 @@
     };
   }
 
+  /* ============================================================
+     SECTORS / PROGRAMMES / DEMO CLASSIFICATIONS (verbatim ports)
+     ============================================================ */
+  const SECTOR_KEYWORDS = [
+    ['jpmorgan', 'Banking & Capital Markets'], ['jpmc', 'Banking & Capital Markets'], ['lazard', 'Banking & Capital Markets'],
+    ['greenberg', 'Legal'], ['baker mckenzie', 'Legal'], ['hogan lovells', 'Legal'], ['withers', 'Legal'], ['keller', 'Legal'], ['bradley arant', 'Legal'],
+    ['jetzero', 'Aerospace & Defense'], ['modern technology', 'Aerospace & Defense'], ['mtsi', 'Aerospace & Defense'],
+    ['tiaa', 'Insurance'], ['willis', 'Insurance'], ['lancashire', 'Insurance'], ['athene', 'Insurance'],
+    ['fanatics', 'Consumer & Retail'], ['children', 'Consumer & Retail'],
+    ['moffitt', 'Healthcare & Life Sciences'], ['elevance', 'Healthcare & Life Sciences'],
+    ['convene', 'Real Estate'], ['hudson square', 'Real Estate'], ['foxy', 'Real Estate'],
+    ['exxon', 'Energy & Utilities'], ['exelon', 'Energy & Utilities'], ['murphy oil', 'Energy & Utilities'],
+    ['miami-dade', 'Public Sector & Education'], ['miami_dade', 'Public Sector & Education'], ['state of florida', 'Public Sector & Education'],
+    ['nyu', 'Public Sector & Education'], ['pennsylvania', 'Public Sector & Education'], ['collegiate', 'Public Sector & Education'],
+    ['accenture', 'Professional Services & Consulting'], ['comcast', 'Telecommunications'],
+    ['disney', 'Media & Entertainment'], ['nba', 'Media & Entertainment'],
+    ['carlyle', 'Asset & Wealth Management'], ['earned wealth', 'Asset & Wealth Management'], ['blackstone', 'Asset & Wealth Management'],
+    ['collibra', 'Technology & Software'], ['expedia', 'Travel & Transportation'], ['british airways', 'Travel & Transportation'],
+    ['community church', 'Nonprofit & Associations'], ['year up', 'Nonprofit & Associations'], ['selfhelp', 'Nonprofit & Associations'], ['seia', 'Nonprofit & Associations'],
+  ];
+  function sectorOf(clientName) {
+    const s = String(clientName == null ? '' : clientName).toLowerCase();
+    for (const [needle, sector] of SECTOR_KEYWORDS) if (s.indexOf(needle) !== -1) return sector;
+    return 'Unclassified';
+  }
+
+  const PROGRAMME_OVERRIDES = [
+    ['small works', 'Small Works'], ['midtown', 'Midtown Migration'], ['redwood city', 'Redwood City'],
+    ['global pmo', 'Global PMO'], ['na pmo', 'NA PMO'], ['na pm', 'NA PM Projects'], ['383', '383 Madison'],
+    ['park ave', 'Park Avenue'], ['100 church', '100 Church St'], ['stenton', 'Stenton'],
+    ['carlyle', 'Carlyle Expansion'], ['alexandria', 'Alexandria'], ['relocation', 'Relocation'],
+    ['fit-out', 'Fit-out'], ['fitout', 'Fit-out'],
+  ];
+  const _alnum = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  function programmeOf(name) {
+    const s2 = _alnum(name == null ? '' : name);
+    for (const [key, label] of PROGRAMME_OVERRIDES) if (s2.indexOf(_alnum(key)) !== -1) return label;
+    let base = String(name == null ? '' : name).replace(/\(.*?\)/g, ' ');
+    base = base.replace(/\s*[-:].*$/, '');
+    base = base.replace(/\b(rev|phase|ext|extension|sow|po|wo|amendment|co|20\d\d|#?\d+)\b.*/i, '');
+    base = base.replace(/\s+/g, ' ').trim().replace(/^[\s\-,&]+|[\s\-,&]+$/g, '');
+    return base.slice(0, 30) || String(name == null ? 'Other' : name).trim().slice(0, 30) || 'Other';
+  }
+
+  const DEMO_INDUSTRY = {
+    'JPMC': 'Financial Services', 'JPMorgan Chase': 'Financial Services', 'Lazard': 'Financial Services',
+    'TIAA': 'Financial Services', 'Willis Towers Watson': 'Financial Services',
+    'Greenberg Traurig': 'Legal', 'Fanatics': 'Retail / Consumer', 'JetZero': 'Aviation / Industrial',
+    'ExxonMobil': 'Energy', 'Comcast': 'Media / Telecom', 'Disney': 'Media / Telecom',
+    'Convene': 'Real Estate', 'Miami-Dade County': 'Public Sector', 'Collegiate School': 'Education',
+    'Modern Technology Solutions': 'Technology',
+  };
+  const DEMO_TYPE = {
+    'JPMC': 'Workplace Strategy', 'JPMorgan Chase': 'Workplace Strategy', 'Fanatics': 'Capital Projects',
+    'JetZero': 'Relocation & Migration', 'Greenberg Traurig': 'Lease Advisory',
+    'Convene': 'Workplace Strategy', 'Lazard': 'Workplace Strategy', 'Disney': 'Capital Projects',
+    'ExxonMobil': 'Project & Dev Mgmt',
+  };
+  const demoIndustryOf = (c) => DEMO_INDUSTRY[c] || 'Other / untagged';
+  const demoProjectTypeOf = (c) => DEMO_TYPE[c] || 'Project & Dev Mgmt';
+
+  /* ============================================================
+     TAB 2 · LEADERS (port of lib/queries/leaders-tab.ts)
+     ============================================================ */
+  function tab2Data(mapped, studioMapped, overview, nowMs) {
+    const year = overview.year;
+    const now = new Date(nowMs != null ? nowMs : Date.now());
+    const yearRev = projectYearRevenue(mapped);
+
+    const lastMove = new Map();
+    for (const c of mapped.activityChanges) {
+      if (!c.material || !c.changed_at) continue;
+      const cur = lastMove.get(c.project_source_id);
+      if (!cur || c.changed_at > cur) lastMove.set(c.project_source_id, c.changed_at);
+    }
+
+    const byLeader = new Map();
+    const byIndustry = new Map();
+    const byType = new Map();
+    const allClients = new Set();
+    let revenue = 0, booked = 0, withRevenueRows = 0;
+
+    for (const p of mapped.projects) {
+      const years = yearRev.get(p.source_id);
+      if (!years || !years.has(year)) continue;      // parity: rows with year revenue
+      const rev = years.get(year) || 0;
+      const display = p.raw_client ? canonicalNameFor(p.raw_client) : UNNAMED_CLIENT;
+      withRevenueRows += 1;
+      revenue += rev;
+      if (p.rating === 1) booked += rev;
+      if (rev > 0) allClients.add(display);
+
+      const lid = p.leader_id || 'unassigned';
+      let book = byLeader.get(lid);
+      if (!book) {
+        book = { id: lid, name: p.leader_id ? leaderDisplay(p.leader_id) : 'Unassigned',
+          revenue: 0, booked: 0, projects: 0, clients: [],
+          aging: { green: 0, amber: 0, red: 0, amberRedValue: 0, tracked: false } };
+        byLeader.set(lid, book);
+      }
+      book.revenue += rev;
+      book.projects += 1;
+      if (p.rating === 1) book.booked += rev;
+      const cl = book.clients.find((c) => c.name === display);
+      if (cl) cl.revenue += rev; else book.clients.push({ name: display, revenue: rev });
+
+      if (p.rating != null && p.rating >= 2 && p.rating <= 4) {
+        const moved = lastMove.get(p.source_id);
+        const days = moved ? Math.floor((now.getTime() - new Date(moved).getTime()) / 86400000) : 0;
+        if (moved) book.aging.tracked = true;
+        if (days >= 90) { book.aging.red += 1; book.aging.amberRedValue += rev; }
+        else if (days >= 30) { book.aging.amber += 1; book.aging.amberRedValue += rev; }
+        else book.aging.green += 1;
+      }
+
+      for (const [map, key] of [[byIndustry, demoIndustryOf(display)], [byType, demoProjectTypeOf(display)]]) {
+        const g = map.get(key) || { key, revenue: 0, booked: 0, projects: 0 };
+        g.revenue += rev; g.projects += 1;
+        if (p.rating === 1) g.booked += rev;
+        map.set(key, g);
+      }
+    }
+
+    const books = [...byLeader.values()].sort((a, b) => b.revenue - a.revenue);
+    for (const b of books) b.clients.sort((x, y) => y.revenue - x.revenue);
+
+    const top = books[0];
+    const top3 = books.slice(0, 3).reduce((a, b) => a + b.revenue, 0);
+    const scorecardMsg = top
+      ? top.name + ' leads with ' + Math.round((top.revenue / revenue) * 100) + '% of ' + year + ' revenue - the top three leaders hold ' + Math.round((top3 / revenue) * 100) + '% between them.'
+      : 'No leader revenue yet.';
+
+    const anyTracked = books.some((b) => b.aging.tracked);
+    const agingValue = books.reduce((a, b) => a + b.aging.amberRedValue, 0);
+    const agingMsg = anyTracked
+      ? fmtMoney(agingValue) + ' of open pipeline sits in deals ageing 30+ days - surfaced automatically to the owning leader.'
+      : 'No rating or value changes recorded yet - every leader\'s open pipeline reads on track today.';
+
+    // RF timeline off the studio baselines: budget + reforecasts by kind/name.
+    const blByName = new Map(studioMapped.baselines.map((b) => [String(b.name), b.total == null ? null : Number(b.total)]));
+    const kindOrder = ['Annual Budget', 'RF1', 'RF2', 'RF3 / Final'];
+    const baselines = kindOrder.map((name) => ({
+      name,
+      total: blByName.has(name === 'Annual Budget' ? '2026 Budget' : name)
+        ? blByName.get(name === 'Annual Budget' ? '2026 Budget' : name)
+        : null,
+    }));
+
+    return {
+      year,
+      kpis: { revenue, booked, projects: mapped.projects.length, leaders: books.filter((b) => b.revenue > 0 && b.id !== 'unassigned').length, clients: allClients.size },
+      withRevenueRows,
+      books, scorecardMsg,
+      byIndustry: [...byIndustry.values()].sort((a, b) => b.revenue - a.revenue),
+      byType: [...byType.values()].sort((a, b) => b.revenue - a.revenue),
+      baselines, agingMsg,
+      snapshots: mapped.flashSnapshots.length,
+    };
+  }
+
+  /* ============================================================
+     TAB 3 · CLIENTS (port of lib/queries/clients-tab.ts)
+     Revenue = ALL ratings, off the imported monthly grain.
+     ============================================================ */
+  function tab3Data(mapped, year, nowMs) {
+    const projById = new Map(mapped.projects.map((p) => [p.source_id, {
+      name: p.name,
+      client: p.raw_client ? canonicalNameFor(p.raw_client) : UNNAMED_CLIENT,
+    }]));
+    for (const v of projById.values()) v.sector = sectorOf(v.client);
+
+    const byClient = new Map();
+    const byClientMonth = new Map();
+    const bySectorMonth = new Map();
+    const byClientSector = new Map();
+    const byProgramme = new Map();
+    const monthTotals = Array(12).fill(0);
+    let total = 0;
+
+    for (const r of mapped.monthlyRevenue) {
+      if (r.year !== year) continue;
+      const amt = typeof r.amount === 'number' ? r.amount : 0;
+      if (!amt) continue;
+      const p = projById.get(r.project_source_id);
+      if (!p) continue;
+      total += amt;
+      monthTotals[r.month - 1] += amt;
+      byClient.set(p.client, (byClient.get(p.client) || 0) + amt);
+      byClientSector.set(p.client, p.sector);
+      if (!byClientMonth.has(p.client)) byClientMonth.set(p.client, Array(12).fill(0));
+      byClientMonth.get(p.client)[r.month - 1] += amt;
+      if (!bySectorMonth.has(p.sector)) bySectorMonth.set(p.sector, Array(12).fill(0));
+      bySectorMonth.get(p.sector)[r.month - 1] += amt;
+      if (!byProgramme.has(p.client)) byProgramme.set(p.client, new Map());
+      const progs = byProgramme.get(p.client);
+      const prog = programmeOf(p.name);
+      if (!progs.has(prog)) progs.set(prog, new Map());
+      const projMap = progs.get(prog);
+      projMap.set(p.name, (projMap.get(p.name) || 0) + amt);
+    }
+
+    const ranked = [...byClient.entries()].filter((e) => e[1] > 0).sort((a, b) => b[1] - a[1]);
+    const posTotal = ranked.reduce((a, e) => a + e[1], 0);
+    let cum = 0;
+    const pareto = ranked.slice(0, 10).map(([name, revenue]) => {
+      cum += revenue;
+      return { name, revenue, share: revenue / posTotal, cumShare: cum / posTotal };
+    });
+    const top5Pct = Math.round((ranked.slice(0, 5).reduce((a, e) => a + e[1], 0) / posTotal) * 100);
+    const hhi = Math.round(ranked.reduce((a, e) => a + Math.pow(e[1] / posTotal, 2), 0) * 10000);
+    const hhiBand = hhi < 1500 ? 'low' : hhi < 2500 ? 'moderate' : 'high';
+    const paretoMsg = 'The top 5 clients carry ' + top5Pct + '% of revenue - concentration is ' + hhiBand + ' (HHI ' + hhi + ').';
+
+    const sectorTotals = [...bySectorMonth.entries()]
+      .map(([sector, months]) => ({ sector, revenue: months.reduce((a, b) => a + b, 0) }))
+      .filter((s) => s.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+    const topSectors = sectorTotals.slice(0, 6).map((s) => s.sector);
+    const donut = sectorTotals.map((s) => ({
+      sector: s.sector, revenue: s.revenue, share: s.revenue / total,
+      topClients: ranked.filter((e) => byClientSector.get(e[0]) === s.sector).slice(0, 5).map((e) => e[0]),
+    }));
+    const sTop = donut[0];
+    const top3 = Math.round(donut.slice(0, 3).reduce((a, s) => a + s.share, 0) * 100);
+    const sectorMsg = sTop
+      ? sTop.sector + ' leads at ' + Math.round(sTop.share * 100) + '% of revenue; the top three sectors hold ' + top3 + '%.'
+      : 'No sector revenue yet.';
+
+    const smAgg = new Map();
+    for (const [sector, months] of bySectorMonth) {
+      const key = topSectors.indexOf(sector) !== -1 ? sector : 'Other';
+      months.forEach((v, i) => {
+        if (v === 0) return;
+        const k = key + '|' + (i + 1);
+        const cur = smAgg.get(k);
+        if (cur) cur.revenue += v;
+        else smAgg.set(k, { sector: key, month: i + 1, revenue: v });
+      });
+    }
+
+    const now = new Date(nowMs != null ? nowMs : Date.now());
+    const lastActual = now.getFullYear() === year ? Math.max(Math.min(now.getMonth(), 12), 2) : 12;
+    const movers = [...byClientMonth.entries()].map(([name, months]) => ({
+      name, prev: months[lastActual - 2], cur: months[lastActual - 1],
+      delta: months[lastActual - 1] - months[lastActual - 2],
+    })).filter((mv) => mv.delta !== 0);
+    movers.sort((a, b) => b.delta - a.delta);
+
+    const programmes = [];
+    for (const [client] of ranked.slice(0, 8)) {
+      const progs = byProgramme.get(client);
+      if (!progs) continue;
+      for (const [programme, projMap] of progs) {
+        const rows = [...projMap.entries()].map(([name, revenue]) => ({ name, revenue })).sort((a, b) => b.revenue - a.revenue);
+        const revenue = rows.reduce((a, r) => a + r.revenue, 0);
+        if (revenue > 0) programmes.push({ client, programme, revenue, projects: rows });
+      }
+    }
+    programmes.sort((a, b) => b.revenue - a.revenue);
+
+    return {
+      year,
+      kpis: {
+        topClientPct: Math.round((pareto[0] ? pareto[0].share : 0) * 100),
+        topClientName: pareto[0] ? pareto[0].name : '-',
+        top5Pct, hhi, clients: ranked.length, revenue: total,
+      },
+      pareto, paretoMsg, donut, sectorMsg,
+      sectorMonths: [...smAgg.values()], monthTotals, lastActual, topSectors,
+      movers: {
+        month: MON[lastActual - 1], prevMonth: MON[lastActual - 2],
+        gainers: movers.slice(0, 5),
+        drops: movers.slice(-5).reverse(),
+      },
+      programmes: programmes.slice(0, 14),
+    };
+  }
+
   /* ---------------- public surface ---------------- */
   const CORE = {
     RATING_WEIGHTS, RATING_LABELS, BUDGET_RATINGS, isBudgetRating, weightFor, ratingFromStatus,
@@ -786,6 +1064,7 @@
     KNOWN_SCHEMA_VERSION, mapProjects, mapStudio,
     projectYearRevenue, budgetBaseline, pipelineOverview,
     UNNAMED_CLIENT, canonicalNameFor, resolvedMonthly, tab1Panels, MON,
+    sectorOf, programmeOf, demoIndustryOf, demoProjectTypeOf, tab2Data, tab3Data,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = CORE;
