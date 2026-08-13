@@ -300,6 +300,19 @@ ck('year: with no budget, the CURRENT year wins over a stray future year', (() =
   return years.has(now) ? y === now : y !== Math.max(...years) || years.size === 1;
 })());
 
+// ---- parity with the original app's panel set ----
+ck('delivery: margin-by-leader data exists and reconciles to the project margins', (() => {
+  if (!dv.byLeader.length) return false;
+  const sumRev = dv.byLeader.reduce((a, l) => a + l.revenue, 0);
+  const sumCost = dv.byLeader.reduce((a, l) => a + l.cost, 0);
+  const projRev = dv.margins.reduce((a, x) => a + x.revenue, 0);
+  const projCost = dv.margins.reduce((a, x) => a + x.cost, 0);
+  return near(sumRev, projRev, 0.01) && near(sumCost, projCost, 0.01)
+    && dv.byLeader.every((l) => near(l.margin, l.revenue - l.cost, 0.01));
+})());
+ck('leaders: the snapshot count needed by movement-vs-prior is reported',
+  typeof t2.snapshots === 'number');
+
 console.log('');
 console.log(checks + ' checks, ' + (fails ? fails + ' FAILURES' : 'all passed'));
 if (m.notes.length) { console.log('mapper notes:'); m.notes.slice(0, 8).forEach((n) => console.log('  - ' + n)); }

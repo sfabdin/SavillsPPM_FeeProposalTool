@@ -603,7 +603,17 @@
         '<td class="num">' + fm(b.aging.amberRedValue) + '</td></tr>').join('') +
       '</tbody></table>');
 
-    return kpis + scorecard + leadersInteractive(d) + agingPanel + rfPanel + industryPanel + typePanel;
+    /* Movement vs prior reporting period. Needs two frozen monthly snapshots
+       to compare against; the shared files carry none yet, so this states the
+       honest position rather than inventing a comparison. It fills itself in
+       once the monthly capture has been run twice. */
+    const snaps = d.snapshots || 0;
+    const movementPanel = panel('Movement vs prior reporting period',
+      snaps >= 2 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: 'AWAITING HISTORY' }, '',
+      'What it is: what changed since the last reporting period, by rating and by leader. The comparison lands automatically once two monthly snapshots exist. Nothing is fabricated in the meantime: reliability over completeness.',
+      '<div class="note" style="border:1px dashed var(--hairline)">First comparison available after the next monthly snapshot (' + snaps + ' of 2 needed). Snapshots are captured in this app on the Revenue Projections page, under Monthly Flash.</div>');
+
+    return kpis + scorecard + leadersInteractive(d) + agingPanel + movementPanel + rfPanel + industryPanel + typePanel;
   }
 
   /* ---- Leaders interactive: selection scorecard + staff-cost grid + quadrant.
@@ -957,7 +967,24 @@
       (cov.unmappedTop.length ? '<br>Heaviest unmapped Clockify projects: ' + cov.unmappedTop.slice(0, 5).map((u) => esc(u.name) + ' (' + Math.round(u.hours).toLocaleString() + 'h)').join(' · ') + '.' : '') +
       '</div>');
 
-    return kpis + mixPanel + capPanel + ratingPanel + marginPanel + cliPanel + pplPanel + covPanel;
+    /* Which leader's book actually makes money. Revenue leaders are an
+       attribute of the project records, not of the Clockify export, so this
+       grouping exists only here. The scorecard on Leaders ranks books by
+       revenue; this ranks them by what is left once the work is paid for,
+       which is a different order. */
+    const leaderMarginRows = d.byLeader.map((l) =>
+      '<tr><td>' + esc(l.name) + '</td><td class="num">' + l.projects + '</td>' +
+      '<td class="num">' + Math.round(l.hours).toLocaleString() + 'h</td>' +
+      '<td class="num">' + fm(l.cost) + '</td><td class="num">' + fm(l.revenue) + '</td>' +
+      '<td class="num ' + (l.margin >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(l.margin) + '</td>' +
+      '<td class="num ' + (l.marginPct == null ? '' : l.marginPct >= 0 ? 'tone-good' : 'tone-bad') + '">' +
+      (l.marginPct == null ? '-' : Math.round(l.marginPct) + '%') + '</td></tr>').join('');
+    const leaderMarginPanel = panel('Which leader\'s book actually makes money',
+      { kind: 'demo', text: 'PART-LIVE · ' + d.coverage.gridCostPct + '% of cost is rate-grid-backed' }, '',
+      'What it is: every leader\'s attributable revenue, the delivery cost behind it, and the resulting true margin. Why we show it: the leader scorecard ranks books by revenue; this ranks them by what is left once the work is paid for, which is a different order. Cost is hours at each person\'s cost rate.',
+      '<table class="vtable"><thead><tr><th>Revenue leader</th><th class="num">Projects</th><th class="num">Hours</th><th class="num">Delivery cost</th><th class="num">Revenue</th><th class="num">Margin</th><th class="num">Margin %</th></tr></thead><tbody>' + leaderMarginRows + '</tbody></table>');
+
+    return kpis + mixPanel + capPanel + ratingPanel + marginPanel + leaderMarginPanel + cliPanel + pplPanel + covPanel;
   }
 
   /* ---------------- TAB · Rates ---------------- */
