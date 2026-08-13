@@ -2,8 +2,9 @@
 
 A multi-page, Box-backed system for building, pricing, storing, and reporting on
 fee proposals. The app is a **front door to Box after OAuth** — all project data
-lives in Box (`projects.json`, `studio.json`); the confidential rate grid
-(`rates.json`) is pulled from Box only after sign-in and is **never** in this repo.
+lives in Box (`projects.json`, `studio.json`, `staff.json`, `revenue.json`); the
+confidential rate grid (`rates.json`) is pulled from Box only after sign-in and is
+**never** in this repo.
 
 ## Pages (all wired into the shared hamburger nav)
 
@@ -17,22 +18,34 @@ lives in Box (`projects.json`, `studio.json`); the confidential rate grid
 **Manage**
 - `Projects Index.html` — every project; client rollup; per-project fees
 - `Revenue Projections.html` — monthly invoice matrix (reads the materialized
-  billing series), broker split toggle, current-month marker, Excel export
-- `Revenue Studio.html` — budget/RF baselines vs. actuals, scenarios, waterfall,
+  billing series), broker split toggle, current-month marker, Excel export,
+  **open revenue slips banner** (months Finance moved, shown red until reconciled)
+- (retired) Revenue Studio — replaced by Revenue Reconciliation for the monthly close;
   drill-down (bucket → client → project), Exec Report tab
 - `Benchmarking Dashboard.html` — rate spread + scope/assumptions comparison
 - `Proposal Analytics.html` — funnel, win/loss, discount analytics, health score,
   client profile
 
 **Admin**
+- `Revenue Reconciliation.html` — the monthly close, Finance-owned: import the
+  actuals workbook, reconcile billed vs accrued vs forecast per project, fee
+  shares as their own deduction line, disposition every variance, export the
+  monthly flash to Excel. One calendar year at a time, 2026 forward
 - `Import Revenues.html` — bulk-import monthly billing (admin only)
 
 **Docs**
-- `Enterprise Migration Guide.html`, `Fee System Roadmap.html`, `Maintainers Runbook.html`
+- `Maintainers Runbook.html` (deployed) · `docs/` (repo-only: migration guide, roadmap, readiness report)
 
 ## Modules — `universal-fee-calc/`
+- `revenue-reconcile.js` — Revenue Reconciliation: close-workbook parser (columns
+  found by header text, rows footed against the sheet's own reported revenue),
+  project matching, disposition queue, flash + Excel export
 - `store.js` — data layer: projects + studio stores, the calc engines
-  (`computeFinancials`, `monthlySeries`, `projectFinancials`), change-order ledger,
+  (`computeFinancials`, `monthlySeries`, `projectFinancials`), the **revenue ledger**
+  (its own store, backed by `revenue.json`; `recognised = billed + fee share + accrued`),
+  **revenue slips** (Finance moving a missed fee to a later month — moves money,
+  never creates it; open slips flag the affected months for the red on Projections),
+  change-order ledger,
   version history, **schema migrations**, **tombstone soft-delete**, **activity log**,
   access wall + leader directory
 - `box-adapter.js` — Box OAuth, pull/push with etag concurrency + union merge
@@ -63,6 +76,17 @@ It uses an in-memory storage shim, so it never touches real Box-synced data.
 Host on Vercel. Required env vars: `BOX_CLIENT_ID`, `BOX_CLIENT_SECRET`,
 `ANTHROPIC_API_KEY`. `rates.json` is uploaded to the Box folder (not here);
 its file id is set in `box-adapter.js` config.
+
+## Box files
+- `projects.json` — project records only. Nothing else is written here.
+- `rates.json` — the confidential rate grid (pulled post-login, never in this repo).
+- `studio.json` — retired Revenue Studio baselines + scenarios (kept in Box for the Budget/RF baseline decision; no page writes it).
+- `staff.json` — the living staffing matrix.
+- `revenue.json` — Revenue Reconciliation's actuals ledger, keyed by year then
+  project. **Self-configuring**: with no file id set it is found by name in the
+  shared folder and created on first run, so every admin lands on the same file.
+  Merged per ROW (each carries `updatedAt`), because everything lives under one
+  year — a whole-year newest-wins would let two admins erase each other.
 
 ## Data model
 Project records store **inputs only** (roles, FTE %, assumptions) — never dollar

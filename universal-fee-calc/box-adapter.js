@@ -52,6 +52,7 @@
     studioFileId: '2302220793247',        // studio.json in Box (Revenue Studio baselines + scenarios)
     actualsFileId: '',                    // clockify-actuals.csv in Box — hours by user×project×month. '' = not configured (page falls back to manual drop / API proxy)
     staffFileId: '2364190093321',         // staff.json in Box — the LIVING staffing matrix (allocations + notes + actuals + mappings), shared by all admins
+    revenueFileId: '',                    // revenue.json in Box — Revenue Reconciliation's actuals ledger. '' = SELF-CONFIGURING: found by name in the shared folder, created on first run.
     folderId: '387228486391',             // used only to (re)create the file if missing
     pushDebounceMs: 1500,
 
@@ -75,6 +76,7 @@
     pushNow,         // force an immediate flush
     pullRates,       // fetch the confidential rate grid (post-login only)
     pullActuals,     // fetch the Clockify actuals CSV (clockify-actuals.csv in Box)
+    pullRevenue,     // fetch revenue.json (the reconciliation ledger)
     pullStaff,       // fetch staff.json (staffing matrix + notes + actuals)
     pullStaffIfChanged, // etag-checked pull — null when nothing new
     uploadStaff,     // push staff.json (debounced by the staffing page)
@@ -401,6 +403,42 @@
         leaders: byId(rv.leaders, lv.leaders, 'id'),
       };
     }
+    /* Revenue ledger + flash snapshots: union by PERIOD, never whole-key.
+       Both are built up over time, often from different machines — Finance
+       posts 2026 on their laptop while someone else works a prior year. The catch-all below takes whichever side wrote last for
+       the entire key, which would silently drop the other month. Merging per
+       period keeps every close that either side has, and only compares
+       timestamps when the SAME period exists on both. */
+    const unionByPeriod = (key, stamp) => {   // period = a year for the ledger, a month for snapshots
+      const rp = remote[key], lp = local[key];
+      if (!rp && !lp) return;
+      const merged = { ...(rp || {}) };
+      Object.entries(lp || {}).forEach(([ym, lv]) => {
+        const rv = merged[ym];
+        if (!rv) { merged[ym] = lv; return; }
+        merged[ym] = (stamp(lv) >= stamp(rv)) ? lv : rv;
+      });
+      out[key] = merged;
+    };
+    unionByPeriod('ledger', (v) => (v && v.updatedAt) || '');
+    // Snapshots nest a second level (period → label), so union that too: two
+    // people capturing #1 FLASH and #2 FINAL for the same month both keep theirs.
+    (function () {
+      const rs = remote.snapshots, ls = local.snapshots;
+      if (!rs && !ls) return;
+      const merged = { ...(rs || {}) };
+      Object.entries(ls || {}).forEach(([ym, labels]) => {
+        if (!merged[ym]) { merged[ym] = labels; return; }
+        const both = { ...merged[ym] };
+        Object.entries(labels || {}).forEach(([lbl, snap]) => {
+          const cur = both[lbl];
+          if (!cur || ((snap && snap.asOf) || '') >= ((cur && cur.asOf) || '')) both[lbl] = snap;
+        });
+        merged[ym] = both;
+      });
+      out.snapshots = merged;
+    })();
+
     // Anything added to the db in future: keep it rather than dropping it.
     Object.keys({ ...remote, ...local }).forEach(k => {
       if (k in out || k === 'schemaVersion') return;
@@ -640,6 +678,140 @@
     return true;
   };
 
+  /* ---- Revenue Reconciliation file (revenue.json) — SEPARATE from projects.json.
+     Actuals are a different kind of data on a different cadence: re-posting a
+     close would otherwise churn the file every project record shares. Uses the
+     staff.json SELF-CONFIGURING pattern — with no file id set, it is found by
+     name in the shared folder (created on first run), so every admin lands on
+     the same revenue.json with zero Box setup. ---- */
+  let _revEtag = null;
+  let _revId = null;
+  async function resolveRevenueFileId() {
+    const cfg = BOX_CONFIG.revenueFileId;
+    if (cfg && !/PASTE/.test(cfg)) return cfg;
+    if (_revId) return _revId;
+    try { const c = localStorage.getItem('ufc_revenue_file_id'); if (c) return (_revId = c); } catch (e) {}
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    if (res.ok) {
+      const j = await res.json();
+      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === 'revenue.json');
+      if (hit) { _revId = hit.id; try { localStorage.setItem('ufc_revenue_file_id', hit.id); } catch (e) {} return hit.id; }
+    }
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'revenue.json', parent: { id: BOX_CONFIG.folderId } }));
+    form.append('file', new Blob([JSON.stringify(Store.defaultRevenue())], { type: 'application/json' }), 'revenue.json');
+    const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+    if (up.status === 409) {                                     // raced another admin — use theirs
+      try { const j = await up.json(); const cid = j.context_info && j.context_info.conflicts && j.context_info.conflicts.id; if (cid) { _revId = cid; try { localStorage.setItem('ufc_revenue_file_id', cid); } catch (e) {} return cid; } } catch (e) {}
+      throw new Error('revenue.json create conflict — reload to retry');
+    }
+    if (!up.ok) throw new Error('could not create revenue.json: HTTP ' + up.status);
+    const j = await up.json(); const nid = j.entries && j.entries[0] && j.entries[0].id;
+    if (!nid) throw new Error('revenue.json create returned no id');
+    _revId = nid; try { localStorage.setItem('ufc_revenue_file_id', nid); } catch (e) {}
+    return nid;
+  }
+  async function pullRevenue() {
+    const id = await resolveRevenueFileId();
+    if (!id) return Store.defaultRevenue();
+    const meta = await boxFetch('/files/' + id + '?fields=etag');
+    if (meta.ok) { const m = await meta.json(); _revEtag = m.etag; }
+    const res = await boxFetch('/files/' + id + '/content');
+    if (res.status === 404) return Store.defaultRevenue();
+    if (!res.ok) throw new Error('revenue pull failed: ' + res.status);
+    const txt = await res.text();
+    if (!txt.trim()) return Store.defaultRevenue();
+    const parsed = JSON.parse(txt);
+    parsed.ledger = parsed.ledger || {};
+    return parsed;
+  }
+  /* Merge at ROW level, not year level. Everything lives under one year, so a
+     whole-year newest-wins would be newest-wins for the entire ledger — two
+     admins working different projects in 2026 would erase each other. Rows
+     carry their own updatedAt, so each project's line survives on its merits;
+     a year present on only one side is kept whole. */
+  function mergeRevenueDb(remote, local) {
+    const out = Store.defaultRevenue();
+    const years = new Set([...Object.keys((remote && remote.ledger) || {}), ...Object.keys((local && local.ledger) || {})]);
+    years.forEach(yk => {
+      const ry = ((remote && remote.ledger) || {})[yk];
+      const ly = ((local && local.ledger) || {})[yk];
+      if (!ry) { out.ledger[yk] = ly; return; }
+      if (!ly) { out.ledger[yk] = ry; return; }
+      const rows = { ...(ry.rows || {}) };
+      Object.entries(ly.rows || {}).forEach(([k, lr]) => {
+        const rr = rows[k];
+        if (!rr || ((lr && lr.updatedAt) || '') >= ((rr && rr.updatedAt) || '')) rows[k] = lr;
+      });
+      // Import history is append-only per close month — union it, newest wins
+      // on a month both sides posted.
+      const imps = {};
+      [...(ry.imports || []), ...(ly.imports || [])].forEach(i => {
+        const cur = imps[i.closeMonth];
+        if (!cur || (i.at || '') >= (cur.at || '')) imps[i.closeMonth] = i;
+      });
+      out.ledger[yk] = {
+        updatedAt: ((ly.updatedAt || '') >= (ry.updatedAt || '') ? ly.updatedAt : ry.updatedAt),
+        updatedBy: ((ly.updatedAt || '') >= (ry.updatedAt || '') ? ly.updatedBy : ry.updatedBy),
+        imports: Object.values(imps).sort((a, b) => a.closeMonth - b.closeMonth),
+        rows,
+      };
+    });
+    return out;
+  }
+  async function uploadRevenue(r, depth) {
+    const id = await resolveRevenueFileId();
+    if (!id) return;
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'revenue.json' }));
+    form.append('file', new Blob([JSON.stringify(r)], { type: 'application/json' }), 'revenue.json');
+    const res = await fetch('https://upload.box.com/api/2.0/files/' + id + '/content', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, ...(_revEtag ? { 'If-Match': _revEtag } : {}) },
+      body: form,
+    });
+    if (res.status === 412) {
+      // A teammate saved first. Re-uploading ours as-is would erase their work,
+      // so pull → merge per row → retry.
+      if ((depth || 0) >= 2) throw new Error('revenue push failed: repeated conflicts');
+      const remote = await pullRevenue();          // also refreshes _revEtag
+      const merged = mergeRevenueDb(remote, r);
+      Store.hydrateRevenueFromRemote(merged);
+      return uploadRevenue(merged, (depth || 0) + 1);
+    }
+    if (!res.ok) throw new Error('revenue upload failed: ' + res.status);
+    const j = await res.json(); if (j.entries && j.entries[0]) _revEtag = j.entries[0].etag;
+  }
+  let _revTimer = null, _revPending = null;
+  function scheduleRevenuePush(r) {
+    _revPending = r;
+    clearTimeout(_revTimer);
+    _revTimer = setTimeout(revenuePushNow, BOX_CONFIG.pushDebounceMs);
+  }
+  async function revenuePushNow() {
+    if (!_revPending) return;
+    const tok = await ensureToken(); if (!tok) return;
+    const r = _revPending; _revPending = null;
+    try { await uploadRevenue(r); } catch (e) { _revPending = r; console.warn('revenue push failed', e); }
+  }
+  Box.pullRevenue = pullRevenue;
+  /** Pull-if-changed + row-level merge + hydrate — so a tab left open all day
+      picks up a teammate's reconciliation instead of overwriting it. */
+  Box.refreshRevenueIfChanged = async function () {
+    const id = await resolveRevenueFileId();
+    if (!id) return false;
+    const meta = await boxFetch('/files/' + id + '?fields=etag');
+    if (!meta.ok) return false;
+    const m = await meta.json();
+    if (_revEtag && m.etag === _revEtag) return false;
+    const remote = await pullRevenue();
+    const merged = mergeRevenueDb(remote, Store.readRevenue());
+    Store.hydrateRevenueFromRemote(merged);
+    return true;
+  };
+
   /* ---- Rolling weekly backup ----------------------------------------------
      Box already versions projects.json on every upload (first-line recovery:
      Box → projects.json → Version History). This adds a SECOND line: a dated
@@ -718,6 +890,14 @@
       Store.hydrateStudioFromRemote(studio);
     } catch (e) { console.warn('studio pull failed', e); }
     Store.attachStudioRemote(scheduleStudioPush);
+    // revenue.json — pull before attaching the push, so hydrating can't echo
+    // straight back out as an upload.
+    try {
+      const rev = await pullRevenue();
+      const merged = mergeRevenueDb(rev, Store.readRevenue());
+      Store.hydrateRevenueFromRemote(merged);
+    } catch (e) { console.warn('revenue pull failed — reconciliation is local-only this session', e); }
+    Store.attachRevenueRemote(scheduleRevenuePush);
     return { ok: true, backend: 'box' };
   }
 

@@ -12,3 +12,6 @@ research/
 # Old working backups.
 _changed*/
 screenshots/
+
+# Repo-only reference docs — not part of the deployed app.
+docs/

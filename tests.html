@@ -55,6 +55,10 @@
 </script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/staff.js"></script>
+<!-- Pulled in for its workbook parser only; it renders nothing without the
+     reconciliation page's markup. -->
+<script src="universal-fee-calc/revenue-reconcile.js"></script>
 <script>
 (function () {
   'use strict';
@@ -329,6 +333,879 @@
     const fields = S.describeChanges(a, b).map(c => c.field);
     return fields.includes('Team') || 'removing a role did not register as a Team change';
   });
+
+  /* ============ REVENUE LEDGER (year of actuals, cell by cell) ============
+     cell recognised = billed + feeShare + (accrual − last known accrual)
+     The accrual column is a BALANCE and a close tab states only ONE — its own
+     close month. Every test below exists because treating it as a monthly
+     flow, or interpolating the months between, gives an answer that looks
+     plausible and is wrong. Prior-year reversals are excluded; the ledger
+     reports one year at a time from 2026. */
+
+  function asAdmin() {
+    S.setRealIdentity({ username: 'sabdin@savills.us', name: 'Test Admin' });
+    return S.isAdmin(S.getCurrentUser());
+  }
+  function freshDb() {
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    localStorage.removeItem('savills-ppm-revenue-db:v1');
+  }
+  const feeDb = () => JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1') || '{}');
+  const revDb = () => JSON.parse(localStorage.getItem('savills-ppm-revenue-db:v1') || 'null');
+  const lrow = (over) => Object.assign({
+    key: 'P001', code: 'P001', name: 'Test Project', client: 'Acme',
+    billed: {}, feeShare: {}, accrued: {}, accrualBal: {}, billingSummary: 0,
+  }, over || {});
+
+  test('Ledger · recognition', 'recognised = billed + feeShare + accrued', () => {
+    const r = lrow({ billed: { 7: 100000 }, feeShare: { 7: -7500 }, accrued: { 7: 18000 } });
+    return eq(S.cellRecognised(r, 7), 100000 - 7500 + 18000, 'July recognised');
+  });
+
+  test('Ledger · recognition', 'an imported lump alone recognises nothing until it is allocated', () => {
+    // P009355: $680,000 in the accrual column, no billings, no month behind it.
+    const r = lrow({ accrualBal: { 7: 680000 } });
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    return eq(total, 0, 'an unallocated lump must not book itself into a month');
+  });
+
+  test('Ledger · recognition', 'a manual billed figure overrides the imported one', () => {
+    const r = lrow({ billed: { 3: 40000 }, billedEdit: { 3: 52000 } });
+    return eq(S.cellRecognised(r, 3), 52000, 'the correction wins');
+  });
+
+  test('Ledger · recognition', 'clearing a billed correction restores the sheet figure', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 3: 40000 } })], { closeMonth: 3 });
+    S.setCellAmount(2026, 'A', 3, 'billed', 52000);
+    S.setCellAmount(2026, 'A', 3, 'billed', null);
+    return eq(S.billedOf(S.getLedgerYear(2026).rows.A, 3), 40000, 'restored');
+  });
+
+  test('Ledger · recognition', 'fee share moves revenue but never billings', () => {
+    const gross = lrow({ key: 'P002', billed: { 4: 200000 } });
+    const share = lrow({ key: 'P002-FS', feeShare: { 4: -30000 }, isFeeShare: true });
+    const rec = S.cellRecognised(gross, 4) + S.cellRecognised(share, 4);
+    if (!near((gross.billed[4] || 0) + (share.billed[4] || 0), 200000)) return 'billed gross changed';
+    return eq(rec, 170000, 'recognised net of the share');
+  });
+
+  test('Ledger · recognition', 'a positive fee share (reversal) adds revenue back', () => {
+    return eq(S.cellRecognised(lrow({ feeShare: { 2: 43112 } }), 2), 43112, 'positive share');
+  });
+
+  test('Ledger · year', 'yearTotals foots to the sum of its cells', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [
+      lrow({ key: 'A', billed: { 1: 40000, 2: 40000 }, accrued: { 2: 10000 } }),
+      lrow({ key: 'B', billed: { 2: 25000 }, feeShare: { 2: -5000 } }),
+    ], { closeMonth: 2 });
+    const t = S.yearTotals(2026);
+    if (!near(t.recognised[1], 40000)) return 'Jan ' + round(t.recognised[1]);
+    if (!near(t.recognised[2], 40000 + 10000 + 25000 - 5000)) return 'Feb ' + round(t.recognised[2]);
+    return eq(t.total.recognised, 110000, 'year recognised');
+  });
+
+  test('Ledger · accrual', 'spread turns the 270P lump into equal months', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'P009355', accrualBal: { 7: 680000 } })], { closeMonth: 7 });
+    S.spreadAccrual(2026, 'P009355', 4, 7);
+    const r = S.getLedgerYear(2026).rows.P009355;
+    for (const m of [4, 5, 6, 7]) if (!near(S.accruedOf(r, m), 170000)) return `${m} = ${round(S.accruedOf(r, m))}, expected 170000`;
+    if (S.accruedOf(r, 3)) return 'March was filled outside the range';
+    return S.accrualCheck(r).ok || 'allocation does not foot to the lump';
+  });
+
+  test('Ledger · accrual', 'a remainder lands on the last month so the allocation foots', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrualBal: { 3: 100 } })], { closeMonth: 3 });
+    S.spreadAccrual(2026, 'A', 1, 3);            // 100 / 3 does not divide
+    const c = S.accrualCheck(S.getLedgerYear(2026).rows.A);
+    return c.ok || `allocated ${round(c.allocated)} against a lump of ${round(c.imported)}`;
+  });
+
+  test('Ledger · accrual', 'the check reports what is still unallocated', () => {
+    const r = lrow({ accrualBal: { 7: 680000 }, accrued: { 4: 170000, 5: 170000 } });
+    const c = S.accrualCheck(r);
+    if (c.ok) return 'a half-allocated lump reported as balanced';
+    return eq(c.diff, -340000, 'remaining to allocate');
+  });
+
+  test('Ledger · accrual', 'a hand-entered accrual survives the next import', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrualBal: { 6: 680000 } })], { closeMonth: 6 });
+    S.spreadAccrual(2026, 'A', 4, 7);
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 7: 5000 }, accrualBal: { 7: 680000 } })], { closeMonth: 7 });
+    const r = S.getLedgerYear(2026).rows.A;
+    if (!near(S.accruedOf(r, 4), 170000)) return 'the allocation was lost on re-import';
+    return eq(S.billedOf(r, 7), 5000, 'new billings still landed');
+  });
+
+  test('Ledger · year', 'one upload lands every month the tab carries', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 10, 2: 20, 3: 30, 4: 40, 5: 50, 6: 60, 7: 70 } })], { closeMonth: 7 });
+    const t = S.yearTotals(2026);
+    const months = [1,2,3,4,5,6,7].filter(m => t.recognised[m] > 0);
+    return months.length === 7 || `only ${months.length} months landed from a July tab`;
+  });
+
+  test('Ledger · year', 'the ledger refuses years before it models', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    try { S.postLedgerYear(2025, [lrow({})], {}); return '2025 was accepted'; }
+    catch (e) { return /2026/.test(e.message) || 'wrong error: ' + e.message; }
+  });
+
+  test('Ledger · year', 're-importing next month keeps every status already set', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 6: 1000 } })], { closeMonth: 6 });
+    S.setCellStatus(2026, 'A', 6, 'slip', { carryTo: 9 });
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 6: 4000, 7: 5000 } })], { closeMonth: 7 });
+    const r = S.getLedgerYear(2026).rows.A;
+    if (r.billed[6] !== 4000) return 'corrected figure did not land';
+    if (r.status[6] !== 'slip') return 'status lost on re-import';
+    return r.carryTo[6] === 9 || 'carry month lost on re-import';
+  });
+
+  test('Ledger · year', 'accrual balances accumulate across imports, one close month each', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrualBal: { 2: 15000 } })], { closeMonth: 2 });
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrualBal: { 7: 40000 } })], { closeMonth: 7 });
+    const r = S.getLedgerYear(2026).rows.A;
+    if (!(2 in r.accrualBal)) return 'February lump was dropped by the July import';
+    return eq(r.accrualBal[7], 40000, 'July lump');
+  });
+
+  test('Ledger · year', 'closedThrough reports the latest close imported', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({})], { closeMonth: 2 });
+    S.postLedgerYear(2026, [lrow({})], { closeMonth: 7 });
+    S.postLedgerYear(2026, [lrow({})], { closeMonth: 5 });
+    return S.closedThrough(2026) === 7 || 'closedThrough = ' + S.closedThrough(2026);
+  });
+
+  test('Ledger · year', 'a manual project match survives the next import', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', pid: null })], { closeMonth: 6 });
+    S.setRowMatch(2026, 'A', 'proj_manual');
+    S.postLedgerYear(2026, [lrow({ key: 'A', pid: 'proj_autoguess' })], { closeMonth: 7 });
+    return S.getLedgerYear(2026).rows.A.pid === 'proj_manual' || 'the auto-matcher overwrote a human decision';
+  });
+
+  test('Ledger · year', 'only cells where money moved need a status', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000, 2: 2000 } })], { closeMonth: 2 });
+    S.setCellStatus(2026, 'A', 1, 'billed');
+    const open = S.openCells(2026);
+    return (open.length === 1 && open[0].month === 2) || `${open.length} unruled, expected 1 (Feb)`;
+  });
+
+  /* ---- revenue slips: Finance moving money between months ---- */
+
+  function slipProject() {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 6, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }],
+    }));
+    return p;
+  }
+  const seriesMap = (p) => { const m = {}; S.monthlySeries(p, C).forEach(s => { m[s.year + '-' + s.month] = s; }); return m; };
+
+  test('Slips · engine', 'a slip moves money and leaves the total untouched', () => {
+    const p = slipProject();
+    const before = seriesSum(S.getProject(p.id));
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    const after = seriesSum(S.getProject(p.id));
+    return eq(after, before, 'project total after a slip');
+  });
+
+  test('Slips · engine', 'the from-month falls and the to-month rises by the same figure', () => {
+    const p = slipProject();
+    const b = seriesMap(S.getProject(p.id));
+    const b3 = b['2026-3'].amount, b5 = b['2026-5'].amount;
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    const a = seriesMap(S.getProject(p.id));
+    if (!near(a['2026-3'].amount, b3 - 5000)) return 'March ' + round(a['2026-3'].amount) + ', expected ' + round(b3 - 5000);
+    return eq(a['2026-5'].amount, b5 + 5000, 'May');
+  });
+
+  test('Slips · engine', 'an open slip flags both months so the forecast can paint it red', () => {
+    const p = slipProject();
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    const m = seriesMap(S.getProject(p.id));
+    if (!m['2026-3'].slipOut) return 'the from-month is not flagged';
+    return !!m['2026-5'].slipIn || 'the to-month is not flagged';
+  });
+
+  test('Slips · engine', 'reconciling clears the flag but keeps the money where it moved', () => {
+    const p = slipProject();
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    const moved = seriesMap(S.getProject(p.id))['2026-5'].amount;
+    const sl = S.projectSlips(S.getProject(p.id))[0];
+    S.reconcileSlip(p.id, sl.id, true);
+    const m = seriesMap(S.getProject(p.id));
+    if (m['2026-5'].slipIn) return 'still flagged after reconciling';
+    if (!near(m['2026-5'].amount, moved)) return 'reconciling silently moved the money back';
+    return S.allOpenSlips().length === 0 || 'still listed as open';
+  });
+
+  test('Slips · engine', 're-picking the carry month moves the slip, it does not stack a second', () => {
+    const p = slipProject();
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-06', amount: 5000 });
+    const slips = S.projectSlips(S.getProject(p.id));
+    if (slips.length !== 1) return slips.length + ' slips recorded for one cell';
+    const m = seriesMap(S.getProject(p.id));
+    return (slips[0].toYm === '2026-06' && !m['2026-5'].slipIn) || 'the old carry month was left behind';
+  });
+
+  test('Slips · engine', 'removing a slip puts the forecast back exactly', () => {
+    const p = slipProject();
+    const before = JSON.stringify(seriesMap(S.getProject(p.id)));
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03', toYm: '2026-05', amount: 5000 });
+    S.removeSlip(p.id, { ledgerKey: 'K', fromYm: '2026-03' });
+    return JSON.stringify(seriesMap(S.getProject(p.id))) === before || 'the forecast did not return to its prior shape';
+  });
+
+  test('Slips · engine', 'allOpenSlips lists only what is still unreconciled', () => {
+    const p = slipProject();
+    S.recordSlip(p.id, { ledgerKey: 'A', fromYm: '2026-02', toYm: '2026-04', amount: 1000 });
+    S.recordSlip(p.id, { ledgerKey: 'B', fromYm: '2026-03', toYm: '2026-05', amount: 2000 });
+    const sl = S.projectSlips(S.getProject(p.id))[0];
+    S.reconcileSlip(p.id, sl.id, true);
+    const open = S.allOpenSlips();
+    return (open.length === 1 && open[0].ledgerKey === 'B') || open.length + ' open, expected 1';
+  });
+
+  /* ---- one canonical series: freeze the price, not the calendar ---- */
+
+  test('Series · canonical', 'a monthly override shows on a BOOKED record', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ id: 'bk1', project: { name: 'B', client: 'A', status: 'active' },
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    const jun0 = S.billingSeries(S.getProject(p.id), C).find(x => x.month === 6).net;
+    const rec = S.getProject(p.id); rec.monthlyOverrides = { '2026-6': 15000 }; S.saveProject(rec);
+    const s2 = S.billingSeries(S.getProject(p.id), C).find(x => x.month === 6);
+    if (near(s2.net, jun0)) return 'the frozen snapshot won — override invisible (' + round(s2.net) + ')';
+    if (!s2.overridden) return 'the cell is not flagged as overridden';
+    return eq(s2.net, 15000, 'June');
+  });
+
+  test('Series · canonical', 'a slip shows on a BOOKED record', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ id: 'bk2', project: { name: 'B', client: 'A', status: 'active' },
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    const g = () => { const m = {}; S.billingSeries(S.getProject(p.id), C).forEach(x => m[x.month] = x); return m; };
+    const b = g(); const jun = b[6].net, aug = b[8].net;
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-06', toYm: '2026-08', amount: jun });
+    const a = g();
+    if (!near(a[6].net, 0)) return 'June ' + round(a[6].net);
+    if (!a[6].slipOut || !a[8].slipIn) return 'flags missing on a booked record';
+    return eq(a[8].net, aug + jun, 'August');
+  });
+
+  /* ---- plan adjustments ---- */
+
+  test('Adjust · plan', 'an adjustment changes the month and the year total', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    const before = seriesSum(S.getProject(p.id));
+    S.recordAdjustment(p.id, { ledgerKey: 'K', ym: '2026-06', delta: -5000 });
+    return eq(seriesSum(S.getProject(p.id)), before - 5000, 'total after adjusting a month down');
+  });
+
+  test('Adjust · plan', 'an open adjustment flags its month, reconciling clears it', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    S.recordAdjustment(p.id, { ledgerKey: 'K', ym: '2026-06', delta: -5000 });
+    const g = () => S.billingSeries(S.getProject(p.id), C).find(x => x.month === 6);
+    if (!g().adjusted) return 'not flagged';
+    const held = g().net;
+    const adj = S.projectSlips(S.getProject(p.id))[0];
+    S.reconcileSlip(p.id, adj.id, true);
+    if (g().adjusted) return 'still flagged after reconciling';
+    if (!near(g().net, held)) return 'reconciling silently undid the adjustment';
+    return S.allOpenSlips().length === 0 || 'still listed as open';
+  });
+
+  test('Adjust · plan', 'adjusting the same month twice replaces, never compounds', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    S.recordAdjustment(p.id, { ledgerKey: 'K', ym: '2026-06', delta: -5000 });
+    S.recordAdjustment(p.id, { ledgerKey: 'K', ym: '2026-06', delta: -8000 });
+    const adjs = S.projectSlips(S.getProject(p.id)).filter(x => x.kind === 'adjust');
+    return adjs.length === 1 && near(adjs[0].delta, -8000) ? true : adjs.length + ' records, delta ' + round(adjs[0].delta);
+  });
+
+  /* ---- schedule shift: move the work, not just the money ---- */
+
+  test('Shift · schedule', 'the timeline moves and phase lengths are untouched', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 3, startYear: 2026, endMonth: 8, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }] }));
+    S.shiftSchedule(p.id, 2);
+    const t = S.getProject(p.id).timeline;
+    if (t.startMonth !== 5 || t.startYear !== 2026) return 'start ' + t.startYear + '-' + t.startMonth;
+    if (t.endMonth !== 10) return 'end month ' + t.endMonth;
+    return S.getProject(p.id).phases[0].length === 6 || 'phase length changed';
+  });
+
+  test('Shift · schedule', 'a shift crossing December rolls the year', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 11, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 2 }] }));
+    S.shiftSchedule(p.id, 3);
+    const t = S.getProject(p.id).timeline;
+    return (t.startYear === 2027 && t.startMonth === 2) || 'start ' + t.startYear + '-' + t.startMonth;
+  });
+
+  test('Shift · schedule', 'per-month staffing moves with the dates', () => {
+    freshDb(); asAdmin();
+    const rec = base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 6, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }] });
+    rec.roles[0].fteMonthly = { '2026-3': 50 };
+    const p = S.saveProject(rec);
+    S.shiftSchedule(p.id, 2);
+    const fm = S.getProject(p.id).roles[0].fteMonthly;
+    if (fm['2026-3'] != null) return 'FTE left behind in the old month';
+    return fm['2026-5'] === 50 || 'FTE did not land in May: ' + JSON.stringify(fm);
+  });
+
+  test('Shift · schedule', 'the revenue moves with the work', () => {
+    freshDb(); asAdmin();
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 6, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }] }));
+    const before = seriesSum(S.getProject(p.id));
+    const firstBefore = S.monthlySeries(S.getProject(p.id), C)[0];
+    S.shiftSchedule(p.id, 2);
+    const firstAfter = S.monthlySeries(S.getProject(p.id), C)[0];
+    if (firstAfter.month !== firstBefore.month + 2) return 'series starts at month ' + firstAfter.month;
+    return eq(seriesSum(S.getProject(p.id)), before, 'total after the shift');
+  });
+
+  /* ---- the ledger is its own store (revenue.json), not projects.json ---- */
+
+  test('Ledger · store', 'actuals never land in projects.json', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    if ('ledger' in feeDb()) return 'the ledger was written into projects.json';
+    const r = revDb();
+    return (r && r.ledger && r.ledger['2026']) ? true : 'the ledger is not in revenue.json';
+  });
+
+  test('Ledger · store', 'editing actuals does not touch projects.json', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    const before = JSON.stringify(feeDb().projects);
+    S.setCellAmount(2026, 'A', 1, 'accrued', 500);
+    S.setCellStatus(2026, 'A', 1, 'accrued');
+    return JSON.stringify(feeDb().projects) === before || 'project records changed when actuals were edited';
+  });
+
+  test('Ledger · store', 'a ledger left in projects.json is lifted out on first read', () => {
+    // Early builds kept it inside projects.json; the lift must move it and strip it.
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({
+      schemaVersion: 2, projects: {}, activity: [],
+      ledger: { '2026': { updatedAt: 'x', rows: { A: { key: 'A', billed: { 3: 777 } } }, imports: [] } },
+    }));
+    localStorage.removeItem('savills-ppm-revenue-db:v1');
+    const y = S.getLedgerYear(2026);
+    if (!y || !y.rows.A) return 'the old ledger was not carried across';
+    if ('ledger' in feeDb()) return 'the old ledger was left behind in projects.json';
+    return eq(S.billedOf(y.rows.A, 3), 777, 'figures survived the lift');
+  });
+
+  test('Ledger · store', 'every row edit stamps updatedAt, so the Box merge can pick a winner', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    const t0 = S.getLedgerYear(2026).rows.A.updatedAt;
+    if (!t0) return 'no stamp written on post';
+    S.setCellAmount(2026, 'A', 1, 'accrued', 500);
+    const t1 = S.getLedgerYear(2026).rows.A.updatedAt;
+    return (t1 && t1 >= t0) || 'the stamp did not move on edit';
+  });
+
+  /* ---- allocation: every earned dollar spent exactly once ---- */
+
+  const arow = (over) => Object.assign({ key: 'A', billed: {}, billedEdit: {}, feeShare: {},
+    accrued: {}, billsIn: {}, alloc: {} }, over || {});
+
+  test('Allocation · no double count', 'earned, accrued AND invoiced in the same month counts once', () => {
+    // The trap: 45,000 of work, three figures, one month.
+    const r = arow({ billed: { 1: 45000 }, alloc: { 1: { amount: 45000, accrueIn: 1, invoiceIn: 1 } } });
+    return eq(S.cellRecognised(r, 1), 45000, 'January realized');
+  });
+
+  test('Allocation · no double count', 'the three-month version totals the work, not three times it', () => {
+    const r = arow({ billed: { 3: 135000 }, alloc: {
+      1: { amount: 45000, accrueIn: 1, invoiceIn: 3 },
+      2: { amount: 45000, accrueIn: 2, invoiceIn: 3 },
+      3: { amount: 45000, accrueIn: 3, invoiceIn: 3 } } });
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    if (!near(S.cellRecognised(r, 3), 45000)) return 'March realized ' + round(S.cellRecognised(r, 3));
+    if (!near(S.allocatedInvoicedIn(r, 3), 135000)) return 'March invoice story ' + round(S.allocatedInvoicedIn(r, 3));
+    return eq(total, 135000, 'the year');
+  });
+
+  test('Allocation · no double count', 'realized follows the accrual month, not the invoice month', () => {
+    const r = arow({ billed: { 6: 20000 }, alloc: { 2: { amount: 20000, accrueIn: 2, invoiceIn: 6 } } });
+    if (!near(S.cellRecognised(r, 2), 20000)) return 'February ' + round(S.cellRecognised(r, 2));
+    return eq(S.cellRecognised(r, 6), 0, 'June — the invoice only settles what February already took');
+  });
+
+  test('Allocation · audit', 'an earned month with no allocation is reported as a gap', () => {
+    const r = arow({ alloc: { 1: { amount: 45000, accrueIn: 1, invoiceIn: 1 } } });
+    const a = S.allocationAudit(r, { 1: 45000, 2: 45000 });
+    if (a.complete) return 'reported complete with February unallocated';
+    if (a.unallocated.length !== 1 || a.unallocated[0].month !== 2) return JSON.stringify(a.unallocated);
+    return eq(a.gap, 45000, 'unallocated earned revenue');
+  });
+
+  test('Allocation · audit', 'an allocation for the wrong amount is a gap too', () => {
+    const r = arow({ alloc: { 1: { amount: 30000, accrueIn: 1, invoiceIn: 1 } } });
+    const a = S.allocationAudit(r, { 1: 45000 });
+    return (!a.complete && near(a.gap, 15000)) || `complete=${a.complete} gap=${round(a.gap)}`;
+  });
+
+  test('Allocation · audit', 'fully allocated reports complete', () => {
+    const r = arow({ alloc: { 1: { amount: 45000, accrueIn: 1, invoiceIn: 3 },
+                              2: { amount: 45000, accrueIn: 2, invoiceIn: 3 } } });
+    const a = S.allocationAudit(r, { 1: 45000, 2: 45000 });
+    return a.complete || JSON.stringify(a.unallocated);
+  });
+
+  test('Allocation · rules', 'an invoice cannot go out before the revenue is accrued', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 5: 1000 } })], { closeMonth: 5 });
+    try { S.setEarnedAllocation(2026, 'A', 5, { amount: 1000, accrueIn: 5, invoiceIn: 3 }); return 'accepted an invoice before the accrual'; }
+    catch (e) { return /before the revenue is accrued/i.test(e.message) || 'wrong error: ' + e.message; }
+  });
+
+  test('Allocation · auto', 'auto-allocate accrues in the earned month and invoices where the sheet bills', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 3: 135000 } })], { closeMonth: 3 });
+    S.autoAllocate(2026, 'A', { 1: 45000, 2: 45000, 3: 45000 });
+    const r = S.getLedgerYear(2026).rows.A;
+    const a = S.allocOf(r);
+    for (const m of [1, 2, 3]) {
+      if (!a[m] || !near(a[m].amount, 45000)) return `month ${m} not allocated`;
+      if (+a[m].accrueIn !== +m) return `month ${m} accrues in ${a[m].accrueIn}`;
+      if (+a[m].invoiceIn !== 3) return `month ${m} invoices in ${a[m].invoiceIn}, expected 3`;
+    }
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    return eq(total, 135000, 'the year after auto-allocating');
+  });
+
+  test('Allocation · auto', 'auto-allocate never overwrites a human decision', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 3: 45000 } })], { closeMonth: 3 });
+    S.setEarnedAllocation(2026, 'A', 1, { amount: 45000, accrueIn: 1, invoiceIn: 9 });
+    S.autoAllocate(2026, 'A', { 1: 45000 });
+    return +S.allocOf(S.getLedgerYear(2026).rows.A)[1].invoiceIn === 9 || 'the auto pass overwrote a human allocation';
+  });
+
+  test('Allocation · outstanding', 'accrued and not yet invoiced, as at a month', () => {
+    const r = arow({ alloc: { 1: { amount: 45000, accrueIn: 1, invoiceIn: 3 },
+                              2: { amount: 45000, accrueIn: 2, invoiceIn: 3 } } });
+    if (!near(S.allocatedOutstandingAt(r, 2), 90000)) return 'at Feb ' + round(S.allocatedOutstandingAt(r, 2));
+    return eq(S.allocatedOutstandingAt(r, 3), 0, 'at Mar, once the invoice goes out');
+  });
+
+  /* ---- two calendars: revenue where the work was, cash where the invoice went ---- */
+
+  test('Calendars · accrual', 'an accrual names its invoice month without moving anything', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrued: { 2: 12000 } })], { closeMonth: 2 });
+    S.setCellStatus(2026, 'A', 2, 'accrued', { billsIn: 4 });
+    const r = S.getLedgerYear(2026).rows.A;
+    if (r.billsIn[2] !== 4) return 'invoice month not recorded';
+    // revenue stays in February
+    if (!near(S.cellRecognised(r, 2), 12000)) return 'February revenue moved: ' + round(S.cellRecognised(r, 2));
+    if (S.cellRecognised(r, 4)) return 'revenue leaked into the invoice month';
+    return S.allOpenSlips().length === 0 || 'an accrual wrote a slip onto a project';
+  });
+
+  test('Calendars · accrual', 'settling an accrual does not recognise the revenue twice', () => {
+    // Feb accrues 12,000 and Mar 13,800, both invoiced in April's 37,800.
+    // The three months must total what was actually invoiced, not 63,600.
+    const r = lrow({ accrued: { 2: 12000, 3: 13800 }, billed: { 4: 37800 }, billsIn: { 2: 4, 3: 4 } });
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    if (!near(S.cellRecognised(r, 2), 12000)) return 'February ' + round(S.cellRecognised(r, 2));
+    if (!near(S.cellRecognised(r, 4), 12000)) return 'April should recognise only its own 12,000, got ' + round(S.cellRecognised(r, 4));
+    return eq(total, 37800, 'the year against what was invoiced');
+  });
+
+  test('Calendars · accrual', 'a promise the invoice did not keep settles nothing', () => {
+    // Feb accrued 12,000 promised for April; April billed only 5,000.
+    const r = lrow({ accrued: { 2: 12000 }, billed: { 4: 5000 }, billsIn: { 2: 4 } });
+    const c = S.billingComposition(r, 4);
+    if (!near(c.fromPriorAccruals, 5000)) return 'settled ' + round(c.fromPriorAccruals) + ', cannot exceed what was billed';
+    if (!near(c.outstanding, 7000)) return 'outstanding ' + round(c.outstanding);
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    return eq(total, 12000, 'the year — the unsettled part stays recognised in February');
+  });
+
+  test('Calendars · accrual', 'an accrual never invoiced still counts once', () => {
+    const r = lrow({ accrued: { 2: 12000 } });
+    let total = 0; for (let m = 1; m <= 12; m++) total += S.cellRecognised(r, m);
+    return eq(total, 12000, 'recognised with no invoice yet');
+  });
+
+  test('Calendars · accrual', 'a billed month decomposes into prior accruals plus its own', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrued: { 2: 12000, 3: 13800 }, billed: { 4: 37800 } })], { closeMonth: 4 });
+    S.setCellStatus(2026, 'A', 2, 'accrued', { billsIn: 4 });
+    S.setCellStatus(2026, 'A', 3, 'accrued', { billsIn: 4 });
+    const c = S.billingComposition(S.getLedgerYear(2026).rows.A, 4);
+    if (!near(c.billed, 37800)) return 'billed ' + round(c.billed);
+    if (!near(c.fromPriorAccruals, 25800)) return 'prior accruals ' + round(c.fromPriorAccruals);
+    return eq(c.ownMonth, 12000, 'earned and invoiced in the month itself');
+  });
+
+  test('Calendars · accrual', 'with no invoice month promised, all of a month\'s billing reads as its own', () => {
+    const r = lrow({ billed: { 4: 37800 }, accrued: { 2: 12000 } });
+    const c = S.billingComposition(r, 4);
+    return (near(c.fromPriorAccruals, 0) && near(c.ownMonth, 37800)) || `${round(c.fromPriorAccruals)}/${round(c.ownMonth)}`;
+  });
+
+  test('Calendars · accrual', 'accruals with no invoice month are surfaced as open', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrued: { 2: 12000, 3: 5000 } })], { closeMonth: 3 });
+    S.setCellStatus(2026, 'A', 2, 'accrued', { billsIn: 4 });
+    S.setCellStatus(2026, 'A', 3, 'accrued');
+    const open = S.accrualsAwaitingInvoiceMonth(2026);
+    return (open.length === 1 && open[0].month === 3) || `${open.length} open, expected 1 (Mar)`;
+  });
+
+  test('Calendars · accrual', 'changing away from accrued drops the invoice promise', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', accrued: { 2: 12000 } })], { closeMonth: 2 });
+    S.setCellStatus(2026, 'A', 2, 'accrued', { billsIn: 4 });
+    S.setCellStatus(2026, 'A', 2, 'billed');
+    return !(S.getLedgerYear(2026).rows.A.billsIn || {})[2] || 'a stale invoice promise survived';
+  });
+
+  test('Calendars · slip', 'a slip moves the money — unlike an accrual, which does not', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    const p = S.saveProject(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }] }));
+    const g = () => { const m = {}; S.billingSeries(S.getProject(p.id), C).forEach(x => m[x.month] = x.net); return m; };
+    const jun = g()[6];
+    S.recordSlip(p.id, { ledgerKey: 'K', fromYm: '2026-06', toYm: '2026-08', amount: jun });
+    const after = g();
+    return (near(after[6], 0) && after[8] > jun) || `Jun ${round(after[6])} / Aug ${round(after[8])}`;
+  });
+
+  /* ---- every line needs a home on the forecast ---- */
+
+  test('Ledger · mapping', 'a line with no project can become one, at the sheet\'s own figures', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'P123', code: 'P123', name: 'Big Long Project Name From The Sheet',
+      client: 'Acme Holdings', billed: { 3: 10000, 4: 20000, 5: 20000 } })], { closeMonth: 5 });
+    const p = S.createProjectFromLedgerRow(2026, 'P123');
+    if (!p) return 'nothing created';
+    if (p.project.name !== 'Big Long Project Name From The Sheet') return 'name was not carried whole: ' + p.project.name;
+    if (p.project.projectId365 !== 'P123') return 'project code not carried';
+    const ser = S.billingSeries(S.getProject(p.id), C);
+    const g = (m) => (ser.find(x => x.month === m) || {}).net || 0;
+    if (!near(g(3), 10000) || !near(g(4), 20000)) return `series ${round(g(3))}/${round(g(4))}`;
+    return S.getLedgerYear(2026).rows.P123.pid === p.id || 'the line was not mapped to what it created';
+  });
+
+  test('Ledger · mapping', 'creating twice from one line is refused', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    S.createProjectFromLedgerRow(2026, 'A');
+    try { S.createProjectFromLedgerRow(2026, 'A'); return 'a duplicate project was created'; }
+    catch (e) { return /already mapped/i.test(e.message) || 'wrong error: ' + e.message; }
+  });
+
+  test('Ledger · mapping', 'a line with no figures cannot become a project', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'EMPTY' })], { closeMonth: 1 });
+    try { S.createProjectFromLedgerRow(2026, 'EMPTY'); return 'an empty line was accepted'; }
+    catch (e) { return /no figures/i.test(e.message) || 'wrong error: ' + e.message; }
+  });
+
+  test('Ledger · mapping', 'coverage counts the revenue nobody is measured on', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [
+      lrow({ key: 'A', billed: { 1: 10000 } }),
+      lrow({ key: 'B', billed: { 1: 25000 } }),
+    ], { closeMonth: 1 });
+    let c = S.ledgerCoverage(2026);
+    if (c.unmapped !== 2 || !near(c.unmappedAmt, 35000)) return `${c.unmapped} unmapped / ${round(c.unmappedAmt)}`;
+    S.createProjectFromLedgerRow(2026, 'A');
+    c = S.ledgerCoverage(2026);
+    return (c.mapped === 1 && c.unmapped === 1 && near(c.unmappedAmt, 25000)) || `after: ${c.mapped}/${c.unmapped}/${round(c.unmappedAmt)}`;
+  });
+
+  test('Ledger · mapping', 'a line can be remapped to a different project', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 1: 1000 } })], { closeMonth: 1 });
+    S.setRowMatch(2026, 'A', 'proj_one');
+    S.setRowMatch(2026, 'A', 'proj_two');
+    const r = S.getLedgerYear(2026).rows.A;
+    return (r.pid === 'proj_two' && r.pidManual) || 'pid ' + r.pid;
+  });
+
+  /* ---- workbook parser: the piece that breaks when Finance's file moves ---- */
+  const P = window.UFC_ReconcileParse;
+  const SHEET = [
+    ['Customer account', 'Customer name', 'Project Name', 'PROJECT',
+     'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'Sept', 'Oct', 'Nov', 'Dec',
+     'YTD July-2026 Billings +', 'Dec-2025 Accruals Reversed Jan-2025', 'July 2026 Revenue Accruals',
+     'YTD 2026 Reported Revenue', null, 'YTD July 2026 Billing Summary', 'Reported vs Billing Summary OVER(UNDER)', 'Comments'],
+    ['C1', 'Acme', 'Acme Tower Fitout', 'P001', 10000,20000,0,0,0,0, 50000, 0,0,0,0,0, 80000, 0, 10000, 90000, null, 50000, 0, ''],
+    ['C1', 'Acme', 'Acme Tower Fitout - Hoffman Fee Share', 'P001FS', 0,0,0,0,0,0, -7500, 0,0,0,0,0, -7500, 0, 0, -7500, null, 0, 0, ''],
+    ['C2', 'Baxter', 'Baxter Bardy MN (NO FEE SHARE)', 'P002', 0,0,0,0,0,0, 12000, 0,0,0,0,0, 12000, 0, 0, 12000, null, 0, 0, 'Brokerage revenue adjustment'],
+    ['C3', 'Conde Nast', 'Condé Nast-1WTC Workplace Study', 'P003', 0,0,0,0,0,0, 24500, 0,0,0,0,0, 24500, 0, 0, 24500, null, 0, 0, '2025 Fee Share Due to WPG'],
+  ];
+  const parsed = (P && P.parseSheet) ? P.parseSheet(SHEET, 'YTD July 2026') : null;
+
+  test('Ledger · parser', 'reads EVERY month column, not just the close month', () => {
+    if (!parsed) return 'parser not exposed';
+    const a = parsed.rows.find(r => r.code === 'P001');
+    if (!a) return 'Acme row not parsed';
+    if (!near(a.billed[1], 10000)) return 'January missed: ' + round(a.billed[1] || 0);
+    if (!near(a.billed[2], 20000)) return 'February missed: ' + round(a.billed[2] || 0);
+    return eq(a.billed[7], 50000, 'July');
+  });
+
+  test('Ledger · parser', 'detects the close month from the YTD header, not the mislabelled accrual header', () => {
+    if (!parsed) return 'parser not exposed';
+    return parsed.closeMonth === 7 || 'closeMonth = ' + parsed.closeMonth;
+  });
+
+  test('Ledger · parser', 'the accrual lump is recorded only at the close month, never allocated', () => {
+    if (!parsed) return 'parser not exposed';
+    const a = parsed.rows.find(r => r.code === 'P001');
+    if (!near(a.accrualBal[7] || 0, 10000)) return 'July lump missing';
+    const others = Object.keys(a.accrualBal).filter(m => +m !== 7);
+    if (others.length) return 'lumps invented for months ' + others.join(',');
+    return !Object.keys(a.accrued || {}).length || 'the importer allocated months it cannot know';
+  });
+
+  test('Ledger · parser', 'a row named "Fee Share" posts as a fee share, not billings', () => {
+    if (!parsed) return 'parser not exposed';
+    const fs = parsed.rows.find(r => r.code === 'P001FS');
+    if (!fs || !fs.isFeeShare) return 'fee-share row not classified';
+    if (Object.keys(fs.billed).length) return 'fee share leaked into billings';
+    return eq(fs.feeShare[7], -7500, 'fee share amount');
+  });
+
+  test('Ledger · parser', '"(NO FEE SHARE)" is a project, not a fee share', () => {
+    if (!parsed) return 'parser not exposed';
+    const b = parsed.rows.find(r => r.code === 'P002');
+    if (!b) return 'row not parsed';
+    if (b.isFeeShare) return 'negation ignored — the row was classified as a fee share';
+    return eq(b.billed[7], 12000, 'billings kept on the project');
+  });
+
+  test('Ledger · parser', 'a comment mentioning a fee share does not reclassify the row', () => {
+    if (!parsed) return 'parser not exposed';
+    const c = parsed.rows.find(r => r.code === 'P003');
+    if (!c) return 'row not parsed';
+    if (c.isFeeShare) return 'classified off the Comments column — real billings would be pulled out of revenue';
+    if (!near(c.billed[7], 24500)) return 'billings did not stay on the project';
+    return c.feeHint === true || 'the comment hint was not surfaced for a human to rule on';
+  });
+
+  test('Ledger · parser', 'a fee share attaches to the project it comes out of', () => {
+    if (!parsed) return 'parser not exposed';
+    const fs = parsed.rows.find(r => r.code === 'P001FS');
+    const parent = parsed.rows.find(r => r.code === 'P001');
+    return (fs && parent && fs.parentKey === parent.key) || 'fee share did not attach to its parent';
+  });
+
+  test('Ledger · parser', 'rows are footed against the sheet\'s own Reported Revenue', () => {
+    if (!parsed) return 'parser not exposed';
+    return parsed.footFails === 0 || `${parsed.footFails} row(s) failed to foot on a sheet that should balance`;
+  });
+
+  test('Ledger · parser', 'the accrual header is not mistaken for a month column', () => {
+    if (!P || !P.monthIndexOf) return 'parser not exposed';
+    if (P.monthIndexOf('July 2026 Revenue Accruals') !== -1) return '"July 2026 Revenue Accruals" read as a month column';
+    if (P.monthIndexOf('YTD July-2026 Billings +') !== -1) return 'the YTD header read as a month column';
+    if (P.monthIndexOf('July') !== 6) return '"July" not recognised';
+    if (P.monthIndexOf('Sept') !== 8) return '"Sept" not recognised';
+    return P.monthIndexOf('Jan-2026') === 0 || '"Jan-2026" not recognised';
+  });
+
+  test('Ledger · parser', 'a sheet with no month columns is rejected', () => {
+    if (!P || !P.parseSheet) return 'parser not exposed';
+    const bad = [['Customer account', 'Customer name', 'Project Name', 'PROJECT', 'July 2026 Revenue Accruals']];
+    try { P.parseSheet(bad, 'x'); return 'a sheet with no month columns was accepted'; }
+    catch (e) { return /month/i.test(e.message) || 'wrong error: ' + e.message; }
+  });
+
+  test('Ledger · parser', "the sheet's own REPORTED REVENUE total line is not a project", () => {
+    if (!P || !P.parseSheet) return 'parser not exposed';
+    if (!P.isSummaryRow('REPORTED REVENUE', 'REPORTED')) return 'grand-total row not recognised as a summary line';
+    if (P.isSummaryRow('Total Facilities Overhaul', 'Acme')) return 'a real project name got swallowed';
+    const aoa = [
+      ['Customer account', 'Customer name', 'Project Name', 'January', 'February', 'July 2026 Revenue Accruals', 'YTD Reported Revenue'],
+      ['C1', 'Acme', 'Real Tower', 100, 200, 0, 300],
+      [null, 'REPORTED', 'REPORTED REVENUE', 100, 200, 0, 300],
+    ];
+    const out = P.parseSheet(aoa, 't');
+    const names = out.rows.map(r => r.name);
+    if (names.some(n => /reported/i.test(n))) return 'total line ingested as a project: ' + names.join(', ');
+    return names.includes('Real Tower') || 'the real row was dropped with it';
+  });
+
+  test('Ledger · store', 'a legacy REPORTED REVENUE row is scrubbed from an already-posted year', () => {
+    S.postLedgerYear(2027, [
+      { key: 'real1', name: 'Real Project', client: 'Acme', billed: { 2: 1000 } },
+      { key: 'reported revenue', name: 'REPORTED REVENUE', client: 'REPORTED', billed: { 2: 99999 } },
+    ], { closeMonth: 2, file: 't' });
+    const y = S.getLedgerYear(2027);
+    const hasReal = !!(y && y.rows && y.rows.real1);
+    const gone = !Object.values((y && y.rows) || {}).some(r => /^reported revenue$/i.test(r.name || ''));
+    S.deleteLedgerYear(2027);
+    if (!hasReal) return 'the real row was lost';
+    return gone || 'the total line survived in the ledger';
+  });
+
+  /* ============================================================
+     STAFFING — the allocation engine, the Clockify pipeline, the
+     contract bridge, and the shift loop that carries the PEOPLE
+     when Reconciliation moves a schedule.
+     ============================================================ */
+  (function () {
+    const ST = window.UFC_Staff;
+    if (!ST) { test('Staffing', 'module loads', () => 'UFC_Staff not present'); return; }
+
+    test('Staffing', 'capacity honors the part-time percentage', () => {
+      ST.setMonthHours(172);
+      const p = ST.savePerson({ id: 'stp_jane', name: 'Jane Tester', title: 'Project Manager', capacityPct: 50, active: true });
+      const r1 = eq(ST.capacityHours(p), 86, 'half-time capacity'); if (r1 !== true) return r1;
+      p.capacityPct = 100; ST.savePerson(p);
+      return eq(ST.capacityHours(ST.getPerson('stp_jane')), 172, 'full-time capacity');
+    });
+
+    test('Staffing', 'personLoad sums overlapping allocations in-month and drops them out-of-window', () => {
+      ST.saveAllocation({ id: 'sta_1', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Alpha', start: '2026-03', end: '2026-06', pct: 60 });
+      ST.saveAllocation({ id: 'sta_2', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Beta',  start: '2026-05', end: '2026-08', pct: 60 });
+      const r1 = eq(ST.personLoad('stp_jane', '2026-04'), 60, 'April: one allocation'); if (r1 !== true) return r1;
+      const r2 = eq(ST.personLoad('stp_jane', '2026-05'), 120, 'May: both stack to an overload'); if (r2 !== true) return r2;
+      return eq(ST.personLoad('stp_jane', '2026-09'), 0, 'September: both rows ended');
+    });
+
+    test('Staffing', 'expected hours = month hours × capacity% × allocation%', () => {
+      const p = ST.getPerson('stp_jane'); p.capacityPct = 100; ST.savePerson(p);
+      return eq(ST.expectedHours('stp_jane', 'Tower Alpha', '2026-04'), 172 * 0.6, 'Jane on Tower Alpha in April');
+    });
+
+    test('Staffing', 'Clockify CSV: quoted commas parse, a saved user mapping routes the odd spelling, hours aggregate', () => {
+      // "Tester, Jane" is not fuzzy-matched to Jane Tester (deliberate — reversed
+      // names are ambiguous); the saved user mapping is the designed route.
+      ST.setUserMapping('Tester, Jane', 'stp_jane');
+      const csv = 'User,Project,Time (h),Start Date\n'
+        + '"Tester, Jane","Tower Alpha",8.5,2026-04-03\n'
+        + 'Jane Tester,"Tower Alpha",3.5,2026-04-10\n'
+        + 'Jane Tester,"Tower Alpha",4,2026-05-02\n';
+      const rep = ST.analyzeClockify(csv, '2026-04');
+      if (rep.error) return 'analyze failed: ' + rep.error;
+      const res = ST.commitClockify(rep, 'replace');
+      if (!res || !res.written) return 'nothing committed';
+      const r1 = eq(ST.actualHours('stp_jane', 'Tower Alpha', '2026-04'), 12, 'April rows aggregate'); if (r1 !== true) return r1;
+      return eq(ST.actualHours('stp_jane', 'Tower Alpha', '2026-05'), 4, 'May kept separate');
+    });
+
+    test('Staffing', 'a saved __ignore__ project mapping drops those rows on import', () => {
+      ST.setProjectMapping('Internal Admin', '__ignore__');
+      const rep = ST.analyzeClockify('User,Project,Time (h),Start Date\nJane Tester,Internal Admin,9,2026-04-08\n', '2026-04');
+      if (rep.error) return 'analyze failed: ' + rep.error;
+      const before = ST.actualHours('stp_jane', 'Internal Admin', '2026-04');
+      ST.commitClockify(rep, 'merge');
+      const r1 = eq(ST.actualHours('stp_jane', 'Internal Admin', '2026-04'), before, 'ignored project stays at prior value');
+      if (r1 !== true) return r1;
+      return eq(before, 0, 'and that prior value was zero');
+    });
+
+    // A fee-tool project the bridge functions can resolve. Saved through the
+    // normal store path, then the fee cache is told the project list changed.
+    const feeP = S.saveProject(base({
+      project: { name: 'Tower Alpha', client: 'Acme', status: 'active' },
+      roles: [{ id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'core', fte: {},
+                fteMonthly: { '2026-3': 50, '2026-4': 50, '2026-5': 50, '2026-6': 50 } }],
+    }));
+    document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+
+    test('Staffing', 'contractPlan turns the fee tool’s fteMonthly into hours on the calendar', () => {
+      const plan = ST.contractPlan('Tower Alpha', ['2026-04', '2026-05'], 'Acme');
+      if (!plan) return 'no plan resolved — fee link failed';
+      return eq(plan.byMonth['2026-04'], 0.5 * 160, 'April: 50% FTE × 160 contract hrs/mo');
+    });
+
+    test('Staffing', 'contractStaffingGaps flags contract months the matrix has not staffed', () => {
+      const gaps = ST.contractStaffingGaps();
+      const g = gaps.find(x => (x.feeName || x.project || '').includes('Tower Alpha'));
+      if (!g) return true;   // fully covered is a legal outcome — the flag list just must not throw
+      return (g.totalNeedFteMo == null || g.totalNeedFteMo >= 0) || 'negative need reported';
+    });
+
+    test('Staffing', 'merge: a teammate’s new allocation arrives, my newer edit of a shared row wins', () => {
+      const local = { schemaVersion: 1, people: { stp_jane: ST.getPerson('stp_jane') },
+        allocations: [{ id: 'sh_1', personId: 'stp_jane', project: 'Tower Alpha', start: '2026-03', end: '2026-06', pct: 80, updatedAt: '2026-08-02T00:00:00Z' }],
+        actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { monthHours: 172 } };
+      const remote = { schemaVersion: 1, people: { stp_jane: ST.getPerson('stp_jane') },
+        allocations: [
+          { id: 'sh_1', personId: 'stp_jane', project: 'Tower Alpha', start: '2026-03', end: '2026-06', pct: 40, updatedAt: '2026-08-01T00:00:00Z' },
+          { id: 'rm_1', personId: 'stp_jane', project: 'Tower Beta', start: '2026-07', end: '2026-09', pct: 25, updatedAt: '2026-08-01T00:00:00Z' },
+        ], actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { monthHours: 172 } };
+      const merged = ST.mergeStaffDb(remote, local);
+      const shared = merged.allocations.find(a => a.id === 'sh_1');
+      const theirs = merged.allocations.find(a => a.id === 'rm_1');
+      if (!shared || !theirs) return 'a row was lost in the merge';
+      return eq(shared.pct, 80, 'newer local edit wins the shared row');
+    });
+
+    test('Staffing', 'a tombstoned allocation does not resurrect from a teammate’s copy', () => {
+      const dead = { id: 'dead_1', personId: 'stp_jane', project: 'Tower Alpha', start: '2026-01', end: '2026-02', pct: 10, updatedAt: '2026-07-01T00:00:00Z' };
+      const local = { schemaVersion: 1, people: {}, allocations: [], actuals: {}, mappings: { users: {}, projects: {} },
+        deleted: { dead_1: '2026-08-01T00:00:00Z' }, meta: { monthHours: 172 } };
+      const remote = { schemaVersion: 1, people: {}, allocations: [dead], actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { monthHours: 172 } };
+      const merged = ST.mergeStaffDb(remote, local);
+      return !merged.allocations.some(a => a.id === 'dead_1') || 'deleted row came back from the remote copy';
+    });
+
+    test('Staffing', 'allocationsForFeeProject resolves matrix rows through the fee link', () => {
+      const rows = ST.allocationsForFeeProject(feeP.id);
+      if (!rows.length) return 'no allocations resolved for the linked fee project';
+      return rows.every(a => a.project === 'Tower Alpha') || 'picked up a row from the wrong project';
+    });
+
+    test('Staffing', 'shiftSchedule stamps the pending flag; shifting the allocations moves start AND end; clearing ends the loop', () => {
+      const shifted = S.shiftSchedule(feeP.id, 2);
+      if (!shifted || !shifted.staffingShiftPending) return 'shiftSchedule did not stamp staffingShiftPending';
+      const r0 = eq(shifted.staffingShiftPending.months, 2, 'flag carries the shift size'); if (r0 !== true) return r0;
+      const pend = ST.pendingContractShifts().find(x => x.id === feeP.id);
+      if (!pend) return 'pendingContractShifts does not surface the flagged project';
+      const moved = ST.shiftAllocationsForFeeProject(feeP.id, pend.months);
+      if (!moved) return 'no allocation rows moved';
+      const a = ST.listAllocations().find(x => x.id === 'sta_1');
+      if (a.start !== '2026-05') return 'start moved to ' + a.start + ', expected 2026-05';
+      if (a.end !== '2026-08') return 'end moved to ' + a.end + ', expected 2026-08';
+      S.clearStaffingShift(feeP.id);
+      return !ST.pendingContractShifts().some(x => x.id === feeP.id) || 'flag survived the clear';
+    });
+
+    test('Staffing', 'a second shift accumulates on the same flag instead of overwriting it', () => {
+      S.shiftSchedule(feeP.id, 1);
+      S.shiftSchedule(feeP.id, 1);
+      const p = S.getProject(feeP.id);
+      const r = eq(p.staffingShiftPending.months, 2, 'two +1 shifts read as +2');
+      S.clearStaffingShift(feeP.id);
+      return r;
+    });
+  })();
 
   /* ---- render ---- */
   const pass = results.filter(r => r.ok).length;

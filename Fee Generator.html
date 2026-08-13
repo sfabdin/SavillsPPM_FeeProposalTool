@@ -148,7 +148,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 <div class="overview">
 <div class="lede">
 <h3>What this is.</h3>
-<p>One record per project, entered once, used everywhere. Price the work in the <strong>Fee Calculator</strong> — roles off the PPM rate grid, allocations by phase and month, escalation, discounts, broker splits and pass-through all in one place. It saves to the <strong>Projects Index</strong>, which every other tool reads: <strong>Revenue Projections</strong> for the month-by-month forecast, <strong>Revenue Studio</strong> for budget-vs-pipeline and the exec report, <strong>Benchmarking</strong> and <strong>Proposal Analytics</strong> for what we've charged and why we win, and <strong>Profitability</strong> for real margin once time is booked. Everything lives in Box, syncs live, and reconciles to the same rate engine end to end.</p>
+<p>One record per project, entered once, used everywhere. Price the work in the <strong>Fee Calculator</strong> — roles off the PPM rate grid, allocations by phase and month, escalation, discounts, broker splits and pass-through all in one place. It saves to the <strong>Projects Index</strong>, which every other tool reads: <strong>Revenue Projections</strong> for the month-by-month forecast, <strong>Revenue Reconciliation</strong> for the monthly close and the exec flash, <strong>Benchmarking</strong> and <strong>Proposal Analytics</strong> for what we've charged and why we win, and <strong>Profitability</strong> for real margin once time is booked. Everything lives in Box, syncs live, and reconciles to the same rate engine end to end.</p>
 </div>
 <div class="pillar">
 <div class="pn">Pillar 01</div>
@@ -192,8 +192,8 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 </div>
 <div class="flow-node">
 <div class="fn-step">Report</div>
-<div class="fn-name">Revenue Studio</div>
-<div class="fn-desc">Pipeline against a frozen Budget / RF baseline, scenarios, and the exec report.</div>
+<div class="fn-name">Revenue Reconciliation</div>
+<div class="fn-desc">The billed book against the plan — the monthly flash and the exec numbers come from here.</div>
 </div>
 <div class="flow-node">
 <div class="fn-step">Reconcile</div>
@@ -268,34 +268,34 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 <li>Projected total plus the <strong>probability-weighted</strong> forecast</li>
 <li><strong>Edit mode</strong> for ratings and monthly overrides where actuals differ from plan; optional broker and pass-through split lines; Excel export and print</li>
 </ul>
-<div class="mod-feeds"><strong>Feeds:</strong> the baseline for the Studio, the exec report and accruals.</div>
+<div class="mod-feeds"><strong>Feeds:</strong> the baseline for the Studio and the exec report — and the plan that <strong>Revenue Reconciliation</strong> checks each closed month against.</div>
 </div>
 <div class="mod-cta"><span>Open projections</span><span class="arr">→</span></div>
 </a>
 
-<a class="mod" href="Revenue Studio.html">
+<a class="mod" href="Revenue Reconciliation.html">
 <div class="mod-top">
 <div class="mod-num">04</div>
-<div class="mod-titles"><div class="mod-kicker">Plan &amp; report</div><div class="mod-name">Revenue Studio</div></div>
-<span class="mod-status">Live</span>
+<div class="mod-titles"><div class="mod-kicker">The actuals</div><div class="mod-name">Revenue Reconciliation</div></div>
+<span class="mod-status adm">Admin</span>
 </div>
 <div class="mod-body">
-<p class="mod-lede">Slice, compare and shape revenue against frozen baselines — Budget, RF1, RF2 — without ever touching project data. Real numbers only change in the calculator.</p>
+<p class="mod-lede">The monthly close, laid against the forecast. Finance imports what was actually billed, accrued and recognised; every line that disagrees with the plan gets ruled on before it moves the year.</p>
 <div class="mod-sub">What it does</div>
 <ul>
-<li><strong>Pipeline &amp; Budget</strong> — live revenue vs. a frozen baseline by client, leader, industry, service line or rating; year or month granularity</li>
-<li><strong>Exec Report</strong> — the leadership read-out, generated from the same numbers</li>
-<li>Named <strong>scenarios</strong> with a future-projects pool by client and overall, plus drawdown</li>
-<li><strong>Leader view</strong> and admin "View as" to see exactly what each revenue leader sees</li>
+<li>Import the close workbook and post it as a <strong>locked month</strong> — the only way actuals enter the system</li>
+<li>Per project: <strong>billed gross, fee share, accrual movement, recognised revenue</strong> and the variance against plan</li>
+<li><strong>Disposition every exception</strong> — billed, accrued, slipped, billed early, true-up, written off, unforecast, reclass</li>
+<li><strong>Month view</strong> for the close you are working, <strong>year to date</strong> for the twelve-month picture; <strong>monthly flash</strong> with a three-tab Excel export</li>
 </ul>
-<div class="mod-feeds"><strong>Reads only:</strong> baselines and scenarios live in their own file — projections are never rewritten here.</div>
+<div class="mod-feeds"><strong>Feeds:</strong> what a closed month actually was, so the forecast ahead of it stays honest.</div>
 </div>
-<div class="mod-cta"><span>Open the studio</span><span class="arr">→</span></div>
+<div class="mod-cta"><span>Open reconciliation</span><span class="arr">→</span></div>
 </a>
 
 <a class="mod" href="Benchmarking Dashboard.html">
 <div class="mod-top">
-<div class="mod-num">05</div>
+<div class="mod-num">06</div>
 <div class="mod-titles"><div class="mod-kicker">Institutional memory</div><div class="mod-name">Benchmarking Dashboard</div></div>
 <span class="mod-status">Live</span>
 </div>
@@ -314,7 +314,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 
 <a class="mod" href="Proposal Analytics.html">
 <div class="mod-top">
-<div class="mod-num">06</div>
+<div class="mod-num">07</div>
 <div class="mod-titles"><div class="mod-kicker">Win, loss &amp; discount</div><div class="mod-name">Proposal Analytics</div></div>
 <span class="mod-status">Live</span>
 </div>
@@ -334,7 +334,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 
 <a class="mod" href="Data Entry Status.html">
 <div class="mod-top">
-<div class="mod-num">07</div>
+<div class="mod-num">08</div>
 <div class="mod-titles"><div class="mod-kicker">Completeness</div><div class="mod-name">Data Entry Status</div></div>
 <span class="mod-status">Live</span>
 </div>
@@ -353,7 +353,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 
 <a class="mod" href="Change Log.html">
 <div class="mod-top">
-<div class="mod-num">08</div>
+<div class="mod-num">09</div>
 <div class="mod-titles"><div class="mod-kicker">Accountability</div><div class="mod-name">Change Log</div></div>
 <span class="mod-status">Live</span>
 </div>
@@ -373,7 +373,7 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 
 <a class="mod" href="Staffing Matrix.html">
 <div class="mod-top">
-<div class="mod-num">09</div>
+<div class="mod-num">10</div>
 <div class="mod-titles"><div class="mod-kicker">Bandwidth</div><div class="mod-name">Staffing &amp; Bandwidth</div></div>
 <span class="mod-status adm">Admin</span>
 </div>
@@ -513,20 +513,6 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 </details>
 
 <details class="man">
-<summary><span class="man-ix">04</span><span class="man-title">Revenue Studio</span><span class="man-toggle"></span></summary>
-<div class="man-body">
-<ol>
-<li>Pick a <strong>baseline</strong> — the frozen Budget or revised forecast (RF1, RF2) you're measuring against.</li>
-<li>On <strong>Pipeline &amp; Budget</strong>, choose a <strong>slice</strong> (client, leader, industry, service line, rating), a year, and year or month granularity. Rows expand to show what's driving each number, with at / below / above flags against the baseline.</li>
-<li>Build a named <strong>scenario</strong> to test what-ifs: add a pool of projected future projects by client or overall and draw it down as real work books.</li>
-<li>Switch to <strong>Exec Report</strong> for the leadership read-out off the same numbers.</li>
-<li>Admins can use <strong>View as</strong> to see the Studio exactly as a given revenue leader sees it.</li>
-</ol>
-<div class="man-tip"><strong>Nothing here changes project data.</strong> Baselines and scenarios are stored separately. Real projections only move in the calculator.</div>
-</div>
-</details>
-
-<details class="man">
 <summary><span class="man-ix">05</span><span class="man-title">Benchmarking Dashboard</span><span class="man-toggle"></span></summary>
 <div class="man-body">
 <ol>
@@ -635,11 +621,6 @@ details.man:not([open]) .man-toggle::after{content:"How to use"}
 <div class="doc-kick">For maintainers</div>
 <div class="doc-name">Maintainer's Runbook</div>
 <p class="doc-desc">Architecture, the Box data files, deploys, environment secrets, the rate-grid update procedure and how to fix things when they break.</p>
-</a>
-<a class="doc" href="Enterprise Migration Guide.html">
-<div class="doc-kick">For IT</div>
-<div class="doc-name">Hosting &amp; Migration Guide</div>
-<p class="doc-desc">How the app is hosted and authenticated today, and the path to a fully enterprise-managed deployment.</p>
 </a>
 </div>
 </section>

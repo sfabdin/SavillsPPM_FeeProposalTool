@@ -433,7 +433,7 @@
     wireGoto('#p-allocations');
     const clr = $('#al-clear'); if (clr) clr.onclick = (e) => { e.preventDefault(); state.allocSearch = state.allocStatus = state.allocProject = ''; renderAllocations(); };
     $$('#p-allocations [data-edit]').forEach(b => b.onclick = () => openAllocModal(b.dataset.edit));
-    $$('#p-allocations [data-del]').forEach(b => b.onclick = () => { const a = S.listAllocations().find(x => x.id === b.dataset.del); if (a && confirm(`Delete ${(S.getPerson(a.personId) || {}).name} on ${a.project}?`)) { S.deleteAllocation(b.dataset.del); renderAll(); } });
+    $$('#p-allocations [data-del]').forEach(b => b.onclick = () => { const a = S.listAllocations().find(x => x.id === b.dataset.del); if (a && confirm(`Remove ${(S.getPerson(a.personId) || {}).name}'s planned allocation on ${a.project}?\n\nOnly the plan goes — their logged Clockify hours stay.`)) { S.deleteAllocation(b.dataset.del); renderAll(); } });
   }
 
   /* ---------- BY PROJECT ---------- */
@@ -910,7 +910,7 @@
       drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) readClockify(e.dataTransfer.files[0]); };
     }
     if (fileInput) fileInput.onchange = () => { if (fileInput.files[0]) readClockify(fileInput.files[0]); fileInput.value = ''; };
-    const ca = $('#clear-actuals'); if (ca) ca.onclick = (e) => { e.preventDefault(); if (confirm('Clear all imported actual hours?')) { S.clearActuals(); state.clockifyReport = null; renderSources(); renderFreshness(); } };
+    const ca = $('#clear-actuals'); if (ca) ca.onclick = (e) => { e.preventDefault(); if (confirm('Clear all imported Clockify hours?\n\nBandwidth and profitability lose their actuals until the next import. Project mappings and title pins are kept.')) { S.clearActuals(); state.clockifyReport = null; renderSources(); renderFreshness(); } };
     const cm = $('#commit-merge'); if (cm) cm.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'replace'); state.clockifyReport = null; state.clockifyRaw = null; renderSources(); renderFreshness(); toast(`Imported ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped (unmatched)` : ''}.`); };
     const cadd = $('#commit-add'); if (cadd) cadd.onclick = () => { const r = S.commitClockify(state.clockifyReport, 'merge'); state.clockifyReport = null; state.clockifyRaw = null; renderSources(); renderFreshness(); toast(`Added ${r.written} rows${r.skipped ? ` · ${r.skipped} skipped` : ''}.`); };
     const cc = $('#commit-cancel'); if (cc) cc.onclick = () => { state.clockifyReport = null; state.clockifyRaw = null; renderSources(); };
@@ -999,7 +999,7 @@
   function saveAllocModal() {
     const name = $('#am-person').value.trim();
     const project = $('#am-project').value.trim();
-    if (!name || !project) { alert('Person and project are required.'); return; }
+    if (!name || !project) { UFC_UI.toast('Person and project are required.'); return; }
     const rec = {
       id: state.editingAlloc || undefined,
       personId: S.personIdForName(name), personName: name,
@@ -1610,7 +1610,7 @@
       const orig = ex.textContent;
       ex.disabled = true; ex.textContent = 'Building…';
       try { await window.UFC_buildAndDownloadTimeEntryExport(months(), { clockifyUsers: state.clockifyUsers || [] }); toast('Clockify Reporting exported.'); }
-      catch (e) { console.error(e); alert('Export failed: ' + (e && e.message ? e.message : e)); }
+      catch (e) { console.error(e); UFC_UI.toast('Export failed: ' + (e && e.message ? e.message : e)); }
       finally { ex.disabled = false; ex.textContent = orig; }
     };
     const b = $('#pull-lateness'); if (!b) return;
@@ -1692,7 +1692,7 @@
       if (!rows.length) throw new Error('empty project list');
       state.canonProposals = S.proposeCanonical(rows);
       renderSources();
-    } catch (e) { alert('Could not pull the Clockify project list: ' + e.message + '\n\nAlternative: export any Clockify report as CSV and drop it on the import card below — unmatched projects can be mapped there.'); if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync names from Clockify'; } }
+    } catch (e) { UFC_UI.toast('Could not pull the Clockify project list: ' + e.message + '\n\nAlternative: export any Clockify report as CSV and drop it on the import card below — unmatched projects can be mapped there.'); if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync names from Clockify'; } }
   }
   function renderCanonReview() {
     const props = state.canonProposals; if (!props) return;
@@ -1735,7 +1735,7 @@
     fi.onchange = async () => {
       const f = fi.files[0]; fi.value = ''; if (!f) return;
       const res = await S.parseMatrixFile(f);
-      if (res.error) { alert('Import failed — ' + res.error); return; }
+      if (res.error) { UFC_UI.toast('Import failed — ' + res.error); return; }
       const people = new Set(res.rows.map(r => r.person)).size, projects = new Set(res.rows.map(r => r.proj)).size;
       if (!confirm(`Replace the allocation matrix with “${f.name}”?\n\n${res.rows.length} allocations · ${people} people · ${projects} projects.\n\nClockify actuals and roster capacity/title edits are KEPT. Manually-added allocations and note edits made here since the last import are REPLACED by the sheet.`)) return;
       const out = S.importMatrix(res.rows, f.name);
@@ -1882,7 +1882,45 @@
       if (panel) panel.innerHTML = `<div class="empty" style="color:#8f2418"><b>This view hit an error:</b> ${esc(e.message)}<br><span class="vmini">${esc((e.stack || '').split('\n')[1] || '')}</span></div>`;
     }
   }
-  function renderAll() { buildIdentityBar(); renderCounts(); renderFreshness(); renderActive(); }
+  function renderAll() { buildIdentityBar(); renderCounts(); renderFreshness(); renderShiftBanner(); renderActive(); }
+
+  /* ---- Pending schedule shifts — the people must follow the contract ----
+     Reconciliation moved a project's schedule (and its contract staffing);
+     the named-people allocations here did not move with it. One click
+     applies the same shift to every allocation row on that project. */
+  function renderShiftBanner() {
+    let bar = $('#shift-pending-bar');
+    const pend = (S.pendingContractShifts ? S.pendingContractShifts() : [])
+      .filter(x => x.months);
+    if (!pend.length) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'shift-pending-bar';
+      bar.style.cssText = 'background:#fdeaea;border:1px solid var(--sav-red);border-left:5px solid var(--sav-red);padding:12px 16px;margin-bottom:14px;font-family:var(--font-body);font-size:12.5px;color:var(--sav-navy)';
+      const anchor = $('#fresh-strip');
+      if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(bar, anchor);
+      else document.querySelector('.controls')?.after(bar);
+    }
+    bar.innerHTML = '<strong style="font-family:var(--font-display);letter-spacing:.04em">SCHEDULES MOVED — allocations have not.</strong> '
+      + 'Reconciliation shifted these projects; their contract staffing moved with them, the named-people rows below did not.'
+      + pend.map(x => `<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span><b>${esc(x.name)}</b> moved ${x.months > 0 ? '+' : ''}${x.months} month${Math.abs(x.months) === 1 ? '' : 's'}${x.by ? ' · ' + esc(x.by) : ''}${x.at ? ' · ' + new Date(x.at).toLocaleDateString() : ''} · ${x.allocations} allocation row${x.allocations === 1 ? '' : 's'} here</span>
+          <button class="btn" data-shift-apply="${esc(x.id)}" data-n="${x.months}" style="background:var(--sav-navy);color:#fff">Shift ${x.allocations ? x.allocations + ' row' + (x.allocations === 1 ? '' : 's') : 'allocations'} ${x.months > 0 ? '+' : ''}${x.months}mo</button>
+          <button class="btn" data-shift-skip="${esc(x.id)}" title="Clear the flag without moving anything — the allocations were already right">Already handled</button>
+        </div>`).join('');
+    $$('#shift-pending-bar [data-shift-apply]').forEach(b => b.onclick = () => {
+      const n = +b.dataset.n;
+      let moved = 0;
+      try { moved = S.shiftAllocationsForFeeProject(b.dataset.shiftApply, n); window.UFC_Store.clearStaffingShift(b.dataset.shiftApply); }
+      catch (e) { UFC_UI.toast(e.message); return; }
+      toast(moved ? `${moved} allocation row${moved === 1 ? '' : 's'} moved ${n > 0 ? '+' : ''}${n} month${Math.abs(n) === 1 ? '' : 's'} — bandwidth reflects the new dates.` : 'No allocation rows found for that project — flag cleared.');
+      renderAll();
+    });
+    $$('#shift-pending-bar [data-shift-skip]').forEach(b => b.onclick = () => {
+      try { window.UFC_Store.clearStaffingShift(b.dataset.shiftSkip); } catch (e) { UFC_UI.toast(e.message); return; }
+      renderAll();
+    });
+  }
 
   function buildWindowOptions() {
     const sel = $('#win-start'); const now = new Date();
@@ -1909,11 +1947,11 @@
     $('#month-hrs').onchange = (e) => { S.setMonthHours(+e.target.value); const g2 = $('#gloss-hrs'); if (g2) g2.textContent = S.monthHours(); renderActive(); };
     $('#inc-pursuit').onchange = (e) => { state.incPursuit = e.target.checked; renderActive(); };
     $('#export-snapshot-btn').onclick = async () => {
-      if (typeof ExcelJS === 'undefined') { alert('Excel library failed to load.'); return; }
+      if (typeof ExcelJS === 'undefined') { UFC_UI.toast('Excel library failed to load.'); return; }
       const btn = $('#export-snapshot-btn'); const orig = btn.textContent;
       btn.textContent = 'Building…'; btn.disabled = true;
       try { await window.UFC_buildAndDownloadStaffingSnapshot(); }
-      catch (e) { console.error(e); alert('Snapshot export failed: ' + e.message); }
+      catch (e) { console.error(e); UFC_UI.toast('Snapshot export failed: ' + e.message); }
       finally { btn.textContent = orig; btn.disabled = false; }
     };
     $$('#tabs .tab').forEach(t => t.onclick = () => setTab(t.dataset.tab));

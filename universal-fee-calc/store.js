@@ -6,6 +6,7 @@
   'use strict';
   const KEY = 'savills-ppm-fee-db:v1';
   const STUDIO_KEY = 'savills-ppm-studio-db:v1';   // Revenue Studio — SEPARATE store/file
+  const REVENUE_KEY = 'savills-ppm-revenue-db:v1'; // Revenue Reconciliation — SEPARATE store/file (revenue.json in Box)
   const SCHEMA = 2;
 
   const STATUSES = ['draft','submitted','negotiation','won','lost','active','closed','hold'];
@@ -150,7 +151,8 @@
      ~30 call sites that read STORE.INDUSTRIES keep working unchanged. */
   function readVocab() {
     const v = (readDb() || {}).vocab || {};
-    return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [], leaders: v.leaders || [] };
+    return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [], leaders: v.leaders || [],
+             admins: v.admins || [], toolAdmins: v.toolAdmins || [] };
   }
   function allIndustries() {
     const extra = readVocab().industries.filter(x => x && !BASE_INDUSTRIES.includes(x));
@@ -198,6 +200,16 @@
       if (!cur && base && subsNew.length) { cur = { name: ct.name, subs: [] }; v.projectTypes.push(cur); }
       if (cur) subsNew.forEach(s2 => { if (!cur.subs.includes(s2)) { cur.subs.push(s2); added++; } });
     });
+    // Admin grants — an email in `admins` gets the full book, one in
+    // `toolAdmins` gets the admin tools with member-scoped visibility.
+    // Data change, not a deploy: syncs to every browser with the db.
+    v.admins = v.admins || []; v.toolAdmins = v.toolAdmins || [];
+    const addEmail = (list, x, already) => {
+      const k = String(x || '').trim().toLowerCase();
+      if (k && k.includes('@') && !already.has(k) && !list.includes(k)) { list.push(k); added++; }
+    };
+    (patch.admins || []).forEach(x => addEmail(v.admins, x, ADMINS));
+    (patch.toolAdmins || []).forEach(x => addEmail(v.toolAdmins, x, TOOL_ADMINS));
     if (added) writeDb(db);
     return added;
   }
@@ -916,6 +928,805 @@
     }
   }
 
+  /* ============================================================
+  /* ============================================================
+     REVENUE LEDGER — the year's actuals, as posted by Finance
+     ------------------------------------------------------------
+     Everything above this line is a FORECAST: what the fee record says
+     a project should bill. The ledger is the other half — what Finance
+     actually invoiced and accrued — and it is never derived from
+     project records, because the whole point is to disagree with them.
+
+     SHAPE: A YEAR, NOT A MONTH.
+     Finance's book is a running year-to-date sheet: one tab per close
+     ("YTD July 2026") whose monthly columns already carry January
+     through July. So one upload lands the whole year, and re-uploading
+     next month's tab refreshes it. The unit of work is the CELL —
+     one project in one month — because that is the grain at which a
+     billing question actually gets asked and answered.
+
+     revenue.json (Box) — never inside projects.json:
+       revenue.ledger = {
+         "2026": {
+           updatedAt, updatedBy,
+           imports: [{ file, sheet, closeMonth, at, by }],
+           rows: { <key>: {
+             code, name, client,
+             pid,                      // matched project in projects.json
+             billed:     { 1: 38000, … },  // AS IMPORTED from the sheet
+             billedEdit: { 1: 40000, … },  // manual correction, wins over the import
+             feeShare:   { 2: -7500, … },  // signed, its own line
+             accrued:    { 4: 170000, … }, // MOVEMENT per month — entered by hand
+             accrualBal: { 7: 680000 },    // the lump BALANCE as imported, per close
+             status:     { 1: 'billed', … },
+             carryTo:    { 6: 9 },
+             note, billingSummary } }
+         }
+       }
+
+     THE ACCRUAL LUMP IS A HUMAN'S JOB, NOT A DERIVATION
+     A close tab states ONE accrual figure per project — a balance at
+     its close date, with no month behind it. P009355 carries $680,000
+     against no billings at all; that is really $170,000 earned in each
+     of April, May, June and July, and nothing in the sheet says so.
+     No arithmetic can recover that, so the ledger does not pretend to:
+     the imported lump is kept as `accrualBal` (the target), and a human
+     allocates it across months in `accrued`. The page shows both and
+     flags when the allocation does not foot to the lump.
+
+     `accrued[m]` is MOVEMENT, not a balance — what was earned but not
+     invoiced in that month. Billing something previously accrued is a
+     negative entry in the billing month, exactly as it unwinds in the
+     ledger.
+
+     RECOGNITION
+       cell recognised = billed + feeShare + accrued
+     where billed is the manual correction if one exists, else the
+     imported figure.
+
+     THE VOCABULARY (say these words on the page, not in code only)
+       EARNED    — what the fee tool says the work is worth in a month.
+                   The contract's own schedule, and the month the staffing
+                   grid is tied to. This is the anchor: effort, roster and
+                   earned revenue all sit in the same month.
+       ACCRUED   — earned revenue we have not invoiced yet. An accounting
+                   term for WHEN revenue is realized, not when the work
+                   happened; usually the earned month, sometimes not.
+       BILLED    — an invoice actually went out in that month.
+       REALIZED  — what the month is worth on the P&L:
+                     realized = accrued + billed for that month's own work
+                   A month's INVOICE total is a different number: it can
+                   carry earlier accruals finally going out.
+
+     Worked example, because this is where everyone trips:
+       Jan earned 45,000 → accrued 45,000, invoice due March
+       Feb earned 45,000 → accrued 45,000, invoice due March
+       Mar earned 45,000, and 135,000 is invoiced
+       March is NOT worth 135,000. It is 90,000 of January and February
+       finally going out plus 45,000 of its own — realized 45,000. The
+       billing sheet is right to say 135,000; the page's job is to
+       translate it, and to leave room for a human to say why.
+
+     TWO CALENDARS, NOT ONE
+     Revenue and cash do not move together, and the difference is the
+     whole reason this page exists.
+
+       ACCRUED — the work happened HERE. Revenue is recognised here and
+       the staffing stays here. Only the INVOICE is later, so an accrual
+       carries `billsIn`: the month its invoice goes out. Nothing about
+       the project moves.
+
+       SLIPPED — the work did not happen. Revenue, staffing and invoice
+       all move together, which is why a slip writes to the project and
+       offers a schedule shift, and an accrual does neither.
+
+     The consequence is that a month's BILLED figure is not that month's
+     work. It is prior accruals settling PLUS whatever was earned and
+     invoiced in the month itself — $37,800 billed in April can be
+     $25,800 of February and March finally going out, on top of April's
+     own $12,000. billingComposition() takes that apart, because a
+     number nobody can decompose is a number nobody trusts.
+
+     PRIOR-YEAR REVERSALS ARE EXCLUDED. The close file's "Dec-<PY>
+     Accruals Reversed" column is a whole-year opening adjustment about
+     last year's work, not activity in any month of this one. It is read
+     at import to prove the sheet parsed correctly against its own
+     arithmetic, then discarded — so this ledger's YTD deliberately
+     differs from the file's "YTD Reported Revenue" by exactly that
+     amount. Each year stands alone from LEDGER_FIRST_YEAR forward.
+     ============================================================ */
+
+  /** The ledger does not model anything before this year. */
+  const LEDGER_FIRST_YEAR = 2026;
+
+  /* Billing statuses — the vocabulary Finance already writes by hand in
+     the close file's Comments column, turned into a closed list. `forecast`
+     says what each one does to the rest of the year:
+       keep   — timing only, the year is unchanged
+       push   — the money moves to a later month (needs carryTo)
+       drop   — it leaves the forecast for good
+       add    — real revenue with no project record behind it
+       pair   — a reclass; meaningless unless read with its offsetting code */
+  const DISPOSITIONS = [
+    { id: 'billed',   label: 'Billed as planned',            forecast: 'keep' },
+    { id: 'accrued',  label: 'Accrued — invoice deferred',   forecast: 'keep' },
+    { id: 'slip',     label: 'Slipped — push billing out',   forecast: 'push' },
+    { id: 'early',    label: 'Billed early — prior period',  forecast: 'keep' },
+    { id: 'trueup',   label: 'True-up — billing ≠ accrual',  forecast: 'keep' },
+    { id: 'writeoff', label: 'Written off — not billable',   forecast: 'drop' },
+    { id: 'unfcast',  label: 'Unforecast revenue',           forecast: 'add'  },
+    { id: 'reclass',  label: 'Reclass — offset to another code', forecast: 'pair' },
+    { id: 'feeshare', label: 'Fee share out',                forecast: 'keep' },
+  ];
+  const DISPOSITION_LABEL = (id) => (DISPOSITIONS.find(d => d.id === id) || {}).label || '';
+
+  /* ------------------------------------------------------------
+     The ledger is its OWN store, backed by revenue.json in Box —
+     deliberately not part of projects.json. Actuals are a different
+     kind of data on a different cadence: one admin re-posting a close
+     would otherwise churn the file every project record shares, and
+     projects.json's shape would grow a key that has nothing to do
+     with project records. Same separation studio.json and staff.json
+     already have.
+     ------------------------------------------------------------ */
+  let _revenuePush = null;
+  function attachRevenueRemote(pushFn) { _revenuePush = typeof pushFn === 'function' ? pushFn : null; }
+  function defaultRevenue() { return { schemaVersion: SCHEMA, ledger: {} }; }
+  /* The close sheet prints its own grand-total line among the data rows
+     (Customer name "REPORTED", Project Name "REPORTED REVENUE"). Early
+     imports ingested it as a project, DOUBLING the book. The parser now
+     skips it; this scrub heals any year posted before the fix — and the
+     write-back pushes the healed copy to Box so every browser converges. */
+  const LEDGER_SUMMARY_RX = /^(reported(\s+revenue)?|(grand\s+|sub\s*)?totals?)$/i;
+  function isSummaryLedgerRow(row) {
+    if (!row) return false;
+    if (String(row.code || '').trim()) return false;      // a customer account = a real project
+    const n = String(row.name || '').trim(), c = String(row.client || '').trim();
+    if (!n && !c) return false;
+    return (!n || LEDGER_SUMMARY_RX.test(n)) && (!c || LEDGER_SUMMARY_RX.test(c));
+  }
+  function scrubSummaryRows(rev) {
+    let removed = 0;
+    Object.values((rev && rev.ledger) || {}).forEach(y => {
+      Object.keys((y && y.rows) || {}).forEach(k => {
+        if (isSummaryLedgerRow(y.rows[k])) { delete y.rows[k]; removed++; }
+      });
+    });
+    return removed;
+  }
+
+  function readRevenue() {
+    try {
+      const raw = localStorage.getItem(REVENUE_KEY);
+      if (!raw) return migrateLedgerOutOfProjects();
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return defaultRevenue();
+      parsed.ledger = parsed.ledger || {};
+      if (scrubSummaryRows(parsed)) { try { writeRevenue(parsed); } catch (e) {} }
+      return parsed;
+    } catch (e) { return defaultRevenue(); }
+  }
+  function writeRevenue(r) {
+    r.schemaVersion = SCHEMA;
+    r.updatedAt = new Date().toISOString();
+    localStorage.setItem(REVENUE_KEY, JSON.stringify(r));
+    if (typeof _revenuePush === 'function') { try { _revenuePush(r); } catch (e) { console.warn('revenue push failed', e); } }
+  }
+  function hydrateRevenueFromRemote(r) {
+    if (!r || typeof r !== 'object') return;
+    r.schemaVersion = SCHEMA;
+    r.ledger = r.ledger || {};
+    scrubSummaryRows(r);       // a remote copy may still carry the sheet's total line
+    localStorage.setItem(REVENUE_KEY, JSON.stringify(r));
+  }
+  /** One-time lift: early builds kept the ledger inside projects.json. Move it
+      into revenue.json and strip it out, so projects.json goes back to holding
+      only project records. Runs once, on the first read of the new store. */
+  function migrateLedgerOutOfProjects() {
+    const out = defaultRevenue();
+    try {
+      const db = readDb();
+      if (db && db.ledger && Object.keys(db.ledger).length) {
+        out.ledger = db.ledger;
+        localStorage.setItem(REVENUE_KEY, JSON.stringify(out));
+        delete db.ledger;
+        writeDb(db);                                  // pushes the slimmed projects.json
+        logActivity('ledger-migrate', null, { years: Object.keys(out.ledger) });
+      }
+    } catch (e) { /* a failed lift must never block reading the ledger */ }
+    return out;
+  }
+  function readLedger() { return readRevenue().ledger || {}; }
+  /** Years that have been imported, oldest first. */
+  function ledgerYears() { return Object.keys(readLedger()).sort(); }
+  function getLedgerYear(year) { return readLedger()[String(year)] || null; }
+  /** The latest close month imported for a year (1–12), or 0 if none. */
+  function closedThrough(year) {
+    const y = getLedgerYear(year);
+    if (!y || !y.imports || !y.imports.length) return 0;
+    return y.imports.reduce((a, i) => Math.max(a, +i.closeMonth || 0), 0);
+  }
+
+  /** Land a parsed close tab into a year. Billed / fee-share figures are
+      REPLACED from the sheet (it is the source of truth and a correction
+      must win), while every human decision — the billing status on each
+      cell, its carry month, a manual project match — is carried across.
+      Re-importing next month's tab must never throw away review work. */
+  function postLedgerYear(year, rows, meta) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can post revenue actuals.');
+    if (+year < LEDGER_FIRST_YEAR)
+      throw new Error(`The ledger starts at ${LEDGER_FIRST_YEAR}. Earlier years stay in Finance's own files.`);
+    const rev = readRevenue();
+    rev.ledger = rev.ledger || {};
+    const yk = String(year);
+    const prev = rev.ledger[yk] || { rows: {}, imports: [] };
+    const out = {};
+    rows.forEach(r => {
+      const old = prev.rows[r.key];
+      out[r.key] = {
+        ...r,
+        // The sheet is the authority on what was invoiced, so `billed` is
+        // replaced wholesale. Everything a human put in survives: their
+        // billing corrections, their accrual allocation, statuses, matches.
+        // Incoming first, then what a human already put in — so an existing
+        // hand entry always wins, but nothing passed in is silently dropped.
+        billedEdit: { ...(r.billedEdit || {}), ...((old && old.billedEdit) || {}) },
+        accrued:    { ...(r.accrued || {}),    ...((old && old.accrued) || {}) },
+        // Imported lumps accumulate: each tab contributes the one close
+        // month it actually knows a figure for.
+        accrualBal: { ...((old && old.accrualBal) || {}), ...(r.accrualBal || {}) },
+        status:     { ...((old && old.status) || {}) },
+        carryTo:    { ...((old && old.carryTo) || {}) },
+        pid: (old && old.pidManual) ? old.pid : r.pid,     // a human's match outranks the matcher
+        pidManual: !!(old && old.pidManual),
+      };
+    });
+    // Rows that existed before but are absent from this tab keep their history.
+    Object.entries(prev.rows || {}).forEach(([k, r]) => { if (!out[k]) out[k] = r; });
+    const cu = getCurrentUser() || {};
+    const stamp = new Date().toISOString();
+    Object.values(out).forEach(r => { r.updatedAt = r.updatedAt || stamp; });
+    rev.ledger[yk] = {
+      updatedAt: stamp,
+      updatedBy: cu.name || cu.username || 'admin',
+      imports: [
+        ...(prev.imports || []).filter(i => +i.closeMonth !== +(meta && meta.closeMonth)),
+        { file: (meta && meta.file) || '', sheet: (meta && meta.sheet) || '',
+          closeMonth: +(meta && meta.closeMonth) || 0, at: new Date().toISOString(),
+          by: cu.name || cu.username || 'admin', rows: rows.length },
+      ].sort((a, b) => a.closeMonth - b.closeMonth),
+      rows: out,
+    };
+    writeRevenue(rev);
+    logActivity('ledger-post', null, { year: yk, closeMonth: (meta && meta.closeMonth) || 0, rows: rows.length, file: (meta && meta.file) || '' });
+    return rev.ledger[yk];
+  }
+
+  /** Set the billing status on ONE cell (project × month). */
+  function setCellStatus(year, key, month, status, extra) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can set a billing status.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.status = row.status || {}; row.carryTo = row.carryTo || {};
+    if (status) row.status[month] = status; else delete row.status[month];
+    if (extra && 'carryTo' in extra) {
+      if (extra.carryTo) row.carryTo[month] = extra.carryTo; else delete row.carryTo[month];
+    }
+    // When an accrual's invoice month is set. Distinct from carryTo: this
+    // moves the invoice only, never the revenue or the work.
+    row.billsIn = row.billsIn || {};
+    if (extra && 'billsIn' in extra) {
+      if (extra.billsIn) row.billsIn[month] = extra.billsIn; else delete row.billsIn[month];
+    }
+    // A cell that stops being accrued has no invoice month to promise.
+    if (status !== 'accrued') delete row.billsIn[month];
+    row.updatedAt = new Date().toISOString();          // row-level stamp drives the Box merge
+    writeRevenue(rev);
+    return row;
+  }
+
+  /** Point a ledger row at a project record (or clear it). Marked manual so a
+      later import cannot silently re-match it to something else. */
+  function setRowMatch(year, key, pid) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can re-map a revenue line.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    y.rows[key].pid = pid || null;
+    y.rows[key].pidManual = !!pid;
+    y.rows[key].updatedAt = new Date().toISOString();
+    writeRevenue(rev);
+    return y.rows[key];
+  }
+
+  /** Create a project record FROM a ledger line, so a line in the billed book
+      that has no project can be given one without leaving the page.
+
+      The record carries no roster and no pricing — it is not a priced
+      proposal, it is a line in the billed book that needs a home on the
+      forecast. Its monthly figures come straight from the sheet and land in
+      monthlyOverrides, which is the mechanism Revenue Projections already
+      reads, so it shows up there immediately at exactly the figures Finance
+      reported. Someone can price it properly later; the point is that the
+      book reconciles today. */
+  function createProjectFromLedgerRow(year, key) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can create a project.');
+    const y = getLedgerYear(year);
+    const row = y && y.rows && y.rows[key];
+    if (!row) throw new Error('That line is no longer in the ledger.');
+    if (row.pid) throw new Error('That line is already mapped to a project.');
+
+    const months = [];
+    for (let m = 1; m <= 12; m++) if (cellHasValue(row, m)) months.push(m);
+    if (!months.length) throw new Error('That line has no figures to build a project from.');
+    const first = months[0], last = months[months.length - 1];
+
+    const overrides = {};
+    for (let m = first; m <= last; m++) overrides[year + '-' + m] = Math.round(cellRecognised(row, m) * 100) / 100;
+
+    const rec = {
+      id: 'proj_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      project: {
+        name: row.name || '(unnamed)', client: row.client || '',
+        projectId365: row.code || '', status: 'active', rating: 1,
+      },
+      timeline: { startMonth: first, startYear: +year, endMonth: last, endYear: +year },
+      phases: [{ id: 'p1', name: 'Delivery', length: last - first + 1 }],
+      groups: [{ id: 'core', name: 'Core' }],
+      roles: [],
+      assumptions: { hrsPerMo: 173.33, discount: 0, rateLock: false, escalation: 0, industryAdj: 0,
+                     catalogBaseYear: +year, feeShare: { enabled: false, pct: 0, mode: 'offtop' },
+                     feeBasis: 'fixed', nteCeiling: 0 },
+      monthlyOverrides: overrides,
+      source: { fromReconciliation: true, ledgerKey: key, ledgerYear: String(year), note: row.note || '' },
+    };
+    const saved = saveProject(rec);
+    setRowMatch(year, key, saved.id);
+    logActivity('project-from-ledger', saved.id, { year: String(year), key, months: months.length });
+    return saved;
+  }
+
+  /** How much of the billed book has a home on the forecast. This is the
+      number that says whether the reconciliation can be trusted as a
+      measure — an unmapped line is revenue nobody is being measured on. */
+  function ledgerCoverage(year) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    let mapped = 0, unmapped = 0, mappedAmt = 0, unmappedAmt = 0;
+    Object.values(y.rows || {}).forEach(r => {
+      let amt = 0;
+      for (let m = 1; m <= 12; m++) amt += cellRecognised(r, m);
+      if (r.pid) { mapped++; mappedAmt += amt; } else { unmapped++; unmappedAmt += amt; }
+    });
+    return { mapped, unmapped, total: mapped + unmapped, mappedAmt, unmappedAmt };
+  }
+
+  function deleteLedgerYear(year) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can remove revenue actuals.');
+    const rev = readRevenue();
+    if (rev.ledger && rev.ledger[String(year)]) {
+      delete rev.ledger[String(year)]; writeRevenue(rev);
+      logActivity('ledger-remove', null, { year: String(year) });
+    }
+  }
+
+  const nnum = (v) => (typeof v === 'number' && isFinite(v)) ? v : 0;
+
+  /** What was invoiced in this month: a manual correction if someone made
+      one, otherwise whatever the sheet said. */
+  function billedOf(row, month) {
+    const e = (row && row.billedEdit) || {};
+    return (month in e) ? nnum(e[month]) : nnum(((row && row.billed) || {})[month]);
+  }
+  const accruedOf = (row, month) => nnum(((row && row.accrued) || {})[month]);
+  const feeShareOf = (row, month) => nnum(((row && row.feeShare) || {})[month]);
+
+  /** Accruals from earlier months PROMISED to this month's invoice. */
+  function accrualPromised(row, month) {
+    const bi = (row && row.billsIn) || {};
+    let sum = 0;
+    Object.keys(bi).forEach(k => { if (+bi[k] === +month) sum += accruedOf(row, +k); });
+    return sum;
+  }
+  /** How much of that promise actually SETTLED — capped at the money that
+      really went out. A promise is not an invoice: if February's accrual was
+      due to bill in April and April billed nothing, nothing settled, and the
+      revenue stays recognised in February where the work was. Reversing on the
+      promise alone would drive April negative for an invoice that never left
+      the building. */
+  function accrualSettling(row, month) {
+    const promised = accrualPromised(row, month);
+    if (promised <= 0) return promised;
+    const billed = billedOf(row, month) + feeShareOf(row, month);
+    return Math.max(0, Math.min(promised, billed));
+  }
+  /** Take a month's billing apart: what is prior accruals finally going out,
+      and what was earned and invoiced in the month itself. A month's billed
+      figure is NOT that month's work — $37,800 in April can be $25,800 of
+      February and March settling on top of April's own $12,000, and a number
+      nobody can decompose is a number nobody trusts. */
+  function billingComposition(row, month) {
+    const billed = billedOf(row, month) + feeShareOf(row, month);
+    const promised = accrualPromised(row, month);
+    const settling = accrualSettling(row, month);
+    return {
+      billed,
+      promised,
+      fromPriorAccruals: settling,
+      ownMonth: Math.round((billed - settling) * 100) / 100,
+      // Promised to this month's invoice and still not out the door.
+      outstanding: Math.round(Math.max(0, promised - settling) * 100) / 100,
+    };
+  }
+  /** The same decomposition across the whole book for one month. */
+  function monthBillingComposition(year, month) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    const t = { billed: 0, fromPriorAccruals: 0, ownMonth: 0 };
+    Object.values(y.rows || {}).forEach(r => {
+      const c = billingComposition(r, month);
+      t.billed += c.billed; t.fromPriorAccruals += c.fromPriorAccruals; t.ownMonth += c.ownMonth;
+    });
+    return t;
+  }
+  const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const _m$ = (n) => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString();
+
+  /** The sentence the page writes for a cell, in the vocabulary above. It is
+      a starting point, not the last word: a human can replace it, and their
+      version is what exports. */
+  function explainCell(row, month, earned) {
+    if (!row) return '';
+    const c = billingComposition(row, month);
+    const acc = accruedOf(row, month);
+    const realized = cellRecognised(row, month);
+    const billsIn = (row.billsIn || {})[month];
+    const status = (row.status || {})[month];
+    const M = MONTH_ABBR[month - 1];
+    const parts = [];
+
+    if (earned) parts.push(`${_m$(earned)} earned in ${M}`);
+    if (c.fromPriorAccruals) {
+      const from = Object.keys(row.billsIn || {})
+        .filter(k => +row.billsIn[k] === +month && accruedOf(row, +k))
+        .map(k => MONTH_ABBR[+k - 1]);
+      parts.push(`${_m$(c.billed)} invoiced — ${_m$(c.fromPriorAccruals)} settling ${from.join(' and ') || 'earlier'} accruals`
+        + (c.ownMonth ? ` and ${_m$(c.ownMonth)} for ${M} itself` : ''));
+      if (c.outstanding) parts.push(`${_m$(c.outstanding)} promised for ${M} has not gone out`);
+    } else if (c.billed) {
+      parts.push(`${_m$(c.billed)} invoiced`);
+    }
+    if (acc) parts.push(`${_m$(acc)} accrued` + (billsIn ? `, invoice due ${MONTH_ABBR[billsIn - 1]}` : ', no invoice month set'));
+    if (status === 'slip') {
+      const to = (row.carryTo || {})[month];
+      parts.push(`neither billed nor accrued — the work moves${to ? ' to ' + MONTH_ABBR[to - 1] : ''}`);
+    }
+    if (!parts.length) return '';
+    return parts.join('. ') + `. Realized ${_m$(realized)}.`;
+  }
+
+  /** A human's own words for a cell. Overrides the generated sentence and is
+      what both exports carry. */
+  function setCellNote(year, key, month, text) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can annotate the book.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.notes = row.notes || {};
+    if (text && String(text).trim()) row.notes[month] = String(text).trim(); else delete row.notes[month];
+    row.updatedAt = new Date().toISOString();
+    writeRevenue(rev);
+    return row;
+  }
+  const cellNote = (row, month) => ((row && row.notes) || {})[month] || '';
+
+  /** Confirm the earned months: where the fee tool says work was earned and
+      no invoice went out, log it as accrued in that month. This is the
+      overwhelmingly common case and typing it project by project is how a
+      close takes a week. `earnedByMonth` comes from the caller because the
+      fee tool's schedule lives on the project, not in the ledger. */
+  function accrueAsEarned(year, key, earnedByMonth) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can edit revenue actuals.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.accrued = row.accrued || {}; row.status = row.status || {};
+    let touched = 0;
+    Object.entries(earnedByMonth || {}).forEach(([m, amt]) => {
+      const mm = +m, earned = Number(amt) || 0;
+      if (!earned) return;
+      const billed = billedOf(row, mm) + feeShareOf(row, mm);
+      if (Math.abs(billed) > 0.005) return;              // it invoiced — nothing to accrue
+      if (Math.abs(accruedOf(row, mm)) > 0.005) return;  // a human already put a figure here
+      row.accrued[mm] = earned;
+      if (!row.status[mm]) row.status[mm] = 'accrued';
+      touched++;
+    });
+    if (touched) { row.updatedAt = new Date().toISOString(); writeRevenue(rev); }
+    return { row, touched };
+  }
+
+  /** Accrued revenue with no invoice month named — revenue recognised that
+      nobody has said when we will actually bill for. */
+  function accrualsAwaitingInvoiceMonth(year) {
+    const y = getLedgerYear(year);
+    if (!y) return [];
+    const out = [];
+    Object.entries(y.rows || {}).forEach(([key, r]) => {
+      for (let m = 1; m <= 12; m++) {
+        if ((r.status || {})[m] !== 'accrued') continue;
+        if ((r.billsIn || {})[m]) continue;
+        const amt = accruedOf(r, m);
+        if (amt) out.push({ key, month: m, row: r, amount: amt });
+      }
+    });
+    return out;
+  }
+
+  /* ============================================================
+     ALLOCATION — every earned dollar gets an accrual month and an
+     invoice month, at the same amount
+     ------------------------------------------------------------
+     Left to float, accrual and billing double-count. Earn 45,000 in
+     January, accrue 45,000 in January, invoice 45,000 in January and
+     the naive sum is 90,000 for one month's work — the same trap at
+     three months' remove gives 135,000.
+
+     So allocation is the model, not a nicety. Each EARNED month's
+     amount is assigned:
+         alloc[earnedMonth] = { amount, accrueIn, invoiceIn }
+     accrueIn and invoiceIn may be the same month or different ones,
+     but the amount is one amount, spent once.
+
+     Revenue is realized on the ACCRUAL calendar — realized in month m
+     is the sum of allocations whose accrueIn is m. Same-month earn /
+     accrue / invoice therefore counts once by construction, not by a
+     subtraction that has to be remembered. The invoice calendar is
+     cash, and is reconciled separately against what the sheet says
+     actually went out.
+     ============================================================ */
+  const allocOf = (row) => (row && row.alloc) || {};
+  const hasAllocations = (row) => Object.keys(allocOf(row)).length > 0;
+  const allocAmount = (a) => (a && isFinite(+a.amount)) ? +a.amount : 0;
+
+  /** Realized in this month: everything whose ACCRUAL lands here. */
+  function allocatedAccruedIn(row, month) {
+    const a = allocOf(row);
+    let sum = 0;
+    Object.keys(a).forEach(e => { if (+a[e].accrueIn === +month) sum += allocAmount(a[e]); });
+    return sum;
+  }
+  /** What our story says should be invoiced in this month. */
+  function allocatedInvoicedIn(row, month) {
+    const a = allocOf(row);
+    let sum = 0;
+    Object.keys(a).forEach(e => { if (+a[e].invoiceIn === +month) sum += allocAmount(a[e]); });
+    return sum;
+  }
+  /** Still earned, still not invoiced, as at the end of `month`. */
+  function allocatedOutstandingAt(row, month) {
+    const a = allocOf(row);
+    let sum = 0;
+    Object.keys(a).forEach(e => {
+      const al = a[e];
+      if (+al.accrueIn <= +month && +al.invoiceIn > +month) sum += allocAmount(al);
+    });
+    return sum;
+  }
+
+  function setEarnedAllocation(year, key, earnedMonth, alloc) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can allocate revenue.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.alloc = row.alloc || {};
+    if (!alloc) delete row.alloc[earnedMonth];
+    else {
+      const amount = Number(alloc.amount) || 0;
+      const accrueIn = +alloc.accrueIn || +earnedMonth;
+      const invoiceIn = +alloc.invoiceIn || accrueIn;
+      if (accrueIn < 1 || accrueIn > 12 || invoiceIn < 1 || invoiceIn > 12) throw new Error('Months must be inside the year.');
+      if (invoiceIn < accrueIn) throw new Error('An invoice cannot go out before the revenue is accrued.');
+      if (!amount) delete row.alloc[earnedMonth];
+      else row.alloc[earnedMonth] = { amount, accrueIn, invoiceIn };
+    }
+    row.updatedAt = new Date().toISOString();
+    writeRevenue(rev);
+    return row;
+  }
+
+  /** Is every earned dollar spoken for? `earnedByMonth` comes from the caller
+      because the fee tool's schedule lives on the project, not the ledger. */
+  function allocationAudit(row, earnedByMonth) {
+    const a = allocOf(row);
+    const months = [];
+    let earnedTotal = 0, allocatedTotal = 0;
+    for (let m = 1; m <= 12; m++) {
+      const earned = Number((earnedByMonth || {})[m]) || 0;
+      const al = a[m];
+      const amount = allocAmount(al);
+      earnedTotal += earned; allocatedTotal += amount;
+      if (!earned && !amount) continue;
+      months.push({
+        month: m, earned, amount,
+        accrueIn: al ? +al.accrueIn : null, invoiceIn: al ? +al.invoiceIn : null,
+        ok: Math.abs(earned - amount) < 0.5 && !!al,
+        gap: Math.round((earned - amount) * 100) / 100,
+      });
+    }
+    return {
+      months,
+      earnedTotal: Math.round(earnedTotal * 100) / 100,
+      allocatedTotal: Math.round(allocatedTotal * 100) / 100,
+      gap: Math.round((earnedTotal - allocatedTotal) * 100) / 100,
+      complete: months.length > 0 && months.every(x => x.ok),
+      unallocated: months.filter(x => !x.ok),
+    };
+  }
+
+  /** Allocate every earned month in one action: accrue it in the month it was
+      earned, and invoice it in the first month at or after that where the
+      sheet actually shows billing — falling back to the earned month itself.
+      A starting point that is right most of the time and visibly wrong when
+      it is not, which is the only kind of default worth having here. */
+  function autoAllocate(year, key, earnedByMonth) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can allocate revenue.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    row.alloc = row.alloc || {};
+    let touched = 0;
+    Object.entries(earnedByMonth || {}).forEach(([m, amt]) => {
+      const earned = Number(amt) || 0, mm = +m;
+      if (!earned) return;
+      if (row.alloc[mm]) return;                       // a human already ruled on this month
+      let invoiceIn = mm;
+      for (let k = mm; k <= 12; k++) {
+        if (Math.abs(billedOf(row, k) + feeShareOf(row, k)) > 0.005) { invoiceIn = k; break; }
+      }
+      row.alloc[mm] = { amount: earned, accrueIn: mm, invoiceIn };
+      touched++;
+    });
+    if (touched) { row.updatedAt = new Date().toISOString(); writeRevenue(rev); }
+    return { row, touched };
+  }
+
+  /** Book-wide: earned revenue nobody has allocated. This is the number that
+      says whether the year can be trusted — an unallocated earned month is
+      revenue that will not be counted anywhere. */
+  function ledgerAllocationGaps(year, earnedLookup) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    let rows = 0, gapAmt = 0, gapMonths = 0;
+    Object.entries(y.rows || {}).forEach(([key, r]) => {
+      const audit = allocationAudit(r, (earnedLookup && earnedLookup(r)) || {});
+      if (!audit.months.length) return;
+      if (!audit.complete) { rows++; gapMonths += audit.unallocated.length; gapAmt += audit.gap; }
+    });
+    return { rows, gapMonths, gapAmt: Math.round(gapAmt * 100) / 100 };
+  }
+
+  /** Recognised revenue for one project in one month.
+
+      The settling term is what makes `billsIn` load-bearing rather than
+      decorative. An accrual is recognised in the month the work happened;
+      when its invoice finally goes out, that portion of the billing is
+      revenue we have ALREADY taken, so it has to come back out or the year
+      counts it twice. Feb accrues 12,000 and Mar 13,800, both promised for
+      April; April bills 37,800. Without the term April reads 37,800 and the
+      three months total 63,600 against 37,800 actually invoiced. With it,
+      April recognises its own 12,000 and the three months foot exactly. */
+  function cellRecognised(row, month) {
+    if (!row) return 0;
+    // Allocated rows are realized on the accrual calendar, so a month that
+    // earns, accrues AND invoices the same dollars counts it once — by
+    // construction, not by a subtraction someone has to remember.
+    if (hasAllocations(row)) return allocatedAccruedIn(row, month) + feeShareOf(row, month);
+    return billedOf(row, month) + feeShareOf(row, month) + accruedOf(row, month)
+         - accrualSettling(row, month);
+  }
+  /** Has anything at all happened in this cell? */
+  const cellHasValue = (row, month) => !!(billedOf(row, month) || feeShareOf(row, month) || accruedOf(row, month));
+
+  /** The accrual lump as imported (the latest close's figure) versus what a
+      human has actually allocated across the months. `ok` is the whole point
+      of the column: an allocation that does not foot to the lump is wrong. */
+  function accrualCheck(row) {
+    const bal = (row && row.accrualBal) || {};
+    const closes = Object.keys(bal).map(Number).sort((a, b) => a - b);
+    const imported = closes.length ? nnum(bal[closes[closes.length - 1]]) : 0;
+    let allocated = 0;
+    for (let m = 1; m <= 12; m++) allocated += accruedOf(row, m);
+    return { imported, allocated, diff: allocated - imported, ok: Math.abs(allocated - imported) < 1, closeMonth: closes[closes.length - 1] || 0 };
+  }
+
+  /** Write one figure into one cell. `field` is 'billed' (a correction that
+      overrides the import) or 'accrued' (the human's allocation). Passing
+      null clears the entry — for billed, that restores the imported figure. */
+  function setCellAmount(year, key, month, field, value) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can edit revenue actuals.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    const bucket = field === 'billed' ? 'billedEdit' : 'accrued';
+    row[bucket] = row[bucket] || {};
+    if (value == null || value === '') delete row[bucket][month];
+    else row[bucket][month] = Number(value) || 0;
+    row.updatedAt = new Date().toISOString();
+    writeRevenue(rev);
+    return row;
+  }
+
+  /** Spread an accrual lump evenly across a run of months — the common case
+      by far, and the reason the lump is unusable as imported. Remainder lands
+      on the last month so the allocation foots to the cent. */
+  function spreadAccrual(year, key, fromMonth, toMonth, amount) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can edit revenue actuals.');
+    const rev = readRevenue();
+    const y = (rev.ledger || {})[String(year)];
+    if (!y || !y.rows || !y.rows[key]) return null;
+    const row = y.rows[key];
+    const a = +fromMonth, b = +toMonth;
+    if (!(a >= 1 && b <= 12 && a <= b)) throw new Error('Pick a month range inside the year.');
+    const total = (amount == null) ? accrualCheck(row).imported : Number(amount) || 0;
+    const n = b - a + 1;
+    const each = Math.round((total / n) * 100) / 100;
+    row.accrued = row.accrued || {};
+    for (let m = a; m <= b; m++) row.accrued[m] = each;
+    row.accrued[b] = Math.round((total - each * (n - 1)) * 100) / 100;   // remainder on the last month
+    row.updatedAt = new Date().toISOString();
+    writeRevenue(rev);
+    return row;
+  }
+
+  /** Column totals for a year: billed, fee share, accrued and recognised,
+      per month plus the year. */
+  function yearTotals(year) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    const blank = () => Array.from({ length: 13 }, () => 0);
+    const t = { billed: blank(), feeShare: blank(), accrued: blank(), plan: blank(), recognised: blank(), rows: 0 };
+    Object.values(y.rows || {}).forEach(r => {
+      t.rows++;
+      for (let m = 1; m <= 12; m++) {
+        t.billed[m] += billedOf(r, m);
+        t.feeShare[m] += feeShareOf(r, m);
+        t.accrued[m] += accruedOf(r, m);
+        t.recognised[m] += cellRecognised(r, m);
+      }
+    });
+    const sum = (a) => a.reduce((x, y2) => x + y2, 0);
+    t.total = { billed: sum(t.billed), feeShare: sum(t.feeShare), accrued: sum(t.accrued), recognised: sum(t.recognised) };
+    // The unallocated remainder across the book — money Finance has accrued
+    // that nobody has placed in a month yet.
+    t.unallocated = Object.values(y.rows || {}).reduce((a, r) => { const c = accrualCheck(r); return a + (c.imported - c.allocated); }, 0);
+    return t;
+  }
+
+  /** Cells a human still has to rule on: money moved (or was planned and
+      didn't) and nobody has said what that means. */
+  function openCells(year) {
+    const y = getLedgerYear(year);
+    if (!y) return [];
+    const out = [];
+    Object.entries(y.rows || {}).forEach(([key, r]) => {
+      for (let m = 1; m <= 12; m++) {
+        if (!cellHasValue(r, m)) continue;
+        if (!(r.status || {})[m]) out.push({ key, month: m, row: r, recognised: cellRecognised(r, m) });
+      }
+    });
+    return out;
+  }
+
+
   function importDb(jsonStr, mode = 'merge') {
     const incoming = JSON.parse(jsonStr);
     if (!incoming || typeof incoming !== 'object' || !incoming.projects || typeof incoming.projects !== 'object') throw new Error('Invalid file — no projects key.');
@@ -1595,12 +2406,12 @@
       // Flatline distributes the project's net evenly; a service-line slice gets
       // its proportional share of each flat month.
       const flat = months.length ? net / months.length : 0;
-      if (!slFilter) return applyOverrides(rows.map(r => ({ year: r.year, month: r.month, amount: flat })), p, slFilter);
+      if (!slFilter) return applyOverrides(rows.map(r => ({ year: r.year, month: r.month, amount: flat })), p, slFilter, opts && opts.raw);
       const sliceGross = totalGross || 1;
       return rows.map(r => ({ year: r.year, month: r.month, amount: flat * (r.gross / sliceGross) }));
     }
     let series = rows.map(r => ({ year: r.year, month: r.month, amount: r.gross * (1 - discPct) - r.lockC }));
-    return applyOverrides(series, p, slFilter);
+    return applyOverrides(series, p, slFilter, opts && opts.raw);
   }
 
   /** Imported broker (fee-share) series for a project, by month. */
@@ -1753,14 +2564,312 @@
 
   /** Manual monthly overrides (set in Revenue Projections) replace the computed
       amount for that month. Stored as p.monthlyOverrides = { "YYYY-M": number }. */
-  function applyOverrides(series, p, slFilter) {
+  function applyOverrides(series, p, slFilter, raw) {
+    if (slFilter || raw) return series;             // a slice, or a deliberately raw read
     const ov = p.monthlyOverrides;
-    if (slFilter || !ov) return series;
-    return series.map(s => {
+    const withOv = !ov ? series : series.map(s => {
       const k = s.year + '-' + s.month;
       return (ov[k] != null && !isNaN(ov[k])) ? { ...s, amount: Number(ov[k]), overridden: true } : s;
     });
+    return applySlips(withOv, p);
   }
+
+  /* ============================================================
+     REVENUE SLIPS — Finance moving money between months
+     ------------------------------------------------------------
+     When a close shows a month that was planned to bill and didn't —
+     neither invoiced nor accrued — the fee is not lost, it is late.
+     Reconciliation records that as a SLIP against the project: an
+     amount, the month it should have billed, and the month it is now
+     expected in.
+
+     A slip MOVES money, it never creates or destroys it: the same
+     figure comes off the from-month and lands on the to-month, so a
+     project's total is identical before and after. That invariant is
+     what makes this safe to let Finance write into a revenue leader's
+     forecast at all, and it is asserted in the test suite.
+
+     Slips stay OPEN until someone reconciles them, and every page
+     that reads monthlySeries gets `slipOut` / `slipIn` flags on the
+     affected months so an open slip shows in red wherever the
+     forecast is read. Reconciling does not undo the move — the money
+     really did shift — it just stops the shouting.
+     ============================================================ */
+  const slipYm = (y, m) => y + '-' + String(m).padStart(2, '0');
+  function projectSlips(p) { return (p && p.revenueSlips) || []; }
+  function openSlips(p) { return projectSlips(p).filter(s => !s.reconciled); }
+  const changeKind = (s) => s.kind || 'slip';       // records written before adjustments existed
+
+  /** Fold open AND reconciled slips into a monthly series. Both move money —
+      reconciling is an acknowledgement, not a reversal — but only open ones
+      raise a flag for the UI to paint. */
+  function applySlips(series, p) {
+    const changes = projectSlips(p);
+    if (!changes.length) return series;
+    const byKey = {};
+    series.forEach(s => { byKey[slipYm(s.year, s.month)] = { ...s }; });
+    changes.forEach(sl => {
+      if (changeKind(sl) === 'adjust') {
+        // A plan correction: Finance found the month should have been a
+        // different figure. Changes the year's total — that is the point.
+        const d = Number(sl.delta) || 0;
+        const cell = byKey[sl.ym];
+        if (!d || !cell) return;
+        cell.amount += d;
+        if (!sl.reconciled) cell.adjusted = (cell.adjusted || 0) + d;
+        return;
+      }
+      const amt = Number(sl.amount) || 0;
+      if (!amt) return;
+      const from = byKey[sl.fromYm], to = byKey[sl.toYm];
+      if (from) { from.amount -= amt; if (!sl.reconciled) { from.slipOut = (from.slipOut || 0) + amt; } }
+      if (to) { to.amount += amt; if (!sl.reconciled) { to.slipIn = (to.slipIn || 0) + amt; } }
+    });
+    return series.map(s => byKey[slipYm(s.year, s.month)] || s);
+  }
+
+  /** Record a plan ADJUSTMENT: this month should have been a different number.
+      Unlike a slip it changes the year — money is added or removed, not moved —
+      and like a slip it stays open (red everywhere) until someone reconciles it. */
+  function recordAdjustment(projectId, adj) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can adjust a project plan.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p) return null;
+    p.revenueSlips = p.revenueSlips || [];
+    const cu = getCurrentUser() || {};
+    const idx = p.revenueSlips.findIndex(s => changeKind(s) === 'adjust' && s.ledgerKey === adj.ledgerKey && s.ym === adj.ym);
+    const rec = {
+      kind: 'adjust', ledgerKey: adj.ledgerKey || '', ym: adj.ym,
+      delta: Number(adj.delta) || 0, was: Number(adj.was) || 0, now: Number(adj.now) || 0,
+      note: adj.note || '', source: 'reconciliation', reconciled: false,
+      at: new Date().toISOString(), by: cu.name || cu.username || 'admin',
+    };
+    if (idx >= 0) rec.id = p.revenueSlips[idx].id;
+    else rec.id = 'adj_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    if (idx >= 0) p.revenueSlips[idx] = rec; else p.revenueSlips.push(rec);
+    p.updatedAt = new Date().toISOString();
+    writeDb(db);
+    logActivity('plan-adjust', projectId, { ym: adj.ym, delta: rec.delta });
+    return p;
+  }
+
+  /* ============================================================
+     SCHEDULE SHIFT — moving the work, not just the money
+     ------------------------------------------------------------
+     A slip says the fee arrives later. Usually that is because the
+     WORK is later, and until the schedule moves with it the roster
+     still shows people booked in a month that earns nothing. This
+     shifts a project's timeline by N months and carries the per-month
+     staffing with it, so effort and revenue stay in step.
+
+     Phase lengths are untouched — the shape of the job does not
+     change, it just starts later, which is what "push it out two
+     months" actually means.
+     ============================================================ */
+  function shiftSchedule(projectId, months) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can move a project schedule.');
+    const n = parseInt(months, 10);
+    if (!n) return null;
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p || !p.timeline) return null;
+    const bump = (y, m) => { const d = new Date(y, (m - 1) + n, 1); return { year: d.getFullYear(), month: d.getMonth() + 1 }; };
+    const st = bump(p.timeline.startYear, p.timeline.startMonth);
+    const en = bump(p.timeline.endYear || p.timeline.startYear, p.timeline.endMonth || p.timeline.startMonth);
+    p.timeline = { ...p.timeline, startYear: st.year, startMonth: st.month, endYear: en.year, endMonth: en.month };
+    // Carry the month-level staffing with the dates, or a shifted schedule
+    // would keep pointing its FTE at the months it just left.
+    (p.roles || []).forEach(r => {
+      if (!r.fteMonthly) return;
+      const moved = {};
+      Object.entries(r.fteMonthly).forEach(([k, v]) => {
+        const [y, m] = k.split('-').map(Number);
+        const t = bump(y, m);
+        moved[t.year + '-' + t.month] = v;
+      });
+      r.fteMonthly = moved;
+    });
+    // Monthly billing overrides are keyed by month too.
+    if (p.monthlyOverrides) {
+      const mo = {};
+      Object.entries(p.monthlyOverrides).forEach(([k, v]) => {
+        const [y, m] = k.split('-').map(Number);
+        const t = bump(y, m);
+        mo[t.year + '-' + t.month] = v;
+      });
+      p.monthlyOverrides = mo;
+    }
+    p.scheduleShiftedAt = new Date().toISOString();
+    p.updatedAt = p.scheduleShiftedAt;
+    // The named-people allocation matrix (staff.json) lives in its own store
+    // and does NOT move with the contract. Flag the project so the Staffing
+    // page offers a one-click "shift the allocations too" until a human
+    // applies or dismisses it. Repeated shifts accumulate.
+    const shiftBy = (getRealIdentity() || getCurrentUser() || {}).username || '';
+    const prevShift = p.staffingShiftPending;
+    p.staffingShiftPending = { months: (prevShift ? +prevShift.months || 0 : 0) + n, at: p.scheduleShiftedAt, by: shiftBy };
+    // The frozen snapshot is now describing the wrong months — restamp it.
+    const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    if (catalog && catalog.hydrated) {
+      const fin = computeFinancials(p, catalog);
+      if (fin) { fin.inputsHash = financialsInputsHash(p); fin.stale = false; p.financials = fin; }
+    } else if (p.financials) { p.financials.stale = true; }
+    writeDb(db);
+    logActivity('schedule-shift', projectId, { months: n, start: st.year + '-' + st.month });
+    return p;
+  }
+
+  /** Clear the "shift the staffing allocations too" flag — called by the
+      Staffing page after the allocations were moved, or dismissed. */
+  function clearStaffingShift(projectId) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can clear a staffing-shift flag.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p || !p.staffingShiftPending) return false;
+    delete p.staffingShiftPending;
+    p.updatedAt = new Date().toISOString();
+    writeDb(db);
+    return true;
+  }
+
+  /** THE canonical monthly billing series — what every page should read.
+      ------------------------------------------------------------------
+      Freezing protects the PRICE, not the CALENDAR. A booked record's
+      frozen snapshot is the authority on what the work is worth (immune to
+      later rate-grid changes), but the month-by-month distribution stays
+      live, because overrides, slips and adjustments are exactly the things
+      that must show up after a record is booked. Reading the frozen
+      byMonth raw — which Revenue Projections and the staffing dollars view
+      both did — meant a monthly edit was recorded, flagged in red, and
+      then displayed at its old value. */
+  function billingSeries(p, catalog) {
+    const fs = (p.assumptions && p.assumptions.feeShare) || {};
+    const pct = fs.enabled ? (parseFloat(fs.pct) || 0) / 100 : 0;
+    const onTop = fs.mode === 'ontop';
+    const fin = p.financials;
+    const base = {};
+    if (fin && Array.isArray(fin.byMonth) && fin.byMonth.length) {
+      fin.byMonth.forEach(s => {
+        const [y, m] = s.ym.split('-').map(Number);
+        base[y + '-' + m] = { year: y, month: m, net: s.net || 0,
+          broker: s.broker || 0, passCost: s.passCost || 0, passClient: s.passClient || 0 };
+      });
+    } else {
+      (monthlySeries(p, catalog, { raw: true }) || []).forEach(s => {
+        base[s.year + '-' + s.month] = { year: s.year, month: s.month, net: s.amount,
+          broker: s.amount * pct, passCost: 0, passClient: 0 };
+      });
+    }
+    // The live series carries the same months with overrides + changes folded
+    // in; use it as the authority on `net` and on the flags.
+    const live = monthlySeries(p, catalog) || [];
+    const out = [];
+    const seen = {};
+    live.forEach(s => {
+      const k = s.year + '-' + s.month;
+      const b = base[k] || { net: s.amount, broker: 0, passCost: 0, passClient: 0 };
+      const net = s.amount;
+      // Broker/pass-through ride the ORIGINAL proportions — a monthly edit
+      // changes what we bill, not the deal behind it.
+      const ratio = b.net ? net / b.net : 1;
+      const broker = (b.broker || 0) * ratio;
+      out.push({
+        ym: k, year: s.year, month: s.month, net,
+        invoice: (onTop ? net + broker : net) + (b.passClient || 0),
+        broker, passCost: b.passCost || 0, passClient: b.passClient || 0,
+        overridden: !!s.overridden, slipOut: s.slipOut || 0, slipIn: s.slipIn || 0, adjusted: s.adjusted || 0,
+      });
+      seen[k] = true;
+    });
+    // Months the snapshot knows about that the live compute doesn't reach.
+    Object.entries(base).forEach(([k, b]) => {
+      if (seen[k]) return;
+      out.push({ ym: k, year: b.year, month: b.month, net: b.net, invoice: (onTop ? b.net + b.broker : b.net) + (b.passClient || 0),
+                 broker: b.broker, passCost: b.passCost, passClient: b.passClient, overridden: false, slipOut: 0, slipIn: 0, adjusted: 0 });
+    });
+    return out.sort((a, b) => a.year - b.year || a.month - b.month);
+  }
+
+  /** Record (or update) a slip on a project. Keyed by the ledger cell it came
+      from, so re-picking the carry month moves the existing slip instead of
+      stacking a second one on top. */
+  function recordSlip(projectId, slip) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can move revenue between months.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p) return null;
+    p.revenueSlips = p.revenueSlips || [];
+    const cu = getCurrentUser() || {};
+    const idx = p.revenueSlips.findIndex(s => s.ledgerKey === slip.ledgerKey && s.fromYm === slip.fromYm);
+    if (idx >= 0) {
+      // Keep the amount settled at creation: the plan has already moved to
+      // reflect this slip, so recomputing it here would shrink it each time.
+      p.revenueSlips[idx] = { ...p.revenueSlips[idx], toYm: slip.toYm, note: slip.note || p.revenueSlips[idx].note, at: new Date().toISOString(), by: cu.name || cu.username || 'admin' };
+    } else {
+      p.revenueSlips.push({
+        id: 'slip_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        ledgerKey: slip.ledgerKey || '', fromYm: slip.fromYm, toYm: slip.toYm,
+        amount: Number(slip.amount) || 0, note: slip.note || '',
+        source: 'reconciliation', reconciled: false,
+        at: new Date().toISOString(), by: cu.name || cu.username || 'admin',
+      });
+    }
+    p.updatedAt = new Date().toISOString();
+    writeDb(db);
+    logActivity('slip', projectId, { from: slip.fromYm, to: slip.toYm, amount: Number(slip.amount) || 0 });
+    return p;
+  }
+
+  /** Drop a slip — used when a cell's status stops being 'slipped'. */
+  function removeSlip(projectId, match) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can move revenue between months.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p || !p.revenueSlips) return null;
+    const before = p.revenueSlips.length;
+    p.revenueSlips = p.revenueSlips.filter(s => match.id ? s.id !== match.id
+      : !(s.ledgerKey === match.ledgerKey && s.fromYm === match.fromYm));
+    if (p.revenueSlips.length !== before) {
+      p.updatedAt = new Date().toISOString();
+      writeDb(db);
+      logActivity('slip-remove', projectId, { from: match.fromYm || null });
+    }
+    return p;
+  }
+
+  /** Mark a slip settled. The money stays where the slip put it; this only
+      clears the red. */
+  function reconcileSlip(projectId, slipId, on) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can reconcile a slip.');
+    const db = readDb();
+    const p = db.projects[projectId];
+    if (!p || !p.revenueSlips) return null;
+    const sl = p.revenueSlips.find(s => s.id === slipId);
+    if (!sl) return null;
+    const cu = getCurrentUser() || {};
+    sl.reconciled = on !== false;
+    sl.reconciledAt = sl.reconciled ? new Date().toISOString() : null;
+    sl.reconciledBy = sl.reconciled ? (cu.name || cu.username || 'admin') : null;
+    p.updatedAt = new Date().toISOString();
+    writeDb(db);
+    logActivity(sl.reconciled ? 'slip-reconciled' : 'slip-reopened', projectId, { from: sl.fromYm, to: sl.toYm, amount: sl.amount });
+    return p;
+  }
+
+  /** Every unreconciled slip in the book — drives the red banner on
+      Revenue Projections. */
+  function allOpenSlips() {
+    const out = [];
+    listProjects().forEach(p => openSlips(p).forEach(s => out.push({
+      projectId: p.id,
+      name: (p.project && p.project.name) || 'Untitled',
+      client: (p.project && p.project.client) || '',
+      ...s,
+    })));
+    return out.sort((a, b) => (a.fromYm || '').localeCompare(b.fromYm || ''));
+  }
+
 
   /** Resolve a role's base rate AND its escalation anchor year, matching the
       calculator's roleBaseInfo():
@@ -1844,7 +2953,7 @@
   /* ------------------------------------------------------------
      TOOL ADMINS — admin TOOLS, member PROJECT ACCESS.
      These logins get the admin-only tools (Staffing & Bandwidth,
-     Revenue Studio, Profitability, Ingestion, Data Repair, …) but
+     Revenue Reconciliation, Profitability, Ingestion, Data Repair, …) but
      their project visibility is unchanged: they still see only the
      projects they lead / own / are granted, exactly like a member.
      Use this for people who run an operational function without
@@ -1871,9 +2980,16 @@
     'kyerou@savills.us',
   ]);
 
+  /* Admins added through the synced vocabulary (Bulk Editor → Lists sheet, or
+     addVocab from the console) — so granting admin is a data change that syncs
+     to everyone, not a code deploy. The hardcoded sets above stay as the
+     bootstrap floor; these extend them. */
+  function vocabAdmins()     { try { return new Set(readVocab().admins.map(s => String(s).trim().toLowerCase())); } catch (e) { return new Set(); } }
+  function vocabToolAdmins() { try { return new Set(readVocab().toolAdmins.map(s => String(s).trim().toLowerCase())); } catch (e) { return new Set(); } }
+
   function roleFor(login) {
     const k = String(login || '').trim().toLowerCase();
-    return (ADMINS.has(k) || TOOL_ADMINS.has(k)) ? 'admin' : 'member';
+    return (ADMINS.has(k) || TOOL_ADMINS.has(k) || vocabAdmins().has(k) || vocabToolAdmins().has(k)) ? 'admin' : 'member';
   }
   /** TRUE only for people who may see EVERY project. Tool admins are role
       'admin' (so the admin tools open for them) but are NOT here — their
@@ -1881,7 +2997,8 @@
       use this, never isAdmin(). */
   function seesAllProjects(user) {
     const u = user || getCurrentUser();
-    return ADMINS.has(String(u.username || '').trim().toLowerCase());
+    const k = String(u.username || '').trim().toLowerCase();
+    return ADMINS.has(k) || vocabAdmins().has(k);   // tool admins stay member-scoped
   }
 
   /* ============================================================
@@ -1906,7 +3023,9 @@
   const BASE_REVENUE_LEADERS = [
     { id: 'acpeters',  displayName: 'Andrew Peters',    username: 'acpeters@savills.us',   aliases: ['Andrew Peters', 'A. Peters', 'Peters', 'AP'] },
     { id: 'bjosselson',displayName: 'Benay Josselson',  username: 'bjosselson@savills.us',  aliases: ['Benay Josselson', 'B. Josselson', 'Josselson', 'BLJ'] },
-    { id: 'bking',     displayName: 'Brianna King',     username: 'bshepparding@savills.us',aliases: ['Brianna King', 'B. King', 'King', 'Brianna Sheppard King', 'BSK'] },
+    // NOTE: confirm Brianna's actual SSO login. Both spellings resolve to her
+    // (resolveLeader matches aliases too), so neither can lock her out.
+    { id: 'bking',     displayName: 'Brianna King',     username: 'bshepparding@savills.us',aliases: ['Brianna King', 'B. King', 'King', 'Brianna Sheppard King', 'BSK', 'bsheppardking@savills.us'] },
     { id: 'emerkelson',displayName: 'Eric Merkelson',   username: 'emerkelson@savills.us',  aliases: ['Eric Merkelson', 'E. Merkelson', 'Merkelson', 'EM'] },
     { id: 'esobel',    displayName: 'Emily Sobel',      username: 'esobel@savills.us',      aliases: ['Emily Sobel', 'E. Sobel', 'Sobel', 'ES'] },
     { id: 'fbuscaglia',displayName: 'Fred Buscaglia',   username: 'fbuscaglia@savills.us',  aliases: ['Fred Buscaglia', 'F. Buscaglia', 'Buscaglia', 'FB'] },
@@ -2070,7 +3189,18 @@
     return projects.filter(p => userOwnsProject(p, u));
   }
 
+  /* One formatting convention for money everywhere: $ with thousands
+     separators, negatives in parentheses (finance style), blanks as an
+     em-dash. Pages with dense grids may still compress to $K / $M — but
+     the sign convention must match this. */
+  function fmtMoney(n) {
+    if (n == null || isNaN(n)) return '—';
+    const s = '$' + Math.abs(Math.round(n)).toLocaleString();
+    return n < 0 ? '(' + s + ')' : s;
+  }
+
   window.UFC_Store = {
+    fmtMoney,
     SCHEMA, STATUSES, STATUS_LABELS, ASSUMPTION_LIBRARY, projectTypeSubs, addVocab, readVocab,
     accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING,
@@ -2082,10 +3212,22 @@
     proposalHealth,
     exportDb, importDb, downloadJson,
     FLASH_LABELS, captureSnapshot, getSnapshots, deleteSnapshot, periodKey,
+    DISPOSITIONS, DISPOSITION_LABEL, LEDGER_FIRST_YEAR,
+    ledgerYears, getLedgerYear, closedThrough, postLedgerYear, deleteLedgerYear,
+    setCellStatus, setRowMatch, setCellAmount, spreadAccrual,
+    createProjectFromLedgerRow, ledgerCoverage,
+    cellRecognised, cellHasValue, billedOf, accruedOf, feeShareOf, accrualCheck,
+    accrualPromised, accrualSettling, billingComposition, monthBillingComposition, accrualsAwaitingInvoiceMonth,
+    explainCell, setCellNote, cellNote, accrueAsEarned,
+    hasAllocations, allocOf, allocatedAccruedIn, allocatedInvoicedIn, allocatedOutstandingAt,
+    setEarnedAllocation, allocationAudit, autoAllocate, ledgerAllocationGaps,
+    yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     computeFinancials, financialsInputsHash, restampFinancials,
     isChangeOrder, childChangeOrders, approvedChangeOrders, createChangeOrder,
     importedBrokerSeries, reconcileImport,
+    projectSlips, openSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
+    recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries,
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
@@ -2094,6 +3236,7 @@
     leaderById, resolveLeader, leaderDisplay,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,
+    attachRevenueRemote, hydrateRevenueFromRemote, readRevenue, defaultRevenue,
     listBaselines, getBaseline, saveBaseline, deleteBaseline, baselineFromBudget, baselineGridForSlice,
     listScenarios, getScenario, saveScenario, deleteScenario,
   };
