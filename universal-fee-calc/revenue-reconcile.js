@@ -57,11 +57,13 @@
 
   let CATALOG = null;
   let YEAR = null;
-  let MODE = 'actual';        // actual | plan | variance
+  let MODE = 'earned';        // which calendar the grid shows: earned | accrued | invoiced
+  let LEADER = '';            // revenue leader filter
   let FOCUS = 0;              // 0 = whole year, 1–12 = one month
   let PENDING = null;
   let SHOW_ZERO = false;
   let ONLY_UNMAPPED = false;
+  let ONLY_UNASSIGNED = false;
 
   /* ============================================================
      1 · PARSE — one tab, every month it carries
@@ -395,10 +397,39 @@
   const cellMoved = (r, m) => STORE.cellHasValue(r, m);
   const rowActive = (r) => { for (let m = 1; m <= 12; m++) if (cellMoved(r, m) || planFor(r.pid, YEAR, m)) return true; return false; };
 
+  /* The three calendars. Earned is the fee tool — where the work and the
+     staffing sit. Accrued is where revenue is realized. Invoiced is what the
+     close file says actually went out. Reconciliation is making the first
+     account for the other two. */
   function cellValue(r, m) {
-    if (MODE === 'plan') return planFor(r.pid, YEAR, m);
-    if (MODE === 'variance') return STORE.cellRecognised(r, m) - planFor(r.pid, YEAR, m);
-    return STORE.cellRecognised(r, m);
+    if (MODE === 'earned') return planFor(r.pid, YEAR, m);
+    if (MODE === 'accrued') return STORE.hasAllocations(r) ? STORE.allocatedAccruedIn(r, m) : STORE.accruedOf(r, m);
+    return STORE.billedOf(r, m) + STORE.feeShareOf(r, m);      // invoiced — the sheet's own fact
+  }
+  /** Earned in this month that has not been given an accrual and invoice
+      month. This is the monthly reconciliation: everything else is bookkeeping. */
+  function unassignedIn(r, m) {
+    const earned = planFor(r.pid, YEAR, m);
+    if (!earned) return 0;
+    const a = STORE.allocOf(r)[m];
+    return Math.round((earned - (a ? (+a.amount || 0) : 0)) * 100) / 100;
+  }
+  const rowUnassigned = (r) => { let t = 0; for (let m = 1; m <= 12; m++) t += unassignedIn(r, m); return t; };
+
+  /* ---- revenue leader, off the matched project record ---- */
+  function leaderOf(pid) {
+    if (!pid) return '';
+    const p = STORE.getProject(pid);
+    const pj = (p && p.project) || {};
+    const raw = pj.lead || pj.clientRelOwner || '';
+    if (!raw) return '';
+    const L = STORE.resolveLeader ? STORE.resolveLeader(raw) : null;
+    return (L && (L.name || L.username)) || String(raw);
+  }
+  function leaderList() {
+    const seen = new Set();
+    ledgerRows().forEach(r => { const l = leaderOf(r.pid); if (l) seen.add(l); });
+    return [...seen].sort((a, b) => a.localeCompare(b));
   }
 
   function buildBar() {
@@ -504,7 +535,11 @@
   function renderGrid() {
     const rows = ledgerRows()
       .filter(r => SHOW_ZERO || rowActive(r) || (r.children || []).some(rowActive))
-      .filter(r => !ONLY_UNMAPPED || !r.pid);
+      .filter(r => !ONLY_UNMAPPED || !r.pid)
+      .filter(r => !LEADER || leaderOf(r.pid) === LEADER)
+      .filter(r => !ONLY_UNASSIGNED || Math.abs(rowUnassigned(r)) > 0.5)
+      .sort((a, b) => (leaderOf(a.pid) || 'zzz').localeCompare(leaderOf(b.pid) || 'zzz')
+                    || (a.name || '').localeCompare(b.name || ''));
     const t = $('#grid');
     if (!rows.length) { t.innerHTML = ''; $('#empty').hidden = false; return; }
     $('#empty').hidden = true;
@@ -516,6 +551,9 @@
       h += `<th class="${mm <= closeM ? 'closed-h' : 'open-h'} ${FOCUS === mm ? 'focus-h' : ''}">${m}<span class="sub">${mm <= closeM ? 'ACTUAL' : 'FORECAST'}</span></th>`;
     });
     h += `<th>${YEAR}</th><th class="acc-h">Accrual<span class="sub">IMPORTED</span></th></tr></thead><tbody>`;
+    $('#mode-label').textContent = MODE === 'earned' ? 'Showing EARNED — what the fee tool says each month is worth'
+      : MODE === 'accrued' ? 'Showing ACCRUED — the month revenue is realized'
+      : 'Showing INVOICED — what the close file says went out the door';
 
     /* One figure per project-month — recognised revenue, with a stripe under it
        saying how it settled. The three lanes behind that figure open on click,
@@ -528,7 +566,9 @@
       if (isChild) s += `<div class="wp-name fee">${feeLabel(Object.values(r.feeShare || {})[0] || 0)} — ${esc(r.name || 'co-broker')}</div>`;
       else {
         s += `<span class="chev">▸</span><div class="wp-name">${esc(r.name || '(unnamed)')}</div>`;
-        s += `<div class="wp-meta">${esc(r.client || '—')}${r.code ? ' · ' + esc(r.code) : ''}`;
+        const ld = leaderOf(r.pid);
+        s += `<div class="wp-meta">${esc(r.client || '—')}${r.code ? ' · ' + esc(r.code) : ''}`
+          + (ld ? ` · <span class="wp-lead">${esc(ld)}</span>` : '');
         // Remap is always offered. The auto-matcher is a starting point, and a
         // line quietly matched to the WRONG project is worse than an unmatched one.
         const mp = r.pid ? (STORE.getProject(r.pid) || {}).project : null;
@@ -632,6 +672,9 @@
        <div class="acc-d">${Math.abs(unalloc) < 1 ? 'all allocated ✓' : money(Math.abs(unalloc)) + ' unallocated'}</div>`);
     h += lane('Billed (invoice out)', 'lane-bill', (r, m) => STORE.billedOf(r, m) + STORE.feeShareOf(r, m));
     h += lane('Realized revenue', '', (r, m) => STORE.cellRecognised(r, m));
+    // The reconciliation itself: earned money nobody has placed.
+    const anyUn = flat.some(r => Math.abs(rowUnassigned(r)) > 0.5);
+    if (anyUn) h += lane('UNASSIGNED — earned, not placed', 'lane-unassigned', (r, m) => unassignedIn(r, m));
     h += '</tfoot>';
     t.innerHTML = h;
     wireGrid();
@@ -970,7 +1013,8 @@
     const rows = ledgerRows();
     const flat = [];
     rows.forEach(r => { flat.push(r); (r.children || []).forEach(fs => flat.push(fs)); });
-    return flat.filter(r => cellMoved(r, m) || planFor(r.pid, YEAR, m)).map(r => ({
+    return flat.filter(r => !LEADER || leaderOf(r.pid) === LEADER)
+      .filter(r => cellMoved(r, m) || planFor(r.pid, YEAR, m)).map(r => ({
       row: r, m,
       billed: STORE.billedOf(r, m),
       fee: STORE.feeShareOf(r, m),
@@ -978,6 +1022,8 @@
       rec: STORE.cellRecognised(r, m),
       plan: planFor(r.pid, YEAR, m),
       comp: STORE.billingComposition(r, m),
+      leader: leaderOf(r.pid),
+      unassigned: unassignedIn(r, m),
       status: (r.status || {})[m] || '',
     }));
   }
@@ -991,7 +1037,7 @@
        recognised, and the two figures that make up the difference. The three
        that did not exist before the ledger are highlighted, so it is obvious
        what this page added to a report people already knew. */
-    let h = `<thead><tr><th class="l">Project</th><th class="l">Client</th>
+    let h = `<thead><tr><th class="l">Project</th><th class="l">Client</th><th class="l">Revenue leader</th>
       <th>Earned<span class="sub">FEE TOOL</span></th>
       <th class="new-col">Realized</th><th class="new-col">Invoiced</th><th class="new-col">Accrued</th>
       <th>Fee share</th><th>Variance</th><th class="l new-col">Disposition</th>
@@ -1003,7 +1049,8 @@
       h += `<tr class="${x.row.isFeeShare ? 'fee-row' : ''}">
         <td class="l">${x.row.isFeeShare ? feeLabel(x.fee) + ' — ' : ''}${esc(x.row.name || '')}</td>
         <td class="l">${esc(x.row.client || '—')}</td>
-        <td>${x.plan ? money(x.plan) : '—'}</td>
+        <td class="l lead-c">${esc(x.leader || '—')}</td>
+        <td class="${x.unassigned ? 'unassigned-c' : ''}" title="${x.unassigned ? money(x.unassigned) + ' of this month\'s earned revenue has no accrual and invoice month' : ''}">${x.plan ? money(x.plan) : '—'}${x.unassigned ? `<div class="comp-note">${money(x.unassigned)} unassigned</div>` : ''}</td>
         <td class="new-col strong">${money(x.rec)}</td>
         <td class="new-col">${x.billed ? money(x.billed) : '—'}${x.comp && x.comp.fromPriorAccruals
             ? `<div class="comp-note" title="Prior accruals settling in this month, plus what was earned and invoiced in it">${money(x.comp.fromPriorAccruals)} prior + ${money(x.comp.ownMonth)} own</div>` : ''}</td>
@@ -1038,7 +1085,7 @@
       ? `Of the <b>${money(mc.billed)}</b> invoiced in ${MONTHS_LONG[m - 1]}, <b>${money(mc.fromPriorAccruals)}</b> is
          earlier accruals settling and <b>${money(mc.ownMonth)}</b> was earned and invoiced in the month itself.`
       : '';
-    h += `</tbody><tfoot><tr class="tot"><td class="l">Total</td><td></td><td>${money(tot.plan)}</td>
+    h += `</tbody><tfoot><tr class="tot"><td class="l">Total</td><td></td><td></td><td>${money(tot.plan)}</td>
       <td class="new-col">${money(tot.rec)}</td><td class="new-col">${money(tot.billed)}</td>
       <td class="new-col">${money(tot.acc)}</td><td>${money(tot.fee)}</td>
       <td>${money(tot.rec - tot.plan)}</td><td class="new-col"></td><td class="new-col"></td></tr></tfoot>`;
@@ -1136,7 +1183,7 @@
     ws.getCell('A2').value = 'Revenue is realized in the ACCRUAL month. A month that earns, accrues and invoices the same work counts it once.';
     ws.getCell('A2').font = { italic: true, size: 10, color: { argb: 'FF79828C' } };
     ws.addRow([]);
-    const h = ws.addRow(['Project', 'Client', 'Earned in', 'Earned', 'Allocated', 'Accrues in', 'Invoices in', 'Status']);
+    const h = ws.addRow(['Project', 'Client', 'Revenue leader', 'Earned in', 'Earned', 'Allocated', 'Accrues in', 'Invoices in', 'Status']);
     h.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
     const rows = ledgerRows();
     const flat = []; rows.forEach(r => { flat.push(r); (r.children || []).forEach(f => flat.push(f)); });
@@ -1146,21 +1193,21 @@
       const audit = STORE.allocationAudit(r, earned);
       audit.months.forEach(x => {
         earnedT += x.earned; allocT += x.amount;
-        const row = ws.addRow([r.name || '', r.client || '', MONTHS[x.month - 1], x.earned || null, x.amount || null,
+        const row = ws.addRow([r.name || '', r.client || '', leaderOf(r.pid) || '', MONTHS[x.month - 1], x.earned || null, x.amount || null,
           x.accrueIn ? MONTHS[x.accrueIn - 1] : '', x.invoiceIn ? MONTHS[x.invoiceIn - 1] : '',
           x.ok ? 'placed' : (x.amount ? 'amount does not match earned' : 'NOT ALLOCATED')]);
-        row.getCell(4).numFmt = fmt; row.getCell(5).numFmt = fmt;
-        if (!x.ok) { row.getCell(8).font = { bold: true, color: { argb: RED } };
-                     row.getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEAEA' } }; }
-        else row.getCell(8).font = { color: { argb: GRN } };
+        row.getCell(5).numFmt = fmt; row.getCell(6).numFmt = fmt;
+        if (!x.ok) { row.getCell(9).font = { bold: true, color: { argb: RED } };
+                     row.getCell(9).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEAEA' } }; }
+        else row.getCell(9).font = { color: { argb: GRN } };
       });
     });
-    const t = ws.addRow(['TOTAL', '', '', earnedT, allocT, '', '', Math.abs(earnedT - allocT) < 0.5 ? 'every earned dollar placed' : 'UNPLACED ' + Math.round(earnedT - allocT)]);
+    const t = ws.addRow(['TOTAL', '', '', '', earnedT, allocT, '', '', Math.abs(earnedT - allocT) < 0.5 ? 'every earned dollar placed' : 'UNPLACED ' + Math.round(earnedT - allocT)]);
     t.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
-    t.getCell(4).numFmt = fmt; t.getCell(5).numFmt = fmt;
-    t.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
-    t.getCell(5).font = { bold: true, color: { argb: NAVY } };
-    ws.columns = [{ width: 42 }, { width: 26 }, { width: 11 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 12 }, { width: 30 }];
+    t.getCell(5).numFmt = fmt; t.getCell(6).numFmt = fmt;
+    t.getCell(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
+    t.getCell(6).font = { bold: true, color: { argb: NAVY } };
+    ws.columns = [{ width: 42 }, { width: 26 }, { width: 20 }, { width: 11 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 12 }, { width: 30 }];
     ws.views = [{ state: 'frozen', ySplit: 4 }];
   }
 
@@ -1175,7 +1222,7 @@
     ws.getCell('A1').value = `${YEAR} — what happened, month by month`;
     ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
     ws.addRow([]);
-    const h = ws.addRow(['Month', 'Project', 'Client', 'Earned', 'Realized', 'Status', 'What happened']);
+    const h = ws.addRow(['Month', 'Project', 'Client', 'Revenue leader', 'Earned', 'Realized', 'Status', 'What happened']);
     h.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
     const rows = ledgerRows();
     const flat = []; rows.forEach(r => { flat.push(r); (r.children || []).forEach(f => flat.push(f)); });
@@ -1184,13 +1231,13 @@
         const earned = planFor(r.pid, YEAR, m);
         const note = STORE.cellNote(r, m) || STORE.explainCell(r, m, earned);
         if (!note) return;
-        const row = ws.addRow([MONTHS[m - 1], r.name || '', r.client || '', earned || null,
+        const row = ws.addRow([MONTHS[m - 1], r.name || '', r.client || '', leaderOf(r.pid) || '', earned || null,
           STORE.cellRecognised(r, m) || null, STORE.DISPOSITION_LABEL((r.status || {})[m]) || 'unruled', note]);
-        row.getCell(4).numFmt = fmt; row.getCell(5).numFmt = fmt;
-        row.getCell(7).alignment = { wrapText: true, vertical: 'top' };
+        row.getCell(5).numFmt = fmt; row.getCell(6).numFmt = fmt;
+        row.getCell(8).alignment = { wrapText: true, vertical: 'top' };
       });
     }
-    ws.columns = [{ width: 8 }, { width: 42 }, { width: 26 }, { width: 14 }, { width: 14 }, { width: 24 }, { width: 90 }];
+    ws.columns = [{ width: 8 }, { width: 40 }, { width: 24 }, { width: 20 }, { width: 14 }, { width: 14 }, { width: 24 }, { width: 86 }];
     ws.views = [{ state: 'frozen', ySplit: 3 }];
   }
 
@@ -1245,7 +1292,7 @@
         for (let m = 1; m <= 12; m++) { const v = fn(m); tt += v; pp += planFor(r.pid, YEAR, m); cells.push(v || null); }
         const row = ws.addRow([
           li === 0 ? (r.isFeeShare ? '    ' + feeLabel(Object.values(r.feeShare || {})[0] || 0) + ' — ' : '') + (r.name || '') : '',
-          li === 0 ? (r.client || '') : '', li === 0 ? (r.code || '') : '', label,
+          li === 0 ? (r.client || '') : '', li === 0 ? (leaderOf(r.pid) || '') : '', label,
           ...cells, tt, isMain ? pp : null, isMain ? tt - pp : null,
         ]);
         for (let i = 5; i <= 19; i++) row.getCell(i).numFmt = fmt;
@@ -1299,33 +1346,36 @@
     ws.getCell('A2').value = `Actuals through ${MONTHS_LONG[STORE.closedThrough(YEAR) - 1] || '—'} · last updated ${new Date(y.updatedAt).toLocaleDateString()} by ${y.updatedBy} · exported ${new Date().toLocaleString()}`;
     ws.getCell('A2').font = { italic: true, size: 10, color: { argb: STEEL } };
     ws.addRow([]);
-    const head = ws.addRow(['Project', 'Client', 'Project #', 'Earned (fee tool)', 'Realized revenue', 'Invoiced', 'Accrued', 'Fee share', 'Variance vs earned', 'Billing status', 'What happened', 'Finance note (from the close file)']);
+    const head = ws.addRow(['Project', 'Client', 'Revenue leader', 'Project #', 'Earned (fee tool)', 'Unassigned', 'Realized revenue', 'Invoiced', 'Accrued', 'Fee share', 'Variance vs earned', 'Billing status', 'What happened', 'Finance note (from the close file)']);
     head.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; c.alignment = { horizontal: 'center', wrapText: true }; });
-    [1, 2, 3, 10, 11].forEach(i => head.getCell(i).alignment = { horizontal: 'left', wrapText: true });
+    [1, 2, 3, 4, 12, 13, 14].forEach(i => head.getCell(i).alignment = { horizontal: 'left', wrapText: true });
     const tot = { plan: 0, billed: 0, fee: 0, acc: 0, rec: 0 };
     rows.sort((a, b) => (a.row.name || '').localeCompare(b.row.name || '')).forEach(x => {
       tot.plan += x.plan; tot.billed += x.billed; tot.fee += x.fee; tot.acc += x.acc; tot.rec += x.rec;
       const v = x.rec - x.plan;
       const row = ws.addRow([(x.row.isFeeShare ? '    ' + feeLabel(x.fee) + ' — ' : '') + (x.row.name || ''),
-        x.row.client || '', x.row.code || '', x.plan, x.rec, x.billed, x.acc, x.fee, v,
+        x.row.client || '', x.leader || '', x.row.code || '', x.plan, x.unassigned || null, x.rec, x.billed, x.acc, x.fee, v,
         STORE.DISPOSITION_LABEL(x.status) || 'unruled',
         STORE.cellNote(x.row, x.m) || STORE.explainCell(x.row, x.m, x.plan),
         x.row.note || '']);
-      [4, 5, 6, 7, 8, 9].forEach(i => row.getCell(i).numFmt = fmt);
+      [5, 6, 7, 8, 9, 10, 11].forEach(i => row.getCell(i).numFmt = fmt);
+      if (x.unassigned) { row.getCell(6).font = { bold: true, color: { argb: RED } };
+                          row.getCell(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEAEA' } }; }
       if (x.row.isFeeShare) row.eachCell(c => { c.font = { italic: true, color: { argb: RED } }; });
-      row.getCell(5).font = { bold: true, color: { argb: NAVY } };
-      if (x.acc) row.getCell(7).font = { color: { argb: AMB } };
-      if (x.fee) row.getCell(8).font = { color: { argb: RED } };
-      if (Math.abs(v) > 0.5) row.getCell(9).font = { bold: true, color: { argb: v < 0 ? RED : GRN } };
-      if (!x.status) row.getCell(10).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF0D8' } };
-      row.getCell(11).alignment = { wrapText: true, vertical: 'top' };
+      row.getCell(7).font = { bold: true, color: { argb: NAVY } };
+      if (x.acc) row.getCell(9).font = { color: { argb: AMB } };
+      if (x.fee) row.getCell(10).font = { color: { argb: RED } };
+      if (Math.abs(v) > 0.5) row.getCell(11).font = { bold: true, color: { argb: v < 0 ? RED : GRN } };
+      if (!x.status) row.getCell(12).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF0D8' } };
+      row.getCell(13).alignment = { wrapText: true, vertical: 'top' };
     });
-    const tr = ws.addRow(['TOTAL', '', '', tot.plan, tot.rec, tot.billed, tot.acc, tot.fee, tot.rec - tot.plan, '', '', '']);
+    const tr = ws.addRow(['TOTAL', '', '', '', tot.plan, rows.reduce((a, x) => a + (x.unassigned || 0), 0) || null,
+      tot.rec, tot.billed, tot.acc, tot.fee, tot.rec - tot.plan, '', '', '']);
     tr.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
-    [4, 5, 6, 7, 8, 9].forEach(i => tr.getCell(i).numFmt = fmt);
-    tr.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
-    tr.getCell(5).font = { bold: true, color: { argb: NAVY } };
-    ws.columns = [{ width: 46 }, { width: 30 }, { width: 12 }, { width: 16 }, { width: 16 }, { width: 15 }, { width: 14 }, { width: 12 }, { width: 17 }, { width: 26 }, { width: 74 }, { width: 46 }];
+    [5, 6, 7, 8, 9, 10, 11].forEach(i => tr.getCell(i).numFmt = fmt);
+    tr.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
+    tr.getCell(7).font = { bold: true, color: { argb: NAVY } };
+    ws.columns = [{ width: 44 }, { width: 28 }, { width: 20 }, { width: 11 }, { width: 15 }, { width: 14 }, { width: 16 }, { width: 15 }, { width: 13 }, { width: 12 }, { width: 16 }, { width: 25 }, { width: 72 }, { width: 44 }];
     ws.views = [{ state: 'frozen', ySplit: 4, xSplit: 1 }];
     xlGlossary(wb);
 
@@ -1388,7 +1438,14 @@
      6 · BOOT
      ============================================================ */
   function render() { buildBar(); renderCoverage(); kpis(); renderGrid(); renderFlash(); renderLeader();
-    ['actual', 'plan', 'variance'].forEach(k => $('#mode-' + k).classList.toggle('on', MODE === k));
+    ['earned', 'accrued', 'invoiced'].forEach(k => $('#mode-' + k).classList.toggle('on', MODE === k));
+    (function () {
+      const sel = $('#leader-pick'); if (!sel) return;
+      const list = leaderList();
+      sel.innerHTML = '<option value="">All revenue leaders</option>'
+        + list.map(l => `<option value="${esc(l)}" ${l === LEADER ? 'selected' : ''}>${esc(l)}</option>`).join('');
+      sel.classList.toggle('active', !!LEADER);
+    })();
     $('#flash-card').hidden = !STORE.getLedgerYear(YEAR);
   }
 
@@ -1403,7 +1460,9 @@
       $('#sheet-row').hidden = true; $('#import-msg').innerHTML = ''; render();
     });
     $('#focus-pick').addEventListener('change', e => { FOCUS = +e.target.value; render(); });
-    ['actual', 'plan', 'variance'].forEach(k => $('#mode-' + k).addEventListener('click', () => { MODE = k; render(); }));
+    ['earned', 'accrued', 'invoiced'].forEach(k => $('#mode-' + k).addEventListener('click', () => { MODE = k; render(); }));
+    $('#leader-pick').addEventListener('change', e => { LEADER = e.target.value; renderGrid(); renderFlash(); });
+    $('#only-unassigned').addEventListener('change', e => { ONLY_UNASSIGNED = e.target.checked; renderGrid(); });
     $('#show-zero').addEventListener('change', e => { SHOW_ZERO = e.target.checked; renderGrid(); });
     $('#flash-export').addEventListener('click', exportFlash);
     $('#year-export').addEventListener('click', exportYear);
