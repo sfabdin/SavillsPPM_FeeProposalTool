@@ -182,6 +182,7 @@
     else if (activeTab === 'glossary') body = tabGlossary();
     else body = tabStub(activeTab);
     host.innerHTML = exportBar() + body;
+    boxWideContent(host);
     wireTab(host);
   }
 
@@ -702,7 +703,7 @@
     return panel('Leader selection - scorecard, cost model and quadrant', { kind: 'live', text: 'LIVE + MANUAL INPUTS' }, '',
       'Pick one or more leaders and every figure below recomputes for that selection. The revenue and booked figures are live; profit and margin run on the manual cost grid until real hours land.',
       dropdown + kpi6 +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:8px"><div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:4px">Revenue by leader (selection highlighted)</div>' + bars + '</div>' +
+      '<div class="two" style="margin-top:8px"><div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:4px">Revenue by leader (selection highlighted)</div>' + bars + '</div>' +
       '<div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:4px">Client list for the selection</div>' + clientTable + '</div></div>') +
       costPanel + quadrant;
   }
@@ -758,7 +759,7 @@
       '<span style="font-weight:700;min-width:70px;text-align:right">' + fm(s.revenue) + '</span></div>').join('');
     const donutPanel = panel('Revenue by sector', { kind: 'demo', text: 'SEEDED CLASSIFICATION' }, esc(d.sectorMsg),
       'What it is: ' + d.year + ' revenue by client sector. The classification is the app-side seed map (keyword based); the curated corrections made in the database app\'s Client Admin are not in the shared files, so treat slices as directional. Hover a slice for its top clients.',
-      '<div style="display:grid;grid-template-columns:220px 1fr;gap:20px;align-items:center">' +
+      '<div class="split">' +
       '<svg viewBox="0 0 210 210" width="210" role="img" aria-label="Revenue by sector">' + slices + '</svg>' +
       '<div>' + legend + '</div></div>');
 
@@ -804,7 +805,7 @@
       '</tbody></table></div>';
     const moversPanel = panel('Month-on-month movers - ' + esc(d.movers.month) + ' vs ' + esc(d.movers.prevMonth), { kind: 'live', text: 'LIVE' }, '',
       'What it is: the clients whose month went up or down the most between the two latest reporting months. Why we show it: the month-on-month story names who moved, not just that the total moved.',
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">' + moverTable(d.movers.gainers, 'Largest gains') + moverTable(d.movers.drops, 'Largest drops') + '</div>');
+      '<div class="two">' + moverTable(d.movers.gainers, 'Largest gains') + moverTable(d.movers.drops, 'Largest drops') + '</div>');
 
     // Programme drill
     const progRows = d.programmes.map((pr) =>
@@ -1061,7 +1062,7 @@
       '<div style="padding:9px 0;border-bottom:1px solid var(--hairline)"><div style="font-weight:700;font-size:13px;color:var(--teal-ink)">' + esc(g.term) + '</div><div style="font-size:12.5px;color:var(--mut);line-height:1.5">' + esc(g.def) + '</div></div>').join('') + '</div>';
     return panel('Canonical definitions', { kind: 'live', text: 'LIVE' }, '',
       'One definition per concept, the same wording everywhere it appears - panels, tooltips and exports never disagree with this page.',
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:26px">' + col(entries.slice(0, half)) + col(entries.slice(half)) + '</div>');
+      '<div class="two" style="gap:26px">' + col(entries.slice(0, half)) + col(entries.slice(half)) + '</div>');
   }
 
   /* ---------------- Project box score (drill from any project link) ---------------- */
@@ -1185,6 +1186,26 @@
     return '<div style="display:flex;gap:8px;justify-content:flex-end;margin:6px 0">' +
       '<button data-export="xlsx" style="font:inherit;font-size:12px;border:1px solid var(--hairline);background:#fff;padding:6px 12px;cursor:pointer">↓ Excel</button>' +
       '<button data-export="pdf" style="font:inherit;font-size:12px;border:1px solid var(--hairline);background:#fff;padding:6px 12px;cursor:pointer">↓ PDF (print)</button></div>';
+  }
+
+  /* Wide content (tables, charts) scrolls inside its own box so the page
+     itself never scrolls sideways, whatever the window width. Applied once
+     after each render rather than at every call site. */
+  function boxWideContent(host) {
+    host.querySelectorAll('table.vtable').forEach((t) => {
+      if (t.parentElement && t.parentElement.classList.contains('tscroll')) return;
+      const w = document.createElement('div');
+      w.className = 'tscroll';
+      t.parentElement.insertBefore(w, t);
+      w.appendChild(t);
+    });
+    host.querySelectorAll('svg').forEach((s) => {
+      if (s.parentElement && s.parentElement.classList.contains('chartwrap')) return;
+      const w = document.createElement('div');
+      w.className = 'chartwrap';
+      s.parentElement.insertBefore(w, s);
+      w.appendChild(s);
+    });
   }
 
   /* ---------------- per-tab wiring ---------------- */

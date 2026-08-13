@@ -15,7 +15,7 @@
   font-size: 14px;
   line-height: 1.5;
 }
-body.exec-page { margin: 0; background: var(--page); }
+body.exec-page { margin: 0; background: var(--page); overflow-x: hidden; }
 .exec a { color: var(--teal-ink); }
 
 /* ---- page header ---- */
@@ -55,6 +55,17 @@ body.exec-page { margin: 0; background: var(--page); }
 .exec .dflag.live { color: var(--good); border-color: var(--good); background: rgba(31,122,68,.07); }
 .exec .dflag.demo { color: var(--amber-ink); border-color: var(--amber-ink); background: rgba(217,163,0,.08); }
 .exec .note { background: rgba(37,39,58,.035); border: 1px solid var(--hairline); padding: 10px 12px; font-size: 13px; line-height: 1.55; margin: 8px 0; }
+
+/* ---- two-column blocks: stack rather than clip on narrow screens ---- */
+.exec .two { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.exec .split { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: center; }
+@media (max-width: 900px) {
+  .exec .two, .exec .split { grid-template-columns: 1fr; }
+  .exec .kpirow { grid-template-columns: repeat(2, 1fr) !important; }
+}
+/* Wide content scrolls inside its own box; the page itself never does. */
+.exec .tscroll { overflow-x: auto; max-width: 100%; }
+.exec .chartwrap { overflow-x: auto; max-width: 100%; }
 
 /* ---- tables ---- */
 .exec table.vtable { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0 4px; }
