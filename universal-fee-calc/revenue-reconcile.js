@@ -92,6 +92,16 @@
   }
   const FEESHARE_RX = /\bfee\s*shar/i;
   const FEESHARE_NOT_RX = /\bno\s+fee\s*shar/i;
+  /* Summary lines the sheet prints among the data — its grand-total row and
+     any TOTAL/SUBTOTAL banding. Matched only when the row has no customer
+     account code, so a real project that happens to be named "Total…" (it
+     would carry a code) can never be swallowed. */
+  const SUMMARY_ROW_RX = /^(reported(\s+revenue)?|(grand\s+|sub\s*)?totals?)$/i;
+  function isSummaryRow(name, client) {
+    const n = String(name || '').trim(), c = String(client || '').trim();
+    if (!n && !c) return false;
+    return (!n || SUMMARY_ROW_RX.test(n)) && (!c || SUMMARY_ROW_RX.test(c));
+  }
   const FEEHINT_RX = /fee\s*shar|brokerage\s+(revenue\s+)?(alloc|adjust)/i;
   const isFeeShareName = (name) => FEESHARE_RX.test(name || '') && !FEESHARE_NOT_RX.test(name || '');
 
@@ -156,6 +166,11 @@
       const name = col.name >= 0 ? String(r[col.name] == null ? '' : r[col.name]).trim() : '';
       const client = col.client >= 0 ? String(r[col.client] == null ? '' : r[col.client]).trim() : '';
       if (!code && !name && !client) continue;
+      // The sheet prints its own grand-total line among the data rows
+      // (Customer name "REPORTED", Project Name "REPORTED REVENUE").
+      // That is the sheet's arithmetic, not a project — ingesting it
+      // doubles the book.
+      if (!code && isSummaryRow(name, client)) continue;
       parsed++;
 
       const accrual = num(r[col.accrual]);
@@ -357,6 +372,7 @@
     try {
       STORE.postLedgerYear(YEAR, p.rows, { file: PENDING.file, sheet: p.sheet, closeMonth: p.closeMonth });
       autoStatus();
+      FOCUS = p.closeMonth || FOCUS;      // land on the month just closed
       PENDING = null;
       $('#sheet-row').hidden = true; $('#close-file').value = '';
       $('#import-msg').innerHTML = `<div class="msg ok">${YEAR} posted through ${MONTHS[p.closeMonth - 1]}.</div>`;
@@ -407,6 +423,7 @@
      account for the other two. */
   function cellValue(r, m) {
     if (MODE === 'earned') return planFor(r.pid, YEAR, m);
+    if (MODE === 'realized') return STORE.cellRecognised(r, m);
     if (MODE === 'accrued') return STORE.hasAllocations(r) ? STORE.allocatedAccruedIn(r, m) : STORE.accruedOf(r, m);
     return STORE.billedOf(r, m) + STORE.feeShareOf(r, m);      // invoiced — the sheet's own fact
   }
@@ -456,8 +473,11 @@
       ? `Through <b>${MONTHS[STORE.closedThrough(YEAR) - 1] || '—'}</b> · last updated ${new Date(y.updatedAt).toLocaleDateString()} by <b>${esc(y.updatedBy)}</b>`
         + (y.imports || []).map(i => `<span class="imp-chip" title="${esc(i.file)}">${MONTHS[i.closeMonth - 1] || '?'} tab</span>`).join('')
       : 'Upload the year-to-date tab to bring in this year\'s actuals.';
-    $('#focus-pick').innerHTML = '<option value="0">Whole year</option>'
+    // One month focus, two selectors: the top bar and the month-view card
+    // stay in lockstep so the month is never more than a glance away.
+    const monthOpts = '<option value="0">Whole year</option>'
       + MONTHS.map((m, i) => `<option value="${i + 1}" ${FOCUS === i + 1 ? 'selected' : ''}>${m} only</option>`).join('');
+    ['#focus-pick', '#focus-top'].forEach(id => { const s = $(id); if (s) { s.innerHTML = monthOpts; s.value = String(FOCUS); } });
     $('#remove-year').hidden = !y;
   }
 
@@ -557,6 +577,7 @@
     h += `<th>${YEAR}</th><th class="acc-h">Accrual<span class="sub">IMPORTED</span></th></tr></thead><tbody>`;
     $('#mode-label').textContent = MODE === 'earned' ? 'Showing EARNED — what the fee tool says each month is worth'
       : MODE === 'accrued' ? 'Showing ACCRUED — the month revenue is realized'
+      : MODE === 'realized' ? 'Showing REALIZED — accrued + billed-in-month, every dollar counted once'
       : 'Showing INVOICED — what the close file says went out the door';
 
     /* One figure per project-month — recognised revenue, with a stripe under it
@@ -685,72 +706,109 @@
   }
 
   /* Expansion, editing, and the status picker. */
+  /* One set of DELEGATED listeners on the #grid table itself. The table node
+     survives every innerHTML rebuild, so handlers can never be lost to a
+     re-render or to one bad row aborting a per-element wiring loop — with a
+     141-project book, that resilience is the difference between "clicks work"
+     and "the grid feels dead". */
   function wireGrid() {
+    const t = $('#grid');
+    if (!t || t.dataset.wired) return;
+    t.dataset.wired = '1';
+
     const toggle = (row) => {
       const i = row.dataset.i;
       const open = row.classList.toggle('open');
       row.querySelector('.pcell')?.setAttribute('aria-expanded', String(open));
       $$('#grid .lane-of-' + i).forEach(el => { el.hidden = !open; });
     };
-    $$('#grid tr.prow .pcell').forEach(td => {
-      const row = td.closest('tr');
-      td.addEventListener('click', (e) => { if (e.target.closest('a,button')) return; toggle(row); });
-      td.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(row); } });
+    const reAlloc = () => { buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage(); };
+
+    t.addEventListener('click', (e) => {
+      const mapBtn = e.target.closest('.map-btn');
+      if (mapBtn) { e.stopPropagation(); openMapMenu(mapBtn); return; }
+      const spreadBtn = e.target.closest('.spread-btn');
+      if (spreadBtn) { e.stopPropagation(); openSpreadMenu(spreadBtn); return; }
+      const alFix = e.target.closest('.al-fix');
+      if (alFix) {
+        e.stopPropagation();
+        const key = alFix.dataset.key, m = +alFix.dataset.m;
+        const cur = STORE.allocOf(STORE.getLedgerYear(YEAR).rows[key])[m] || {};
+        try { STORE.setEarnedAllocation(YEAR, key, m, { amount: +alFix.dataset.amt, accrueIn: cur.accrueIn || m, invoiceIn: cur.invoiceIn || m }); }
+        catch (err) { UFC_UI.toast(err.message); return; }
+        reAlloc(); return;
+      }
+      const accBtn = e.target.closest('.acc-earned-btn');
+      if (accBtn) {
+        e.stopPropagation();
+        const key = accBtn.dataset.key, row = STORE.getLedgerYear(YEAR).rows[key];
+        const earned = {};
+        for (let m = 1; m <= 12; m++) { const v = planFor(row.pid, YEAR, m); if (v) earned[m] = v; }
+        const res = STORE.autoAllocate(YEAR, key, earned);
+        if (!res || !res.touched) { UFC_UI.toast('Nothing to place — every earned month on this project is already allocated.'); return; }
+        reAlloc(); return;
+      }
+      if (e.target.closest('a,button,select,input,[contenteditable="true"]')) return;
+      const pc = e.target.closest('.pcell');
+      if (pc) { toggle(pc.closest('tr')); return; }
+      const cell = e.target.closest('td.cell');
+      if (cell) openStatusMenu(cell, e);
     });
-    $$('#grid td.cell').forEach(td => {
-      td.addEventListener('click', (e) => openStatusMenu(td, e));
-      td.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openStatusMenu(td, e); } });
-    });
-    $$('#grid td.ed').forEach(td => {
-      td.addEventListener('focus', () => { td.dataset.before = td.textContent.trim(); });
-      td.addEventListener('keydown', (e) => {
+
+    t.addEventListener('keydown', (e) => {
+      const ed = e.target.closest('td.ed');
+      if (ed) {
         // Spreadsheet motion: Enter/Tab commit and move to the next month in
         // the same lane (Shift reverses); Esc puts the old figure back.
         if (e.key === 'Enter' || e.key === 'Tab') {
           e.preventDefault();
-          const m = +td.dataset.m + (e.shiftKey ? -1 : 1);
-          if (m >= 1 && m <= 12) NAV_NEXT = { key: td.dataset.key, m, f: td.dataset.f };
-          td.blur();
+          const m = +ed.dataset.m + (e.shiftKey ? -1 : 1);
+          if (m >= 1 && m <= 12) NAV_NEXT = { key: ed.dataset.key, m, f: ed.dataset.f };
+          ed.blur();
         }
-        else if (e.key === 'Escape') { td.textContent = td.dataset.before || ''; td.blur(); }
-      });
-      td.addEventListener('blur', () => {
-        const raw = td.textContent.replace(/[$,\s()]/g, '').replace(/[−–—]/g, '-').trim();
-        const changed = raw !== (td.dataset.before || '').replace(/[$,\s()]/g, '')
-                     && !(raw !== '' && isNaN(Number(raw)));
-        if (raw !== '' && isNaN(Number(raw))) td.textContent = td.dataset.before || '';
-        if (changed) {
-          const openKeys = $$('#grid tr.prow.open').map(x => x.dataset.i);
-          if (td.dataset.f === 'tool') adjustPlan(td.dataset.key, +td.dataset.m, raw === '' ? null : Number(raw));
-          else STORE.setCellAmount(YEAR, td.dataset.key, +td.dataset.m, td.dataset.f, raw === '' ? null : Number(raw));
-          buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
-          // keep whatever the user had open, open
-          openKeys.forEach(i => { const r = $(`#grid tr.prow[data-i="${i}"]`); if (r && !r.classList.contains('open')) r.querySelector('.pcell').click(); });
-        }
-        // land the caret in the next cell (the re-render replaced the DOM)
-        if (NAV_NEXT) {
-          const nxt = NAV_NEXT; NAV_NEXT = null;
-          setTimeout(() => {
-            const cell = $(`#grid td.ed[data-key="${CSS.escape(nxt.key)}"][data-m="${nxt.m}"][data-f="${nxt.f}"]`);
-            if (!cell) return;
-            cell.focus();
-            const sel = window.getSelection(), rng = document.createRange();
-            rng.selectNodeContents(cell); sel.removeAllRanges(); sel.addRange(rng);
-          }, 0);
-        }
-      });
+        else if (e.key === 'Escape') { ed.textContent = ed.dataset.before || ''; ed.blur(); }
+        return;
+      }
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const pc = e.target.closest('.pcell');
+      if (pc) { e.preventDefault(); toggle(pc.closest('tr')); return; }
+      const cell = e.target.closest('td.cell');
+      if (cell) { e.preventDefault(); openStatusMenu(cell, e); }
     });
-    $$('#grid .map-btn').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openMapMenu(b); }));
-    $$('#grid .spread-btn').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openSpreadMenu(b); }));
-    const reAlloc = () => { buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage(); };
-    $$('#grid .al-fix').forEach(b => b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const key = b.dataset.key, m = +b.dataset.m;
-      const cur = STORE.allocOf(STORE.getLedgerYear(YEAR).rows[key])[m] || {};
-      try { STORE.setEarnedAllocation(YEAR, key, m, { amount: +b.dataset.amt, accrueIn: cur.accrueIn || m, invoiceIn: cur.invoiceIn || m }); }
-      catch (err) { UFC_UI.toast(err.message); return; }
-      reAlloc();
-    }));
+
+    t.addEventListener('focusin', (e) => {
+      const ed = e.target.closest('td.ed');
+      if (ed) ed.dataset.before = ed.textContent.trim();
+    });
+
+    t.addEventListener('focusout', (e) => {
+      const td = e.target.closest('td.ed');
+      if (!td) return;
+      const raw = td.textContent.replace(/[$,\s()]/g, '').replace(/[−–—]/g, '-').trim();
+      const changed = raw !== (td.dataset.before || '').replace(/[$,\s()]/g, '')
+                   && !(raw !== '' && isNaN(Number(raw)));
+      if (raw !== '' && isNaN(Number(raw))) td.textContent = td.dataset.before || '';
+      if (changed) {
+        const openKeys = $$('#grid tr.prow.open').map(x => x.dataset.i);
+        if (td.dataset.f === 'tool') adjustPlan(td.dataset.key, +td.dataset.m, raw === '' ? null : Number(raw));
+        else STORE.setCellAmount(YEAR, td.dataset.key, +td.dataset.m, td.dataset.f, raw === '' ? null : Number(raw));
+        buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+        // keep whatever the user had open, open
+        openKeys.forEach(i => { const r = $(`#grid tr.prow[data-i="${i}"]`); if (r && !r.classList.contains('open')) r.querySelector('.pcell').click(); });
+      }
+      // land the caret in the next cell (the re-render replaced the DOM)
+      if (NAV_NEXT) {
+        const nxt = NAV_NEXT; NAV_NEXT = null;
+        setTimeout(() => {
+          const cell = $(`#grid td.ed[data-key="${CSS.escape(nxt.key)}"][data-m="${nxt.m}"][data-f="${nxt.f}"]`);
+          if (!cell) return;
+          cell.focus();
+          const sel = window.getSelection(), rng = document.createRange();
+          rng.selectNodeContents(cell); sel.removeAllRanges(); sel.addRange(rng);
+        }, 0);
+      }
+    });
+
     const pairChange = (sel, field) => {
       const key = sel.dataset.key, m = +sel.dataset.m;
       const row = STORE.getLedgerYear(YEAR).rows[key];
@@ -762,17 +820,10 @@
       try { STORE.setEarnedAllocation(YEAR, key, m, next); } catch (err) { UFC_UI.toast(err.message); return; }
       reAlloc();
     };
-    $$('#grid .al-acc').forEach(sel => sel.addEventListener('change', () => pairChange(sel, 'accrueIn')));
-    $$('#grid .al-inv').forEach(sel => sel.addEventListener('change', () => pairChange(sel, 'invoiceIn')));
-    $$('#grid .acc-earned-btn').forEach(b => b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const key = b.dataset.key, row = STORE.getLedgerYear(YEAR).rows[key];
-      const earned = {};
-      for (let m = 1; m <= 12; m++) { const v = planFor(row.pid, YEAR, m); if (v) earned[m] = v; }
-      const res = STORE.autoAllocate(YEAR, key, earned);
-      if (!res || !res.touched) { UFC_UI.toast('Nothing to place — every earned month on this project is already allocated.'); return; }
-      buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage();
-    }));
+    t.addEventListener('change', (e) => {
+      if (e.target.closest('.al-acc')) pairChange(e.target.closest('.al-acc'), 'accrueIn');
+      else if (e.target.closest('.al-inv')) pairChange(e.target.closest('.al-inv'), 'invoiceIn');
+    });
   }
 
   /* ---- "What changed on your projects" — the same reconciliation, written
@@ -1464,7 +1515,7 @@
      6 · BOOT
      ============================================================ */
   function render() { buildBar(); renderCoverage(); kpis(); renderGrid(); renderFlash(); renderLeader();
-    ['earned', 'accrued', 'invoiced'].forEach(k => $('#mode-' + k).classList.toggle('on', MODE === k));
+    $$('#glossary .gl[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === MODE));
     (function () {
       const sel = $('#leader-pick'); if (!sel) return;
       const list = leaderList();
@@ -1489,8 +1540,10 @@
       YEAR = +e.target.value; PENDING = null;
       $('#sheet-row').hidden = true; $('#import-msg').innerHTML = ''; render();
     });
-    $('#focus-pick').addEventListener('change', e => { FOCUS = +e.target.value; render(); });
-    ['earned', 'accrued', 'invoiced'].forEach(k => $('#mode-' + k).addEventListener('click', () => { MODE = k; render(); }));
+    ['#focus-pick', '#focus-top'].forEach(id => $(id)?.addEventListener('change', e => { FOCUS = +e.target.value; render(); }));
+    // The glossary cards ARE the view switch — reading the definition and
+    // choosing the calendar are the same gesture.
+    $$('#glossary .gl[data-mode]').forEach(b => b.addEventListener('click', () => { MODE = b.dataset.mode; render(); }));
     $('#leader-pick').addEventListener('change', e => { LEADER = e.target.value; renderGrid(); renderFlash(); });
     $('#only-unassigned').addEventListener('change', e => { ONLY_UNASSIGNED = e.target.checked; renderGrid(); });
     $('#show-zero').addEventListener('change', e => { SHOW_ZERO = e.target.checked; renderGrid(); });
@@ -1506,7 +1559,7 @@
 
   /* Test surface — the workbook parser is pure (AOA in, rows out) and is the
      one piece that must not break when Finance's file changes shape. */
-  window.UFC_ReconcileParse = { parseSheet, findHeaderRow, mapColumns, rowKey, tokenScore, detectClose, monthIndexOf };
+  window.UFC_ReconcileParse = { parseSheet, findHeaderRow, mapColumns, rowKey, tokenScore, detectClose, monthIndexOf, isSummaryRow };
 
   if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(boot);
   else document.addEventListener('DOMContentLoaded', boot);

@@ -1072,6 +1072,29 @@
   let _revenuePush = null;
   function attachRevenueRemote(pushFn) { _revenuePush = typeof pushFn === 'function' ? pushFn : null; }
   function defaultRevenue() { return { schemaVersion: SCHEMA, ledger: {} }; }
+  /* The close sheet prints its own grand-total line among the data rows
+     (Customer name "REPORTED", Project Name "REPORTED REVENUE"). Early
+     imports ingested it as a project, DOUBLING the book. The parser now
+     skips it; this scrub heals any year posted before the fix — and the
+     write-back pushes the healed copy to Box so every browser converges. */
+  const LEDGER_SUMMARY_RX = /^(reported(\s+revenue)?|(grand\s+|sub\s*)?totals?)$/i;
+  function isSummaryLedgerRow(row) {
+    if (!row) return false;
+    if (String(row.code || '').trim()) return false;      // a customer account = a real project
+    const n = String(row.name || '').trim(), c = String(row.client || '').trim();
+    if (!n && !c) return false;
+    return (!n || LEDGER_SUMMARY_RX.test(n)) && (!c || LEDGER_SUMMARY_RX.test(c));
+  }
+  function scrubSummaryRows(rev) {
+    let removed = 0;
+    Object.values((rev && rev.ledger) || {}).forEach(y => {
+      Object.keys((y && y.rows) || {}).forEach(k => {
+        if (isSummaryLedgerRow(y.rows[k])) { delete y.rows[k]; removed++; }
+      });
+    });
+    return removed;
+  }
+
   function readRevenue() {
     try {
       const raw = localStorage.getItem(REVENUE_KEY);
@@ -1079,6 +1102,7 @@
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return defaultRevenue();
       parsed.ledger = parsed.ledger || {};
+      if (scrubSummaryRows(parsed)) { try { writeRevenue(parsed); } catch (e) {} }
       return parsed;
     } catch (e) { return defaultRevenue(); }
   }
@@ -1092,6 +1116,7 @@
     if (!r || typeof r !== 'object') return;
     r.schemaVersion = SCHEMA;
     r.ledger = r.ledger || {};
+    scrubSummaryRows(r);       // a remote copy may still carry the sheet's total line
     localStorage.setItem(REVENUE_KEY, JSON.stringify(r));
   }
   /** One-time lift: early builds kept the ledger inside projects.json. Move it

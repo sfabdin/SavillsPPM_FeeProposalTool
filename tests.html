@@ -1044,6 +1044,34 @@
     catch (e) { return /month/i.test(e.message) || 'wrong error: ' + e.message; }
   });
 
+  test('Ledger · parser', "the sheet's own REPORTED REVENUE total line is not a project", () => {
+    if (!P || !P.parseSheet) return 'parser not exposed';
+    if (!P.isSummaryRow('REPORTED REVENUE', 'REPORTED')) return 'grand-total row not recognised as a summary line';
+    if (P.isSummaryRow('Total Facilities Overhaul', 'Acme')) return 'a real project name got swallowed';
+    const aoa = [
+      ['Customer account', 'Customer name', 'Project Name', 'January', 'February', 'July 2026 Revenue Accruals', 'YTD Reported Revenue'],
+      ['C1', 'Acme', 'Real Tower', 100, 200, 0, 300],
+      [null, 'REPORTED', 'REPORTED REVENUE', 100, 200, 0, 300],
+    ];
+    const out = P.parseSheet(aoa, 't');
+    const names = out.rows.map(r => r.name);
+    if (names.some(n => /reported/i.test(n))) return 'total line ingested as a project: ' + names.join(', ');
+    return names.includes('Real Tower') || 'the real row was dropped with it';
+  });
+
+  test('Ledger · store', 'a legacy REPORTED REVENUE row is scrubbed from an already-posted year', () => {
+    S.postLedgerYear(2027, [
+      { key: 'real1', name: 'Real Project', client: 'Acme', billed: { 2: 1000 } },
+      { key: 'reported revenue', name: 'REPORTED REVENUE', client: 'REPORTED', billed: { 2: 99999 } },
+    ], { closeMonth: 2, file: 't' });
+    const y = S.getLedgerYear(2027);
+    const hasReal = !!(y && y.rows && y.rows.real1);
+    const gone = !Object.values((y && y.rows) || {}).some(r => /^reported revenue$/i.test(r.name || ''));
+    S.deleteLedgerYear(2027);
+    if (!hasReal) return 'the real row was lost';
+    return gone || 'the total line survived in the ledger';
+  });
+
   /* ============================================================
      STAFFING — the allocation engine, the Clockify pipeline, the
      contract bridge, and the shift loop that carries the PEOPLE
