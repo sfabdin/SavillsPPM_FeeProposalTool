@@ -154,7 +154,75 @@
   table.ws td.s-reclass { border-bottom:3px solid var(--st-reclass); }
   table.ws td.s-fee     { border-bottom:3px solid var(--st-fee); }
 
-  /* ---- three-lane editable grid ---- */
+  /* ---- collapsed grid: one figure per month, stripe says how it settled ---- */
+  table.ws tr.prow { cursor:default; }
+  table.ws tr.prow td.pcell { cursor:pointer; }
+  table.ws tr.prow:hover td.pcell { background:#fffdf2; }
+  table.ws tr.prow.open td.pcell { background:var(--sav-yellow); }
+  table.ws .chev { float:left; margin:2px 7px 0 0; color:var(--sav-steel); font-size:11px; transition:transform .12s ease; display:inline-block; }
+  table.ws tr.prow.open .chev { transform:rotate(90deg); color:var(--sav-navy); }
+  table.ws td.cell { cursor:pointer; border-bottom:3px solid transparent; }
+  table.ws td.cell:hover { box-shadow:inset 0 0 0 2px var(--sav-navy); }
+  table.ws td.cell:focus-visible { outline:3px solid var(--sav-teal); outline-offset:-3px; }
+  table.ws td.unruled-c { border-bottom-color:var(--st-unruled); background:#fffdf2; font-weight:700; }
+  /* the timing lanes, revealed on click */
+  table.ws tr.lane td { background:#fbfbf9; font-size:11px; padding:5px 9px; border-bottom:1px solid var(--hair); }
+  table.ws tr.lane td.l { font-family:var(--font-body); font-size:10.5px; color:var(--sav-steel);
+                          font-style:italic; padding-left:26px; }
+  table.ws tr.lane td.l .lane-hint { color:#b3b8c2; margin-left:5px; font-size:9.5px; }
+  table.ws tr.lane-perf td.l { border-left:4px solid var(--sav-teal); }
+  table.ws tr.lane-acc  td.l { border-left:4px solid var(--st-accrued); }
+  table.ws tr.lane-bill td.l { border-left:4px solid var(--st-billed); }
+  table.ws tr.lane-acc td.ed { background:#fffdf5; }
+  table.ws tr.lane-note td { background:#fffdf2; font-family:var(--font-body); font-size:11.5px;
+                             color:var(--sav-navy); padding:8px 9px 10px 30px; white-space:normal; }
+  table.ws td.ed { cursor:text; }
+  table.ws td.ed:hover { box-shadow:inset 0 0 0 1px var(--hair-strong); }
+  table.ws td.ed:focus { outline:0; box-shadow:inset 0 0 0 2px var(--sav-navy); background:#fff !important; }
+  table.ws td.ed.edited { font-weight:700; }
+  table.ws td.ed.edited::after { content:"•"; color:var(--sav-red); margin-left:3px; }
+  /* accrual target column */
+  table.ws th.acc-h { background:#3b3a34; }
+  table.ws td.acc-c { text-align:right; padding:4px 9px; min-width:132px; background:#fbfaf6; }
+  table.ws td.acc-c .acc-n { font-weight:800; font-size:12px; font-variant-numeric:tabular-nums; }
+  table.ws td.acc-c .acc-d { font-family:var(--font-body); font-size:9.5px; margin-top:1px; }
+  table.ws td.acc-c.ok .acc-n, table.ws td.acc-c.ok .acc-d { color:#166b45; }
+  table.ws td.acc-c.off .acc-n, table.ws td.acc-c.off .acc-d { color:#8a5a00; }
+  table.ws th.focus-h { background:var(--sav-teal) !important; }
+  table.ws td.focus-c { box-shadow:inset 2px 0 0 var(--sav-teal), inset -2px 0 0 var(--sav-teal); }
+  table.ws tfoot tr.lane-acc td { background:#3b3a34; font-size:11.5px; font-weight:700; bottom:66px; color:#f2c56b; }
+  table.ws tfoot tr.lane-acc td.l { background:#3b3a34; color:#f2c56b; }
+  table.ws tfoot tr.lane-bill td { background:#2f3147; font-size:11.5px; font-weight:700; bottom:33px; }
+  table.ws tfoot tr.lane-bill td.l { background:#2f3147; color:rgba(255,255,255,.85); }
+  .spread-btn { font-family:var(--font-display); font-weight:700; font-size:9px; letter-spacing:.06em;
+        text-transform:uppercase; border:0; background:var(--sav-yellow); color:var(--sav-navy);
+        padding:3px 8px; margin-top:3px; cursor:pointer; }
+  .spread-btn:hover { background:#ffe94d; }
+  .popover.spread .sp-body { padding:12px; display:flex; flex-direction:column; gap:9px; }
+  .popover.spread label { font-family:var(--font-body); font-size:11.5px; color:var(--sav-steel);
+        display:flex; align-items:center; gap:8px; justify-content:space-between; }
+  .popover.spread input, .popover.spread select { font-family:var(--font-body); font-size:12px;
+        border:1px solid var(--hair-strong); background:var(--sav-cream); padding:6px 8px; color:var(--sav-navy); min-width:130px; }
+  .popover.spread .sp-preview { font-family:var(--font-display); font-weight:700; font-size:11.5px;
+        color:var(--sav-navy); background:var(--sav-cream); padding:8px 10px; }
+  .popover.spread .sp-go { justify-content:center; }
+  /* revenue leader cards */
+  .card.lead > h2 { background:var(--sav-teal); }
+  .impact { display:flex; flex-direction:column; gap:10px; }
+  .icard { border:1px solid var(--hair); border-left:5px solid var(--sav-steel); padding:11px 13px; }
+  .icard.up { border-left-color:var(--st-billed); }
+  .icard.down { border-left-color:var(--st-slip); }
+  .icard.defer { border-left-color:var(--st-accrued); }
+  .icard .ic-top { display:flex; align-items:baseline; gap:10px; }
+  .icard .ic-proj { font-weight:700; font-size:12.5px; }
+  .icard .ic-amt { margin-left:auto; font-weight:900; font-size:14px; font-variant-numeric:tabular-nums; }
+  .icard.up .ic-amt { color:var(--st-billed); }
+  .icard.down .ic-amt { color:var(--st-slip); }
+  .icard.defer .ic-amt { color:var(--st-accrued); }
+  .icard .ic-txt { font-family:var(--font-body); font-size:11.5px; color:var(--sav-steel); line-height:1.5; margin-top:4px; }
+  .icard .ic-txt b { color:var(--sav-navy); font-family:var(--font-display); }
+
+  /* ---- superseded three-lane styles ---- */
   table.ws td.pcell { vertical-align:top; padding-top:9px; }
   table.ws th.lane-h, table.ws td.lane-c { font-size:9.5px; font-weight:800; letter-spacing:.1em;
         text-transform:uppercase; color:var(--sav-steel); min-width:74px; background:#fafaf8; }
@@ -333,7 +401,7 @@
   </section>
 
   <div class="ws-head">
-    <h2>Tool vs billed vs accrued, by project and month</h2>
+    <h2>Recognised revenue, by project and month</h2>
     <span class="modebar">
       <button class="btn sm on" id="mode-actual">Actual</button>
       <button class="btn sm" id="mode-plan">Plan</button>
@@ -342,6 +410,7 @@
     <label class="ctl-toggle"><input type="checkbox" id="show-zero"> Show projects with no activity</label>
     <div class="legend">
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-unruled)"></span>No status yet</span>
+      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-reclass)"></span>Reclass</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-billed)"></span>Billed</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-accrued)"></span>Accrued</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-slip)"></span>Slipped</span>
@@ -350,12 +419,23 @@
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-wo)"></span>Written off</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-new)"></span>Unforecast</span>
       <span class="lg"><span class="sw" style="border-bottom-color:var(--st-fee)"></span>Fee share</span>
-      <span class="hint">Type into Billed and Accrued · double-click a figure to set its billing status</span>
+      <span class="hint">Closed months carry a settlement stripe · click a project to open its timing lanes · click a figure to set its status</span>
     </div>
   </div>
 
   <div class="empty" id="empty" hidden>No actuals for this year yet. Upload the year-to-date tab above.</div>
   <div class="ws-scroll"><table class="ws" id="grid"></table></div>
+
+  <section class="card lead" id="leader-card" hidden>
+    <h2>What changed on your projects <span class="owner">Revenue leader view — the same reconciliation, in plain language</span></h2>
+    <div class="cbody">
+      <p class="intro">
+        No accounting vocabulary — just what moved, where it went, and what is now expected of the person who owns
+        the client. Ordered by how far each month landed from its plan.
+      </p>
+      <div class="impact" id="leader-list"></div>
+    </div>
+  </section>
 
   <section class="card" id="flash-card" hidden>
     <h2 id="flash-title">Monthly flash</h2>

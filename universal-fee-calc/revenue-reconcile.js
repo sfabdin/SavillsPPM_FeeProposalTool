@@ -442,13 +442,24 @@
     });
     const pick = (arr) => FOCUS ? arr[FOCUS] : arr.reduce((a, b) => a + b, 0);
     const rec = pick(t.recognised), bil = pick(t.billed), fee = pick(t.feeShare), acc = pick(t.accrued);
+    /* The year as it now stands: what was actually recognised in the months
+       Finance has closed, plus the plan for the months still ahead. Reading
+       the plan across the whole year would double-count everything already
+       reconciled. */
+    const closeM = STORE.closedThrough(YEAR);
+    let recClosed = 0, planOpen = 0;
+    for (let m = 1; m <= 12; m++) {
+      if (m <= closeM) recClosed += t.recognised[m];
+      else planOpen += flat.reduce((a, r) => a + planFor(r.pid, YEAR, m), 0);
+    }
+    const forecast = recClosed + planOpen;
     const cards = [
-      { l: 'Billed gross', v: compact(bil), s: FOCUS ? MONTHS[FOCUS - 1] + ' invoices' : 'invoices out this year' },
-      { l: 'Fee share (net)', v: compact(fee), s: 'co-broker cut, off revenue', cls: fee < 0 ? 'neg' : '' },
-      { l: 'Accrued', v: compact(acc), s: Math.abs(t.unallocated) < 1 ? 'all allocated to months' : compact(t.unallocated) + ' still to place', cls: 'acc' },
-      { l: 'Recognised revenue', v: compact(rec), s: 'billed + fee share + accrued', navy: true },
-      { l: 'Variance vs plan', v: compact(rec - plan), s: `plan ${compact(plan)}`, cls: (rec - plan) < 0 ? 'neg' : '' },
-      { l: 'Slipped / written off', v: compact(-slip + wo), s: unf ? `${compact(unf)} unforecast found` : 'pushed out or removed', cls: 'neg' },
+      { l: 'Recognised YTD', v: compact(rec), s: FOCUS ? MONTHS[FOCUS - 1] + ', from the close file' : 'from the close file' },
+      { l: 'Billed YTD', v: compact(bil), s: 'invoices actually out the door' },
+      { l: 'Accrued, not billed', v: compact(acc), s: Math.abs(t.unallocated) < 1 ? 'earned, invoice still to go' : compact(t.unallocated) + ' still to place', cls: 'acc' },
+      { l: 'Slipped out of period', v: compact(-slip), s: 'not billed, not accrued', cls: 'neg' },
+      { l: 'Written off', v: compact(wo), s: 'reversed, never billable', cls: 'neg' },
+      { l: `${YEAR} forecast`, v: compact(forecast), s: `plan was ${compact(plan)}` + (Math.abs(forecast - plan) >= 1 ? ` — ${compact(forecast - plan)} after reconciliation` : ' — unchanged so far'), navy: true },
     ];
     $('#kpis').innerHTML = cards.map(c => `
       <div class="kpi ${c.navy ? 'navy' : ''}"><div class="k-lbl">${c.l}</div>
@@ -462,107 +473,117 @@
     $('#empty').hidden = true;
     const closeM = STORE.closedThrough(YEAR);
 
-    let h = '<thead><tr><th class="l">Project</th><th class="l lane-h">Lane</th>';
+    let h = '<thead><tr><th class="l">Project</th>';
     MONTHS.forEach((m, i) => {
       const mm = i + 1;
-      h += `<th class="${mm <= closeM ? 'closed-h' : 'open-h'} ${FOCUS === mm ? 'focus-h' : ''}">${m}<span class="sub">${mm <= closeM ? 'ACTUAL' : '—'}</span></th>`;
+      h += `<th class="${mm <= closeM ? 'closed-h' : 'open-h'} ${FOCUS === mm ? 'focus-h' : ''}">${m}<span class="sub">${mm <= closeM ? 'ACTUAL' : 'FORECAST'}</span></th>`;
     });
-    h += '<th>Total</th><th class="acc-h">Accrual<span class="sub">IMPORTED</span></th></tr></thead><tbody>';
+    h += `<th>${YEAR}</th><th class="acc-h">Accrual<span class="sub">IMPORTED</span></th></tr></thead><tbody>`;
 
-    /* Three lanes per project. Tool is the plan and never editable — it is
-       the thing being reconciled against. Billed and Accrued are typed into
-       directly, because the sheet is right most of the time and silent the
-       rest of it. */
-    const laneRow = (r, kind, isChild) => {
-      // The Tool lane is editable too now — "the sheet says 15k, make the plan
-      // say 15k" is the single most common correction, and having to remember
-      // to go do it on another page is how it stops happening.
-      const editable = kind !== 'tool' || !!r.pid;
-      let s = `<tr class="ln ln-${kind} ${isChild ? 'fee-row' : ''} ${kind === 'tool' ? 'grp-top' : ''}" data-key="${esc(r.key)}">`;
-      if (kind === 'tool') {
-        s += `<td class="l pcell" rowspan="3">`;
-        if (isChild) s += `<div class="wp-name fee">${feeLabel(Object.values(r.feeShare || {})[0] || 0)} — ${esc(r.name || 'co-broker')}</div>`;
-        else {
-          s += `<div class="wp-name">${esc(r.name || '(unnamed)')}</div><div class="wp-meta">${esc(r.client || '—')}${r.code ? ' · ' + esc(r.code) : ''}`;
-          s += r.pid
-            ? ` <a class="proj-link" href="Universal Fee Calculator.html?project=${encodeURIComponent(r.pid)}" title="Open this project in the calculator">open ↗</a>`
-            : ` <button class="map-btn" data-key="${esc(r.key)}">map to project…</button>`;
-          s += r.feeHint ? ' <span class="feehint">comment mentions a fee share</span>' : '';
-          s += `</div>`;
-          if (r.note) s += `<div class="wp-note">“${esc(r.note)}”</div>`;
-        }
-        s += `</td>`;
+    /* One figure per project-month — recognised revenue, with a stripe under it
+       saying how it settled. The three lanes behind that figure open on click,
+       because they are the detail you go looking for, not the thing you read
+       across a book of 176 projects. */
+    const group = (r, ri, isChild) => {
+      let s = '', tot = 0;
+      s += `<tr class="prow ${isChild ? 'fee-row' : ''}" data-i="${ri}" data-key="${esc(r.key)}">`;
+      s += `<td class="l pcell" tabindex="0" role="button" aria-expanded="false">`;
+      if (isChild) s += `<div class="wp-name fee">${feeLabel(Object.values(r.feeShare || {})[0] || 0)} — ${esc(r.name || 'co-broker')}</div>`;
+      else {
+        s += `<span class="chev">▸</span><div class="wp-name">${esc(r.name || '(unnamed)')}</div>`;
+        s += `<div class="wp-meta">${esc(r.client || '—')}${r.code ? ' · ' + esc(r.code) : ''}`;
+        s += r.pid
+          ? ` <a class="proj-link" href="Universal Fee Calculator.html?project=${encodeURIComponent(r.pid)}" title="Open in the calculator">open ↗</a>`
+          : ` <button class="map-btn" data-key="${esc(r.key)}">map to project…</button>`;
+        s += r.feeHint ? ' <span class="feehint">comment mentions a fee share</span>' : '';
+        s += `</div>`;
       }
-      const label = kind === 'tool' ? 'Tool' : kind === 'billed' ? 'Billed' : 'Accrued';
-      s += `<td class="l lane-c">${label}</td>`;
-
-      let tot = 0;
+      s += `</td>`;
       for (let m = 1; m <= 12; m++) {
-        const plan = planFor(r.pid, YEAR, m);
-        const v = kind === 'tool' ? plan : kind === 'billed' ? STORE.billedOf(r, m) + STORE.feeShareOf(r, m) : STORE.accruedOf(r, m);
+        const plan = planFor(r.pid, YEAR, m), moved = cellMoved(r, m);
+        const v = cellValue(r, m);
         tot += v;
         const focus = FOCUS === m ? 'focus-c' : '';
-        if (!editable) { s += `<td class="plan-c ${focus} ${v ? '' : 'zero'}">${v ? money(v) : '—'}</td>`; continue; }
-        if (kind === 'tool') {
-          const adj = (STORE.projectSlips(STORE.getProject(r.pid) || {}) || [])
-            .find(x => (x.kind || 'slip') === 'adjust' && x.ledgerKey === r.key && x.ym === ymOf(YEAR, m) && !x.reconciled);
-          s += `<td class="ed plan-c ${focus} ${adj ? 'adjusted-c' : ''} ${v ? '' : 'zero'}"
-                   data-key="${esc(r.key)}" data-m="${m}" data-f="tool"
-                   contenteditable="true" inputmode="decimal" role="textbox"
-                   aria-label="Tool plan ${MONTHS[m - 1]} ${esc(r.name || '')}"
-                   title="${esc('The project\'s planned billing. Editing this adjusts the project and flags it red until reconciled.')}">${v ? Math.round(v).toLocaleString() : ''}</td>`;
-          continue;
-        }
+        if (!moved && !plan) { s += `<td class="num zero ${focus}">—</td>`; continue; }
         const st = (r.status || {})[m];
-        const edited = kind === 'billed' && (r.billedEdit || {})[m] != null;
-        const cls = st ? 's-' + (ST_CLASS[st] || '') : ((v || plan) ? 'unruled-c' : '');
-        s += `<td class="ed ${cls} ${focus} ${edited ? 'edited' : ''} ${v ? '' : 'zero'}"
-                 data-key="${esc(r.key)}" data-m="${m}" data-f="${kind}"
-                 contenteditable="true" inputmode="decimal" role="textbox"
-                 aria-label="${label} ${MONTHS[m - 1]} ${esc(r.name || '')}"
-                 title="${esc(label + ' · ' + MONTHS[m - 1] + ' · plan ' + money(plan) + (st ? ' · ' + STORE.DISPOSITION_LABEL(st) : ''))}">${v ? Math.round(v).toLocaleString() : ''}</td>`;
+        const cls = st ? 's-' + (ST_CLASS[st] || '') : 'unruled-c';
+        const title = `${MONTHS[m - 1]} · recognised ${money(STORE.cellRecognised(r, m))} · plan ${money(plan)}`
+          + (st ? ' · ' + STORE.DISPOSITION_LABEL(st) : ' · no status yet');
+        s += `<td class="num cell ${cls} ${focus} ${v ? '' : 'zero'}" data-key="${esc(r.key)}" data-m="${m}"
+                 tabindex="0" title="${esc(title)}">${v ? money(v) : '—'}</td>`;
       }
-      s += `<td class="strong">${money(tot)}</td>`;
+      s += `<td class="num strong">${money(tot)}</td>`;
+      const c = STORE.accrualCheck(r);
+      s += (!c.imported && !c.allocated) ? `<td class="acc-c zero">—</td>`
+        : `<td class="acc-c ${c.ok ? 'ok' : 'off'}"><div class="acc-n">${money(c.imported)}</div>
+             <div class="acc-d">${c.ok ? 'allocated ✓' : (c.diff > 0 ? 'over by ' : 'left ') + money(Math.abs(c.diff))}</div>
+             ${!c.ok && c.imported ? `<button class="spread-btn" data-key="${esc(r.key)}">spread…</button>` : ''}</td>`;
+      s += '</tr>';
 
-      // The imported lump sits beside the Accrued lane as its target.
-      if (kind === 'accrued') {
-        const c = STORE.accrualCheck(r);
-        if (!c.imported && !c.allocated) s += `<td class="acc-c zero">—</td>`;
-        else s += `<td class="acc-c ${c.ok ? 'ok' : 'off'}">
-            <div class="acc-n">${money(c.imported)}</div>
-            <div class="acc-d">${c.ok ? 'allocated ✓' : (c.diff > 0 ? 'over by ' : 'left ') + money(Math.abs(c.diff))}</div>
-            ${!c.ok && c.imported ? `<button class="spread-btn" data-key="${esc(r.key)}">spread…</button>` : ''}
-          </td>`;
-      } else s += `<td class="acc-c"></td>`;
-      return s + '</tr>';
+      /* The three lanes — hidden until the row is opened. Billed and Accrued
+         are typed into here; Tool writes a reconcilable plan adjustment. */
+      const lane = (kind, label, hint) => {
+        let x = `<tr class="lane lane-${kind} lane-of-${ri}" hidden><td class="l">${label}<span class="lane-hint">${hint}</span></td>`;
+        for (let m = 1; m <= 12; m++) {
+          const plan = planFor(r.pid, YEAR, m);
+          const val = kind === 'perf' ? plan : kind === 'bill' ? STORE.billedOf(r, m) + STORE.feeShareOf(r, m) : STORE.accruedOf(r, m);
+          const focus = FOCUS === m ? 'focus-c' : '';
+          const editable = kind !== 'perf' || !!r.pid;
+          if (!editable) { x += `<td class="num zero ${focus}">${val ? money(val) : '—'}</td>`; continue; }
+          const f = kind === 'perf' ? 'tool' : kind === 'bill' ? 'billed' : 'accrued';
+          const edited = f === 'billed' && (r.billedEdit || {})[m] != null;
+          x += `<td class="num ed ${focus} ${edited ? 'edited' : ''} ${val ? '' : 'zero'}"
+                   data-key="${esc(r.key)}" data-m="${m}" data-f="${f}" contenteditable="true"
+                   inputmode="decimal" role="textbox" aria-label="${label} ${MONTHS[m - 1]} ${esc(r.name || '')}"
+                   >${val ? Math.round(val).toLocaleString() : ''}</td>`;
+        }
+        return x + '<td class="num"></td><td class="acc-c"></td></tr>';
+      };
+      s += lane('perf', 'Performed', 'contract schedule');
+      s += lane('acc', 'Accrued', 'P&amp;L');
+      s += lane('bill', 'Billed', 'invoice out');
+      if (r.note) s += `<tr class="lane-note lane-of-${ri}" hidden><td colspan="15">“${esc(r.note)}”</td></tr>`;
+      return s;
     };
 
-    const group = (r, isChild) => ['tool', 'billed', 'accrued'].map(k => laneRow(r, k, isChild)).join('');
-    rows.forEach(r => { h += group(r, false); (r.children || []).forEach(fs => { h += group(fs, true); }); });
+    let ri = 0;
+    rows.forEach(r => { h += group(r, ri++, false); (r.children || []).forEach(fs => { h += group(fs, ri++, true); }); });
 
     const flat = rows.concat(...rows.map(r => r.children || []));
     const lane = (label, cls, fn, endCell) => {
-      let s = `<tr class="tot ${cls}"><td class="l" colspan="2">${label}</td>`, tot = 0;
-      for (let m = 1; m <= 12; m++) { const v = flat.reduce((a, r) => a + fn(r, m), 0); tot += v; s += `<td class="${FOCUS === m ? 'focus-c' : ''}">${v ? money(v) : '—'}</td>`; }
-      return s + `<td>${money(tot)}</td><td class="acc-c">${endCell || ''}</td></tr>`;
+      let s = `<tr class="tot ${cls}"><td class="l">${label}</td>`, tot = 0;
+      for (let m = 1; m <= 12; m++) { const v = flat.reduce((a, r) => a + fn(r, m), 0); tot += v; s += `<td class="num ${FOCUS === m ? 'focus-c' : ''}">${v ? money(v) : '—'}</td>`; }
+      return s + `<td class="num">${money(tot)}</td><td class="acc-c">${endCell || ''}</td></tr>`;
     };
     const unalloc = flat.reduce((a, r) => { const c = STORE.accrualCheck(r); return a + (c.imported - c.allocated); }, 0);
     h += '</tbody><tfoot>';
-    h += lane('Tool (plan)', 'lane-plan', (r, m) => planFor(r.pid, YEAR, m));
-    h += lane('Billed', 'lane-bill', (r, m) => STORE.billedOf(r, m) + STORE.feeShareOf(r, m));
-    h += lane('Accrued', 'lane-acc', (r, m) => STORE.accruedOf(r, m),
+    h += lane('Of which accrued, not billed', 'lane-acc', (r, m) => STORE.accruedOf(r, m),
       `<div class="acc-n">${money(flat.reduce((a, r) => a + STORE.accrualCheck(r).imported, 0))}</div>
        <div class="acc-d">${Math.abs(unalloc) < 1 ? 'all allocated ✓' : money(Math.abs(unalloc)) + ' unallocated'}</div>`);
+    h += lane('Billed (invoice out)', 'lane-bill', (r, m) => STORE.billedOf(r, m) + STORE.feeShareOf(r, m));
     h += lane('Recognised revenue', '', (r, m) => STORE.cellRecognised(r, m));
     h += '</tfoot>';
     t.innerHTML = h;
     wireGrid();
   }
 
-  /* Editing: commit on blur or Enter, revert on Escape. Empty clears the entry
-     — for Billed that restores whatever the sheet said, which is the only way
-     back from a correction. */
+  /* Expansion, editing, and the status picker. */
   function wireGrid() {
+    const toggle = (row) => {
+      const i = row.dataset.i;
+      const open = row.classList.toggle('open');
+      row.querySelector('.pcell')?.setAttribute('aria-expanded', String(open));
+      $$('#grid .lane-of-' + i).forEach(el => { el.hidden = !open; });
+    };
+    $$('#grid tr.prow .pcell').forEach(td => {
+      const row = td.closest('tr');
+      td.addEventListener('click', (e) => { if (e.target.closest('a,button')) return; toggle(row); });
+      td.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(row); } });
+    });
+    $$('#grid td.cell').forEach(td => {
+      td.addEventListener('click', (e) => openStatusMenu(td, e));
+      td.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openStatusMenu(td, e); } });
+    });
     $$('#grid td.ed').forEach(td => {
       td.addEventListener('focus', () => { td.dataset.before = td.textContent.trim(); });
       td.addEventListener('keydown', (e) => {
@@ -573,19 +594,51 @@
         const raw = td.textContent.replace(/[$,\s]/g, '').replace(/[−–—]/g, '-').trim();
         if (raw === (td.dataset.before || '').replace(/[$,\s]/g, '')) return;
         if (raw !== '' && isNaN(Number(raw))) { td.textContent = td.dataset.before || ''; return; }
+        const openKeys = $$('#grid tr.prow.open').map(x => x.dataset.i);
         if (td.dataset.f === 'tool') adjustPlan(td.dataset.key, +td.dataset.m, raw === '' ? null : Number(raw));
         else STORE.setCellAmount(YEAR, td.dataset.key, +td.dataset.m, td.dataset.f, raw === '' ? null : Number(raw));
-        buildBar(); kpis(); renderGrid(); renderFlash();
+        buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
+        // keep whatever the user had open, open
+        openKeys.forEach(i => { const r = $(`#grid tr.prow[data-i="${i}"]`); if (r && !r.classList.contains('open')) r.querySelector('.pcell').click(); });
       });
-      // A click on an already-focused cell opens the status picker instead of
-      // fighting the caret — the status lives on the figure, not beside it.
-      td.addEventListener('contextmenu', (e) => { e.preventDefault(); openStatusMenu(td, e); });
     });
     $$('#grid .map-btn').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openMapMenu(b); }));
     $$('#grid .spread-btn').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openSpreadMenu(b); }));
-    $$('#grid td.ed').forEach(td => {
-      td.addEventListener('dblclick', (e) => { e.preventDefault(); openStatusMenu(td, e); });
+  }
+
+  /* ---- "What changed on your projects" — the same reconciliation, written
+     for the person who owns the client. ---- */
+  function renderLeader() {
+    const el = $('#leader-list');
+    if (!el) return;
+    const rows = ledgerRows();
+    const flat = rows.concat(...rows.map(r => r.children || []));
+    const items = [];
+    flat.forEach(r => {
+      for (let m = 1; m <= 12; m++) {
+        const st = (r.status || {})[m];
+        if (!st || st === 'billed' || st === 'feeshare') continue;
+        const rec = STORE.cellRecognised(r, m), plan = planFor(r.pid, YEAR, m);
+        const to = (r.carryTo || {})[m];
+        const say = {
+          slip: ['down', money(plan - rec), `${MONTHS[m - 1]} was planned and never invoiced or accrued.` + (to ? ` Finance has moved the billing to <b>${MONTHS[to - 1]}</b>.` : ' Finance has not yet said which month it moves to.') + ' Your year is unchanged — but if that work is not happening, say so and it comes out.'],
+          accrued: ['defer', money(rec), `${MONTHS[m - 1]} is earned and in the P&amp;L; the invoice goes out next month. <b>Nothing for you to do</b> — this is what a healthy month looks like.`],
+          unfcast: ['up', money(rec), `Billing in ${MONTHS[m - 1]} with <b>no project record behind it</b>. Build the record so the run rate is forecast rather than discovered at the next close.`],
+          writeoff: ['down', money(rec), `A prior accrual that is no longer billable. <b>Written off</b> and out of the forecast for good.`],
+          early: ['up', money(rec), `Invoiced ahead of the plan in ${MONTHS[m - 1]}. Revenue is right for the year; the monthly shape is off by one.`],
+          trueup: [rec >= plan ? 'up' : 'down', money(rec - plan), `${MONTHS[m - 1]} settled at a different figure from the plan. Finance has trued it up.`],
+          reclass: ['defer', money(rec), `A <b>reclass</b> — the same work moved between project codes. Read it with its offsetting line or it looks like a win and a collapse.`],
+        }[st];
+        if (say) items.push({ kind: say[0], amt: say[1], txt: say[2], name: r.name, client: r.client, sort: Math.abs(rec - plan) });
+      }
     });
+    items.sort((a, b) => b.sort - a.sort);
+    $('#leader-card').hidden = !items.length;
+    el.innerHTML = items.slice(0, 12).map(i => `
+      <div class="icard ${i.kind}">
+        <div class="ic-top"><span class="ic-proj">${esc(i.name || '')}${i.client ? ' · ' + esc(i.client) : ''}</span><span class="ic-amt">${i.amt}</span></div>
+        <div class="ic-txt">${i.txt}</div>
+      </div>`).join('');
   }
 
   /* ---- spread an accrual lump across a run of months ---- */
@@ -679,7 +732,7 @@
       if (cur === 'slip' && next !== 'slip' && row.pid) {
         try { STORE.removeSlip(row.pid, { ledgerKey: key, fromYm: ymOf(YEAR, m) }); } catch (e) {}
       }
-      closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash();
+      closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
     }));
     pop.querySelector('.shift-btn')?.addEventListener('click', () => {
       const n = +pop.querySelector('.shift-btn').dataset.n;
@@ -930,7 +983,7 @@
   /* ============================================================
      6 · BOOT
      ============================================================ */
-  function render() { buildBar(); kpis(); renderGrid(); renderFlash();
+  function render() { buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader();
     ['actual', 'plan', 'variance'].forEach(k => $('#mode-' + k).classList.toggle('on', MODE === k));
     $('#flash-card').hidden = !STORE.getLedgerYear(YEAR);
   }
