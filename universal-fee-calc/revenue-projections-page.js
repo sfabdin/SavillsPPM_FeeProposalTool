@@ -22,6 +22,12 @@
   }
 
   let showExcluded = true;
+  /* Closed-out projects are finished work whose earned months are still real
+     revenue, so they stay IN by default — hiding them by default would move
+     every year-to-date total on this page. The preference is remembered per
+     browser so the choice only has to be made once. */
+  const CLOSED_PREF = 'ufc_proj_show_closed_v1';
+  let showClosed = (() => { try { return localStorage.getItem(CLOSED_PREF) !== '0'; } catch (e) { return true; } })();
   let showBroker = false;
   let showPass = false;
   let editMode = false;
@@ -72,7 +78,7 @@
       const feeSharePct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
       const ptCost = (p.financials && p.financials.passThroughCost) || 0;
       return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, total, ov: p.monthlyOverrides || null, slipMap,
-               coCount: cos.length, feeSharePct, ptCost,
+               coCount: cos.length, feeSharePct, ptCost, status: (pj.status || '').trim(),
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim(), projectType: (pj.projectType || '').trim() };
     });
     populateFilters();
@@ -124,6 +130,7 @@
 
     // Row filters
     let rows = ALL.filter(r => {
+      if (!showClosed && r.status === 'closed') return false;
       if (f.client && r.client !== f.client) return false;
       if (f.leader && !r.leaders.includes(f.leader)) return false;
       if (f.service && !r.serviceLines.includes(f.service)) return false;
@@ -140,7 +147,10 @@
         return Object.assign({}, r, { map, total });
       }).filter(r => r.total > 0.5);
     }
-    $('#filt-count').textContent = `${rows.length} of ${ALL.length} projects` + (f.service ? ` · ${f.service} only` : '');
+    const closedHidden = showClosed ? 0 : ALL.filter(r => r.status === 'closed').length;
+    $('#filt-count').textContent = `${rows.length} of ${ALL.length} projects`
+      + (f.service ? ` · ${f.service} only` : '')
+      + (closedHidden ? ` · ${closedHidden} closed out hidden` : '');
 
     // Column (time) filter predicate
     const monthAllowed = (y, m) => {
@@ -341,7 +351,7 @@
 
     // Capture the exact rendered model for the Excel export.
     LAST_VIEW = { rows, cols, years, colTot, colWt, grandTot, grandWt,
-                  booked, pipeline14, longshot, filters: f, showExcluded };
+                  booked, pipeline14, longshot, filters: f, showExcluded, showClosed };
 
     // ---- Legend ----
     $('#legend').innerHTML = STORE.RATINGS.map(r => {
@@ -401,7 +411,7 @@
     if (f.month) fbits.push('Month: '+MONTHS[parseInt(f.month)-1]);
     ws.mergeCells(2,1,2,lastCol);
     const sub = ws.getCell('A2');
-    sub.value = `${V.rows.length} projects · as of ${new Date().toLocaleDateString()}` + (fbits.length ? '  ·  '+fbits.join('  ·  ') : '  ·  all projects') + (V.showExcluded ? '' : '  ·  rated 1–4 only');
+    sub.value = `${V.rows.length} projects · as of ${new Date().toLocaleDateString()}` + (fbits.length ? '  ·  '+fbits.join('  ·  ') : '  ·  all projects') + (V.showExcluded ? '' : '  ·  rated 1–4 only') + (V.showClosed ? '' : '  ·  closed out excluded');
     sub.font = { name:'Calibri', italic:true, size:10, color:{argb:STEEL} };
     // KPI cells (row 4)
     const kpis = [
@@ -688,6 +698,17 @@
     build();
   });
   $('#show-excluded')?.addEventListener('change', e => { showExcluded = e.target.checked; build(); });
+  {
+    const cb = $('#show-closed');
+    if (cb) {
+      cb.checked = showClosed;
+      cb.addEventListener('change', e => {
+        showClosed = e.target.checked;
+        try { localStorage.setItem(CLOSED_PREF, showClosed ? '1' : '0'); } catch (err) {}
+        build();
+      });
+    }
+  }
   $('#show-broker')?.addEventListener('change', e => { showBroker = e.target.checked; build(); });
   $('#show-pass')?.addEventListener('change', e => { showPass = e.target.checked; build(); });
   $('#xlsx-export')?.addEventListener('click', exportProjections);
