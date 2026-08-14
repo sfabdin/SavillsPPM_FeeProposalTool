@@ -149,7 +149,7 @@
     db.schemaVersion = SCHEMA;
     localStorage.setItem(KEY, JSON.stringify(db));
     _dbCache = db;
-    _feeIndex = null; _feeRecords = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
     return true;
   }
   function writeDb(db) {
@@ -398,7 +398,7 @@
     const merged = isPristineSeed(local) ? remote : mergeStaffDb(remote, local);
     localStorage.setItem(KEY, JSON.stringify(merged));
     _dbCache = merged;
-    _feeIndex = null; _feeRecords = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
     return merged;
   }
 
@@ -496,7 +496,7 @@
   // silently keep pointing at old data.
   if (typeof document !== 'undefined') {
     document.addEventListener('ufc:remote-updated', (e) => {
-      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; }
+      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; }
     });
   }
   /** Fee-tool project records, parsed ONCE per page load — UFC_Store.getProject
@@ -917,21 +917,39 @@
     // ---- burned $ per MATRIX project → resolved onto fee-project ids where linked ----
     const burnByFee = {}; const burnLoose = {}; const noRate = new Set();
     const overhead = { byMonth: {}, hours: 0, cost: 0, ppl: {}, byProj: {} };   // macro / non-billable — real staff cost outside any fee
+    /* PTO / vacation / holiday is macro time, but it is NOT discretionary
+       overhead the way BD and internal work are — nobody should read a
+       colleague's vacation as unproductive cost sitting against the fee book.
+       It gets its own bucket so the non-billable line means what it says. */
+    const timeOff = { byMonth: {}, hours: 0, cost: 0, ppl: {}, byProj: {} };
+    /* Hours we could not price (no cost rate for the person's title). They are
+       real effort that is missing from every cost figure below, so carry the
+       size of the hole rather than letting margin quietly read as better. */
+    const unpriced = { hours: 0, byPerson: {} };
+    const addTo = (buck, proj, pid, person, rate, ym, h) => {
+      buck.byMonth[ym] = (buck.byMonth[ym] || 0) + h * rate;
+      buck.hours += h; buck.cost += h * rate;
+      buck.byProj[proj] = (buck.byProj[proj] || 0) + h * rate;
+      const op = buck.ppl[pid] || (buck.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0, byMonth: {} });
+      op.hours += h; op.cost += h * rate;
+      const om = op.byMonth[ym] || (op.byMonth[ym] = { hours: 0, cost: 0 });
+      om.hours += h; om.cost += h * rate;
+    };
     Object.entries(db.actuals || {}).forEach(([k, h]) => {
       const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
       const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
       if (!inWin.has(ym)) return;
       const person = db.people[pid];
       const rate = person ? costRateForTitle(person.title) : null;
-      if (!rate) { noRate.add(person ? (person.name + (person.title ? ' — ' + person.title : ' — no title')) : pid.replace(/^unmatched:/, '')); return; }
+      if (!rate) {
+        const who = person ? (person.name + (person.title ? ' — ' + person.title : ' — no title')) : pid.replace(/^unmatched:/, '');
+        noRate.add(who);
+        unpriced.hours += h;
+        unpriced.byPerson[who] = (unpriced.byPerson[who] || 0) + h;
+        return;
+      }
       if (isMacroProject(proj)) {
-        overhead.byMonth[ym] = (overhead.byMonth[ym] || 0) + h * rate;
-        overhead.hours += h; overhead.cost += h * rate;
-        overhead.byProj[proj] = (overhead.byProj[proj] || 0) + h * rate;
-        const op = overhead.ppl[pid] || (overhead.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0, byMonth: {} });
-        op.hours += h; op.cost += h * rate;
-        const om = op.byMonth[ym] || (op.byMonth[ym] = { hours: 0, cost: 0 });
-        om.hours += h; om.cost += h * rate;
+        addTo(isTimeOffProject(proj) ? timeOff : overhead, proj, pid, person, rate, ym, h);
         return;
       }
       const link = matchFeeProject(proj, '');
@@ -979,7 +997,12 @@
     });
     rows.sort((a, b) => (a.rating || 9) - (b.rating || 9) || b.revTotal - a.revTotal || b.cost - a.cost);
     overhead.ppl = Object.values(overhead.ppl).sort((x, y) => y.cost - x.cost);
-    return { ok: true, rows, overhead, noRate: [...noRate], hasActuals: hasActuals() };
+    timeOff.ppl = Object.values(timeOff.ppl).sort((x, y) => y.cost - x.cost);
+    unpriced.people = Object.entries(unpriced.byPerson)
+      .map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 }))
+      .sort((a, b) => b.hours - a.hours);
+    unpriced.hours = Math.round(unpriced.hours * 10) / 10;
+    return { ok: true, rows, overhead, timeOff, unpriced, noRate: [...noRate], hasActuals: hasActuals() };
   }
 
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
@@ -1542,12 +1565,18 @@
       const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
       const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
       if (!inWin.has(ym)) return;
-      const rec = per[pid] || (per[pid] = { person: db.people[pid] || { id: pid, name: pid.replace(/^unmatched:/, '') }, hours: 0, total: 0, byProj: {} });
+      const rec = per[pid] || (per[pid] = { person: db.people[pid] || { id: pid, name: pid.replace(/^unmatched:/, '') }, hours: 0, total: 0, ptoHours: 0, byProj: {} });
       rec.total += h;
       if (!isMacroProject(proj)) return;
+      /* Time off is macro time but nobody should be flagged for taking it.
+         `hours` counts WORK-type macro only (BD, internal, admin); PTO is
+         tallied beside it so the detail still reconciles to the total. */
+      if (isTimeOffProject(proj)) { rec.ptoHours += h; rec.byProj[proj] = (rec.byProj[proj] || 0) + h; return; }
       rec.hours += h; rec.byProj[proj] = (rec.byProj[proj] || 0) + h;
     });
-    return Object.values(per).filter(r => r.hours > 0).map(r => ({ ...r, pct: r.total ? r.hours / r.total : 0 })).sort((a, b) => b.hours - a.hours);
+    return Object.values(per).filter(r => r.hours > 0 || r.ptoHours > 0)
+      .map(r => ({ ...r, pct: r.total ? r.hours / r.total : 0, ptoPct: r.total ? r.ptoHours / r.total : 0 }))
+      .sort((a, b) => b.hours - a.hours);
   }
 
   /* ---------- saved Clockify → roster mappings (map once, keeps forever;
