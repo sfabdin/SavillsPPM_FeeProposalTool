@@ -347,6 +347,19 @@
       userX: unionUserX(),
     };
 
+    /* Dismissed contract-staffing rows are a team decision, so they must
+       survive the round trip like any other shared state. A top-level key
+       left out of this merge is dropped on EVERY sync, not just on a clash —
+       which is how a lock once vanished on refresh. Union, newest wins. */
+    {
+      const merged = Object.assign({}, remote.dismissedGaps || {});
+      Object.entries(local.dismissedGaps || {}).forEach(([k, v]) => {
+        const r = merged[k];
+        if (!r || (v && v.at || '') >= (r.at || '')) merged[k] = v;
+      });
+      if (Object.keys(merged).length) out.dismissedGaps = merged;
+    }
+
     // Straggler heal: a row arriving from a stale tab may still carry a
     // project name that was since renamed to its canonical form — the same
     // real project then exists under TWO names, splitting coverage. Apply
@@ -1119,6 +1132,46 @@
       Returns [{ project, client, open, roleTitle, resource|null, roles[],
                  person|null, isNew, personId|null, topUp, via,
                  segments:[{start,end,need,want,have}], totalNeedFteMo }] */
+  /* ---------- dismissed contract-staffing rows ----------
+     Not every named contract role becomes an allocation. A pursuit that never
+     closed, a person named in a proposal who was never going to do the work —
+     these are noise that used to sit on the list forever with no way to clear
+     it. Dismissing is a JUDGEMENT, recorded with who and why, never a delete:
+     the row is hidden from the working list and kept in a roll-up so it can
+     be reopened. Lives in staff.json, so the whole team sees one decision.
+
+     The key must survive recomputation (rows are rebuilt from scratch every
+     call) AND a project rename, so it is built from the CANONICAL project
+     name plus either the open role or the contract-named person. */
+  function gapKey(row) {
+    const db = readDb();
+    const ren = (db.mappings || {}).renames || {};
+    const canon = ren[nkey(row.project)] || row.project;
+    const who = row.open ? 'open:' + String(row.roleTitle || '').toLowerCase()
+                         : 'who:' + nkey(canonicalName(row.resource || ''));
+    return nkey(canon) + '|' + who;
+  }
+  function dismissedGaps() { const db = readDb(); return db.dismissedGaps || {}; }
+  /** Hide a contract-staffing row from the working list, with a reason. */
+  function dismissGap(key, reason) {
+    if (!key) return null;
+    const db = readDb();
+    db.dismissedGaps = db.dismissedGaps || {};
+    const S2 = window.UFC_Store;
+    let by = '';
+    try { by = (S2 && S2.getCurrentUser) ? (S2.getCurrentUser().name || S2.getCurrentUser().username || '') : ''; } catch (e) {}
+    db.dismissedGaps[key] = { at: new Date().toISOString(), by, reason: String(reason || '').trim() };
+    writeDb(db);
+    return db.dismissedGaps[key];
+  }
+  /** Put a dismissed row back on the working list. */
+  function restoreGap(key) {
+    const db = readDb();
+    if (!db.dismissedGaps || !db.dismissedGaps[key]) return false;
+    delete db.dismissedGaps[key];
+    writeDb(db);
+    return true;
+  }
   function contractStaffingGaps() {
     const S2 = window.UFC_Store;
     if (!S2 || !S2.computeMonthsByPhase) return [];
@@ -1221,7 +1274,20 @@
         // Segments that ended before this month are history, not a staffing action.
         const future = segs.filter(sg => sg.end >= nowYm);
         if (!future.length) return;
-        out.push({
+        /* Judgement context, so "is this real?" can be answered on the row.
+           A rating-6 pursuit naming someone is not a staffing decision; a
+           rated-1 booked project is. The revenue leader is who to ask. */
+        let rating = null, lead = '';
+        try {
+          const lp = links.map(l => feeRecords().find(x => x.id === l.id)).filter(Boolean)
+            .sort((a, b) => (S2.ratingFor ? S2.ratingFor(a) : 9) - (S2.ratingFor ? S2.ratingFor(b) : 9))[0];
+          if (lp) {
+            rating = S2.ratingFor ? S2.ratingFor(lp) : null;
+            const pj = lp.project || {};
+            lead = (S2.leaderDisplay ? S2.leaderDisplay(pj.leadId || pj.lead) : (pj.lead || '')) || '';
+          }
+        } catch (err) {}
+        const row = {
           project: pn, client,
           open: !!e.open, roleTitle: e.roleLabel || [...e.roles][0] || 'Role',
           resource: e.name, roles: [...e.roles],
@@ -1229,9 +1295,13 @@
           personId: e.open ? null : (person ? person.id : personIdForName(e.name)),
           topUp: existing.length > 0,
           via: e.via,
+          rating, lead,
           segments: future,
           totalNeedFteMo: Math.round(future.reduce((s, sg) => s + sg.need * monthsBetween(sg.start, sg.end).length, 0)) / 100,
-        });
+        };
+        row.key = gapKey(row);
+        row.dismissed = dismissedGaps()[row.key] || null;
+        out.push(row);
       });
     };
 
@@ -1889,7 +1959,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,

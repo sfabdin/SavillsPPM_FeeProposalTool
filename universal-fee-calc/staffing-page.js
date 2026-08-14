@@ -179,12 +179,19 @@
   }
 
   function bridgeSectionHtml() {
+    /* NOTE: `gaps` stays the FULL cached list. Every data-bridge-* attribute
+       below carries an index into it, and the click handlers read
+       bridgeGapsCached()[i] — filtering this array would silently point every
+       Confirm button at the wrong row. Dismissed rows are skipped inside the
+       map instead, the same way inline top-ups are. */
     const gaps = bridgeGapsCached();
     if (!gaps.length) return '';
+    const dropped = gaps.filter(g => g.dismissed);
     const inline = new Set(Object.values(inlineTopUpIndex()));
-    if (gaps.every((g, i) => inline.has(i))) return '';
+    const isHidden = (g, i) => inline.has(i) || !!g.dismissed;
+    if (gaps.every(isHidden) && !dropped.length) return '';
     // ---- roll-up stats: the whole story while the card is collapsed ----
-    const shown = gaps.filter((g, i) => !inline.has(i));
+    const shown = gaps.filter((g, i) => !isHidden(g, i));
     const nOpen = shown.filter(g => g.open).length;
     const nNew = shown.filter(g => !g.open && g.isNew).length;
     const nLinked = shown.filter(g => !g.open && !g.isNew).length;
@@ -212,7 +219,7 @@
       <div style="padding:0 16px 12px">
       <div class="note-txt" style="margin:0 0 6px">Every under-covered contract role — named people AND open slots. Review the segments, adjust the name if it maps to someone already here (nicknames count — the link is remembered), then confirm. Nothing is created without your OK.</div>
       <datalist id="bridge-people">${rosterOptions}</datalist>
-      ${gaps.map((g, i) => inline.has(i) ? '' : `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
+      ${gaps.map((g, i) => isHidden(g, i) ? '' : `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
         <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
           <b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(g.project)}</span>
           ${g.open
@@ -223,6 +230,8 @@
           ${g.topUp ? `<span class="mv-chip" style="background:#e7eef0">${g.open ? 'partially covered by matching titles' : 'top-up — partial allocation exists'}</span>` : ''}
           ${g.via === 'direct' && !g.possibleDupFee ? '<span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">signed project — nobody staffed yet</span>' : ''}
           ${g.possibleDupFee ? `<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Two fee-tool records appear to describe this same work — check Projects Index and archive or merge the spare before staffing against it (its revenue may also double-count).">⚠ from fee record “${esc(g.possibleDupFee)}” — possible duplicate of the linked one</span>` : ''}
+          ${g.rating ? `<span class="mv-chip" style="background:${g.rating <= 1 ? '#e7f0ee' : g.rating <= 4 ? '#eef1f3' : '#f5f4f1'};color:${g.rating <= 1 ? '#0E7C7B' : g.rating <= 4 ? '#4a5560' : '#8a8f98'};font-weight:700" title="Projection rating of the linked fee project. 1 = booked, 2-4 = weighted pipeline, 5-7 = low likelihood — a rating 5-7 naming someone is rarely a staffing decision.">rating ${g.rating}</span>` : ''}
+          ${g.lead ? `<span class="mv-chip" style="background:#f4f2ef;color:#4a5560" title="Revenue leader on the linked fee project — who to ask whether this is real">${esc(g.lead)}</span>` : ''}
           <span class="note-txt">· ${esc(g.roles.join(', '))} · ${g.totalNeedFteMo} FTE-mo missing</span>
         </summary>
         <div style="padding:4px 4px 12px">
@@ -234,9 +243,26 @@
             <span class="note-txt" data-bridge-hint="${i}"></span>
           </div>
           ${!g.open && g.isNew ? `<div class="note-txt" style="margin-top:4px">Contract says “${esc(g.resource)}” — if that's a nickname or old spelling of someone already on the roster, type their roster name above and the mapping is saved for every future contract.</div>` : ''}
-          <button class="btn btn-primary" style="margin-top:10px;padding:8px 16px;font-size:12px" data-bridge-apply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}</button>
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" data-bridge-apply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}</button>
+            <span class="note-txt">or</span>
+            <input data-bridge-why="${esc(g.key)}" placeholder="Why not? e.g. pursuit died, never going to staff" style="padding:7px 10px;border:1px solid rgba(37,39,58,0.3);font-size:12px;min-width:250px">
+            <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" data-bridge-dismiss="${esc(g.key)}" title="Take this off the list without creating anything. Recorded with your name and reason, and reopenable from the dismissed roll-up.">✕ Not staffing this</button>
+          </div>
         </div>
       </details>`).join('')}
+      ${dropped.length ? `<details style="margin-top:10px;border-top:1px solid rgba(37,39,58,0.12);padding-top:8px">
+        <summary style="cursor:pointer;font-size:12px;color:var(--sav-steel)">${dropped.length} dismissed — not being staffed <span class="note-txt">· click to review or put back</span></summary>
+        <table class="dt" style="margin-top:6px"><thead><tr><th>Who / role</th><th>Project</th><th>Reason</th><th>By</th><th></th></tr></thead><tbody>
+        ${dropped.map(g => `<tr>
+          <td>${g.open ? 'Open: ' + esc(g.roleTitle) : esc(g.resource)}</td>
+          <td>${esc(g.project)}</td>
+          <td class="note-txt">${esc((g.dismissed && g.dismissed.reason) || '—')}</td>
+          <td class="note-txt">${esc((g.dismissed && g.dismissed.by) || '')}${g.dismissed && g.dismissed.at ? ' · ' + esc(String(g.dismissed.at).slice(0, 10)) : ''}</td>
+          <td><button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" data-bridge-restore="${esc(g.key)}">Put back</button></td>
+        </tr>`).join('')}
+        </tbody></table>
+      </details>` : ''}
       </div>
     </details>`;
   }
@@ -296,6 +322,23 @@
         if (per && !S.namesMatch(per.name, g.resource)) S.setPersonAlias(g.resource, personId);
       }
       toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${personName}`);
+      renderCounts(); renderAllocations();
+    });
+    /* Dismiss — a recorded judgement, not a delete. The row leaves the working
+       list and lands in the roll-up with who and why, reopenable any time. */
+    $$('#p-allocations [data-bridge-dismiss]').forEach(b => b.onclick = () => {
+      const key = b.dataset.bridgeDismiss;
+      const why = $(`#p-allocations [data-bridge-why="${CSS.escape(key)}"]`);
+      const reason = why ? why.value.trim() : '';
+      S.dismissGap(key, reason);
+      state._gapsKey = null;                       // force a rebuild of the cache
+      toast('Taken off the list. Reopen it any time from “dismissed” at the foot of this card.');
+      renderCounts(); renderAllocations();
+    });
+    $$('#p-allocations [data-bridge-restore]').forEach(b => b.onclick = () => {
+      S.restoreGap(b.dataset.bridgeRestore);
+      state._gapsKey = null;
+      toast('Back on the list.');
       renderCounts(); renderAllocations();
     });
     // Inline top-up chips — the same confirm-gated create, anchored on the
