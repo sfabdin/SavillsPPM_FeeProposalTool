@@ -148,29 +148,6 @@
      default; expands (native <details>, same pattern as matchAudit()) into
      a scrollable gradient timeline covering everyone active in the window,
      not just those freeing up. */
-  function comingAvailableCard() {
-    const list = S.comingAvailable({ includePursuit: state.incPursuit });
-    if (!list.length) return '';
-    const nowYm = S.currentYM();
-    const nextMs = []; { let [fy, fm] = nowYm.split('-').map(Number); for (let i = 0; i < 4; i++) { nextMs.push(fy + '-' + String(fm).padStart(2, '0')); fm++; if (fm > 12) { fm = 1; fy++; } } }
-    const headline = list.slice(0, 8).map(f => `${esc(f.person.name)} (${esc(S.ymLabel(f.m))})`).join(' · ') + (list.length > 8 ? ` +${list.length - 8} more` : '');
-    const gridRows = S.bandwidthGrid(nextMs, { includePursuit: state.incPursuit }).filter(r => r.activeMonths > 0).sort((a, b) => b.peak - a.peak);
-    // gradient: light teal (low load) → red (critical) — lighter cells read as more headroom
-    const grad = (v) => {
-      if (!v) return 'background:#f5f4f1;color:#c9cdd3';
-      const t = Math.min(1, v / 150);
-      const r = Math.round(207 + (228 - 207) * t), g = Math.round(230 + (69 - 230) * t), b = Math.round(228 + (58 - 228) * t);
-      return `background:rgb(${r},${g},${b});color:${t > 0.55 ? '#fff' : 'var(--sav-navy)'}`;
-    };
-    return `<details class="ins-card" style="margin-bottom:16px">
-      <summary style="cursor:pointer;padding:12px 16px;font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy)">📉 Coming available — next 3 months <span class="note-txt" style="font-weight:400;font-family:var(--font-body)">· ${headline}</span></summary>
-      <div style="padding:0 0 12px;overflow-x:auto">
-        <table class="hm" style="font-size:11px"><thead><tr><th class="who" style="min-width:170px">Person</th>${nextMs.map(m => `<th>${esc(S.ymLabel(m))}</th>`).join('')}</tr></thead><tbody>
-        ${gridRows.map(r => `<tr><td class="who">${esc(r.person.name)}</td>${nextMs.map(m => { const v = Math.round(r.byMonth[m] || 0); return `<td><span class="cell" style="${grad(v)}">${v ? v : '·'}</span></td>`; }).join('')}</tr>`).join('')}
-        </tbody></table>
-      </div>
-    </details>`;
-  }
 
   /* ---------- ALLOCATIONS ---------- */
   /* ---------- Contract → Allocation bridge (lives on the Allocations tab —
@@ -582,7 +559,7 @@
       <span><span class="sw sw-stripe"></span>includes pursuit hours — not yet signed</span>
       <span style="margin-left:auto">Click a name for their allocations, click an allocation row to edit it.</span>
     </div>`;
-    $('#p-people').innerHTML = kpis + comingAvailableCard() + toolbar + table + legend;
+    $('#p-people').innerHTML = kpis + toolbar + table + legend;
     $('#ppl-search').oninput = (e) => { state.pplSearch = e.target.value; renderPeople(); const el = $('#ppl-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $('#ppl-expand-toggle').onclick = () => {
       if (allExpanded) state.expandedRoster.clear();
@@ -1341,7 +1318,11 @@
     gaps.sort((a, b) => b.gap - a.gap);
 
     // ---- bandwidth coming available in the next 3 months ----
-    const freeing = S.comingAvailable({ includePursuit: state.incPursuit }).slice(0, 5);
+    /* Pursuits deliberately NOT passed through: this report answers "who can
+       take new work", and unsigned pursuit load makes people look committed
+       when they are not. No top-N cap either — Jeff asked for everyone who
+       frees 25%+, not the five biggest movers. */
+    const freeing = S.comingAvailable({ minFreedPct: 25 });
 
     // ---- pursuit exposure: how much of forward load is unsigned work ----
     const fwdMs = ms.filter(m => m >= nowYm);
@@ -1390,7 +1371,7 @@
       <div class="ins-card"><h3>🟢 Headroom <span>· first call before hiring</span></h3>${headroom.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Avg load</th><th class="num">Burn</th></tr></thead><tbody>${headroom.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.avg)}%</td><td class="num">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No one with meaningful headroom.</div>'}</div>
       <div class="ins-card"><h3>🎯 Pursuit exposure <span>· forward load on unsigned work</span></h3>${pursuitPpl.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Firm</th><th class="num">+ Pursuit</th><th class="num">If landed</th></tr></thead><tbody>${pursuitPpl.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.firm)}%</td><td class="num" style="color:#8a6d00;font-weight:700">+${Math.round(p.pur)}</td><td class="num ${p.all > 100 ? 'var-over' : ''}">${Math.round(p.all)}%</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No pursuit allocations in the forward window.</div>'}</div>
       <div class="ins-card"><h3>📈 Burn trend <span>· last 3 months, ±30%+ swings</span></h3>${trendsShown.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Trend</th></tr></thead><tbody>${trendsShown.map(t => `<tr><td class="pname">${esc(t.project)}</td><td class="num ${t.delta > 0 ? 'var-over' : 'var-under'}">${t.delta > 0 ? '▲' : '▼'} ${t.pct > 0 ? '+' : ''}${Math.round(t.pct * 100)}%</td></tr>`).join('')}</tbody></table>${more(5, trends.length)}` : `<div class="empty" style="border:0">${hasAct ? (msPast.length >= 3 ? 'No big swings.' : 'Widen the window to ≥3 past months.') : 'Needs Clockify actuals.'}</div>`}</div>
-      <div class="ins-card"><h3>📉 Coming available <span>· next 3 months</span></h3>${freeing.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th>When</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}</td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td>${esc(S.ymLabel(f.m))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No meaningful load drops.</div>'}</div>
+      <div class="ins-card"><h3>📉 Coming available <span>· next 3 months · frees 25%+ · pursuits excluded</span></h3>${freeing.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th class="num">Frees</th><th>When</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}${f.stillLoaded ? ' <span class="badge pursuit" title="Still over 100% today — the drop brings them back toward the line rather than opening a full slot">over-allocated now</span>' : ''}</td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td class="num">${Math.round(f.freedPct)}%</td><td>${esc(S.ymLabel(f.m))}</td></tr>`).join('')}</tbody></table></div><div class="note-txt" style="padding:6px 16px 2px;font-size:11px">${freeing.length} ${freeing.length === 1 ? 'person frees' : 'people free'} 25% or more of their capacity. Sorted by where they land, so the most available person is first.</div>` : '<div class="empty" style="border:0">Nobody frees 25% or more in the next three months.</div>'}</div>
       ${(() => { const lv = S.leaveStatus().filter(l => l.status !== 'past'); if (!lv.length) return ''; return `<div class="ins-card"><h3>🌴 Leaves of absence <span>· returns need a plan 1–2 months out</span></h3><table class="dt"><thead><tr><th>Person</th><th>Out</th><th>Back</th><th></th></tr></thead><tbody>${lv.map(l => `<tr><td class="pname">${esc(l.person.name)}</td><td>${esc(S.ymLabel(l.start))} – ${esc(S.ymLabel(l.end))}</td><td>${l.status === 'out' ? esc(S.ymLabel(S.ymAdd(l.end, 1))) : `<span class="vmini">starts ${esc(S.ymLabel(l.start))}</span>`}</td><td>${l.returningSoon ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">🔔 plan their staffing</span>' : (l.startingSoon ? '<span class="mv-chip" style="background:#efe6f7;color:#6b3fa0">reassign their book</span>' : '')}</td></tr>`).join('')}</tbody></table></div>`; })()}
       <div class="ins-card"><h3>🏢 Substantial internal time <span>· &gt;40h · overhead, BOH &amp; PTO excluded</span></h3>${(overheadPpl.length || boh.length) ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="display:flex;flex-wrap:wrap;gap:6px">${overheadPpl.map(r => `<span class="mv-chip" style="background:#e7eef0;color:#4a5560" title="Marked non-billable in Mapping — internal time is their job, this is expected">${esc(r.person.name)} · overhead</span>`).join('')}${boh.map(r => `<span class="mv-chip" style="background:#e7eef0" title="≥90% internal — looks like dedicated back-of-house. If that's their actual job, mark them non-billable in Mapping and they'll stop appearing here">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th class="num">%</th></tr></thead><tbody>${macro.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b>${r.ptoHours > 0 ? `<div class="vmini" style="color:#5a6070" title="Time off, counted separately — it is not part of the flag">+${fH(r.ptoHours)} PTO</div>` : ''}</td><td class="num">${Math.round(r.pct * 100)}%</td></tr>`).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40h.' : 'Needs Clockify actuals.'}</div>`}<div class="note-txt" style="padding:6px 16px 10px;font-size:11px">Counts work-type internal time only — PTO, vacation and holidays are shown beside the figure but never trigger the flag. Pure-overhead staff (admin, finance, BD…) shouldn't be here at all — <a href="#" data-goto-tab="mapping">mark them non-billable in Mapping</a> and this card skips them.</div></div>
     </div>`;

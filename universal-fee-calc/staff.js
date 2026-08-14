@@ -1437,17 +1437,37 @@
       drop below the 100% line and when it lands. Always looks forward from
       "now", independent of whatever window the page happens to be showing. */
   function comingAvailable(opts) {
+    const o = opts || {};
+    /* PURSUITS ARE OUT by default. This report exists to start "who can take
+       new work" conversations, and unwon pursuit load makes people look busy
+       who are not actually committed. Callers must opt in explicitly. */
+    const gridOpts = Object.assign({}, o, { includePursuit: !!o.includePursuit });
+    /* The threshold is on capacity freed BELOW the 100% line, not on the raw
+       drop. Someone at 315% falling to 90% sheds 225 points on paper but only
+       frees 10 points of real capacity — they were over-committed, not
+       available. Reading the raw drop is what put a 315%-allocated person at
+       the top of a "coming available" list. */
+    const minFreedPct = o.minFreedPct == null ? 25 : o.minFreedPct;
     const nowYm = currentYM();
     const nextMs = []; { let [fy, fm] = nowYm.split('-').map(Number); for (let i = 0; i < 4; i++) { nextMs.push(fy + '-' + String(fm).padStart(2, '0')); fm++; if (fm > 12) { fm = 1; fy++; } } }
-    return bandwidthGrid(nextMs, opts).filter(r => !(r.person && r.person.nonBillable)).map(r => {
+    return bandwidthGrid(nextMs, gridOpts).filter(r => !(r.person && r.person.nonBillable)).map(r => {
       const cur = r.byMonth[nextMs[0]] || 0;
+      const capped = Math.min(cur, 100);
       let best = null;
-      nextMs.slice(1).forEach(m => { const v = r.byMonth[m] || 0; if (v < 100 && cur - v >= 25 && (!best || v < best.v)) best = { m, v }; });
+      nextMs.slice(1).forEach(m => {
+        const v = r.byMonth[m] || 0;
+        if (v < 100 && (capped - v) >= minFreedPct && (!best || v < best.v)) best = { m, v };
+      });
       if (!best) return null;
-      // freed = capacity that opens up BELOW the 100% line (loads over 100% free nothing until they cross it)
-      const freedH = Math.round((Math.min(cur, 100) - best.v) / 100 * capacityHours(r.person));
-      return freedH > 0 ? { person: r.person, cur, to: best.v, m: best.m, freedH } : null;
-    }).filter(Boolean).sort((a, b) => b.freedH - a.freedH);
+      const freedPct = capped - best.v;
+      const freedH = Math.round(freedPct / 100 * capacityHours(r.person));
+      return freedH > 0 ? { person: r.person, cur, to: best.v, m: best.m, freedH, freedPct,
+                            stillLoaded: cur > 100 } : null;
+    }).filter(Boolean)
+      /* Sorted by how AVAILABLE they end up — the person dropping to 20% is a
+         better answer to "who can take this?" than one dropping to 95% who
+         happens to have more raw hours. Hours freed breaks ties. */
+      .sort((a, b) => a.to - b.to || b.freedH - a.freedH);
   }
 
   /** People with meaningfully large non-client ("macro") time in the window —
