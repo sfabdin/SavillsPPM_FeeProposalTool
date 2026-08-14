@@ -2743,6 +2743,18 @@
       byMonth raw — which Revenue Projections and the staffing dollars view
       both did — meant a monthly edit was recorded, flagged in red, and
       then displayed at its old value. */
+  /** Canonical month key: ZERO-PADDED 'YYYY-MM'. This is the format used by
+      financials.byMonth[].ym, changeOrderDelta().byMonth[].ym, the Clockify
+      actuals keys in staff.json, and every ym helper in staff.js. The internal
+      maps here are keyed on the unpadded 'YYYY-M' the live compute produces,
+      so anything LEAVING this function gets normalized through here.
+      (Profitability matched billingSeries' ym against a padded window set:
+      months 1–9 never matched, so base contract revenue silently vanished
+      while change-order dollars — already padded — landed. Don't emit raw.) */
+  function padYM(k) {
+    const i = String(k).indexOf('-');
+    return String(k).slice(0, i) + '-' + String(parseInt(String(k).slice(i + 1), 10)).padStart(2, '0');
+  }
   function billingSeries(p, catalog) {
     const fs = (p.assumptions && p.assumptions.feeShare) || {};
     const pct = fs.enabled ? (parseFloat(fs.pct) || 0) / 100 : 0;
@@ -2775,7 +2787,7 @@
       const ratio = b.net ? net / b.net : 1;
       const broker = (b.broker || 0) * ratio;
       out.push({
-        ym: k, year: s.year, month: s.month, net,
+        ym: padYM(k), year: s.year, month: s.month, net,
         invoice: (onTop ? net + broker : net) + (b.passClient || 0),
         broker, passCost: b.passCost || 0, passClient: b.passClient || 0,
         overridden: !!s.overridden, slipOut: s.slipOut || 0, slipIn: s.slipIn || 0, adjusted: s.adjusted || 0,
@@ -2785,7 +2797,7 @@
     // Months the snapshot knows about that the live compute doesn't reach.
     Object.entries(base).forEach(([k, b]) => {
       if (seen[k]) return;
-      out.push({ ym: k, year: b.year, month: b.month, net: b.net, invoice: (onTop ? b.net + b.broker : b.net) + (b.passClient || 0),
+      out.push({ ym: padYM(k), year: b.year, month: b.month, net: b.net, invoice: (onTop ? b.net + b.broker : b.net) + (b.passClient || 0),
                  broker: b.broker, passCost: b.passCost, passClient: b.passClient, overridden: false, slipOut: 0, slipIn: 0, adjusted: 0 });
     });
     return out.sort((a, b) => a.year - b.year || a.month - b.month);

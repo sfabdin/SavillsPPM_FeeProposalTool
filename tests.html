@@ -163,6 +163,46 @@
     return eq(f.byMonth.reduce((s, m) => s + m.net, 0), f.net, 'byMonth net sum');
   });
 
+  /* The month-key contract. Profitability windows months with ZERO-PADDED keys
+     ('2026-08', the format staff.js and financials.byMonth both use) while
+     billingSeries used to emit the live compute's unpadded '2026-8'. Months
+     1–9 never matched, so base contract revenue silently vanished from
+     Profitability while change-order dollars — already padded — landed.
+     Revenue Projections was unaffected: it rebuilds its own grid key from
+     .year/.month and never reads .ym. Both halves are asserted here. */
+  test('Engine · monthly', 'billingSeries ym is zero-padded YYYY-MM', () => {
+    const ser = S.billingSeries(base({
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }],
+    }), C);
+    if (ser.length !== 12) return 'expected 12 months, got ' + ser.length;
+    const bad = ser.filter(s => !/^\d{4}-\d{2}$/.test(s.ym)).map(s => s.ym);
+    return bad.length === 0 || 'unpadded ym: ' + bad.join(', ');
+  });
+
+  test('Engine · monthly', 'billingSeries ym agrees with financials.byMonth', () => {
+    const p = base();
+    const a = S.billingSeries(p, C).map(s => s.ym).sort().join(' ');
+    const b = fin(p).byMonth.map(x => x.ym).sort().join(' ');
+    return a === b || `billingSeries [${a}] vs financials [${b}]`;
+  });
+
+  test('Engine · monthly', 'a padded month window captures every month', () => {
+    const ser = S.billingSeries(base({
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 12 }],
+    }), C);
+    const win = new Set(Array.from({ length: 12 }, (_, i) => '2026-' + String(i + 1).padStart(2, '0')));
+    const hit = ser.filter(s => win.has(s.ym));
+    return hit.length === 12 || `only ${hit.length}/12 months matched a padded window`;
+  });
+
+  test('Engine · monthly', 'Projections grid keys stay UNPADDED (year/month)', () => {
+    const ser = S.billingSeries(base(), C);
+    const keys = ser.map(s => s.year + '-' + s.month);
+    return keys.includes('2026-1') || 'expected an unpadded 2026-1 key, got ' + keys.join(', ');
+  });
+
   test('Engine · monthly', 'Σ byGroup.net = net', () => {
     const p = base({
       groups: [{ id: 'core', name: 'Core' }, { id: 'field', name: 'Field' }],
