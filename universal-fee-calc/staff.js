@@ -448,6 +448,59 @@
   // ---------- ENGINE: bandwidth / utilization ----------
   function allocActiveIn(a, ym) { return a.start && a.end ? (a.start <= ym && ym <= a.end) : (a.start ? a.start <= ym : false); }
 
+  /* ---------- duplicate allocations ----------
+     The same person allocated to the same project over OVERLAPPING months,
+     across two or more rows. On the Aug 13 review this is what put Danielle
+     at 200% ("I think it's the same thing twice") — the load charts add both
+     rows, so every over-allocation number downstream is wrong until one goes.
+
+     Sequential rows on one project (phase 1 then phase 2) are normal and are
+     NOT flagged — only overlapping windows are. Two genuine concurrent roles
+     are possible too, which is exactly why this REPORTS and never deletes:
+     the rows are shown with their overlap so a human decides. */
+  function duplicateAllocations() {
+    const db = readDb();
+    const ren = (db.mappings || {}).renames || {};
+    const canon = (n) => nkey(ren[nkey(n)] || n || '');
+    const groups = {};
+    (db.allocations || []).forEach(a => {
+      if (!a || !a.personId || !a.project) return;
+      if (isLeaveProject(a.project)) return;            // leave rows legitimately repeat
+      (groups[a.personId + '|' + canon(a.project)] = groups[a.personId + '|' + canon(a.project)] || []).push(a);
+    });
+    const overlaps = (x, y) => {
+      const xs = x.start || '', xe = x.end || x.start || '';
+      const ys = y.start || '', ye = y.end || y.start || '';
+      if (!xs || !ys) return false;
+      return xs <= ye && ys <= xe;
+    };
+    const out = [];
+    Object.values(groups).forEach(rows => {
+      if (rows.length < 2) return;
+      // Only keep rows that actually collide with another row in the group.
+      const hit = rows.filter(r => rows.some(o => o !== r && overlaps(r, o)));
+      if (hit.length < 2) return;
+      const person = db.people[hit[0].personId] || { id: hit[0].personId, name: hit[0].personName || hit[0].personId };
+      // The months where the doubling actually bites, and by how much.
+      const months = {};
+      hit.forEach(r => monthsBetween(r.start, r.end || r.start).forEach(m => {
+        months[m] = (months[m] || 0) + (parseFloat(r.pct) || 0);
+      }));
+      const worst = Object.entries(months).sort((a, b) => b[1] - a[1])[0] || ['', 0];
+      out.push({
+        person, project: hit[0].project,
+        rows: hit.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')),
+        worstMonth: worst[0], worstPct: Math.round(worst[1]),
+        /* Byte-identical twins (same window AND same %) are almost certainly
+           one row saved twice — worth saying so, since that needs no thought. */
+        identical: hit.length === 2 && hit[0].start === hit[1].start
+          && (hit[0].end || '') === (hit[1].end || '')
+          && (parseFloat(hit[0].pct) || 0) === (parseFloat(hit[1].pct) || 0),
+      });
+    });
+    return out.sort((a, b) => b.worstPct - a.worstPct || a.person.name.localeCompare(b.person.name));
+  }
+
   /** Total allocation % for a person in a given month (point-in-time). */
   function personLoad(personId, ym, opts) {
     const includePursuit = !opts || opts.includePursuit !== false;
@@ -1959,7 +2012,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,

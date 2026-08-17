@@ -178,6 +178,43 @@
     return idx;
   }
 
+  /* Same person, same project, overlapping months, two rows — the load charts
+     add both, so every over-allocation figure downstream is inflated until one
+     goes. Flag only: two concurrent roles CAN be legitimate, so a human picks
+     which row (if either) is wrong. */
+  function dupAllocSectionHtml() {
+    const dups = S.duplicateAllocations();
+    if (!dups.length) return '';
+    const n = dups.length;
+    return `<details id="dup-roll" style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid #C0392B;margin-bottom:14px">
+      <summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:11px 16px">
+        <span style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy)">⚠ Double-counted allocations</span>
+        <span class="mv-chip" style="background:#C0392B;color:#fff;font-weight:800">${n} person·project pair${n === 1 ? '' : 's'}</span>
+        <span class="grow"></span>
+        <span class="note-txt">click to review</span>
+      </summary>
+      <div style="padding:0 16px 12px">
+        <div class="note-txt" style="margin:0 0 8px">These people hold more than one allocation to the same project over the same months, so their load is counted twice. Two genuine concurrent roles are possible — nothing is removed automatically. Delete the row that shouldn't be there.</div>
+        ${dups.map(d => `<div style="border-bottom:1px dashed rgba(37,39,58,0.12);padding:8px 0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px">
+            <b>${esc(d.person.name)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(d.project)}</span>
+            <span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">${d.worstPct}% in ${esc(S.ymLabel(d.worstMonth))}</span>
+            ${d.identical ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Same window, same percentage — almost certainly one row saved twice">identical rows</span>' : ''}
+          </div>
+          <table class="dt" style="max-width:620px"><thead><tr><th>Window</th><th class="num">%</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>
+          ${d.rows.map(r => `<tr>
+            <td>${esc(S.ymLabel(r.start))}${r.end && r.end !== r.start ? ' → ' + esc(S.ymLabel(r.end)) : ''}</td>
+            <td class="num">${Math.round(parseFloat(r.pct) || 0)}%</td>
+            <td class="note-txt">${esc(r.status || '')}${r.type ? ' · ' + esc(r.type) : ''}</td>
+            <td class="note-txt">${esc((r.note || '').slice(0, 60))}</td>
+            <td><button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" data-dup-del="${esc(r.id)}">Delete this row</button></td>
+          </tr>`).join('')}
+          </tbody></table>
+        </div>`).join('')}
+      </div>
+    </details>`;
+  }
+
   function bridgeSectionHtml() {
     /* NOTE: `gaps` stays the FULL cached list. Every data-bridge-* attribute
        below carries an index into it, and the click handlers read
@@ -324,6 +361,15 @@
       toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${personName}`);
       renderCounts(); renderAllocations();
     });
+    $$('#p-allocations [data-dup-del]').forEach(b => b.onclick = () => {
+      const id = b.dataset.dupDel;
+      const all = S.listAllocations().find(a => a.id === id);
+      if (!all) return;
+      if (!confirm(`Delete this allocation?\n\n${all.personName || ''} · ${all.project}\n${S.ymLabel(all.start)}${all.end && all.end !== all.start ? ' – ' + S.ymLabel(all.end) : ''} at ${Math.round(parseFloat(all.pct) || 0)}%\n\nThe other row on this project stays.`)) return;
+      S.deleteAllocation(id);
+      toast('Allocation deleted.');
+      renderCounts(); renderAllocations();
+    });
     /* Dismiss — a recorded judgement, not a delete. The row leaves the working
        list and lands in the roll-up with who and why, reopenable any time. */
     $$('#p-allocations [data-bridge-dismiss]').forEach(b => b.onclick = () => {
@@ -441,7 +487,7 @@
     });
     const table = list.length ? `<table class="dt"><thead><tr><th>Project</th><th>Client</th><th>Person</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note / decision</th><th></th></tr></thead><tbody>${body}</tbody></table>`
       : `<div class="empty">No allocations match. <a href="#" id="al-clear">Clear filters</a></div>`;
-    $('#p-allocations').innerHTML = bridgeSectionHtml() + leaveSectionHtml() + toolbar + table;
+    $('#p-allocations').innerHTML = dupAllocSectionHtml() + bridgeSectionHtml() + leaveSectionHtml() + toolbar + table;
     wireBridge();
     const la = $('#leave-add');
     if (la) la.onclick = () => openAllocModal(null, { title: 'Log a leave of absence', project: 'Leaves of Absence', client: 'Internal', pct: 100, note: 'Leave of absence' });
