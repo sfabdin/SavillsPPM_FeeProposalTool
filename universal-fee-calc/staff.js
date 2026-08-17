@@ -448,6 +448,50 @@
   // ---------- ENGINE: bandwidth / utilization ----------
   function allocActiveIn(a, ym) { return a.start && a.end ? (a.start <= ym && ym <= a.end) : (a.start ? a.start <= ym : false); }
 
+  /* ---------- logging time with nothing planned against it ----------
+     Two different holes, both of which end with real hours nobody is looking
+     at, and both raised on the Aug 13 review:
+
+     1. NOT ON THE ROSTER. Clockify hours under a name the roster doesn't
+        know land under an 'unmatched:' id. Jeff's own hours were invisible
+        for exactly this reason — no allocation meant no roster record meant
+        no match. These already surface in the import's unmatched list.
+     2. ON THE ROSTER, NO ALLOCATION. Quieter and worse: the person matches,
+        their hours are stored and costed, but nothing is planned against
+        them — so plan-vs-actual compares real burn to zero and the load
+        chart shows them free while they are working.
+
+     This reports (2), which had nowhere to appear at all. */
+  function loggingWithoutAllocation(monthsList) {
+    const db = readDb();
+    const inWin = new Set(monthsList || []);
+    const byPerson = {};
+    Object.entries(db.actuals || {}).forEach(([k, h]) => {
+      const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
+      const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
+      if (inWin.size && !inWin.has(ym)) return;
+      if (isMacroProject(proj)) return;              // internal time needs no allocation
+      const e = byPerson[pid] || (byPerson[pid] = { pid, hours: 0, projects: {} });
+      e.hours += h; e.projects[proj] = (e.projects[proj] || 0) + h;
+    });
+    const out = [];
+    Object.values(byPerson).forEach(e => {
+      if (String(e.pid).startsWith('unmatched:')) return;    // case (1) — reported by the importer
+      const person = db.people[e.pid];
+      if (!person) return;
+      if (person.nonBillable) return;                         // overhead staff need no allocation
+      const covers = (db.allocations || []).some(a => a.personId === e.pid &&
+        (!inWin.size || monthsBetween(a.start, a.end || a.start).some(m => inWin.has(m))));
+      if (covers) return;
+      out.push({
+        person, hours: Math.round(e.hours * 10) / 10,
+        projects: Object.entries(e.projects).map(([name, hrs]) => ({ name, hours: Math.round(hrs * 10) / 10 }))
+          .sort((a, b) => b.hours - a.hours),
+      });
+    });
+    return out.sort((a, b) => b.hours - a.hours);
+  }
+
   /* ---------- duplicate allocations ----------
      The same person allocated to the same project over OVERLAPPING months,
      across two or more rows. On the Aug 13 review this is what put Danielle
@@ -2012,7 +2056,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
