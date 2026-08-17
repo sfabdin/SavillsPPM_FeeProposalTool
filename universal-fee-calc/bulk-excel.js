@@ -480,11 +480,26 @@
       const l = deriveLeader(txt);
       if (l && !newLeaders.some(x => x.id === l.id)) newLeaders.push(l);
     });
+    /* Resolve against the live directory PLUS the leaders this same workbook
+       is adding. Matches the bare name, the email, or the "Name <email>" form
+       the Lists sheet asks for — a leader added on one sheet has to be usable
+       on the others in the very same upload, in whichever of those spellings
+       the person happened to type. */
     const resolveEff = (value) => {
       const hit = st.resolveLeader(value);
       if (hit) return hit;
-      const vk = S(value).toLowerCase();
-      return newLeaders.find(l => l.id === vk || l.displayName.toLowerCase() === vk || String(l.username).toLowerCase() === vk) || null;
+      const tryOne = (raw) => {
+        const vk = S(raw).toLowerCase();
+        if (!vk) return null;
+        return newLeaders.find(l => l.id === vk
+          || l.displayName.toLowerCase() === vk
+          || String(l.username).toLowerCase() === vk
+          || (l.aliases || []).some(a => S(a).toLowerCase() === vk)) || null;
+      };
+      const direct = tryOne(value);
+      if (direct) return direct;
+      const parts = st.splitLeaderText ? st.splitLeaderText(value) : null;
+      return parts ? (tryOne(parts.email) || tryOne(parts.name)) : null;
     };
     const vocabAdds = { industries: newIndustries, lossReasons: newReasons, projectTypes: newTypes, leaders: newLeaders };
     const vocabCount = newIndustries.length + newReasons.length + newLeaders.length + newTypes.reduce((n, t) => n + 1 + t.subs.length, 0);

@@ -3060,16 +3060,32 @@
   }
   function leaderById(id) { return allRevenueLeaders().find(l => l.id === id) || null; }
   /** Resolve any stored value (id, displayName, alias, or username) to a leader. */
+  /** Split a "Display Name <email@savills.us>" (or parenthesised) string into
+      its parts. This is the form the Bulk Editor asks people to type on the
+      Lists sheet, so it turns up pasted into Lead PE / relationship-owner
+      cells too — and it must resolve there, not just where it was authored. */
+  function splitLeaderText(value) {
+    const m = /^(.*?)[<(]\s*([^\s<>()]+@[^\s<>()]+?)\s*[>)]?\s*$/.exec(String(value || '').trim());
+    return m ? { name: String(m[1] || '').trim(), email: String(m[2] || '').trim().toLowerCase() } : null;
+  }
   function resolveLeader(value) {
     if (!value) return null;
     const v = String(value).trim();
     const vk = v.toLowerCase();
-    return allRevenueLeaders().find(l =>
+    const hit = allRevenueLeaders().find(l =>
       l.id === v ||
       String(l.username || '').toLowerCase() === vk ||
       l.displayName.toLowerCase() === vk ||
       (l.aliases || []).some(a => a.toLowerCase() === vk)
-    ) || null;
+    );
+    if (hit) return hit;
+    /* "Naida Serak <nserak@savills.us>" is the exact format the Bulk Editor's
+       own error message tells people to use, so rejecting it when it appears
+       in a Lead PE cell was a trap: the instruction produced the failure. Try
+       the email, then the bare name, before giving up. */
+    const parts = splitLeaderText(v);
+    if (parts) return (parts.email && resolveLeader(parts.email)) || (parts.name && resolveLeader(parts.name)) || null;
+    return null;
   }
   function leaderDisplay(value) { const l = resolveLeader(value); return l ? l.displayName : (value || ''); }
 
@@ -3245,7 +3261,7 @@
     getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, getRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
     getMaintenance, setMaintenance, assertWritable,
-    leaderById, resolveLeader, leaderDisplay,
+    leaderById, resolveLeader, leaderDisplay, splitLeaderText,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,
     attachRevenueRemote, hydrateRevenueFromRemote, readRevenue, defaultRevenue,

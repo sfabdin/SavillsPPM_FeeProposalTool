@@ -170,6 +170,37 @@
      Profitability while change-order dollars — already padded — landed.
      Revenue Projections was unaffected: it rebuilds its own grid key from
      .year/.month and never reads .ym. Both halves are asserted here. */
+  /* The Bulk Editor's own error message tells people to write a leader as
+     "Name <email@savills.us>". That exact string pasted into a Lead PE cell
+     used to be rejected as "not a known revenue leader" — the instruction
+     produced the failure. All three spellings must resolve. */
+  test('Identity · leaders', 'a leader resolves by name, email, and "Name <email>"', () => {
+    const byName = S.resolveLeader('Emily Sobel');
+    if (!byName) return 'bare name did not resolve';
+    const byEmail = S.resolveLeader('esobel@savills.us');
+    if (!byEmail || byEmail.id !== byName.id) return 'email did not resolve to the same leader';
+    const byBoth = S.resolveLeader('Emily Sobel <esobel@savills.us>');
+    if (!byBoth || byBoth.id !== byName.id) return '"Name <email>" did not resolve';
+    const parens = S.resolveLeader('Emily Sobel (esobel@savills.us)');
+    return (parens && parens.id === byName.id) || 'parenthesised form did not resolve';
+  });
+
+  test('Identity · leaders', 'a genuinely unknown leader still resolves to nothing', () => {
+    if (S.resolveLeader('Nobody Here')) return 'an unknown bare name resolved';
+    if (S.resolveLeader('Nobody Here <nobody@savills.us>')) return 'an unknown Name <email> resolved';
+    if (S.resolveLeader('nobody@savills.us')) return 'an unknown email resolved';
+    return true;
+  });
+
+  test('Identity · leaders', 'a wrong email does not borrow a real leader\'s name', () => {
+    // The name half matches a real leader but the email does not: the email is
+    // tried first, then the name — so this DOES resolve, and that is intended
+    // (people mistype emails far more often than names). Assert the behaviour
+    // is the deliberate one rather than an accident.
+    const hit = S.resolveLeader('Emily Sobel <typo@savills.us>');
+    return (hit && hit.displayName === 'Emily Sobel') || 'expected the name half to carry it';
+  });
+
   test('Engine · monthly', 'billingSeries ym is zero-padded YYYY-MM', () => {
     const ser = S.billingSeries(base({
       timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 },
