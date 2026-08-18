@@ -627,13 +627,38 @@
       });
       body += `<td>${projectCount}</td><td class="pk ${r.peak > 100 ? 'over' : ''}">${Math.round(r.peak)}%</td></tr>`;
       if (state.expandedRoster.has(r.person.id)) {
-        let pr = '';
-        inWin.slice().sort((a, b) => b.pct - a.pct).forEach(a => {
+        /* Jeff's structure from the Aug 13 review: the signed work totalled on
+           its own, the pursuits totalled on their own, then the combined line —
+           so "what are they actually committed to" and "what if it all lands"
+           are two separate readings rather than one blended number. */
+        const rowFor = (a) => {
           const isP = isPursuitAlloc(a);
           const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
           const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-          pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
-        });
+          return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+        };
+        const sumRow = (label, list, style, title) => {
+          const cells = ms.map(m => {
+            const v = list.reduce((t, a) => t + (S.allocActiveIn(a, m) ? (parseFloat(a.pct) || 0) : 0), 0);
+            return `<td class="dcell" style="${style}">${v ? Math.round(v) + '%' : '·'}</td>`;
+          }).join('');
+          return `<tr class="drawer-tr"${title ? ` title="${esc(title)}"` : ''}><td class="who dproj" style="${style}">${esc(label)}</td>${cells}<td class="dcell"></td><td class="dcell"></td></tr>`;
+        };
+        const byPct = (a, b) => b.pct - a.pct;
+        const firm = inWin.filter(a => !isPursuitAlloc(a)).sort(byPct);
+        const purs = inWin.filter(a => isPursuitAlloc(a)).sort(byPct);
+        const SUB = 'font-weight:700;background:#f4f6f7';
+        const ALL = 'font-weight:800;background:#eceff1;border-top:1px solid rgba(37,39,58,0.25)';
+        let pr = '';
+        pr += firm.map(rowFor).join('');
+        if (firm.length && purs.length) pr += sumRow('Subtotal · signed work', firm, SUB, 'Confirmed commitments only — what they are actually on the hook for');
+        if (purs.length) {
+          pr += purs.map(rowFor).join('');
+          pr += sumRow('Subtotal · pursuits', purs, SUB, 'Unsigned work — only lands if these convert');
+          pr += sumRow('Total · if every pursuit lands', inWin, ALL, 'Signed plus pursuit — the worst case for their capacity');
+        } else if (firm.length > 1) {
+          pr += sumRow('Total', firm, ALL, '');
+        }
         if (!pr) pr = `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         body += pr;
       }
