@@ -264,7 +264,17 @@
     color: var(--sav-navy); cursor: pointer;
   }
   .projects-table td select.qe-sel:focus { outline: none; border-style: solid; border-color: var(--sav-teal); }
-  .projects-table td select.qe-saved { animation: qeflash 1.2s ease-out; }
+  /* Quick edit: free-text cells (name, client, location) share the dashed
+     "this is editable" treatment so the row reads as one editable unit. */
+  .projects-table td input.qe-in {
+    width: 100%; max-width: 260px; font-family: inherit; font-size: 12px;
+    padding: 5px 6px; border: 1px dashed rgba(14,124,123,0.55); background: #fffdf4;
+    color: var(--sav-navy); box-sizing: border-box;
+  }
+  .projects-table td input.qe-in:focus { outline: none; border-style: solid; border-color: var(--sav-teal); }
+  .projects-table td input.qe-in.qe-sm { margin-top: 4px; font-size: 11px; color: var(--sav-steel); }
+  .projects-table td select.qe-saved,
+  .projects-table td input.qe-saved { animation: qeflash 1.2s ease-out; }
   @keyframes qeflash { 0% { background: #cfe6e4; border-color: var(--sav-teal); } 100% { background: #fffdf4; } }
 
   .pill {
@@ -505,7 +515,7 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
       <button class="btn btn-ghost" id="qe-btn" hidden title="Superuser only — edit Lead PE, Project type and Industry directly in the table. Each change saves instantly and lands in the Change Log.">✎ Quick edit</button>
     </div>
   </div>
-  <div id="qe-note" hidden style="margin:-8px 0 12px;padding:8px 14px;background:#fdf6e3;border-left:3px solid #e8b563;font-size:12.5px;color:#4a4f5e"><b>Quick edit is ON.</b> Lead PE, Project type and Industry are editable in the table — every change saves the moment you pick it (and shows in the Change Log). Row clicks won't open the calculator while editing. Click <b>✓ Done</b> to finish.</div>
+  <div id="qe-note" hidden style="margin:-8px 0 12px;padding:8px 14px;background:#fdf6e3;border-left:3px solid #e8b563;font-size:12.5px;color:#4a4f5e"><b>Quick edit is ON.</b> Project name, client, location, status, industry, project type and Lead PE are all editable in the table. Dropdowns save the moment you pick; typed cells save when you click away or press Tab (every change shows in the Change Log). Row clicks won't open the calculator while editing. Click <b>✓ Done</b> to finish.</div>
 
   <!-- ===== Projects table / empty state ===== -->
   <div id="table-host"></div>
