@@ -1272,6 +1272,46 @@
 
   /** Assumptions & exclusions: library chips (toggle) + any custom lines the
       user added. Selections + custom entries are stored in project.assumptionsList. */
+  /* ---- Who can actually see this project ----
+     Jeff on the Aug 13 call could not tell whether Mark would see Lazard, and
+     nothing on the record answered it. Rather than restating the rules (which
+     would drift the moment the wall changes), this ASKS the wall: it builds a
+     candidate user for every leader and admin and reports what
+     userOwnsProject / seesAllProjects actually return, plus which rule let
+     them through. If the access model changes, this changes with it. */
+  function renderWhoSees() {
+    const el = $('#pm-whosees');
+    if (!el || !STORE.impersonationRoster || !STORE.userOwnsProject) return;
+    const rec = { id: state.id, project: { ...(state.project || {}) }, groups: state.groups || [] };
+    // The typed-but-unsaved grant should be reflected immediately.
+    const accessEl = $('#pm-access');
+    if (accessEl) rec.project.accessGrant = accessEl.value;
+    let roster = [];
+    try { roster = STORE.impersonationRoster() || []; } catch (e) { return; }
+    const named = [];
+    roster.forEach(u => {
+      if (!u.username) return;
+      let all = false, owns = false;
+      try { all = STORE.seesAllProjects(u); owns = STORE.userOwnsProject(rec, u); } catch (e) { return; }
+      if (all || !owns) return;                       // admins are covered by the blanket line below
+      const pj = rec.project || {};
+      const me = STORE.resolveLeader(u.username);
+      const isLead = me && STORE.resolveLeader(pj.leadId || pj.lead) && STORE.resolveLeader(pj.leadId || pj.lead).id === me.id;
+      const isOwner = me && STORE.resolveLeader(pj.clientRelOwner) && STORE.resolveLeader(pj.clientRelOwner).id === me.id;
+      const granted = (STORE.accessGrantList(rec) || []).includes(String(u.username).toLowerCase());
+      const why = isLead ? 'lead' : isOwner ? 'relationship owner' : granted ? 'granted by email' : 'team / group rule';
+      named.push({ name: u.name || u.username, why });
+    });
+    let nAdmin = 0;
+    try { nAdmin = roster.filter(u => u.username && STORE.seesAllProjects(u)).length; } catch (e) {}
+    el.hidden = false;
+    el.innerHTML = '<b>Who can see this project</b>'
+      + (named.length
+          ? named.map(n => `<div class="ws-row">· ${escapeHtml(n.name)} <span class="ws-why">— ${escapeHtml(n.why)}</span></div>`).join('')
+          : '<div class="ws-row ws-why">· nobody outside the admin group — only the people below</div>')
+      + `<div class="ws-row ws-why">· plus everyone with firm-wide access${nAdmin ? ' (' + nAdmin + ')' : ''}</div>`;
+  }
+
   function renderAssumptions() {
     const el = $('#pm-assumptions');
     if (!el) return;
@@ -1384,6 +1424,7 @@
     renderAssumptions();
 
     const accessEl = $('#pm-access'); if (accessEl) accessEl.value = f.accessGrant || '';
+    try { renderWhoSees(); } catch (e) {}
 
     $('#pm-firstProposal').value = f.firstProposalDate || '';
     $('#pm-signed').value = f.signedContractDate || '';
@@ -2983,7 +3024,7 @@
     const ptypeEl = $('#pm-ptype');
     if (ptypeEl) ptypeEl.addEventListener('change', e => { state.project.projectType = e.target.value; state.project.projectSubtypes = []; renderProjectTypeSubs(); markDirty(); });
     const accessInput = $('#pm-access');
-    if (accessInput) accessInput.addEventListener('input', e => { state.project.accessGrant = e.target.value; markDirty(); });
+    if (accessInput) accessInput.addEventListener('input', e => { state.project.accessGrant = e.target.value; markDirty(); try { renderWhoSees(); } catch (err) {} });
     const asmCustom = $('#pm-asm-custom');
     if (asmCustom) asmCustom.addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
