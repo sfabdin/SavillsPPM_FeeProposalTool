@@ -42,15 +42,15 @@
     const showPpl = mFocus ? x.ppl.filter(p => p.byMonth[mFocus]) : x.ppl;
     if (!showPpl.length) return '<span class="note-txt">No hours logged in ' + esc(S.ymLabel(mFocus)) + ' — click another month or the project name for the full window.</span>';
     let h = '<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px"><span style="font-family:var(--font-display);font-weight:700;font-size:11px;color:var(--sav-navy)">' + (mFocus ? esc(S.ymLabel(mFocus)) + ' · staffing' : 'Full window · staffing') + '</span>' + (mFocus ? '<a href="#" data-clear-month="' + esc(x.key) + '" style="font-size:11px">show all months</a>' : '') + '</div>';
-    h += '<table class="dt" style="width:auto;min-width:420px"><thead><tr><th>Person</th><th>Rate</th>' + cols.map(m => '<th class="num">' + esc(S.ymLabel(m)) + '<div class="vmini" style="text-transform:none;letter-spacing:0">h · $</div></th>').join('') + '<th class="num">Total h</th><th class="num">Total $</th></tr></thead><tbody>';
+    h += '<div class="cmp-scroll dg-scroll"><table class="dt" style="width:auto;min-width:420px"><thead><tr><th class="sticky-col dg-who">Person</th><th>Rate</th>' + cols.map(m => '<th class="num">' + esc(S.ymLabel(m)) + '<div class="vmini" style="text-transform:none;letter-spacing:0">h · $</div></th>').join('') + '<th class="num">Total h</th><th class="num">Total $</th></tr></thead><tbody>';
     showPpl.forEach(p => {
-      h += '<tr><td class="pname">' + esc(p.name) + (p.title ? '<div class="vmini">' + esc(p.title) + '</div>' : '') + '</td><td class="num vmini">$' + p.rate + '/h</td>';
+      h += '<tr><td class="pname sticky-col dg-who">' + esc(p.name) + (p.title ? '<div class="vmini">' + esc(p.title) + '</div>' : '') + '</td><td class="num vmini">$' + p.rate + '/h</td>';
       cols.forEach(m => { const c = p.byMonth[m]; h += '<td class="num">' + (c ? Math.round(c.hours * 10) / 10 + '<div class="vmini">' + fmtD(c.cost) + '</div>' : '<span style="color:#c9cdd3">·</span>') + '</td>'; });
       const fh = mFocus ? (p.byMonth[mFocus] || { hours: 0 }).hours : p.hours;
       const fc = mFocus ? (p.byMonth[mFocus] || { cost: 0 }).cost : p.cost;
       h += '<td class="num" style="font-weight:700">' + Math.round(fh * 10) / 10 + '</td><td class="num" style="font-weight:700">' + fmtD(fc) + '</td></tr>';
     });
-    h += '</tbody></table>';
+    h += '</tbody></table></div>';
     return h;
   }
 
