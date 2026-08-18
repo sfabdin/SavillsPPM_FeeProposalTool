@@ -816,16 +816,28 @@
      Box already versions projects.json on every upload (first-line recovery:
      Box → projects.json → Version History). This adds a SECOND line: a dated
      copy (projects-backup-YYYY-MM-DD.json) in the same folder, refreshed at
-     most weekly, keeping the last 8 — so even a version-history mishap or a
-     deleted file has cold copies going back ~2 months. Any signed-in user's
-     boot can create it; a 409 means someone else already made today's. */
+     most weekly and KEPT INDEFINITELY — so a version-history mishap or a
+     deleted file has cold copies to fall back on, and the series doubles as
+     a dated history of the book for period-over-period comparison. Any
+     signed-in user's boot can create it; a 409 means someone else already
+     made today's. */
   const BACKUP_PREFIX = 'projects-backup-';
-  const BACKUP_KEEP = 8;
+  /* KEEP THEM ALL. These dated copies were built as a disaster-recovery
+     second line, so a rolling window of 8 (~2 months) was enough. They have
+     since become the only record of what the book looked like at a point in
+     time — the raw material for comparing the forecast across dates — and
+     pruning them was quietly destroying history a week at a time.
+     Set a positive number here to resume pruning; 0 means never prune. */
+  const BACKUP_KEEP = 0;
   async function weeklyBackup() {
     try {
       const last = Number(localStorage.getItem('ufc_last_backup_check') || 0);
       if (Date.now() - last < 20 * 3600 * 1000) return;               // check at most ~daily per browser
       localStorage.setItem('ufc_last_backup_check', String(Date.now()));
+      // limit=1000 is Box's page size. At one backup a week that is ~19 years
+      // of history before this would need paging — but it IS a ceiling, so if
+      // the folder ever approaches it, page this call rather than losing the
+      // oldest entries silently.
       const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
       if (!res.ok) return;
       const j = await res.json();
@@ -839,8 +851,10 @@
         body: JSON.stringify({ parent: { id: BOX_CONFIG.folderId }, name: BACKUP_PREFIX + today + '.json' }),
       });
       if (!cp.ok && cp.status !== 409) return;                        // 409 = a teammate beat us to it
-      const excess = backups.length + 1 - BACKUP_KEEP;
-      for (let i = 0; i < excess; i++) { try { await boxFetch('/files/' + backups[i].id, { method: 'DELETE' }); } catch (e) {} }
+      if (BACKUP_KEEP > 0) {
+        const excess = backups.length + 1 - BACKUP_KEEP;
+        for (let i = 0; i < excess; i++) { try { await boxFetch('/files/' + backups[i].id, { method: 'DELETE' }); } catch (e) {} }
+      }
     } catch (e) { /* backups must never break boot */ }
   }
 
