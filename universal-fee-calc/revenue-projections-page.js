@@ -147,6 +147,9 @@
         return Object.assign({}, r, { map, total });
       }).filter(r => r.total > 0.5);
     }
+    const dupes = findDoubleCounts(rows);
+    const dupIds = new Set(dupes.map(d => d.row.p.id));
+    renderDoubleCounts(dupes);
     const closedHidden = showClosed ? 0 : ALL.filter(r => r.status === 'closed').length;
     $('#filt-count').textContent = `${rows.length} of ${ALL.length} projects`
       + (f.service ? ` · ${f.service} only` : '')
@@ -236,7 +239,7 @@
         ? `<select class="rtag-edit r${r.rating}" data-pid="${r.p.id}" title="Projection rating">${STORE.RATINGS.map(rt => `<option value="${rt.n}" ${rt.n===r.rating?'selected':''}>${rt.n}</option>`).join('')}</select>`
         : `<span class="rtag r${r.rating}">${r.rating}</span>`;
       const coMeta = r.coCount ? ` · <span style="color:var(--sav-teal);">incl. ${r.coCount} CO${r.coCount === 1 ? '' : 's'}</span>` : '';
-      html += `<td class="proj-cell">${ratingCell}<a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a><div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}${coMeta}<span class="open-link"> · open →</span></div></td>`;
+      html += `<td class="proj-cell">${ratingCell}<a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a><div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}${coMeta}${dupIds.has(r.p.id) ? '<span class="dup-badge" title="This row\u2019s monthly figure equals the sum of this client\u2019s other rows — it may be a roll-up counted on top of its own parts. Check before trusting the total.">⚠ possible double count</span>' : ''}<span class="open-link"> · open →</span></div></td>`;
       let rvt = 0;
       cols.forEach((c, i) => {
         const v = r.map[c.key] || 0;
@@ -724,6 +727,71 @@
   const MLBL = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const YMLBL = (ym) => { const [y, m] = String(ym).split('-').map(Number); return MLBL[m - 1] + ' ' + y; };
   const monthsBetween = (a, b) => { const [ay, am] = String(a).split('-').map(Number), [by, bm] = String(b).split('-').map(Number); return (by - ay) * 12 + (bm - am); };
+  /* ---------- possible double-counted rows ----------
+     From the Aug 13 review: Lazard appeared BOTH as a rolled-up line and as
+     its broken-out change-management / PPM / workplace lines, so the same
+     money was counted twice ("that line at the bottom is duplicative").
+
+     The signature of a roll-up is arithmetic, not naming: within one client
+     and one month, a row whose figure equals the sum of that client's OTHER
+     rows is almost certainly the parent of them. Requiring the pattern to
+     hold in at least two months keeps a single-month coincidence from
+     firing, and requiring at least two siblings stops an ordinary pair of
+     equal-sized projects looking like a parent and child.
+
+     Flags only. A client really can have one project the same size as the
+     rest combined, so nothing is hidden or altered — the row is badged and
+     listed, and a human decides. */
+  function findDoubleCounts(rows) {
+    const TOL = 0.02;                      // 2% — rounding, not a real difference
+    const byClient = {};
+    rows.forEach(r => {
+      const k = (r.client || '').trim().toLowerCase();
+      if (!k) return;                      // no client, no sibling set to compare against
+      (byClient[k] = byClient[k] || []).push(r);
+    });
+    const out = [];
+    Object.values(byClient).forEach(list => {
+      if (list.length < 3) return;         // need a parent plus >= 2 children
+      list.forEach(r => {
+        const months = [];
+        Object.keys(r.map).forEach(mk => {
+          const mine = r.map[mk] || 0;
+          if (mine <= 0) return;
+          const others = list.reduce((t, o) => (o === r ? t : t + (o.map[mk] || 0)), 0);
+          if (others <= 0) return;
+          const siblings = list.filter(o => o !== r && (o.map[mk] || 0) > 0).length;
+          if (siblings < 2) return;
+          if (Math.abs(mine - others) / Math.max(mine, others) <= TOL) months.push(mk);
+        });
+        if (months.length >= 2) {
+          months.sort();
+          out.push({ row: r, months, amount: months.reduce((t, mk) => t + (r.map[mk] || 0), 0),
+                     siblings: list.filter(o => o !== r).length });
+        }
+      });
+    });
+    return out.sort((a, b) => b.amount - a.amount);
+  }
+
+  function renderDoubleCounts(dupes) {
+    const bar = $('#dup-bar');
+    if (!bar) return;
+    if (!dupes.length) { bar.hidden = true; return; }
+    bar.hidden = false;
+    const tot = dupes.reduce((a, d) => a + d.amount, 0);
+    bar.innerHTML = `<div class="dup-head">⚠ <b>${dupes.length} row${dupes.length === 1 ? '' : 's'} may be counted twice</b>
+      — ${fmtFull(tot)} across the flagged months. Each of these matches the sum of its client\u2019s other rows, which is what a roll-up sitting on top of its own parts looks like.</div>
+      <table class="dup-tbl"><thead><tr><th>Project</th><th>Client</th><th>Months</th><th style="text-align:right">In those months</th></tr></thead><tbody>`
+      + dupes.map(d => `<tr>
+          <td><a href="Universal Fee Calculator.html?id=${encodeURIComponent(d.row.p.id)}">${esc((d.row.pj || {}).name || 'Untitled')}</a></td>
+          <td>${esc(d.row.client || '')}</td>
+          <td>${d.months.length} of ${Object.keys(d.row.map).length}<span class="dup-mo"> · ${esc(d.months.slice(0, 3).map(mk => { const [y, m] = mk.split('-'); return MONTHS[+m - 1] + ' ' + String(y).slice(2); }).join(', '))}${d.months.length > 3 ? '…' : ''}</span></td>
+          <td style="text-align:right">${fmtFull(d.amount)}</td>
+        </tr>`).join('')
+      + `</tbody></table><div class="dup-foot">Nothing has been changed or hidden — a client really can have one project the size of the rest combined. If it is a duplicate, delete the roll-up and keep the parts.</div>`;
+  }
+
   function renderSlips() {
     const bar = $('#slip-bar');
     if (!STORE.allOpenSlips) { bar.hidden = true; return; }
