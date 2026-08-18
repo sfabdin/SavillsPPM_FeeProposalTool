@@ -475,10 +475,26 @@
       else if (subs.length) newTypes.push({ name, subs });
     });
     const newLeaders = [];
-    (wbLists.Lead || []).forEach(txt => {
+    const offerLeader = (txt) => {
+      if (!S(txt)) return;
       if (st.resolveLeader(S(txt).replace(/\s*[<(][^<>()]*[>)]\s*$/, '').trim()) || st.resolveLeader(txt)) return;
       const l = deriveLeader(txt);
       if (l && !newLeaders.some(x => x.id === l.id)) newLeaders.push(l);
+    };
+    (wbLists.Lead || []).forEach(offerLeader);
+    /* A leader can also be born in the Lead PE / relationship-owner column
+       itself. Requiring a trip to the Lists sheet first was the whole
+       frustration: the workbook plainly said who the person was, and the tool
+       made you say it twice before it would believe you.
+
+       The guard is the EMAIL. "Naida Serak <nserak@savills.us>" is an
+       unambiguous identity assertion, so it stands up a leader. A bare
+       unrecognised name is still an error, because that is far more likely to
+       be a typo of someone who already exists than a genuinely new person —
+       and a typo that silently minted a duplicate leader would be much worse
+       than one that stopped the upload. */
+    (parsed.projects || []).forEach(row => {
+      [row.lead, row.clientRelOwner].forEach(v => { if (st.splitLeaderText && st.splitLeaderText(v)) offerLeader(v); });
     });
     /* Resolve against the live directory PLUS the leaders this same workbook
        is adding. Matches the bare name, the email, or the "Name <email>" form
@@ -511,6 +527,29 @@
       return (base ? base.subs : []).concat(add ? add.subs : []);
     };
     const effTypeNames = sysTypes.map(t => t.name).concat(newTypes.filter(t => !sysTypes.some(s2 => s2.name === t.name)).map(t => t.name));
+    /* When we do refuse, say what would have been accepted and name the
+       closest existing leader — an unrecognised name is nearly always a
+       spelling drift from someone already on the list, and "not known" alone
+       leaves the person guessing which of the two problems they have. */
+    const leaderHint = (txt) => {
+      const v = S(txt).toLowerCase();
+      const all = st.REVENUE_LEADERS.concat(newLeaders);
+      let best = null, bestScore = 0;
+      all.forEach(l => {
+        const name = S(l.displayName).toLowerCase();
+        if (!name || !v) return;
+        // crude closeness: shared leading characters over the longer string
+        let i = 0; while (i < name.length && i < v.length && name[i] === v[i]) i++;
+        const surname = name.split(/\s+/).pop(), vSurname = v.split(/\s+/).pop();
+        const score = Math.max(i / Math.max(name.length, v.length), surname === vSurname ? 0.8 : 0);
+        if (score > bestScore) { bestScore = score; best = l; }
+      });
+      const near = (best && bestScore >= 0.5)
+        ? ` Did you mean "${best.displayName}"?`
+        : '';
+      return `${near} To add them as a NEW revenue leader, write them with an email — "Name <someone@savills.us>" — in this cell or on the Lists sheet.`;
+    };
+
     const byProjRoles = {}, byProjPhases = {}, byProjGroups = {}, byProjRev = {};
     (parsed.roles || []).forEach(r => { const k = S(r.projectId); if (k) (byProjRoles[k] = byProjRoles[k] || []).push(r); });
     (parsed.phases || []).forEach(r => { const k = S(r.projectId); if (k) (byProjPhases[k] = byProjPhases[k] || []).push(r); });
@@ -563,7 +602,7 @@
       let leader = null;
       if (leadTxt) {
         leader = resolveEff(leadTxt);
-        errIf('lead', !leader, `Lead PE "${leadTxt}" is not a known revenue leader — add them to the Lead column on the Lists sheet (ideally as "Name <email@savills.us>")`);
+        errIf('lead', !leader, `Lead PE "${leadTxt}" is not a known revenue leader.${leaderHint(leadTxt)}`);
       }
       const lossReason = S(row.lossReason);
       errIf('lossReason', lossReason && !effReasons.includes(lossReason), `Loss reason "${lossReason}" is not one of: ${effReasons.join(', ')}`);
@@ -588,7 +627,7 @@
       let relOwner = null;
       if (relTxt) {
         relOwner = resolveEff(relTxt);
-        errIf('clientRelOwner', !relOwner, `Relationship owner "${relTxt}" is not a known revenue leader — add them to the Lead column on the Lists sheet (ideally as "Name <email@savills.us>")`);
+        errIf('clientRelOwner', !relOwner, `Relationship owner "${relTxt}" is not a known revenue leader.${leaderHint(relTxt)}`);
       }
       setIf('name', S(row.name)); setIf('client', S(row.client));
       if (status || !isNew) setIf('status', status || pj.status || 'draft');
