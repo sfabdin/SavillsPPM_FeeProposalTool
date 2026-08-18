@@ -618,10 +618,21 @@
   }
   function feeIndex() {
     if (_feeIndex) return _feeIndex;
-    _feeIndex = feeRecords().map(p => {
+    _feeIndex = [];
+    feeRecords().forEach(p => {
       const name = (p.project && p.project.name) || '';
       const client = (p.project && p.project.client) || '';
-      return { id: p.id, name, client, label: client ? client + ' — ' + name : name, key: projKey(name) };
+      const label = client ? client + ' — ' + name : name;
+      _feeIndex.push({ id: p.id, name, client, label, key: projKey(name) });
+      /* Former names resolve to the SAME project, so a Clockify job still
+         matched by name survives the fee project being renamed. The entry
+         carries the CURRENT name and label — only the match key is historic —
+         so nothing downstream ever displays a stale name. */
+      ((p.source || {}).priorNames || []).forEach(old => {
+        const k = projKey(old);
+        if (!k || k === projKey(name)) return;
+        _feeIndex.push({ id: p.id, name, client, label, key: k, viaPriorName: old });
+      });
     });
     return _feeIndex;
   }
@@ -1824,6 +1835,38 @@
       setFeeMapping(mp, id)                  → add id to the set
       setFeeMapping(mp, id, { remove: true }) → remove just that id
       setFeeMapping(mp, null)                → clear the whole set (revert to auto-match) */
+  /* ---------- freeze auto-matched fee links before a rename ----------
+     A matrix/Clockify project is joined to its fee record either by an
+     explicit pin (stored as the fee project's ID, rename-proof) or by an
+     automatic NAME match. Renaming the fee project silently breaks every
+     automatic link pointing at it: the hours stop landing against that
+     project and reappear as $0-revenue "loose" rows on Profitability, with
+     nothing anywhere saying why.
+
+     Call this with the fee project's id BEFORE its name changes. Every
+     matrix project that currently auto-resolves to it is written down as an
+     explicit pin, so the link survives the rename. Returns the names pinned,
+     so a caller can report them.
+
+     Deliberately does NOT touch matrix projects that already carry an
+     explicit mapping — those are somebody's decision and are already safe. */
+  function pinAutoLinksFor(feeProjectId) {
+    if (!feeProjectId) return [];
+    const db = readDb();
+    const feeMap = (db.mappings || {}).fee || {};
+    const pinned = [];
+    distinctProjects().forEach(pn => {
+      if (feeMap[nkey(pn)]) return;                       // already explicit
+      let hit = null;
+      try { hit = matchFeeProject(pn, ''); } catch (e) { return; }
+      if (!hit || hit.id !== feeProjectId) return;
+      if (hit.via === 'mapped') return;                   // belt and braces
+      setFeeMapping(pn, feeProjectId);
+      pinned.push(pn);
+    });
+    return pinned;
+  }
+
   function setFeeMapping(matrixProject, feeProjectId, opts) {
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
     db.mappings.fee = db.mappings.fee || {};
@@ -2056,7 +2099,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,

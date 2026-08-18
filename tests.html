@@ -174,6 +174,40 @@
      "Name <email@savills.us>". That exact string pasted into a Lead PE cell
      used to be rejected as "not a known revenue leader" — the instruction
      produced the failure. All three spellings must resolve. */
+  /* Renaming a fee project used to break every Clockify link that matched it
+     by NAME — hours silently stopped landing on the project. saveProject now
+     records the former name so the matcher can still resolve it. */
+  test('Engine · rename', 'a rename records the former name', () => {
+    freshDb();
+    const p = S.saveProject(base({ project: { name: 'Exxon NALI Wave 2', client: 'Exxon', status: 'active' } }));
+    const rec = S.getProject(p.id);
+    S.saveProject({ ...rec, project: { ...rec.project, name: 'NALI Wave 2' } }, { baseUpdatedAt: rec.updatedAt });
+    const prior = ((S.getProject(p.id).source || {}).priorNames) || [];
+    return prior.includes('Exxon NALI Wave 2') || 'priorNames = ' + JSON.stringify(prior);
+  });
+
+  test('Engine · rename', 'renaming twice keeps both former names, without duplicates', () => {
+    freshDb();
+    const p = S.saveProject(base({ project: { name: 'One', client: 'C', status: 'active' } }));
+    let rec = S.getProject(p.id);
+    S.saveProject({ ...rec, project: { ...rec.project, name: 'Two' } }, { baseUpdatedAt: rec.updatedAt });
+    rec = S.getProject(p.id);
+    S.saveProject({ ...rec, project: { ...rec.project, name: 'Three' } }, { baseUpdatedAt: rec.updatedAt });
+    const prior = ((S.getProject(p.id).source || {}).priorNames) || [];
+    if (!prior.includes('One') || !prior.includes('Two')) return 'lost a name: ' + JSON.stringify(prior);
+    if (prior.includes('Three')) return 'current name was recorded as prior';
+    return new Set(prior).size === prior.length || 'duplicates: ' + JSON.stringify(prior);
+  });
+
+  test('Engine · rename', 'a save that does NOT rename records nothing', () => {
+    freshDb();
+    const p = S.saveProject(base({ project: { name: 'Steady', client: 'C', status: 'active' } }));
+    const rec = S.getProject(p.id);
+    S.saveProject({ ...rec }, { baseUpdatedAt: rec.updatedAt });
+    const prior = ((S.getProject(p.id).source || {}).priorNames) || [];
+    return prior.length === 0 || 'unexpected priorNames: ' + JSON.stringify(prior);
+  });
+
   test('Identity · leaders', 'a leader resolves by name, email, and "Name <email>"', () => {
     const byName = S.resolveLeader('Emily Sobel');
     if (!byName) return 'bare name did not resolve';

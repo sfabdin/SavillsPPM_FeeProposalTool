@@ -625,6 +625,30 @@
     { const cu = getCurrentUser() || {};
       const ri = (typeof realIdentityLabel === 'function' ? realIdentityLabel() : null) || {};
       record.lastSavedBy = { username: ri.username || cu.username || null, name: ri.name || cu.name || null }; }
+    /* RENAME TRAIL. A matrix/Clockify project is joined to its fee record
+       either by an explicit pin (stored as an id, rename-proof) or by an
+       automatic NAME match. Renaming the fee project used to silently break
+       every automatic link pointing at it — the hours stopped landing on the
+       project and reappeared as $0-revenue "loose" rows on Profitability,
+       with nothing saying why.
+
+       Recording the former name here, in the one function every rename path
+       goes through (calculator, Projects Index quick edit, Bulk Editor,
+       projections import), lets the matcher keep resolving the old name. The
+       alternative — pinning links at rename time — cannot work: none of the
+       pages that rename projects load staff.js. */
+    {
+      const prevName = String(((prev || {}).project || {}).name || '').trim();
+      const nextName = String((record.project || {}).name || '').trim();
+      if (prev && prevName && nextName && prevName !== nextName) {
+        record.source = record.source || {};
+        const seen = new Set([nextName.toLowerCase()]);
+        const list = (record.source.priorNames || []).concat([prevName])
+          .map(x => String(x || '').trim())
+          .filter(x => x && !seen.has(x.toLowerCase()) && seen.add(x.toLowerCase()));
+        record.source.priorNames = list.slice(-10);   // enough to follow a history, not unbounded
+      }
+    }
     maybeSnapshotFinancials(record);   // freeze derived figures once booked
     maybeAutoVersion(record, prev);    // capture a version when status crosses a lifecycle milestone
     db.projects[record.id] = record;
