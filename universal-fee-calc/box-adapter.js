@@ -752,9 +752,13 @@
   async function pullStudio() {
     const id = BOX_CONFIG.studioFileId;
     if (!id || /PASTE/.test(id)) return Store.defaultStudio();   // not configured yet → local only
-    const meta = await boxFetch('/files/' + id + '?fields=etag');
-    if (meta.ok) { const m = await meta.json(); _studioEtag = m.etag; }
+    /* No metadata pre-call. It existed only to capture the etag for the next
+       upload's If-Match, and the content response carries the same etag in a
+       header — so the extra round trip bought nothing and cost a full one.
+       Every Box call is ~800ms in production regardless of payload size, so
+       this halves the wait for the one page that reads this file. */
     const res = await boxFetch('/files/' + id + '/content');
+    _studioEtag = res.headers.get('etag') || _studioEtag;
     if (res.status === 404) return Store.defaultStudio();
     if (!res.ok) throw new Error('studio pull failed: ' + res.status);
     return JSON.parse(await res.text());
@@ -872,9 +876,10 @@
   async function pullRevenue() {
     const id = await resolveRevenueFileId();
     if (!id) return Store.defaultRevenue();
-    const meta = await boxFetch('/files/' + id + '?fields=etag');
-    if (meta.ok) { const m = await meta.json(); _revEtag = m.etag; }
+    // Etag off the content response — see pullStudio for why the separate
+    // metadata call was pure cost.
     const res = await boxFetch('/files/' + id + '/content');
+    _revEtag = res.headers.get('etag') || _revEtag;
     if (res.status === 404) return Store.defaultRevenue();
     if (!res.ok) throw new Error('revenue pull failed: ' + res.status);
     const txt = await res.text();
@@ -1139,6 +1144,62 @@
     } catch (e) { /* backups must never break boot */ }
   }
 
+  /* ---- OPT-IN STORES ------------------------------------------------------
+     studio.json and revenue.json used to be pulled by every page in the app,
+     on every load. Exactly one page reads each: Executive Reporting reads the
+     budget baselines, Revenue Reconciliation reads the actuals ledger. The
+     other twenty pages fetched them, parsed them, and never looked at them —
+     and boot re-polled studio.json every three minutes on all of them.
+
+     So a page now DECLARES what it needs, before boot.js runs:
+
+       <script>window.UFC_NEEDS = ['revenue'];</script>
+
+     and boot waits for those and nothing else.
+
+     AWAITED, NOT BACKGROUNDED, and that is the important part. These two
+     stores are read-write: the page that reads them also saves to them. If
+     the page rendered before the pull landed, a save could push a local-only
+     copy over a teammate's — and with no etag held yet, `If-Match` would be
+     omitted and the overwrite would be blind. Waiting keeps the semantics
+     byte-for-byte identical to what boot did before; the only thing that
+     changed is WHO pays for it.
+
+     Idempotent: repeated calls share the first promise. ---- */
+  const _ensured = {};
+  const STORES = {
+    studio: async () => {
+      const remote = await pullStudio();
+      try { Store.hydrateStudioFromRemote(remote); } catch (e) { console.warn('studio hydrate failed', e); }
+      Store.attachStudioRemote(scheduleStudioPush);
+    },
+    revenue: async () => {
+      const remote = await pullRevenue();
+      try { Store.hydrateRevenueFromRemote(mergeRevenueDb(remote, Store.readRevenue())); }
+      catch (e) { console.warn('revenue hydrate failed', e); }
+      Store.attachRevenueRemote(scheduleRevenuePush);
+    },
+  };
+  /** Load one opt-in store, once per page. */
+  Box.ensureStore = function (name) {
+    if (!STORES[name]) return Promise.reject(new Error('unknown store: ' + name));
+    if (_ensured[name]) return _ensured[name];
+    /* A failure must leave the page usable — the local cache is still there
+       and the sync indicator carries the state — but it must NOT be cached as
+       success, or a later retry would be swallowed. */
+    return (_ensured[name] = STORES[name]().then(
+      () => { Perf.phase(name + '.json'); return true; },
+      (e) => { delete _ensured[name]; console.warn(name + ' pull failed — this page is on its local cache', e); return false; }
+    ));
+  };
+  /** Load several, in parallel. Used by boot.js for window.UFC_NEEDS. */
+  Box.ensureStores = function (names) {
+    return Promise.all((names || []).map(n => Box.ensureStore(n).catch(() => false)));
+  };
+  /** True once a store has been asked for on this page — lets the live-refresh
+      loop poll only what someone is actually looking at. */
+  Box.storeLoaded = function (name) { return !!_ensured[name]; };
+
   // ---- Boot: auth → pull → identity → attach push ----
   /* The other half of the fast path. The page is already on screen from
      cache; this pulls the real thing and folds it in. Every page in the app
@@ -1150,10 +1211,8 @@
      what it is, and the sync indicator carries the state. */
   async function refreshInBackground(inflight) {
     const FEE_CACHE = 'savills-ppm-fee-db:v1';
-    const p = inflight || { projects: pullRemote(), rates: pullRates(), studio: pullStudio(), revenue: pullRevenue() };
-    const [projectsR, ratesR, studioR, revenueR] = await Promise.allSettled([
-      p.projects, p.rates, p.studio, p.revenue,
-    ]);
+    const p = inflight || { projects: pullRemote(), rates: pullRates() };
+    const [projectsR, ratesR] = await Promise.allSettled([p.projects, p.rates]);
     let changed = false;
     if (projectsR.status === 'fulfilled' && projectsR.value) {
       try {
@@ -1167,14 +1226,6 @@
       try { if (window.RATES_CATALOG && window.RATES_CATALOG.hydrate) window.RATES_CATALOG.hydrate(ratesR.value); }
       catch (e) { console.warn('background rates hydrate failed', e); }
     }
-    if (studioR.status === 'fulfilled') {
-      try { Store.hydrateStudioFromRemote(studioR.value); } catch (e) {}
-    }
-    Store.attachStudioRemote(scheduleStudioPush);
-    if (revenueR.status === 'fulfilled') {
-      try { Store.hydrateRevenueFromRemote(mergeRevenueDb(revenueR.value, Store.readRevenue())); } catch (e) {}
-    }
-    Store.attachRevenueRemote(scheduleRevenuePush);
     weeklyBackup();
     emitSync(projectsR.status === 'fulfilled' ? 'synced' : 'error',
              projectsR.status === 'fulfilled' ? '' : 'Could not refresh from Box — showing the last copy');
@@ -1221,12 +1272,21 @@
        in-flight requests simply BECOME the background refresh — nothing is
        wasted and nothing is fetched twice. On a cold boot they overlap the
        identity call instead of queueing behind it. */
-    const inflight = {
-      projects: pullRemote(), rates: pullRates(), studio: pullStudio(), revenue: pullRevenue(),
-    };
+    const inflight = { projects: pullRemote(), rates: pullRates() };
     // Attach catch handlers now so a rejection can never surface as an
     // unhandled promise rejection while we are awaiting something else.
     Object.keys(inflight).forEach(k => { inflight[k].catch(() => {}); });
+
+    /* Start any store this page declared IN PARALLEL with the two above,
+       rather than after boot finishes. boot.js still awaits them before
+       resolving ufcReady — but by then they have been in flight the whole
+       time, so the page that needs one waits roughly as long as a page that
+       needs none. Starting them afterwards, which is the obvious way to write
+       this, made Revenue Reconciliation pay three round trips end to end. */
+    try {
+      const needs = window.UFC_NEEDS;
+      if (Array.isArray(needs) && needs.length) Box.ensureStores(needs);
+    } catch (e) { /* a page that declares nothing is the common case */ }
 
     let me = null;
     try { me = await getIdentity(); Store.setRealIdentity({ username: me.login, name: me.name }); }
@@ -1250,9 +1310,7 @@
       }
     }
 
-    const [projectsR, ratesR, studioR, revenueR] = await Promise.allSettled([
-      inflight.projects, inflight.rates, inflight.studio, inflight.revenue,
-    ]);
+    const [projectsR, ratesR] = await Promise.allSettled([inflight.projects, inflight.rates]);
     Perf.phase('all pulls settled (parallel)');
 
 
@@ -1290,20 +1348,10 @@
     Store.attachRemote(schedulePush);
     weeklyBackup();   // fire and forget; failures never affect boot
 
-    if (studioR.status === 'fulfilled') {
-      try { Store.hydrateStudioFromRemote(studioR.value); Perf.phase('studio.json'); }
-      catch (e) { console.warn('studio hydrate failed', e); }
-    } else { console.warn('studio pull failed', studioR.reason); }
-    Store.attachStudioRemote(scheduleStudioPush);
-
-    if (revenueR.status === 'fulfilled') {
-      try {
-        const mergedRev = mergeRevenueDb(revenueR.value, Store.readRevenue());
-        Store.hydrateRevenueFromRemote(mergedRev);
-        Perf.phase('revenue.json');
-      } catch (e) { console.warn('revenue hydrate failed', e); }
-    } else { console.warn('revenue pull failed — reconciliation is local-only this session', revenueR.reason); }
-    Store.attachRevenueRemote(scheduleRevenuePush);
+    /* studio.json and revenue.json are NOT pulled here any more — see the
+       opt-in stores above. Pages that read them declare window.UFC_NEEDS and
+       boot.js awaits them; everyone else no longer pays for two files they
+       never open. */
     Perf.phase('boot done');
     Perf.finish();
     return { ok: true, backend: 'box' };

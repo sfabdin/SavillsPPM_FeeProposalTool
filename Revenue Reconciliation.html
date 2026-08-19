@@ -644,6 +644,11 @@
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
+<!-- The actuals ledger. This is the only page that reads or writes it, so it
+     is the only page that loads it. Awaited before render — this page SAVES
+     to revenue.json, and saving before the pull landed could overwrite a
+     teammate's close. -->
+<script>window.UFC_NEEDS = ['revenue'];</script>
 <script src="universal-fee-calc/boot.js"></script>
   <script src="universal-fee-calc/ui.js"></script>
 <script src="universal-fee-calc/sync-status.js"></script>

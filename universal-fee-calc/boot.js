@@ -39,6 +39,21 @@
       renderRatesGate(res.error);
       return new Promise(() => {});       // halt — calculator can't run without the rate card
     }
+    /* Opt-in stores. Boot pulls projects.json and rates.json, which every page
+       needs. studio.json and revenue.json are read by ONE page each, so those
+       pages ask for them by name and everyone else never fetches them:
+
+         <script>window.UFC_NEEDS = ['revenue'];</script>
+
+       Awaited before ufcReady resolves, so a page that declares a store can
+       assume it is loaded — same guarantee boot gave when it pulled all four.
+       That matters because both are read-write: rendering, and therefore
+       saving, before the pull landed could push a local-only copy over a
+       teammate's. */
+    if (Array.isArray(window.UFC_NEEDS) && window.UFC_NEEDS.length && Box.ensureStores) {
+      try { await Box.ensureStores(window.UFC_NEEDS); }
+      catch (e) { console.warn('an opt-in store failed to load', e); }
+    }
     return res;
   }
 
@@ -127,7 +142,11 @@
       busy = true;
       try {
         const projects = Box.refreshProjectsIfChanged ? await Box.refreshProjectsIfChanged() : false;
-        const studio = Box.refreshStudioIfChanged ? await Box.refreshStudioIfChanged() : false;
+        /* Only poll studio.json where someone is actually looking at it. This
+           used to run on every page in the app every three minutes, for a file
+           one page reads. */
+        const studio = (Box.storeLoaded && Box.storeLoaded('studio') && Box.refreshStudioIfChanged)
+          ? await Box.refreshStudioIfChanged() : false;
         if (projects || studio) {
           try { document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects, studio } })); } catch (e) {}
         }
