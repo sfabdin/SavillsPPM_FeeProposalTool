@@ -322,6 +322,7 @@
       if (!f) return;
       $('#import-msg').innerHTML = '<div class="msg">Reading…</div>';
       try {
+        await window.UFC_Vendor.xlsx();
         const wb = XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: 'array', raw: true });
         PENDING = { file: f.name, wb };
         const guess = wb.SheetNames.find(n => /ytd/i.test(n) && new RegExp(String(YEAR)).test(n)) || wb.SheetNames[0];
@@ -1342,6 +1343,7 @@
       behind each one written out underneath it, because a spreadsheet cannot
       expand a row on click. */
   async function exportYear() {
+    await window.UFC_Vendor.excel();
     if (typeof ExcelJS === 'undefined') { UFC_UI.toast('Excel library not loaded — reload the page and try again.'); return; }
     const y = STORE.getLedgerYear(YEAR);
     if (!y) { UFC_UI.toast('Nothing to export — no actuals posted for ' + YEAR + '.'); return; }
@@ -1406,6 +1408,7 @@
   }
 
   async function exportFlash() {
+    await window.UFC_Vendor.excel();
     if (typeof ExcelJS === 'undefined') { UFC_UI.toast('Excel library not loaded — reload the page and try again.'); return; }
     const y = STORE.getLedgerYear(YEAR);
     if (!y) { UFC_UI.toast('Nothing to export — no actuals posted for ' + YEAR + '.'); return; }

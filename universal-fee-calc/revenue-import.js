@@ -118,6 +118,7 @@
 
   /* ---------- parse "3. Detailed Revenues" ---------- */
   async function parseWorkbook(file) {
+    await window.UFC_Vendor.xlsx();
     const XLSX = await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm');
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
     const sheetName = wb.SheetNames.find(n => /3[.\s]*detailed\s*revenues/i.test(n)) || wb.SheetNames.find(n => /detailed\s*revenues/i.test(n));
@@ -622,6 +623,7 @@
      This is the artifact finance asked for — every proposed move, by revenue
      leader, carrying the sheet's own comment explaining why. */
   async function buildReviewReport() {
+    await window.UFC_Vendor.excel();
     if (typeof ExcelJS === 'undefined') throw new Error('Excel library not loaded on this page.');
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Savills PPM'; wb.created = new Date();

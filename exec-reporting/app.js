@@ -1203,14 +1203,13 @@
   }
 
   /* ---------------- exports (ExcelJS, the tool's existing pattern) ---------------- */
+  /* Was fetching ExcelJS from a CDN — the only runtime third-party request in
+     the app, and a dead end on a locked-down network. The shared loader serves
+     the same vendored copy every other page uses. */
   function excelReady() {
     if (window.ExcelJS) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
-      s.onload = resolve; s.onerror = () => reject(new Error('ExcelJS failed to load'));
-      document.head.appendChild(s);
-    });
+    if (window.UFC_Vendor) return window.UFC_Vendor.excel();
+    return Promise.reject(new Error('vendor-lazy.js is not loaded on this page'));
   }
   async function exportTab(kind) {
     await excelReady();
