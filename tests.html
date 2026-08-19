@@ -177,6 +177,40 @@
   /* Renaming a fee project used to break every Clockify link that matched it
      by NAME — hours silently stopped landing on the project. saveProject now
      records the former name so the matcher can still resolve it. */
+  /* readDb() used to JSON.parse the whole book on EVERY call. Drawing the
+     Projects Index with 300 projects did 2,133 full reads and parsed ~2GB of
+     JSON — 9.8 seconds of pure client-side work. The cache is keyed on the
+     raw stored string, so it stays correct even when something writes to
+     localStorage without going through writeDb(). */
+  test('Store · cache', 'repeated reads do not re-parse the whole book', () => {
+    freshDb();
+    S.saveProject(base({ project: { name: 'Cached', client: 'C', status: 'active' } }));
+    const realGet = Storage.prototype.getItem;
+    let parsedBytes = 0;
+    const spy = function (k) { const v = realGet.call(this, k); return v; };
+    // Count how much JSON.parse actually sees.
+    const realParse = JSON.parse;
+    JSON.parse = function (t) { if (typeof t === 'string') parsedBytes += t.length; return realParse.apply(this, arguments); };
+    try {
+      for (let i = 0; i < 50; i++) S.listProjects();
+    } finally { JSON.parse = realParse; Storage.prototype.getItem = realGet; }
+    // 50 reads of a multi-KB book would be hundreds of KB if it re-parsed.
+    return parsedBytes < 20000 || 'JSON.parse saw ' + parsedBytes + ' chars across 50 reads — the cache is not holding';
+  });
+
+  test('Store · cache', 'a direct localStorage write is still picked up', () => {
+    freshDb();
+    S.saveProject(base({ project: { name: 'First', client: 'C', status: 'active' } }));
+    if (S.listProjects().length !== 1) return 'setup failed';
+    // Write round the back, exactly as the harness and other tabs do.
+    const raw = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1'));
+    const id = Object.keys(raw.projects)[0];
+    raw.projects[id].project.name = 'Renamed Behind The Cache';
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify(raw));
+    const seen = (S.listProjects()[0] || {}).project || {};
+    return seen.name === 'Renamed Behind The Cache' || 'stale cache returned: ' + seen.name;
+  });
+
   test('Engine · rename', 'a rename records the former name', () => {
     freshDb();
     const p = S.saveProject(base({ project: { name: 'Exxon NALI Wave 2', client: 'Exxon', status: 'active' } }));

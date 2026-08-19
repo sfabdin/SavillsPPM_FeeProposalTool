@@ -244,12 +244,34 @@
     return SCHEMA - from;
   }
 
+  /* PARSED-DB CACHE.
+     readDb() is called everywhere — resolveLeader() alone reaches it through
+     allRevenueLeaders() -> readVocab(), several times per project — and it
+     used to JSON.parse the ENTIRE book on every single call. Drawing the
+     Projects Index with 300 projects did 2,133 full reads and parsed ~2 GB
+     of JSON, which took 9.8 SECONDS with no network involved at all. That,
+     not Box, was why the tool felt slow.
+
+     The cache is keyed on the RAW STRING rather than on an invalidation
+     protocol, deliberately: comparing the stored text is far cheaper than
+     re-parsing it, and it stays correct even when something writes to
+     localStorage without going through writeDb() — another tab, the test
+     harness, a future caller who doesn't know the rules. No discipline
+     required at the call sites, which is the only kind of cache that
+     survives contact with a codebase this size.
+
+     Callers mutate the object they get back and then writeDb() it; that is
+     the existing contract (staff.js has worked this way all along) and it is
+     why the cached object is returned rather than a clone. */
+  let _dbCache = null, _dbRaw = null;
   function readDb() {
     try {
       const raw = localStorage.getItem(KEY);
-      if (!raw) return defaultDb();
+      if (!raw) { _dbCache = null; _dbRaw = null; return defaultDb(); }
+      if (_dbCache && raw === _dbRaw) return _dbCache;
       const parsed = JSON.parse(raw);
       if (!parsed.projects) return defaultDb();
+      _dbCache = parsed; _dbRaw = raw;
       return parsed;
     } catch (e) {
       console.error('DB read failed', e);
@@ -294,8 +316,15 @@
     // Quota-safe local write: if localStorage is full, the local cache write
     // fails but the Box push below STILL runs, so the save is never lost —
     // and the failure is surfaced loudly instead of silently.
-    try { localStorage.setItem(KEY, JSON.stringify(db)); }
+    try {
+      const raw = JSON.stringify(db);
+      localStorage.setItem(KEY, raw);
+      // Prime the cache with what we just wrote, so the next read is free
+      // instead of re-parsing our own output.
+      _dbCache = db; _dbRaw = raw;
+    }
     catch (e) {
+      _dbCache = null; _dbRaw = null;   // storage rejected it — don't trust the cache
       console.error('Local cache write failed (storage full?) — data will still sync to Box', e);
       try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error', message: 'Browser storage is full — your save is syncing to Box but cannot be cached locally. Clear old site data or contact the maintainer.', at: Date.now() } })); } catch (e2) {}
     }
