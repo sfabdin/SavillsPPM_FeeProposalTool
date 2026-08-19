@@ -253,13 +253,102 @@
   Box.exchangeCode = exchangeCode;
 
   // ---- Box REST helpers ----
+  /* ============================================================
+     BOOT INSTRUMENTATION
+     ------------------------------------------------------------
+     Every page load blocks on boot(), so "the tool feels slow" is
+     really "boot() takes N seconds". This records where that time
+     actually goes — per Box request and per boot phase — so the
+     answer comes from measurement rather than assumption.
+
+     Read it three ways:
+       · console table, automatically, once boot finishes
+       · window.UFC_Perf.report()  — same table, on demand
+       · add ?perf=1 to the URL    — on-screen overlay, no devtools
+     Costs nothing when nobody is looking: it is a few timestamps
+     and a running byte count.
+     ============================================================ */
+  const Perf = (() => {
+    const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+    const reqs = [];    // { label, ms, bytes, status, at }
+    const phases = [];  // { label, ms, at }
+    let bootMs = 0;
+    /* Requests are labelled by SHAPE, not by full URL — '/files/123/content'
+       and '/files/456/content' are the same kind of cost, and the ids are
+       noise in a summary. */
+    function label(path) {
+      return String(path || '')
+        .replace(/\/files\/\d+\/content/, '/files/:id/content')
+        .replace(/\/files\/\d+/, '/files/:id')
+        .replace(/\/folders\/\d+/, '/folders/:id')
+        .split('?')[0];
+    }
+    return {
+      enabled: true,
+      req(path, ms, bytes, status) { reqs.push({ label: label(path), ms: Math.round(ms), bytes: bytes || 0, status, at: Math.round(now()) }); },
+      phase(l) { phases.push({ label: l, at: Math.round(now()) }); },
+      finish() {
+        bootMs = Math.round(now());
+        try { this.report(); } catch (e) {}
+        try { if (/[?&]perf=1/.test(location.search)) this.overlay(); } catch (e) {}
+      },
+      totals() {
+        const netMs = reqs.reduce((a, r) => a + r.ms, 0);
+        const bytes = reqs.reduce((a, r) => a + r.bytes, 0);
+        return { bootMs, requests: reqs.length, networkMs: Math.round(netMs), bytes,
+                 /* Serial boot means request time ~= boot time. The gap is
+                    parse + merge + hydrate; a big gap points at the data
+                    layer, a small one points at the network. */
+                 nonNetworkMs: Math.max(0, bootMs - Math.round(netMs)) };
+      },
+      data() { return { reqs: reqs.slice(), phases: phases.slice(), totals: this.totals() }; },
+      report() {
+        const t = this.totals();
+        const kb = (n) => (n / 1024).toFixed(0) + ' KB';
+        console.log('%c⏱ Boot: ' + t.bootMs + ' ms  ·  ' + t.requests + ' Box requests  ·  '
+          + t.networkMs + ' ms waiting on Box  ·  ' + kb(t.bytes) + ' downloaded',
+          'font-weight:700;color:#0E7C7B');
+        if (console.table) console.table(reqs.map(r => ({ request: r.label, ms: r.ms, KB: +(r.bytes / 1024).toFixed(1), status: r.status, 'at ms': r.at })));
+        if (console.table) console.table(phases);
+        console.log('Non-network time (parse / merge / hydrate): ' + t.nonNetworkMs + ' ms');
+      },
+      overlay() {
+        const t = this.totals();
+        const el = document.createElement('div');
+        el.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:2147483647;background:#25273A;color:#fff;font:12px/1.5 ui-monospace,Menlo,monospace;padding:12px 14px;max-width:420px;box-shadow:0 4px 18px rgba(0,0,0,.3)';
+        el.innerHTML = '<div style="font-weight:700;color:#FFDF00;margin-bottom:6px">Boot ' + t.bootMs + ' ms</div>'
+          + '<div>' + t.requests + ' requests · ' + t.networkMs + ' ms on Box · ' + (t.bytes / 1024).toFixed(0) + ' KB</div>'
+          + '<div style="opacity:.7">parse/merge/hydrate ' + t.nonNetworkMs + ' ms</div>'
+          + '<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,.2);padding-top:6px">'
+          + reqs.map(r => r.label + '  <b>' + r.ms + 'ms</b>' + (r.bytes ? '  ' + (r.bytes / 1024).toFixed(0) + 'KB' : '')).join('<br>')
+          + '</div>';
+        (document.body || document.documentElement).appendChild(el);
+      },
+    };
+  })();
+  window.UFC_Perf = Perf;
+
   async function boxFetch(path, opts = {}) {
     const token = await ensureToken();
     if (!token) throw new Error('not authenticated');
+    const t = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const res = await fetch('https://api.box.com/2.0' + path, {
       ...opts,
       headers: { Authorization: 'Bearer ' + token, ...(opts.headers || {}) },
     });
+    /* Measure the BODY too, not just the headers. A 304 or a small metadata
+       call and a multi-megabyte download look identical until the body is
+       drained, and the download is usually the story. Cloning keeps the
+       response usable by the caller. */
+    try {
+      const len = Number(res.headers.get('content-length')) || 0;
+      if (len) { Perf.req(path, (performance.now ? performance.now() : Date.now()) - t, len, res.status); }
+      else {
+        const c = res.clone();
+        c.arrayBuffer().then(b => Perf.req(path, (performance.now ? performance.now() : Date.now()) - t, b.byteLength, res.status)).catch(() => {});
+      }
+    } catch (e) {}
     return res;
   }
 
@@ -267,6 +356,43 @@
     const res = await boxFetch('/users/me?fields=login,name');
     if (!res.ok) throw new Error('identity fetch failed');
     return res.json();   // { login: 'esobel@savills.us', name: 'Emily Sobel' }
+  }
+
+  /* ---------- persisted etags: skip a download that cannot have changed ----------
+     Box hands back an etag per file. The adapter already read it, but kept it
+     in a MODULE-LEVEL variable — which is reset on every page load, so across
+     a navigation it was always null and the full file was re-downloaded every
+     single time. Persisting it means a page-to-page move costs one ~2KB
+     metadata call instead of re-pulling the whole book.
+
+     The skip is only safe when we still hold a local cache to fall back on;
+     with no cache there is nothing to display, so we download regardless. */
+  const ETAG_KEY = 'ufc_box_etags_v1';
+  function readEtags() { try { return JSON.parse(localStorage.getItem(ETAG_KEY)) || {}; } catch (e) { return {}; } }
+  function rememberEtag(fileId, tag) {
+    if (!fileId) return;
+    const m = readEtags();
+    if (tag) m[fileId] = tag; else delete m[fileId];
+    try { localStorage.setItem(ETAG_KEY, JSON.stringify(m)); } catch (e) {}
+  }
+  async function remoteEtag(fileId) {
+    try {
+      const res = await boxFetch('/files/' + fileId + '?fields=etag');
+      if (!res.ok) return null;
+      const j = await res.json();
+      return j.etag || null;
+    } catch (e) { return null; }
+  }
+  function hasLocalCache(key) { try { return !!localStorage.getItem(key); } catch (e) { return false; } }
+  /** True when the remote file is byte-identical to what this browser last
+      downloaded AND we still have that copy. Records the etag either way. */
+  async function unchangedSince(fileId, cacheKey) {
+    if (!fileId) return false;
+    const tag = await remoteEtag(fileId);
+    const known = readEtags()[fileId];
+    const same = !!(tag && known && tag === known && hasLocalCache(cacheKey));
+    if (tag && !same) rememberEtag(fileId, tag);
+    return same;
   }
 
   // Download projects.json + capture its etag for concurrency.
@@ -861,57 +987,92 @@
   // ---- Boot: auth → pull → identity → attach push ----
   async function boot() {
     if (!BOX_CONFIG.enabled) { emitSync('local', ''); return { ok: true, backend: 'local' }; }
+    Perf.phase('boot start');
     const tok = await ensureToken();
+    Perf.phase('token');
     if (!tok) {
       emitSync('signedout', 'Not signed in');
       return BOX_CONFIG.testMode ? { ok: false, needsDevToken: true } : { ok: false, needsLogin: true };
     }
-    // Identity → drives the access wall. The role is decided by the admin
-    // allowlist in store.js (fail-closed); unknown logins see only their own.
+    /* ---------- PARALLEL FETCH ----------
+       These five are independent of each other; only the order in which their
+       results are APPLIED matters. Fetching them one after another meant every
+       page load paid the sum of five round trips before rendering anything.
+       Fetch together, apply in the old order.
+
+       allSettled, not all: a failing studio or revenue pull must not take the
+       whole boot down, exactly as the individual try/catches used to ensure. */
+    const FEE_CACHE = 'savills-ppm-fee-db:v1';
+    const [meR, projectsR, ratesR, studioR, revenueR] = await Promise.allSettled([
+      getIdentity(),
+      (async () => await unchangedSince(BOX_CONFIG.dataFileId, FEE_CACHE) ? null : pullRemote())(),
+      pullRates(),
+      pullStudio(),
+      pullRevenue(),
+    ]);
+    Perf.phase('all pulls settled (parallel)');
+
+    // Identity FIRST — it decides what the access wall lets through.
+    if (meR.status === 'fulfilled' && meR.value) {
+      Store.setRealIdentity({ username: meR.value.login, name: meR.value.name });
+    } else { console.warn('identity failed', meR.reason); }
+    Perf.phase('identity');
+
+    // projects.json — null means the etag matched, so the local cache already
+    // holds this exact content and there is nothing to merge.
     try {
-      const me = await getIdentity();
-      Store.setRealIdentity({ username: me.login, name: me.name });
-    } catch (e) { console.warn('identity failed', e); }
-    // Pull remote → local
-    try {
-      const remote = await pullRemote();
-      const local = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1') || 'null');
-      const merged = local ? mergeDb(remote, local) : remote;
-      Store.hydrateFromRemote(merged);
+      if (projectsR.status === 'rejected') throw projectsR.reason;
+      if (projectsR.value) {
+        const remote = projectsR.value;
+        const local = JSON.parse(localStorage.getItem(FEE_CACHE) || 'null');
+        const merged = local ? mergeDb(remote, local) : remote;
+        Store.hydrateFromRemote(merged);
+        rememberEtag(BOX_CONFIG.dataFileId, _etag);
+        Perf.phase('projects.json merged + hydrated');
+      } else {
+        Perf.phase('projects.json unchanged (skipped download)');
+      }
       emitSync('synced', '');
     } catch (e) {
       emitSync('error', 'Could not load from Box — showing local cache');
       console.error('Box pull failed — running on local cache', e);
     }
-    // Pull the confidential rate grid (rates.json) and hydrate the catalog.
-    // This is REQUIRED — the rates aren't in the shipped code — so a failure
-    // here is fatal (caller shows the rate-card gate rather than running blank).
+
+    /* Rates are REQUIRED — they are not in the shipped code — so a failure
+       here is still fatal and still shows the rate-card gate. */
+    if (ratesR.status === 'rejected') {
+      console.error('Rate card load failed', ratesR.reason);
+      return { ok: false, needsRates: true, error: (ratesR.reason && ratesR.reason.message) || String(ratesR.reason) };
+    }
     try {
-      const ratesPayload = await pullRates();
-      if (window.RATES_CATALOG && window.RATES_CATALOG.hydrate) window.RATES_CATALOG.hydrate(ratesPayload);
+      if (window.RATES_CATALOG && window.RATES_CATALOG.hydrate) window.RATES_CATALOG.hydrate(ratesR.value);
+      Perf.phase('rates.json');
     } catch (e) {
-      console.error('Rate card load failed', e);
+      console.error('Rate card hydrate failed', e);
       return { ok: false, needsRates: true, error: (e && e.message) || String(e) };
     }
-    // Attach the push hook so future writes mirror to Box
+
+    // Attach the push hook so future writes mirror to Box (AFTER hydrate, so
+    // hydrating cannot echo straight back out as an upload).
     Store.attachRemote(schedulePush);
-    // Rolling weekly backup of projects.json (on top of Box's own version
-    // history) — fire and forget; failures never affect boot.
-    weeklyBackup();
-    // Revenue Studio file (separate). Pull → hydrate → attach its push hook.
-    try {
-      const studio = await pullStudio();
-      Store.hydrateStudioFromRemote(studio);
-    } catch (e) { console.warn('studio pull failed', e); }
+    weeklyBackup();   // fire and forget; failures never affect boot
+
+    if (studioR.status === 'fulfilled') {
+      try { Store.hydrateStudioFromRemote(studioR.value); Perf.phase('studio.json'); }
+      catch (e) { console.warn('studio hydrate failed', e); }
+    } else { console.warn('studio pull failed', studioR.reason); }
     Store.attachStudioRemote(scheduleStudioPush);
-    // revenue.json — pull before attaching the push, so hydrating can't echo
-    // straight back out as an upload.
-    try {
-      const rev = await pullRevenue();
-      const merged = mergeRevenueDb(rev, Store.readRevenue());
-      Store.hydrateRevenueFromRemote(merged);
-    } catch (e) { console.warn('revenue pull failed — reconciliation is local-only this session', e); }
+
+    if (revenueR.status === 'fulfilled') {
+      try {
+        const mergedRev = mergeRevenueDb(revenueR.value, Store.readRevenue());
+        Store.hydrateRevenueFromRemote(mergedRev);
+        Perf.phase('revenue.json');
+      } catch (e) { console.warn('revenue hydrate failed', e); }
+    } else { console.warn('revenue pull failed — reconciliation is local-only this session', revenueR.reason); }
     Store.attachRevenueRemote(scheduleRevenuePush);
+    Perf.phase('boot done');
+    Perf.finish();
     return { ok: true, backend: 'box' };
   }
 
