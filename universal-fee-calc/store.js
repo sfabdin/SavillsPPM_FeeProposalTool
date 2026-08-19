@@ -625,6 +625,30 @@
     { const cu = getCurrentUser() || {};
       const ri = (typeof realIdentityLabel === 'function' ? realIdentityLabel() : null) || {};
       record.lastSavedBy = { username: ri.username || cu.username || null, name: ri.name || cu.name || null }; }
+    /* RENAME TRAIL. A matrix/Clockify project is joined to its fee record
+       either by an explicit pin (stored as an id, rename-proof) or by an
+       automatic NAME match. Renaming the fee project used to silently break
+       every automatic link pointing at it — the hours stopped landing on the
+       project and reappeared as $0-revenue "loose" rows on Profitability,
+       with nothing saying why.
+
+       Recording the former name here, in the one function every rename path
+       goes through (calculator, Projects Index quick edit, Bulk Editor,
+       projections import), lets the matcher keep resolving the old name. The
+       alternative — pinning links at rename time — cannot work: none of the
+       pages that rename projects load staff.js. */
+    {
+      const prevName = String(((prev || {}).project || {}).name || '').trim();
+      const nextName = String((record.project || {}).name || '').trim();
+      if (prev && prevName && nextName && prevName !== nextName) {
+        record.source = record.source || {};
+        const seen = new Set([nextName.toLowerCase()]);
+        const list = (record.source.priorNames || []).concat([prevName])
+          .map(x => String(x || '').trim())
+          .filter(x => x && !seen.has(x.toLowerCase()) && seen.add(x.toLowerCase()));
+        record.source.priorNames = list.slice(-10);   // enough to follow a history, not unbounded
+      }
+    }
     maybeSnapshotFinancials(record);   // freeze derived figures once booked
     maybeAutoVersion(record, prev);    // capture a version when status crosses a lifecycle milestone
     db.projects[record.id] = record;
@@ -2743,6 +2767,18 @@
       byMonth raw — which Revenue Projections and the staffing dollars view
       both did — meant a monthly edit was recorded, flagged in red, and
       then displayed at its old value. */
+  /** Canonical month key: ZERO-PADDED 'YYYY-MM'. This is the format used by
+      financials.byMonth[].ym, changeOrderDelta().byMonth[].ym, the Clockify
+      actuals keys in staff.json, and every ym helper in staff.js. The internal
+      maps here are keyed on the unpadded 'YYYY-M' the live compute produces,
+      so anything LEAVING this function gets normalized through here.
+      (Profitability matched billingSeries' ym against a padded window set:
+      months 1–9 never matched, so base contract revenue silently vanished
+      while change-order dollars — already padded — landed. Don't emit raw.) */
+  function padYM(k) {
+    const i = String(k).indexOf('-');
+    return String(k).slice(0, i) + '-' + String(parseInt(String(k).slice(i + 1), 10)).padStart(2, '0');
+  }
   function billingSeries(p, catalog) {
     const fs = (p.assumptions && p.assumptions.feeShare) || {};
     const pct = fs.enabled ? (parseFloat(fs.pct) || 0) / 100 : 0;
@@ -2775,7 +2811,7 @@
       const ratio = b.net ? net / b.net : 1;
       const broker = (b.broker || 0) * ratio;
       out.push({
-        ym: k, year: s.year, month: s.month, net,
+        ym: padYM(k), year: s.year, month: s.month, net,
         invoice: (onTop ? net + broker : net) + (b.passClient || 0),
         broker, passCost: b.passCost || 0, passClient: b.passClient || 0,
         overridden: !!s.overridden, slipOut: s.slipOut || 0, slipIn: s.slipIn || 0, adjusted: s.adjusted || 0,
@@ -2785,7 +2821,7 @@
     // Months the snapshot knows about that the live compute doesn't reach.
     Object.entries(base).forEach(([k, b]) => {
       if (seen[k]) return;
-      out.push({ ym: k, year: b.year, month: b.month, net: b.net, invoice: (onTop ? b.net + b.broker : b.net) + (b.passClient || 0),
+      out.push({ ym: padYM(k), year: b.year, month: b.month, net: b.net, invoice: (onTop ? b.net + b.broker : b.net) + (b.passClient || 0),
                  broker: b.broker, passCost: b.passCost, passClient: b.passClient, overridden: false, slipOut: 0, slipIn: 0, adjusted: 0 });
     });
     return out.sort((a, b) => a.year - b.year || a.month - b.month);
@@ -3048,16 +3084,32 @@
   }
   function leaderById(id) { return allRevenueLeaders().find(l => l.id === id) || null; }
   /** Resolve any stored value (id, displayName, alias, or username) to a leader. */
+  /** Split a "Display Name <email@savills.us>" (or parenthesised) string into
+      its parts. This is the form the Bulk Editor asks people to type on the
+      Lists sheet, so it turns up pasted into Lead PE / relationship-owner
+      cells too — and it must resolve there, not just where it was authored. */
+  function splitLeaderText(value) {
+    const m = /^(.*?)[<(]\s*([^\s<>()]+@[^\s<>()]+?)\s*[>)]?\s*$/.exec(String(value || '').trim());
+    return m ? { name: String(m[1] || '').trim(), email: String(m[2] || '').trim().toLowerCase() } : null;
+  }
   function resolveLeader(value) {
     if (!value) return null;
     const v = String(value).trim();
     const vk = v.toLowerCase();
-    return allRevenueLeaders().find(l =>
+    const hit = allRevenueLeaders().find(l =>
       l.id === v ||
       String(l.username || '').toLowerCase() === vk ||
       l.displayName.toLowerCase() === vk ||
       (l.aliases || []).some(a => a.toLowerCase() === vk)
-    ) || null;
+    );
+    if (hit) return hit;
+    /* "Naida Serak <nserak@savills.us>" is the exact format the Bulk Editor's
+       own error message tells people to use, so rejecting it when it appears
+       in a Lead PE cell was a trap: the instruction produced the failure. Try
+       the email, then the bare name, before giving up. */
+    const parts = splitLeaderText(v);
+    if (parts) return (parts.email && resolveLeader(parts.email)) || (parts.name && resolveLeader(parts.name)) || null;
+    return null;
   }
   function leaderDisplay(value) { const l = resolveLeader(value); return l ? l.displayName : (value || ''); }
 
@@ -3233,7 +3285,7 @@
     getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, getRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
     getMaintenance, setMaintenance, assertWritable,
-    leaderById, resolveLeader, leaderDisplay,
+    leaderById, resolveLeader, leaderDisplay, splitLeaderText,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,
     attachRevenueRemote, hydrateRevenueFromRemote, readRevenue, defaultRevenue,

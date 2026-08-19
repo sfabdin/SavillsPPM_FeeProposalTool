@@ -42,15 +42,15 @@
     const showPpl = mFocus ? x.ppl.filter(p => p.byMonth[mFocus]) : x.ppl;
     if (!showPpl.length) return '<span class="note-txt">No hours logged in ' + esc(S.ymLabel(mFocus)) + ' — click another month or the project name for the full window.</span>';
     let h = '<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px"><span style="font-family:var(--font-display);font-weight:700;font-size:11px;color:var(--sav-navy)">' + (mFocus ? esc(S.ymLabel(mFocus)) + ' · staffing' : 'Full window · staffing') + '</span>' + (mFocus ? '<a href="#" data-clear-month="' + esc(x.key) + '" style="font-size:11px">show all months</a>' : '') + '</div>';
-    h += '<table class="dt" style="width:auto;min-width:420px"><thead><tr><th>Person</th><th>Rate</th>' + cols.map(m => '<th class="num">' + esc(S.ymLabel(m)) + '<div class="vmini" style="text-transform:none;letter-spacing:0">h · $</div></th>').join('') + '<th class="num">Total h</th><th class="num">Total $</th></tr></thead><tbody>';
+    h += '<div class="cmp-scroll dg-scroll"><table class="dt" style="width:auto;min-width:420px"><thead><tr><th class="sticky-col dg-who">Person</th><th>Rate</th>' + cols.map(m => '<th class="num">' + esc(S.ymLabel(m)) + '<div class="vmini" style="text-transform:none;letter-spacing:0">h · $</div></th>').join('') + '<th class="num">Total h</th><th class="num">Total $</th></tr></thead><tbody>';
     showPpl.forEach(p => {
-      h += '<tr><td class="pname">' + esc(p.name) + (p.title ? '<div class="vmini">' + esc(p.title) + '</div>' : '') + '</td><td class="num vmini">$' + p.rate + '/h</td>';
+      h += '<tr><td class="pname sticky-col dg-who">' + esc(p.name) + (p.title ? '<div class="vmini">' + esc(p.title) + '</div>' : '') + '</td><td class="num vmini">$' + p.rate + '/h</td>';
       cols.forEach(m => { const c = p.byMonth[m]; h += '<td class="num">' + (c ? Math.round(c.hours * 10) / 10 + '<div class="vmini">' + fmtD(c.cost) + '</div>' : '<span style="color:#c9cdd3">·</span>') + '</td>'; });
       const fh = mFocus ? (p.byMonth[mFocus] || { hours: 0 }).hours : p.hours;
       const fc = mFocus ? (p.byMonth[mFocus] || { cost: 0 }).cost : p.cost;
       h += '<td class="num" style="font-weight:700">' + Math.round(fh * 10) / 10 + '</td><td class="num" style="font-weight:700">' + fmtD(fc) + '</td></tr>';
     });
-    h += '</tbody></table>';
+    h += '</tbody></table></div>';
     return h;
   }
 
@@ -79,7 +79,14 @@
       + '<div class="kpi-card ' + (totRev - totCost < 0 ? 'warn' : '') + '"><div class="k-num">' + fmtD(totRev - totCost) + '</div><div class="k-lbl">Margin' + (totRev ? ' · ' + Math.round((totRev - totCost) / totRev * 100) + '%' : '') + '</div></div>'
       + '<div class="kpi-card ' + (losing.length ? 'warn' : '') + '"><div class="k-num">' + losing.length + '</div><div class="k-lbl">Projects with cost above revenue</div></div>'
       + '</div>';
-    if (r.noRate.length) html += '<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for ' + r.noRate.length + ' people: ' + esc(r.noRate.slice(0, 10).join(' · ')) + (r.noRate.length > 10 ? ' …' : '') + ' — their hours are EXCLUDED. Pin their titles on the <a href="Staffing Matrix.html">Staffing Matrix</a> Mapping tab.</div>';
+    /* Unpriced hours make every margin below read BETTER than reality, so say
+       how big the hole is — not just who is in it. Margins are still shown
+       (they are directionally useful); this is the asterisk on them. */
+    if (r.noRate.length) {
+      const up = r.unpriced || { hours: 0 };
+      const who = r.noRate.length === 1 ? '1 person' : r.noRate.length + ' people';
+      html += '<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ <strong>' + Math.round(up.hours).toLocaleString() + ' hours are missing from every cost figure below</strong> — no cost rate for ' + who + ': ' + esc(r.noRate.slice(0, 10).join(' · ')) + (r.noRate.length > 10 ? ' …' : '') + '. Margins shown are therefore <strong>better than actual</strong>. Pin their titles on the <a href="Staffing Matrix.html">Staffing Matrix</a> Mapping tab.</div>';
+    }
     if (!r.hasActuals) html += '<div class="note-txt" style="margin:-4px 0 12px;color:#8a6d00">No Clockify actuals loaded — cost rows are empty. Pull actuals on the <a href="Staffing Matrix.html">Staffing Matrix</a> Compare tab.</div>';
     const macroFlag = S.substantialMacroTime(ms);
     if (macroFlag.flagged.length) html += '<div class="note-txt" style="margin:-4px 0 12px;color:#8a6d00">🏢 ' + macroFlag.flagged.length + ' ' + (macroFlag.flagged.length > 1 ? 'people' : 'person') + ' with &gt;40h non-billable/internal time this window: ' + esc(macroFlag.flagged.slice(0, 8).map(x => x.person.name + ' (' + Math.round(x.hours) + 'h)').join(' · ')) + (macroFlag.flagged.length > 8 ? ' …' : '') + ' — see “Non-billable / internal time” below for the $ detail.</div>';
@@ -115,10 +122,15 @@
     let ohCells = ''; ms.forEach(m => { ohCells += '<td class="num vmini" style="color:#8a6d00">' + (oh.byMonth[m] ? fmtK(oh.byMonth[m]) : '·') + '</td>'; });
     const ohRow = oh.cost ? '<tr class="pf-oh" style="background:#fdf9ee;cursor:pointer"><td class="pname sticky-col" style="background:#fdf9ee">Non-billable / internal time <span class="badge pursuit">outside fee mapping</span><div class="vmini">' + ohTop + (Object.keys(oh.byProj).length > 4 ? ' …' : '') + ' · click for people</div></td>' + ohCells + '<td class="num">—</td><td class="num" style="font-weight:700;color:#8a6d00">' + fmtD(oh.cost) + '<div class="vmini">' + Math.round(oh.hours).toLocaleString() + ' h</div></td><td class="num">—</td><td class="num">—</td></tr>'
       + '<tr class="pf-oh-detail" style="display:' + (state.expanded.has('overhead') ? '' : 'none') + '"><td colspan="' + (ms.length + 5) + '" style="background:#fdf9ee;padding:10px 16px 14px">' + detailGrid({ ppl: oh.ppl, key: 'overhead' }, ms, state.monthPick['overhead'] || null) + '</td></tr>' : '';
+    // ---- PTO / vacation / holiday — macro time, but not discretionary overhead ----
+    const to = r.timeOff || { byMonth: {}, cost: 0, hours: 0, ppl: [], byProj: {} };
+    let toCells = ''; ms.forEach(m => { toCells += '<td class="num vmini" style="color:#5a6070">' + (to.byMonth[m] ? fmtK(to.byMonth[m]) : '·') + '</td>'; });
+    const toRow = to.cost ? '<tr class="pf-to" style="background:#f7f7f9;cursor:pointer"><td class="pname sticky-col" style="background:#f7f7f9">PTO · vacation · holiday <span class="badge">not overhead</span><div class="vmini">Time off, priced at cost so the hours reconcile — held apart from non-billable work · click for people</div></td>' + toCells + '<td class="num">—</td><td class="num" style="font-weight:700;color:#5a6070">' + fmtD(to.cost) + '<div class="vmini">' + Math.round(to.hours).toLocaleString() + ' h</div></td><td class="num">—</td><td class="num">—</td></tr>'
+      + '<tr class="pf-to-detail" style="display:' + (state.expanded.has('timeoff') ? '' : 'none') + '"><td colspan="' + (ms.length + 5) + '" style="background:#f7f7f9;padding:10px 16px 14px">' + detailGrid({ ppl: to.ppl, key: 'timeoff' }, ms, state.monthPick['timeoff'] || null) + '</td></tr>' : '';
     const allCost = totCost + oh.cost;
     let allCells = ''; ms.forEach(m => { const v = (costM[m] || 0) + (oh.byMonth[m] || 0); allCells += '<td class="num" style="font-weight:700">' + (v ? fmtK(v) : '·') + '</td>'; });
     const allRow = '<tr style="background:#eceff1;border-top:2px solid rgba(37,39,58,0.35)"><td class="pname sticky-col" style="background:#eceff1;font-weight:700">All staff cost · fee-mapped + non-billable</td>' + allCells + '<td class="num">' + fmtD(totRev) + '</td><td class="num" style="font-weight:700">' + fmtD(allCost) + '</td><td class="num ' + (totRev - allCost < 0 ? 'var-over' : 'var-ok') + '" style="font-weight:700">' + fmtD(totRev - allCost) + '</td><td class="num">' + (totRev ? Math.round((totRev - allCost) / totRev * 100) + '%' : '—') + '</td></tr>';
-    html += '<div class="cmp-scroll"><table class="dt"><thead><tr><th class="sticky-col">Project</th>' + ms.map(m => '<th class="num">' + esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">current</div>' : '') + '<div class="vmini" style="text-transform:none;letter-spacing:0">rev / cost</div></th>').join('') + '<th class="num">Revenue</th><th class="num">Cost</th><th class="num">Margin</th><th class="num">%</th></tr></thead><tbody>' + (body || '<tr><td colspan="' + (ms.length + 5) + '"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>') + totRow + ohRow + allRow + '</tbody></table></div>'
+    html += '<div class="cmp-scroll"><table class="dt"><thead><tr><th class="sticky-col">Project</th>' + ms.map(m => '<th class="num">' + esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">current</div>' : '') + '<div class="vmini" style="text-transform:none;letter-spacing:0">rev / cost</div></th>').join('') + '<th class="num">Revenue</th><th class="num">Cost</th><th class="num">Margin</th><th class="num">%</th></tr></thead><tbody>' + (body || '<tr><td colspan="' + (ms.length + 5) + '"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>') + totRow + ohRow + toRow + allRow + '</tbody></table></div>'
       + '<datalist id="pf-fee-dl">' + feeList.map(p => '<option value="' + esc(p.label) + '"></option>').join('') + '</datalist>';
     $('#p-profit').innerHTML = html;
 
@@ -147,6 +159,7 @@
     });
     $$('#p-profit [data-clear-month]').forEach(a => a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); delete state.monthPick[a.dataset.clearMonth]; render(); });
     $$('#p-profit .pf-oh').forEach(tr => tr.onclick = () => { if (state.expanded.has('overhead')) { state.expanded.delete('overhead'); delete state.monthPick['overhead']; } else state.expanded.add('overhead'); render(); });
+    $$('#p-profit .pf-to').forEach(tr => tr.onclick = () => { if (state.expanded.has('timeoff')) { state.expanded.delete('timeoff'); delete state.monthPick['timeoff']; } else state.expanded.add('timeoff'); render(); });
     $$('#p-profit .pf-row').forEach(tr => tr.onclick = () => {
       const x = rowsRef[+tr.dataset.i]; if (!x) return;
       if (state.expanded.has(x.key)) { state.expanded.delete(x.key); delete state.monthPick[x.key]; } else state.expanded.add(x.key);

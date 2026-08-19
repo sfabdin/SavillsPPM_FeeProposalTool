@@ -149,7 +149,7 @@
     db.schemaVersion = SCHEMA;
     localStorage.setItem(KEY, JSON.stringify(db));
     _dbCache = db;
-    _feeIndex = null; _feeRecords = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
     return true;
   }
   function writeDb(db) {
@@ -347,6 +347,19 @@
       userX: unionUserX(),
     };
 
+    /* Dismissed contract-staffing rows are a team decision, so they must
+       survive the round trip like any other shared state. A top-level key
+       left out of this merge is dropped on EVERY sync, not just on a clash —
+       which is how a lock once vanished on refresh. Union, newest wins. */
+    {
+      const merged = Object.assign({}, remote.dismissedGaps || {});
+      Object.entries(local.dismissedGaps || {}).forEach(([k, v]) => {
+        const r = merged[k];
+        if (!r || (v && v.at || '') >= (r.at || '')) merged[k] = v;
+      });
+      if (Object.keys(merged).length) out.dismissedGaps = merged;
+    }
+
     // Straggler heal: a row arriving from a stale tab may still carry a
     // project name that was since renamed to its canonical form — the same
     // real project then exists under TWO names, splitting coverage. Apply
@@ -398,7 +411,7 @@
     const merged = isPristineSeed(local) ? remote : mergeStaffDb(remote, local);
     localStorage.setItem(KEY, JSON.stringify(merged));
     _dbCache = merged;
-    _feeIndex = null; _feeRecords = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
     return merged;
   }
 
@@ -434,6 +447,103 @@
 
   // ---------- ENGINE: bandwidth / utilization ----------
   function allocActiveIn(a, ym) { return a.start && a.end ? (a.start <= ym && ym <= a.end) : (a.start ? a.start <= ym : false); }
+
+  /* ---------- logging time with nothing planned against it ----------
+     Two different holes, both of which end with real hours nobody is looking
+     at, and both raised on the Aug 13 review:
+
+     1. NOT ON THE ROSTER. Clockify hours under a name the roster doesn't
+        know land under an 'unmatched:' id. Jeff's own hours were invisible
+        for exactly this reason — no allocation meant no roster record meant
+        no match. These already surface in the import's unmatched list.
+     2. ON THE ROSTER, NO ALLOCATION. Quieter and worse: the person matches,
+        their hours are stored and costed, but nothing is planned against
+        them — so plan-vs-actual compares real burn to zero and the load
+        chart shows them free while they are working.
+
+     This reports (2), which had nowhere to appear at all. */
+  function loggingWithoutAllocation(monthsList) {
+    const db = readDb();
+    const inWin = new Set(monthsList || []);
+    const byPerson = {};
+    Object.entries(db.actuals || {}).forEach(([k, h]) => {
+      const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
+      const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
+      if (inWin.size && !inWin.has(ym)) return;
+      if (isMacroProject(proj)) return;              // internal time needs no allocation
+      const e = byPerson[pid] || (byPerson[pid] = { pid, hours: 0, projects: {} });
+      e.hours += h; e.projects[proj] = (e.projects[proj] || 0) + h;
+    });
+    const out = [];
+    Object.values(byPerson).forEach(e => {
+      if (String(e.pid).startsWith('unmatched:')) return;    // case (1) — reported by the importer
+      const person = db.people[e.pid];
+      if (!person) return;
+      if (person.nonBillable) return;                         // overhead staff need no allocation
+      const covers = (db.allocations || []).some(a => a.personId === e.pid &&
+        (!inWin.size || monthsBetween(a.start, a.end || a.start).some(m => inWin.has(m))));
+      if (covers) return;
+      out.push({
+        person, hours: Math.round(e.hours * 10) / 10,
+        projects: Object.entries(e.projects).map(([name, hrs]) => ({ name, hours: Math.round(hrs * 10) / 10 }))
+          .sort((a, b) => b.hours - a.hours),
+      });
+    });
+    return out.sort((a, b) => b.hours - a.hours);
+  }
+
+  /* ---------- duplicate allocations ----------
+     The same person allocated to the same project over OVERLAPPING months,
+     across two or more rows. On the Aug 13 review this is what put Danielle
+     at 200% ("I think it's the same thing twice") — the load charts add both
+     rows, so every over-allocation number downstream is wrong until one goes.
+
+     Sequential rows on one project (phase 1 then phase 2) are normal and are
+     NOT flagged — only overlapping windows are. Two genuine concurrent roles
+     are possible too, which is exactly why this REPORTS and never deletes:
+     the rows are shown with their overlap so a human decides. */
+  function duplicateAllocations() {
+    const db = readDb();
+    const ren = (db.mappings || {}).renames || {};
+    const canon = (n) => nkey(ren[nkey(n)] || n || '');
+    const groups = {};
+    (db.allocations || []).forEach(a => {
+      if (!a || !a.personId || !a.project) return;
+      if (isLeaveProject(a.project)) return;            // leave rows legitimately repeat
+      (groups[a.personId + '|' + canon(a.project)] = groups[a.personId + '|' + canon(a.project)] || []).push(a);
+    });
+    const overlaps = (x, y) => {
+      const xs = x.start || '', xe = x.end || x.start || '';
+      const ys = y.start || '', ye = y.end || y.start || '';
+      if (!xs || !ys) return false;
+      return xs <= ye && ys <= xe;
+    };
+    const out = [];
+    Object.values(groups).forEach(rows => {
+      if (rows.length < 2) return;
+      // Only keep rows that actually collide with another row in the group.
+      const hit = rows.filter(r => rows.some(o => o !== r && overlaps(r, o)));
+      if (hit.length < 2) return;
+      const person = db.people[hit[0].personId] || { id: hit[0].personId, name: hit[0].personName || hit[0].personId };
+      // The months where the doubling actually bites, and by how much.
+      const months = {};
+      hit.forEach(r => monthsBetween(r.start, r.end || r.start).forEach(m => {
+        months[m] = (months[m] || 0) + (parseFloat(r.pct) || 0);
+      }));
+      const worst = Object.entries(months).sort((a, b) => b[1] - a[1])[0] || ['', 0];
+      out.push({
+        person, project: hit[0].project,
+        rows: hit.slice().sort((a, b) => (a.start || '').localeCompare(b.start || '')),
+        worstMonth: worst[0], worstPct: Math.round(worst[1]),
+        /* Byte-identical twins (same window AND same %) are almost certainly
+           one row saved twice — worth saying so, since that needs no thought. */
+        identical: hit.length === 2 && hit[0].start === hit[1].start
+          && (hit[0].end || '') === (hit[1].end || '')
+          && (parseFloat(hit[0].pct) || 0) === (parseFloat(hit[1].pct) || 0),
+      });
+    });
+    return out.sort((a, b) => b.worstPct - a.worstPct || a.person.name.localeCompare(b.person.name));
+  }
 
   /** Total allocation % for a person in a given month (point-in-time). */
   function personLoad(personId, ym, opts) {
@@ -496,7 +606,7 @@
   // silently keep pointing at old data.
   if (typeof document !== 'undefined') {
     document.addEventListener('ufc:remote-updated', (e) => {
-      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; }
+      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; }
     });
   }
   /** Fee-tool project records, parsed ONCE per page load — UFC_Store.getProject
@@ -508,10 +618,21 @@
   }
   function feeIndex() {
     if (_feeIndex) return _feeIndex;
-    _feeIndex = feeRecords().map(p => {
+    _feeIndex = [];
+    feeRecords().forEach(p => {
       const name = (p.project && p.project.name) || '';
       const client = (p.project && p.project.client) || '';
-      return { id: p.id, name, client, label: client ? client + ' — ' + name : name, key: projKey(name) };
+      const label = client ? client + ' — ' + name : name;
+      _feeIndex.push({ id: p.id, name, client, label, key: projKey(name) });
+      /* Former names resolve to the SAME project, so a Clockify job still
+         matched by name survives the fee project being renamed. The entry
+         carries the CURRENT name and label — only the match key is historic —
+         so nothing downstream ever displays a stale name. */
+      ((p.source || {}).priorNames || []).forEach(old => {
+        const k = projKey(old);
+        if (!k || k === projKey(name)) return;
+        _feeIndex.push({ id: p.id, name, client, label, key: k, viaPriorName: old });
+      });
     });
     return _feeIndex;
   }
@@ -917,21 +1038,39 @@
     // ---- burned $ per MATRIX project → resolved onto fee-project ids where linked ----
     const burnByFee = {}; const burnLoose = {}; const noRate = new Set();
     const overhead = { byMonth: {}, hours: 0, cost: 0, ppl: {}, byProj: {} };   // macro / non-billable — real staff cost outside any fee
+    /* PTO / vacation / holiday is macro time, but it is NOT discretionary
+       overhead the way BD and internal work are — nobody should read a
+       colleague's vacation as unproductive cost sitting against the fee book.
+       It gets its own bucket so the non-billable line means what it says. */
+    const timeOff = { byMonth: {}, hours: 0, cost: 0, ppl: {}, byProj: {} };
+    /* Hours we could not price (no cost rate for the person's title). They are
+       real effort that is missing from every cost figure below, so carry the
+       size of the hole rather than letting margin quietly read as better. */
+    const unpriced = { hours: 0, byPerson: {} };
+    const addTo = (buck, proj, pid, person, rate, ym, h) => {
+      buck.byMonth[ym] = (buck.byMonth[ym] || 0) + h * rate;
+      buck.hours += h; buck.cost += h * rate;
+      buck.byProj[proj] = (buck.byProj[proj] || 0) + h * rate;
+      const op = buck.ppl[pid] || (buck.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0, byMonth: {} });
+      op.hours += h; op.cost += h * rate;
+      const om = op.byMonth[ym] || (op.byMonth[ym] = { hours: 0, cost: 0 });
+      om.hours += h; om.cost += h * rate;
+    };
     Object.entries(db.actuals || {}).forEach(([k, h]) => {
       const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
       const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
       if (!inWin.has(ym)) return;
       const person = db.people[pid];
       const rate = person ? costRateForTitle(person.title) : null;
-      if (!rate) { noRate.add(person ? (person.name + (person.title ? ' — ' + person.title : ' — no title')) : pid.replace(/^unmatched:/, '')); return; }
+      if (!rate) {
+        const who = person ? (person.name + (person.title ? ' — ' + person.title : ' — no title')) : pid.replace(/^unmatched:/, '');
+        noRate.add(who);
+        unpriced.hours += h;
+        unpriced.byPerson[who] = (unpriced.byPerson[who] || 0) + h;
+        return;
+      }
       if (isMacroProject(proj)) {
-        overhead.byMonth[ym] = (overhead.byMonth[ym] || 0) + h * rate;
-        overhead.hours += h; overhead.cost += h * rate;
-        overhead.byProj[proj] = (overhead.byProj[proj] || 0) + h * rate;
-        const op = overhead.ppl[pid] || (overhead.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0, byMonth: {} });
-        op.hours += h; op.cost += h * rate;
-        const om = op.byMonth[ym] || (op.byMonth[ym] = { hours: 0, cost: 0 });
-        om.hours += h; om.cost += h * rate;
+        addTo(isTimeOffProject(proj) ? timeOff : overhead, proj, pid, person, rate, ym, h);
         return;
       }
       const link = matchFeeProject(proj, '');
@@ -979,7 +1118,12 @@
     });
     rows.sort((a, b) => (a.rating || 9) - (b.rating || 9) || b.revTotal - a.revTotal || b.cost - a.cost);
     overhead.ppl = Object.values(overhead.ppl).sort((x, y) => y.cost - x.cost);
-    return { ok: true, rows, overhead, noRate: [...noRate], hasActuals: hasActuals() };
+    timeOff.ppl = Object.values(timeOff.ppl).sort((x, y) => y.cost - x.cost);
+    unpriced.people = Object.entries(unpriced.byPerson)
+      .map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 }))
+      .sort((a, b) => b.hours - a.hours);
+    unpriced.hours = Math.round(unpriced.hours * 10) / 10;
+    return { ok: true, rows, overhead, timeOff, unpriced, noRate: [...noRate], hasActuals: hasActuals() };
   }
 
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
@@ -1096,6 +1240,46 @@
       Returns [{ project, client, open, roleTitle, resource|null, roles[],
                  person|null, isNew, personId|null, topUp, via,
                  segments:[{start,end,need,want,have}], totalNeedFteMo }] */
+  /* ---------- dismissed contract-staffing rows ----------
+     Not every named contract role becomes an allocation. A pursuit that never
+     closed, a person named in a proposal who was never going to do the work —
+     these are noise that used to sit on the list forever with no way to clear
+     it. Dismissing is a JUDGEMENT, recorded with who and why, never a delete:
+     the row is hidden from the working list and kept in a roll-up so it can
+     be reopened. Lives in staff.json, so the whole team sees one decision.
+
+     The key must survive recomputation (rows are rebuilt from scratch every
+     call) AND a project rename, so it is built from the CANONICAL project
+     name plus either the open role or the contract-named person. */
+  function gapKey(row) {
+    const db = readDb();
+    const ren = (db.mappings || {}).renames || {};
+    const canon = ren[nkey(row.project)] || row.project;
+    const who = row.open ? 'open:' + String(row.roleTitle || '').toLowerCase()
+                         : 'who:' + nkey(canonicalName(row.resource || ''));
+    return nkey(canon) + '|' + who;
+  }
+  function dismissedGaps() { const db = readDb(); return db.dismissedGaps || {}; }
+  /** Hide a contract-staffing row from the working list, with a reason. */
+  function dismissGap(key, reason) {
+    if (!key) return null;
+    const db = readDb();
+    db.dismissedGaps = db.dismissedGaps || {};
+    const S2 = window.UFC_Store;
+    let by = '';
+    try { by = (S2 && S2.getCurrentUser) ? (S2.getCurrentUser().name || S2.getCurrentUser().username || '') : ''; } catch (e) {}
+    db.dismissedGaps[key] = { at: new Date().toISOString(), by, reason: String(reason || '').trim() };
+    writeDb(db);
+    return db.dismissedGaps[key];
+  }
+  /** Put a dismissed row back on the working list. */
+  function restoreGap(key) {
+    const db = readDb();
+    if (!db.dismissedGaps || !db.dismissedGaps[key]) return false;
+    delete db.dismissedGaps[key];
+    writeDb(db);
+    return true;
+  }
   function contractStaffingGaps() {
     const S2 = window.UFC_Store;
     if (!S2 || !S2.computeMonthsByPhase) return [];
@@ -1198,7 +1382,20 @@
         // Segments that ended before this month are history, not a staffing action.
         const future = segs.filter(sg => sg.end >= nowYm);
         if (!future.length) return;
-        out.push({
+        /* Judgement context, so "is this real?" can be answered on the row.
+           A rating-6 pursuit naming someone is not a staffing decision; a
+           rated-1 booked project is. The revenue leader is who to ask. */
+        let rating = null, lead = '';
+        try {
+          const lp = links.map(l => feeRecords().find(x => x.id === l.id)).filter(Boolean)
+            .sort((a, b) => (S2.ratingFor ? S2.ratingFor(a) : 9) - (S2.ratingFor ? S2.ratingFor(b) : 9))[0];
+          if (lp) {
+            rating = S2.ratingFor ? S2.ratingFor(lp) : null;
+            const pj = lp.project || {};
+            lead = (S2.leaderDisplay ? S2.leaderDisplay(pj.leadId || pj.lead) : (pj.lead || '')) || '';
+          }
+        } catch (err) {}
+        const row = {
           project: pn, client,
           open: !!e.open, roleTitle: e.roleLabel || [...e.roles][0] || 'Role',
           resource: e.name, roles: [...e.roles],
@@ -1206,9 +1403,13 @@
           personId: e.open ? null : (person ? person.id : personIdForName(e.name)),
           topUp: existing.length > 0,
           via: e.via,
+          rating, lead,
           segments: future,
           totalNeedFteMo: Math.round(future.reduce((s, sg) => s + sg.need * monthsBetween(sg.start, sg.end).length, 0)) / 100,
-        });
+        };
+        row.key = gapKey(row);
+        row.dismissed = dismissedGaps()[row.key] || null;
+        out.push(row);
       });
     };
 
@@ -1414,17 +1615,37 @@
       drop below the 100% line and when it lands. Always looks forward from
       "now", independent of whatever window the page happens to be showing. */
   function comingAvailable(opts) {
+    const o = opts || {};
+    /* PURSUITS ARE OUT by default. This report exists to start "who can take
+       new work" conversations, and unwon pursuit load makes people look busy
+       who are not actually committed. Callers must opt in explicitly. */
+    const gridOpts = Object.assign({}, o, { includePursuit: !!o.includePursuit });
+    /* The threshold is on capacity freed BELOW the 100% line, not on the raw
+       drop. Someone at 315% falling to 90% sheds 225 points on paper but only
+       frees 10 points of real capacity — they were over-committed, not
+       available. Reading the raw drop is what put a 315%-allocated person at
+       the top of a "coming available" list. */
+    const minFreedPct = o.minFreedPct == null ? 25 : o.minFreedPct;
     const nowYm = currentYM();
     const nextMs = []; { let [fy, fm] = nowYm.split('-').map(Number); for (let i = 0; i < 4; i++) { nextMs.push(fy + '-' + String(fm).padStart(2, '0')); fm++; if (fm > 12) { fm = 1; fy++; } } }
-    return bandwidthGrid(nextMs, opts).filter(r => !(r.person && r.person.nonBillable)).map(r => {
+    return bandwidthGrid(nextMs, gridOpts).filter(r => !(r.person && r.person.nonBillable)).map(r => {
       const cur = r.byMonth[nextMs[0]] || 0;
+      const capped = Math.min(cur, 100);
       let best = null;
-      nextMs.slice(1).forEach(m => { const v = r.byMonth[m] || 0; if (v < 100 && cur - v >= 25 && (!best || v < best.v)) best = { m, v }; });
+      nextMs.slice(1).forEach(m => {
+        const v = r.byMonth[m] || 0;
+        if (v < 100 && (capped - v) >= minFreedPct && (!best || v < best.v)) best = { m, v };
+      });
       if (!best) return null;
-      // freed = capacity that opens up BELOW the 100% line (loads over 100% free nothing until they cross it)
-      const freedH = Math.round((Math.min(cur, 100) - best.v) / 100 * capacityHours(r.person));
-      return freedH > 0 ? { person: r.person, cur, to: best.v, m: best.m, freedH } : null;
-    }).filter(Boolean).sort((a, b) => b.freedH - a.freedH);
+      const freedPct = capped - best.v;
+      const freedH = Math.round(freedPct / 100 * capacityHours(r.person));
+      return freedH > 0 ? { person: r.person, cur, to: best.v, m: best.m, freedH, freedPct,
+                            stillLoaded: cur > 100 } : null;
+    }).filter(Boolean)
+      /* Sorted by how AVAILABLE they end up — the person dropping to 20% is a
+         better answer to "who can take this?" than one dropping to 95% who
+         happens to have more raw hours. Hours freed breaks ties. */
+      .sort((a, b) => a.to - b.to || b.freedH - a.freedH);
   }
 
   /** People with meaningfully large non-client ("macro") time in the window —
@@ -1542,12 +1763,18 @@
       const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
       const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
       if (!inWin.has(ym)) return;
-      const rec = per[pid] || (per[pid] = { person: db.people[pid] || { id: pid, name: pid.replace(/^unmatched:/, '') }, hours: 0, total: 0, byProj: {} });
+      const rec = per[pid] || (per[pid] = { person: db.people[pid] || { id: pid, name: pid.replace(/^unmatched:/, '') }, hours: 0, total: 0, ptoHours: 0, byProj: {} });
       rec.total += h;
       if (!isMacroProject(proj)) return;
+      /* Time off is macro time but nobody should be flagged for taking it.
+         `hours` counts WORK-type macro only (BD, internal, admin); PTO is
+         tallied beside it so the detail still reconciles to the total. */
+      if (isTimeOffProject(proj)) { rec.ptoHours += h; rec.byProj[proj] = (rec.byProj[proj] || 0) + h; return; }
       rec.hours += h; rec.byProj[proj] = (rec.byProj[proj] || 0) + h;
     });
-    return Object.values(per).filter(r => r.hours > 0).map(r => ({ ...r, pct: r.total ? r.hours / r.total : 0 })).sort((a, b) => b.hours - a.hours);
+    return Object.values(per).filter(r => r.hours > 0 || r.ptoHours > 0)
+      .map(r => ({ ...r, pct: r.total ? r.hours / r.total : 0, ptoPct: r.total ? r.ptoHours / r.total : 0 }))
+      .sort((a, b) => b.hours - a.hours);
   }
 
   /* ---------- saved Clockify → roster mappings (map once, keeps forever;
@@ -1608,6 +1835,38 @@
       setFeeMapping(mp, id)                  → add id to the set
       setFeeMapping(mp, id, { remove: true }) → remove just that id
       setFeeMapping(mp, null)                → clear the whole set (revert to auto-match) */
+  /* ---------- freeze auto-matched fee links before a rename ----------
+     A matrix/Clockify project is joined to its fee record either by an
+     explicit pin (stored as the fee project's ID, rename-proof) or by an
+     automatic NAME match. Renaming the fee project silently breaks every
+     automatic link pointing at it: the hours stop landing against that
+     project and reappear as $0-revenue "loose" rows on Profitability, with
+     nothing anywhere saying why.
+
+     Call this with the fee project's id BEFORE its name changes. Every
+     matrix project that currently auto-resolves to it is written down as an
+     explicit pin, so the link survives the rename. Returns the names pinned,
+     so a caller can report them.
+
+     Deliberately does NOT touch matrix projects that already carry an
+     explicit mapping — those are somebody's decision and are already safe. */
+  function pinAutoLinksFor(feeProjectId) {
+    if (!feeProjectId) return [];
+    const db = readDb();
+    const feeMap = (db.mappings || {}).fee || {};
+    const pinned = [];
+    distinctProjects().forEach(pn => {
+      if (feeMap[nkey(pn)]) return;                       // already explicit
+      let hit = null;
+      try { hit = matchFeeProject(pn, ''); } catch (e) { return; }
+      if (!hit || hit.id !== feeProjectId) return;
+      if (hit.via === 'mapped') return;                   // belt and braces
+      setFeeMapping(pn, feeProjectId);
+      pinned.push(pn);
+    });
+    return pinned;
+  }
+
   function setFeeMapping(matrixProject, feeProjectId, opts) {
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
     db.mappings.fee = db.mappings.fee || {};
@@ -1840,7 +2099,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,

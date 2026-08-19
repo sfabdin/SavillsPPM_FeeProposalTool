@@ -370,6 +370,13 @@
         ? `<span class="pname-sub">${esc(pj.industry || '—')} · revised contract</span>`
         : `<span class="pname-sub">${esc(pj.industry || '—')}</span>`;
       return `<tr data-id="${p.id}">
+        ${quickEdit ? `
+        <td><input class="qe-in" data-qe="name" data-id="${p.id}" value="${esc(pj.name || '')}" placeholder="Project name"></td>
+        <td>
+          <input class="qe-in" data-qe="client" data-id="${p.id}" value="${esc(pj.client || '')}" placeholder="Client">
+          <input class="qe-in qe-sm" data-qe="location" data-id="${p.id}" value="${esc(pj.location || '')}" placeholder="Location">
+        </td>
+        <td><select class="qe-sel" data-qe="status" data-id="${p.id}">${STORE.STATUSES.map(x => `<option value="${esc(x)}" ${pj.status === x ? 'selected' : ''}>${esc(STORE.STATUS_LABELS[x] || x)}</option>`).join('')}</select></td>` : `
         <td>
           <div class="pname">${esc(pj.name || 'Untitled')}${nameSub}</div>
         </td>
@@ -377,7 +384,7 @@
           <div class="pclient">${esc(pj.client || '—')}</div>
           <div class="pclient-sub">${esc(pj.location || '')}</div>
         </td>
-        <td><span class="pill status-${statusKey}">${esc(statusLabel)}</span></td>
+        <td><span class="pill status-${statusKey}">${esc(statusLabel)}</span></td>`}
         ${quickEdit ? `
         <td><select class="qe-sel" data-qe="industry" data-id="${p.id}"><option value="">—</option>${STORE.INDUSTRIES.map(x => `<option ${pj.industry === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></td>
         <td><select class="qe-sel" data-qe="projectType" data-id="${p.id}"><option value="">—</option>${STORE.PROJECT_TYPES.map(t => `<option ${pj.projectType === t.name ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></td>
@@ -429,7 +436,18 @@
           pj.leadId = l ? l.id : '';
           pj.lead = l ? l.displayName : '';
         } else {
-          pj[sel.dataset.qe] = sel.value;
+          const val = String(sel.value == null ? '' : sel.value).trim();
+          /* A project with no name is unfindable everywhere else in the tool,
+             so refuse the blank rather than saving it and let the cell snap
+             back to what it was. */
+          if (sel.dataset.qe === 'name' && !val) {
+            sel.value = (p.project || {}).name || '';
+            sel.classList.remove('qe-saved');
+            alert('A project needs a name — the previous one has been put back.');
+            return;
+          }
+          if (val === String((p.project || {})[sel.dataset.qe] || '').trim()) return;   // no-op edit
+          pj[sel.dataset.qe] = val;
         }
         try {
           STORE.saveProject({ ...p, project: pj }, { baseUpdatedAt: p.updatedAt });

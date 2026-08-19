@@ -148,29 +148,6 @@
      default; expands (native <details>, same pattern as matchAudit()) into
      a scrollable gradient timeline covering everyone active in the window,
      not just those freeing up. */
-  function comingAvailableCard() {
-    const list = S.comingAvailable({ includePursuit: state.incPursuit });
-    if (!list.length) return '';
-    const nowYm = S.currentYM();
-    const nextMs = []; { let [fy, fm] = nowYm.split('-').map(Number); for (let i = 0; i < 4; i++) { nextMs.push(fy + '-' + String(fm).padStart(2, '0')); fm++; if (fm > 12) { fm = 1; fy++; } } }
-    const headline = list.slice(0, 8).map(f => `${esc(f.person.name)} (${esc(S.ymLabel(f.m))})`).join(' · ') + (list.length > 8 ? ` +${list.length - 8} more` : '');
-    const gridRows = S.bandwidthGrid(nextMs, { includePursuit: state.incPursuit }).filter(r => r.activeMonths > 0).sort((a, b) => b.peak - a.peak);
-    // gradient: light teal (low load) → red (critical) — lighter cells read as more headroom
-    const grad = (v) => {
-      if (!v) return 'background:#f5f4f1;color:#c9cdd3';
-      const t = Math.min(1, v / 150);
-      const r = Math.round(207 + (228 - 207) * t), g = Math.round(230 + (69 - 230) * t), b = Math.round(228 + (58 - 228) * t);
-      return `background:rgb(${r},${g},${b});color:${t > 0.55 ? '#fff' : 'var(--sav-navy)'}`;
-    };
-    return `<details class="ins-card" style="margin-bottom:16px">
-      <summary style="cursor:pointer;padding:12px 16px;font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy)">📉 Coming available — next 3 months <span class="note-txt" style="font-weight:400;font-family:var(--font-body)">· ${headline}</span></summary>
-      <div style="padding:0 0 12px;overflow-x:auto">
-        <table class="hm" style="font-size:11px"><thead><tr><th class="who" style="min-width:170px">Person</th>${nextMs.map(m => `<th>${esc(S.ymLabel(m))}</th>`).join('')}</tr></thead><tbody>
-        ${gridRows.map(r => `<tr><td class="who">${esc(r.person.name)}</td>${nextMs.map(m => { const v = Math.round(r.byMonth[m] || 0); return `<td><span class="cell" style="${grad(v)}">${v ? v : '·'}</span></td>`; }).join('')}</tr>`).join('')}
-        </tbody></table>
-      </div>
-    </details>`;
-  }
 
   /* ---------- ALLOCATIONS ---------- */
   /* ---------- Contract → Allocation bridge (lives on the Allocations tab —
@@ -201,13 +178,57 @@
     return idx;
   }
 
+  /* Same person, same project, overlapping months, two rows — the load charts
+     add both, so every over-allocation figure downstream is inflated until one
+     goes. Flag only: two concurrent roles CAN be legitimate, so a human picks
+     which row (if either) is wrong. */
+  function dupAllocSectionHtml() {
+    const dups = S.duplicateAllocations();
+    if (!dups.length) return '';
+    const n = dups.length;
+    return `<details id="dup-roll" style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid #C0392B;margin-bottom:14px">
+      <summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:11px 16px">
+        <span style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy)">⚠ Double-counted allocations</span>
+        <span class="mv-chip" style="background:#C0392B;color:#fff;font-weight:800">${n} person·project pair${n === 1 ? '' : 's'}</span>
+        <span class="grow"></span>
+        <span class="note-txt">click to review</span>
+      </summary>
+      <div style="padding:0 16px 12px">
+        <div class="note-txt" style="margin:0 0 8px">These people hold more than one allocation to the same project over the same months, so their load is counted twice. Two genuine concurrent roles are possible — nothing is removed automatically. Delete the row that shouldn't be there.</div>
+        ${dups.map(d => `<div style="border-bottom:1px dashed rgba(37,39,58,0.12);padding:8px 0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px">
+            <b>${esc(d.person.name)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(d.project)}</span>
+            <span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">${d.worstPct}% in ${esc(S.ymLabel(d.worstMonth))}</span>
+            ${d.identical ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Same window, same percentage — almost certainly one row saved twice">identical rows</span>' : ''}
+          </div>
+          <table class="dt" style="max-width:620px"><thead><tr><th>Window</th><th class="num">%</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>
+          ${d.rows.map(r => `<tr>
+            <td>${esc(S.ymLabel(r.start))}${r.end && r.end !== r.start ? ' → ' + esc(S.ymLabel(r.end)) : ''}</td>
+            <td class="num">${Math.round(parseFloat(r.pct) || 0)}%</td>
+            <td class="note-txt">${esc(r.status || '')}${r.type ? ' · ' + esc(r.type) : ''}</td>
+            <td class="note-txt">${esc((r.note || '').slice(0, 60))}</td>
+            <td><button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" data-dup-del="${esc(r.id)}">Delete this row</button></td>
+          </tr>`).join('')}
+          </tbody></table>
+        </div>`).join('')}
+      </div>
+    </details>`;
+  }
+
   function bridgeSectionHtml() {
+    /* NOTE: `gaps` stays the FULL cached list. Every data-bridge-* attribute
+       below carries an index into it, and the click handlers read
+       bridgeGapsCached()[i] — filtering this array would silently point every
+       Confirm button at the wrong row. Dismissed rows are skipped inside the
+       map instead, the same way inline top-ups are. */
     const gaps = bridgeGapsCached();
     if (!gaps.length) return '';
+    const dropped = gaps.filter(g => g.dismissed);
     const inline = new Set(Object.values(inlineTopUpIndex()));
-    if (gaps.every((g, i) => inline.has(i))) return '';
+    const isHidden = (g, i) => inline.has(i) || !!g.dismissed;
+    if (gaps.every(isHidden) && !dropped.length) return '';
     // ---- roll-up stats: the whole story while the card is collapsed ----
-    const shown = gaps.filter((g, i) => !inline.has(i));
+    const shown = gaps.filter((g, i) => !isHidden(g, i));
     const nOpen = shown.filter(g => g.open).length;
     const nNew = shown.filter(g => !g.open && g.isNew).length;
     const nLinked = shown.filter(g => !g.open && !g.isNew).length;
@@ -235,7 +256,7 @@
       <div style="padding:0 16px 12px">
       <div class="note-txt" style="margin:0 0 6px">Every under-covered contract role — named people AND open slots. Review the segments, adjust the name if it maps to someone already here (nicknames count — the link is remembered), then confirm. Nothing is created without your OK.</div>
       <datalist id="bridge-people">${rosterOptions}</datalist>
-      ${gaps.map((g, i) => inline.has(i) ? '' : `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
+      ${gaps.map((g, i) => isHidden(g, i) ? '' : `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
         <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
           <b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(g.project)}</span>
           ${g.open
@@ -246,6 +267,8 @@
           ${g.topUp ? `<span class="mv-chip" style="background:#e7eef0">${g.open ? 'partially covered by matching titles' : 'top-up — partial allocation exists'}</span>` : ''}
           ${g.via === 'direct' && !g.possibleDupFee ? '<span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">signed project — nobody staffed yet</span>' : ''}
           ${g.possibleDupFee ? `<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Two fee-tool records appear to describe this same work — check Projects Index and archive or merge the spare before staffing against it (its revenue may also double-count).">⚠ from fee record “${esc(g.possibleDupFee)}” — possible duplicate of the linked one</span>` : ''}
+          ${g.rating ? `<span class="mv-chip" style="background:${g.rating <= 1 ? '#e7f0ee' : g.rating <= 4 ? '#eef1f3' : '#f5f4f1'};color:${g.rating <= 1 ? '#0E7C7B' : g.rating <= 4 ? '#4a5560' : '#8a8f98'};font-weight:700" title="Projection rating of the linked fee project. 1 = booked, 2-4 = weighted pipeline, 5-7 = low likelihood — a rating 5-7 naming someone is rarely a staffing decision.">rating ${g.rating}</span>` : ''}
+          ${g.lead ? `<span class="mv-chip" style="background:#f4f2ef;color:#4a5560" title="Revenue leader on the linked fee project — who to ask whether this is real">${esc(g.lead)}</span>` : ''}
           <span class="note-txt">· ${esc(g.roles.join(', '))} · ${g.totalNeedFteMo} FTE-mo missing</span>
         </summary>
         <div style="padding:4px 4px 12px">
@@ -257,9 +280,26 @@
             <span class="note-txt" data-bridge-hint="${i}"></span>
           </div>
           ${!g.open && g.isNew ? `<div class="note-txt" style="margin-top:4px">Contract says “${esc(g.resource)}” — if that's a nickname or old spelling of someone already on the roster, type their roster name above and the mapping is saved for every future contract.</div>` : ''}
-          <button class="btn btn-primary" style="margin-top:10px;padding:8px 16px;font-size:12px" data-bridge-apply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}</button>
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" data-bridge-apply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}</button>
+            <span class="note-txt">or</span>
+            <input data-bridge-why="${esc(g.key)}" placeholder="Why not? e.g. pursuit died, never going to staff" style="padding:7px 10px;border:1px solid rgba(37,39,58,0.3);font-size:12px;min-width:250px">
+            <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" data-bridge-dismiss="${esc(g.key)}" title="Take this off the list without creating anything. Recorded with your name and reason, and reopenable from the dismissed roll-up.">✕ Not staffing this</button>
+          </div>
         </div>
       </details>`).join('')}
+      ${dropped.length ? `<details style="margin-top:10px;border-top:1px solid rgba(37,39,58,0.12);padding-top:8px">
+        <summary style="cursor:pointer;font-size:12px;color:var(--sav-steel)">${dropped.length} dismissed — not being staffed <span class="note-txt">· click to review or put back</span></summary>
+        <table class="dt" style="margin-top:6px"><thead><tr><th>Who / role</th><th>Project</th><th>Reason</th><th>By</th><th></th></tr></thead><tbody>
+        ${dropped.map(g => `<tr>
+          <td>${g.open ? 'Open: ' + esc(g.roleTitle) : esc(g.resource)}</td>
+          <td>${esc(g.project)}</td>
+          <td class="note-txt">${esc((g.dismissed && g.dismissed.reason) || '—')}</td>
+          <td class="note-txt">${esc((g.dismissed && g.dismissed.by) || '')}${g.dismissed && g.dismissed.at ? ' · ' + esc(String(g.dismissed.at).slice(0, 10)) : ''}</td>
+          <td><button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" data-bridge-restore="${esc(g.key)}">Put back</button></td>
+        </tr>`).join('')}
+        </tbody></table>
+      </details>` : ''}
       </div>
     </details>`;
   }
@@ -319,6 +359,32 @@
         if (per && !S.namesMatch(per.name, g.resource)) S.setPersonAlias(g.resource, personId);
       }
       toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${personName}`);
+      renderCounts(); renderAllocations();
+    });
+    $$('#p-allocations [data-dup-del]').forEach(b => b.onclick = () => {
+      const id = b.dataset.dupDel;
+      const all = S.listAllocations().find(a => a.id === id);
+      if (!all) return;
+      if (!confirm(`Delete this allocation?\n\n${all.personName || ''} · ${all.project}\n${S.ymLabel(all.start)}${all.end && all.end !== all.start ? ' – ' + S.ymLabel(all.end) : ''} at ${Math.round(parseFloat(all.pct) || 0)}%\n\nThe other row on this project stays.`)) return;
+      S.deleteAllocation(id);
+      toast('Allocation deleted.');
+      renderCounts(); renderAllocations();
+    });
+    /* Dismiss — a recorded judgement, not a delete. The row leaves the working
+       list and lands in the roll-up with who and why, reopenable any time. */
+    $$('#p-allocations [data-bridge-dismiss]').forEach(b => b.onclick = () => {
+      const key = b.dataset.bridgeDismiss;
+      const why = $(`#p-allocations [data-bridge-why="${CSS.escape(key)}"]`);
+      const reason = why ? why.value.trim() : '';
+      S.dismissGap(key, reason);
+      state._gapsKey = null;                       // force a rebuild of the cache
+      toast('Taken off the list. Reopen it any time from “dismissed” at the foot of this card.');
+      renderCounts(); renderAllocations();
+    });
+    $$('#p-allocations [data-bridge-restore]').forEach(b => b.onclick = () => {
+      S.restoreGap(b.dataset.bridgeRestore);
+      state._gapsKey = null;
+      toast('Back on the list.');
       renderCounts(); renderAllocations();
     });
     // Inline top-up chips — the same confirm-gated create, anchored on the
@@ -421,7 +487,7 @@
     });
     const table = list.length ? `<table class="dt"><thead><tr><th>Project</th><th>Client</th><th>Person</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note / decision</th><th></th></tr></thead><tbody>${body}</tbody></table>`
       : `<div class="empty">No allocations match. <a href="#" id="al-clear">Clear filters</a></div>`;
-    $('#p-allocations').innerHTML = bridgeSectionHtml() + leaveSectionHtml() + toolbar + table;
+    $('#p-allocations').innerHTML = dupAllocSectionHtml() + bridgeSectionHtml() + leaveSectionHtml() + toolbar + table;
     wireBridge();
     const la = $('#leave-add');
     if (la) la.onclick = () => openAllocModal(null, { title: 'Log a leave of absence', project: 'Leaves of Absence', client: 'Internal', pct: 100, note: 'Leave of absence' });
@@ -561,13 +627,38 @@
       });
       body += `<td>${projectCount}</td><td class="pk ${r.peak > 100 ? 'over' : ''}">${Math.round(r.peak)}%</td></tr>`;
       if (state.expandedRoster.has(r.person.id)) {
-        let pr = '';
-        inWin.slice().sort((a, b) => b.pct - a.pct).forEach(a => {
+        /* Jeff's structure from the Aug 13 review: the signed work totalled on
+           its own, the pursuits totalled on their own, then the combined line —
+           so "what are they actually committed to" and "what if it all lands"
+           are two separate readings rather than one blended number. */
+        const rowFor = (a) => {
           const isP = isPursuitAlloc(a);
           const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
           const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-          pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
-        });
+          return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+        };
+        const sumRow = (label, list, style, title) => {
+          const cells = ms.map(m => {
+            const v = list.reduce((t, a) => t + (S.allocActiveIn(a, m) ? (parseFloat(a.pct) || 0) : 0), 0);
+            return `<td class="dcell" style="${style}">${v ? Math.round(v) + '%' : '·'}</td>`;
+          }).join('');
+          return `<tr class="drawer-tr"${title ? ` title="${esc(title)}"` : ''}><td class="who dproj" style="${style}">${esc(label)}</td>${cells}<td class="dcell"></td><td class="dcell"></td></tr>`;
+        };
+        const byPct = (a, b) => b.pct - a.pct;
+        const firm = inWin.filter(a => !isPursuitAlloc(a)).sort(byPct);
+        const purs = inWin.filter(a => isPursuitAlloc(a)).sort(byPct);
+        const SUB = 'font-weight:700;background:#f4f6f7';
+        const ALL = 'font-weight:800;background:#eceff1;border-top:1px solid rgba(37,39,58,0.25)';
+        let pr = '';
+        pr += firm.map(rowFor).join('');
+        if (firm.length && purs.length) pr += sumRow('Subtotal · signed work', firm, SUB, 'Confirmed commitments only — what they are actually on the hook for');
+        if (purs.length) {
+          pr += purs.map(rowFor).join('');
+          pr += sumRow('Subtotal · pursuits', purs, SUB, 'Unsigned work — only lands if these convert');
+          pr += sumRow('Total · if every pursuit lands', inWin, ALL, 'Signed plus pursuit — the worst case for their capacity');
+        } else if (firm.length > 1) {
+          pr += sumRow('Total', firm, ALL, '');
+        }
         if (!pr) pr = `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         body += pr;
       }
@@ -582,7 +673,7 @@
       <span><span class="sw sw-stripe"></span>includes pursuit hours — not yet signed</span>
       <span style="margin-left:auto">Click a name for their allocations, click an allocation row to edit it.</span>
     </div>`;
-    $('#p-people').innerHTML = kpis + comingAvailableCard() + toolbar + table + legend;
+    $('#p-people').innerHTML = kpis + toolbar + table + legend;
     $('#ppl-search').oninput = (e) => { state.pplSearch = e.target.value; renderPeople(); const el = $('#ppl-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
     $('#ppl-expand-toggle').onclick = () => {
       if (allExpanded) state.expandedRoster.clear();
@@ -1315,8 +1406,8 @@
       const capH = msPast.length * S.capacityHours(person);
       return { person, peak: r.peak, avg: r.avg, actH, planH, capH, burnPct: capH ? actH / capH : 0, overMonths: ms.filter(m => (r.byMonth[m] || 0) > 100).length };
     });
-    const overext = ppl.filter(p => p.peak > 100 || p.burnPct > 1.05).sort((a, b) => (b.burnPct + b.peak / 100) - (a.burnPct + a.peak / 100)).slice(0, 5);
-    const headroom = ppl.filter(p => p.peak > 0 && p.peak <= 85 && p.burnPct < 0.85 && !(p.person && p.person.nonBillable)).sort((a, b) => a.avg - b.avg).slice(0, 5);
+    const overext = ppl.filter(p => p.peak > 100 || p.burnPct > 1.05).sort((a, b) => (b.burnPct + b.peak / 100) - (a.burnPct + a.peak / 100));
+    const headroom = ppl.filter(p => p.peak > 0 && p.peak <= 85 && p.burnPct < 0.85 && !(p.person && p.person.nonBillable)).sort((a, b) => a.avg - b.avg);
 
     // ---- role heat: where over-plan hours concentrate, by title ----
     const roleHeat = {};
@@ -1341,7 +1432,11 @@
     gaps.sort((a, b) => b.gap - a.gap);
 
     // ---- bandwidth coming available in the next 3 months ----
-    const freeing = S.comingAvailable({ includePursuit: state.incPursuit }).slice(0, 5);
+    /* Pursuits deliberately NOT passed through: this report answers "who can
+       take new work", and unsigned pursuit load makes people look committed
+       when they are not. No top-N cap either — Jeff asked for everyone who
+       frees 25%+, not the five biggest movers. */
+    const freeing = S.comingAvailable({ minFreedPct: 25 });
 
     // ---- pursuit exposure: how much of forward load is unsigned work ----
     const fwdMs = ms.filter(m => m >= nowYm);
@@ -1371,28 +1466,33 @@
     const macroTime = S.substantialMacroTime(msPast);
     const boh = macroTime.boh;
     const overheadPpl = macroTime.overhead || [];
-    const macro = macroTime.flagged.slice(0, 5);
+    const macro = macroTime.flagged;
 
     const fH = (n) => fmtH(Math.round(n * 10) / 10);
     const noAct = hasAct ? '' : `<div class="note-txt" style="margin-bottom:14px;color:#8a6d00">No Clockify actuals loaded — burn-based insights are empty. Pull actuals on the Compare tab first.</div>`;
     const projTable = (list, dir) => list.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">③ Actual</th><th class="num">① Plan</th><th class="num">② Contract</th><th class="num">${dir}</th></tr></thead><tbody>${list.map(p => `<tr><td class="pname">${esc(p.project)}<div class="vmini">${esc(p.client || '')}</div></td><td class="num"><b>${fH(p.act)}</b></td><td class="num">${fH(p.plan)}</td><td class="num">${p.contract != null ? fH(p.contract) : '—'}</td><td class="num ${dir === 'Over' ? 'var-over' : 'var-under'}">${p.varPlan >= 0 ? '+' : ''}${fH(p.varPlan)}${p.pctPlan != null ? `<div class="vmini">${Math.round(p.pctPlan * 100)}% of plan</div>` : '<div class="vmini">no plan</div>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nothing here — clean.</div>';
 
-    const gapsShown = gaps.slice(0, 5), trendsShown = trends.slice(0, 5);
+    const gapsShown = gaps, trendsShown = trends.slice(0, 5);
     const more = (n, total) => total > n ? `<div class="vmini" style="padding:6px 2px 0">+${total - n} more</div>` : '';
 
 
     $('#p-insights').innerHTML = `${noAct}<div class="ins-grid">
       <div class="ins-card"><h3>🔥 Burning over plan <span>· ${esc(S.ymLabel(msPast[0] || ms[0]))}–${esc(S.ymLabel(msPast[msPast.length - 1] || ms[ms.length - 1]))}</span></h3>${projTable(hot, 'Over')}</div>
       <div class="ins-card"><h3>🧊 Under-served <span>· scope risk or stale plan</span></h3>${projTable(cold, 'Under')}</div>
-      <div class="ins-card"><h3>⚠️ Most overextended <span>· load + burn vs capacity</span></h3>${overext.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Peak</th><th class="num">Months &gt;100%</th><th class="num">Burn</th></tr></thead><tbody>${overext.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num ${p.peak > 100 ? 'var-over' : ''}">${Math.round(p.peak)}%</td><td class="num">${p.overMonths}</td><td class="num ${p.burnPct > 1.05 ? 'var-over' : ''}">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nobody over the line.</div>'}</div>
+      <div class="ins-card"><h3>⚠️ Most overextended <span>· load + burn vs capacity</span></h3>${overext.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Person</th><th class="num">Peak</th><th class="num">Months &gt;100%</th><th class="num">Burn</th></tr></thead><tbody>${overext.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num ${p.peak > 100 ? 'var-over' : ''}">${Math.round(p.peak)}%</td><td class="num">${p.overMonths}</td><td class="num ${p.burnPct > 1.05 ? 'var-over' : ''}">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty" style="border:0">Nobody over the line.</div>'}</div>
       <div class="ins-card"><h3>🎯 Role heat <span>· over-plan hours by title${hireSignal ? ' · <b>' + hireSignal + '</b>' : ''}</span></h3>${roles.length ? `<table class="dt"><tbody>${roles.map(r => `<tr><td style="width:38%" class="pname">${esc(r.title)}</td><td><div class="heat-bar"><i style="width:${Math.round(r.hrs / maxRole * 100)}%;background:${r.hrs / maxRole > 0.6 ? '#e4453a' : '#e8b563'}"></i></div></td><td class="num" style="width:70px"><b>+${fH(r.hrs)}</b>h</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nothing to attribute yet.</div>'}</div>
-      <div class="ins-card"><h3>🕳️ Contract coverage gaps <span>· &lt;60% staffed</span></h3>${gapsShown.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Contract</th><th class="num">Gap</th></tr></thead><tbody>${gapsShown.map(g => `<tr><td class="pname">${esc(g.project)}</td><td class="num">${fH(g.contract)}</td><td class="num var-over">${fH(g.gap)}</td></tr>`).join('')}</tbody></table>${more(5, gaps.length)}` : '<div class="empty" style="border:0">Every contract is ≥60% staffed.</div>'}</div>
-      <div class="ins-card"><h3>🟢 Headroom <span>· first call before hiring</span></h3>${headroom.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Avg load</th><th class="num">Burn</th></tr></thead><tbody>${headroom.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.avg)}%</td><td class="num">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No one with meaningful headroom.</div>'}</div>
+      <div class="ins-card"><h3>🕳️ Contract coverage gaps <span>· &lt;60% staffed</span></h3>${gapsShown.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Project</th><th class="num">Contract</th><th class="num">Gap</th></tr></thead><tbody>${gapsShown.map(g => `<tr><td class="pname">${esc(g.project)}</td><td class="num">${fH(g.contract)}</td><td class="num var-over">${fH(g.gap)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty" style="border:0">Every contract is ≥60% staffed.</div>'}</div>
+      <div class="ins-card"><h3>🟢 Headroom <span>· first call before hiring</span></h3>${headroom.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Person</th><th class="num">Avg load</th><th class="num">Burn</th></tr></thead><tbody>${headroom.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.avg)}%</td><td class="num">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty" style="border:0">No one with meaningful headroom.</div>'}</div>
       <div class="ins-card"><h3>🎯 Pursuit exposure <span>· forward load on unsigned work</span></h3>${pursuitPpl.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Firm</th><th class="num">+ Pursuit</th><th class="num">If landed</th></tr></thead><tbody>${pursuitPpl.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.firm)}%</td><td class="num" style="color:#8a6d00;font-weight:700">+${Math.round(p.pur)}</td><td class="num ${p.all > 100 ? 'var-over' : ''}">${Math.round(p.all)}%</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No pursuit allocations in the forward window.</div>'}</div>
       <div class="ins-card"><h3>📈 Burn trend <span>· last 3 months, ±30%+ swings</span></h3>${trendsShown.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Trend</th></tr></thead><tbody>${trendsShown.map(t => `<tr><td class="pname">${esc(t.project)}</td><td class="num ${t.delta > 0 ? 'var-over' : 'var-under'}">${t.delta > 0 ? '▲' : '▼'} ${t.pct > 0 ? '+' : ''}${Math.round(t.pct * 100)}%</td></tr>`).join('')}</tbody></table>${more(5, trends.length)}` : `<div class="empty" style="border:0">${hasAct ? (msPast.length >= 3 ? 'No big swings.' : 'Widen the window to ≥3 past months.') : 'Needs Clockify actuals.'}</div>`}</div>
-      <div class="ins-card"><h3>📉 Coming available <span>· next 3 months</span></h3>${freeing.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th>When</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}</td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td>${esc(S.ymLabel(f.m))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No meaningful load drops.</div>'}</div>
+      <div class="ins-card"><h3>📉 Coming available <span>· next 3 months · frees 25%+ · pursuits excluded</span></h3>${freeing.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th class="num">Frees</th><th>When</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}${f.stillLoaded ? ' <span class="badge pursuit" title="Still over 100% today — the drop brings them back toward the line rather than opening a full slot">over-allocated now</span>' : ''}</td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td class="num">${Math.round(f.freedPct)}%</td><td>${esc(S.ymLabel(f.m))}</td></tr>`).join('')}</tbody></table></div><div class="note-txt" style="padding:6px 16px 2px;font-size:11px">${freeing.length} ${freeing.length === 1 ? 'person frees' : 'people free'} 25% or more of their capacity. Sorted by where they land, so the most available person is first.</div>` : '<div class="empty" style="border:0">Nobody frees 25% or more in the next three months.</div>'}</div>
+      ${(() => {
+        const noAlloc = S.loggingWithoutAllocation(msPast);
+        if (!noAlloc.length) return '';
+        return `<div class="ins-card"><h3>\u26A0 Logging time, not allocated <span>· real hours with nothing planned against them</span></h3><div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th>Where</th></tr></thead><tbody>${noAlloc.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="note-txt">${esc(r.projects.slice(0, 2).map(p => p.name).join(', '))}${r.projects.length > 2 ? ' +' + (r.projects.length - 2) : ''}</td></tr>`).join('')}</tbody></table></div><div class="note-txt" style="padding:6px 16px 10px;font-size:11px">These people are on the roster and their hours are being costed, but they hold no allocation in this window — so plan-vs-actual compares real burn against zero and their load reads as free. <a href="#" data-goto-tab="allocations">Add an allocation</a> and they join the plan.</div></div>`;
+      })()}
       ${(() => { const lv = S.leaveStatus().filter(l => l.status !== 'past'); if (!lv.length) return ''; return `<div class="ins-card"><h3>🌴 Leaves of absence <span>· returns need a plan 1–2 months out</span></h3><table class="dt"><thead><tr><th>Person</th><th>Out</th><th>Back</th><th></th></tr></thead><tbody>${lv.map(l => `<tr><td class="pname">${esc(l.person.name)}</td><td>${esc(S.ymLabel(l.start))} – ${esc(S.ymLabel(l.end))}</td><td>${l.status === 'out' ? esc(S.ymLabel(S.ymAdd(l.end, 1))) : `<span class="vmini">starts ${esc(S.ymLabel(l.start))}</span>`}</td><td>${l.returningSoon ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">🔔 plan their staffing</span>' : (l.startingSoon ? '<span class="mv-chip" style="background:#efe6f7;color:#6b3fa0">reassign their book</span>' : '')}</td></tr>`).join('')}</tbody></table></div>`; })()}
-      <div class="ins-card"><h3>🏢 Substantial internal time <span>· &gt;40h · overhead &amp; BOH excluded</span></h3>${(overheadPpl.length || boh.length) ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="display:flex;flex-wrap:wrap;gap:6px">${overheadPpl.map(r => `<span class="mv-chip" style="background:#e7eef0;color:#4a5560" title="Marked non-billable in Mapping — internal time is their job, this is expected">${esc(r.person.name)} · overhead</span>`).join('')}${boh.map(r => `<span class="mv-chip" style="background:#e7eef0" title="≥90% internal — looks like dedicated back-of-house. If that's their actual job, mark them non-billable in Mapping and they'll stop appearing here">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th class="num">%</th></tr></thead><tbody>${macro.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b></td><td class="num">${Math.round(r.pct * 100)}%</td></tr>`).join('')}</tbody></table>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40h.' : 'Needs Clockify actuals.'}</div>`}<div class="note-txt" style="padding:6px 16px 10px;font-size:11px">Pure-overhead staff (admin, finance, BD…) shouldn't be here at all — <a href="#" data-goto-tab="mapping">mark them non-billable in Mapping</a> and this card skips them.</div></div>
+      <div class="ins-card"><h3>🏢 Substantial internal time <span>· &gt;40h · overhead, BOH &amp; PTO excluded</span></h3>${(overheadPpl.length || boh.length) ? `<div style="padding:8px 16px;border-bottom:1px dashed rgba(37,39,58,0.12);background:#faf9f7"><div style="display:flex;flex-wrap:wrap;gap:6px">${overheadPpl.map(r => `<span class="mv-chip" style="background:#e7eef0;color:#4a5560" title="Marked non-billable in Mapping — internal time is their job, this is expected">${esc(r.person.name)} · overhead</span>`).join('')}${boh.map(r => `<span class="mv-chip" style="background:#e7eef0" title="≥90% internal — looks like dedicated back-of-house. If that's their actual job, mark them non-billable in Mapping and they'll stop appearing here">${esc(r.person.name)} · ${Math.round(r.pct * 100)}%</span>`).join('')}</div></div>` : ''}${macro.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Person</th><th class="num">Hrs</th><th class="num">%</th></tr></thead><tbody>${macro.map(r => `<tr><td class="pname">${esc(r.person.name)}</td><td class="num var-over"><b>${fH(r.hours)}</b>${r.ptoHours > 0 ? `<div class="vmini" style="color:#5a6070" title="Time off, counted separately — it is not part of the flag">+${fH(r.ptoHours)} PTO</div>` : ''}</td><td class="num">${Math.round(r.pct * 100)}%</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty" style="border:0">${hasAct ? 'Nobody over 40h.' : 'Needs Clockify actuals.'}</div>`}<div class="note-txt" style="padding:6px 16px 10px;font-size:11px">Counts work-type internal time only — PTO, vacation and holidays are shown beside the figure but never trigger the flag. Pure-overhead staff (admin, finance, BD…) shouldn't be here at all — <a href="#" data-goto-tab="mapping">mark them non-billable in Mapping</a> and this card skips them.</div></div>
     </div>`;
     $$('#p-insights [data-goto-tab]').forEach(a => a.onclick = (e) => { e.preventDefault(); const t = document.querySelector(`#tabs .tab[data-tab="${a.dataset.gotoTab}"]`); if (t) t.click(); });
   }
