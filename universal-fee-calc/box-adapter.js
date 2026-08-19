@@ -225,8 +225,14 @@
     clearToken();
     try { Store.setRealIdentity(null); } catch (e) {}
     try { Store.clearImpersonation(); } catch (e) {}
-    // Clear the local project cache so no fee data lingers on a shared machine.
-    try { localStorage.removeItem('savills-ppm-fee-db:v1'); } catch (e) {}
+    /* Clear EVERY local cache so nothing lingers on a shared machine. This
+       used to drop only the project book, leaving the staffing matrix, the
+       Revenue Studio store and the reconciliation ledger behind — and now the
+       rate grid too, which is precisely why they are all listed here rather
+       than one being singled out. */
+    ['savills-ppm-fee-db:v1', 'savills-ppm-staff-db:v1', 'savills-ppm-studio-db:v1',
+     'savills-ppm-revenue-db:v1', RATES_CACHE_KEY, 'ufc_box_etags_v1'
+    ].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
   }
 
   /* Exchange the ?code from the redirect for a token. Call this from
@@ -358,50 +364,19 @@
     return res.json();   // { login: 'esobel@savills.us', name: 'Emily Sobel' }
   }
 
-  /* ---------- persisted etags: skip a download that cannot have changed ----------
-     Box hands back an etag per file. The adapter already read it, but kept it
-     in a MODULE-LEVEL variable — which is reset on every page load, so across
-     a navigation it was always null and the full file was re-downloaded every
-     single time. Persisting it means a page-to-page move costs one ~2KB
-     metadata call instead of re-pulling the whole book.
-
-     The skip is only safe when we still hold a local cache to fall back on;
-     with no cache there is nothing to display, so we download regardless. */
-  const ETAG_KEY = 'ufc_box_etags_v1';
-  function readEtags() { try { return JSON.parse(localStorage.getItem(ETAG_KEY)) || {}; } catch (e) { return {}; } }
-  function rememberEtag(fileId, tag) {
-    if (!fileId) return;
-    const m = readEtags();
-    if (tag) m[fileId] = tag; else delete m[fileId];
-    try { localStorage.setItem(ETAG_KEY, JSON.stringify(m)); } catch (e) {}
-  }
-  async function remoteEtag(fileId) {
-    try {
-      const res = await boxFetch('/files/' + fileId + '?fields=etag');
-      if (!res.ok) return null;
-      const j = await res.json();
-      return j.etag || null;
-    } catch (e) { return null; }
-  }
-  function hasLocalCache(key) { try { return !!localStorage.getItem(key); } catch (e) { return false; } }
-  /** True when the remote file is byte-identical to what this browser last
-      downloaded AND we still have that copy. Records the etag either way. */
-  async function unchangedSince(fileId, cacheKey) {
-    if (!fileId) return false;
-    const tag = await remoteEtag(fileId);
-    const known = readEtags()[fileId];
-    const same = !!(tag && known && tag === known && hasLocalCache(cacheKey));
-    if (tag && !same) rememberEtag(fileId, tag);
-    return same;
-  }
-
   // Download projects.json + capture its etag for concurrency.
   let _etag = null;
   let _remoteCount = 0;   // project count last seen in Box — drives the shrink guard
   async function pullRemote() {
-    const meta = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '?fields=etag');
-    if (meta.ok) { const m = await meta.json(); _etag = m.etag; }
+    /* One round trip, not two. This used to ask for the etag and THEN download,
+       which made sense when the file was assumed to be large — but production
+       measurement says projects.json is ~73KB and a Box request costs 200-900ms
+       regardless of size. At that ratio an extra round trip to maybe avoid a
+       73KB transfer is a straight loss. The etag comes off the content
+       response instead; if Box omits it, _etag stays null and the periodic
+       refresh simply pulls, which is the old safe behaviour. */
     const res = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '/content');
+    try { const tag = res.headers.get('etag'); if (tag) _etag = tag.replace(/^W\//, '').replace(/"/g, ''); } catch (e) {}
     if (res.status === 404) return Store.defaultDb();
     if (!res.ok) throw new Error('pull failed: ' + res.status);
     let db;
@@ -412,12 +387,35 @@
 
   // Download the confidential rate grid (rates.json) from Box.
   // Never cached to localStorage — it must not linger on a signed-out machine.
+  /* ---------- local rate-grid cache ----------
+     The rate card is not in the shipped code and is fetched from Box on every
+     load, which put an ~800ms round trip on the critical path of every single
+     page. Caching it locally is what lets a page render from cache instead of
+     waiting for Box.
+
+     On exposure: FETCHING it is still gated by Box auth — no token, no
+     download. What changes is that a copy rests on disk in the browser
+     profile. That is the same posture the project book already has (every
+     negotiated fee and effective rate is cached in localStorage today), and
+     logout() wipes it along with everything else, so nothing outlives the
+     session on a shared machine. */
+  const RATES_CACHE_KEY = 'savills-ppm-rates-cache:v1';
+  function readRatesCache() {
+    try { const j = JSON.parse(localStorage.getItem(RATES_CACHE_KEY)); return (j && j.grid) ? j : null; }
+    catch (e) { return null; }
+  }
+  function writeRatesCache(payload) {
+    try { if (payload && payload.grid) localStorage.setItem(RATES_CACHE_KEY, JSON.stringify(payload)); } catch (e) {}
+  }
+
   async function pullRates() {
     const id = BOX_CONFIG.ratesFileId;
     if (!id || /PASTE/.test(id)) throw new Error('rates file id not configured');
     const res = await boxFetch('/files/' + id + '/content');
     if (!res.ok) throw new Error('rates pull failed: ' + res.status);
-    return JSON.parse(await res.text());
+    const payload = JSON.parse(await res.text());
+    writeRatesCache(payload);
+    return payload;
   }
 
   // Upload a new version of projects.json, guarded by If-Match (etag).
@@ -985,6 +983,49 @@
   }
 
   // ---- Boot: auth → pull → identity → attach push ----
+  /* The other half of the fast path. The page is already on screen from
+     cache; this pulls the real thing and folds it in. Every page in the app
+     already listens for ufc:remote-updated and redraws, so a figure that
+     moved since the last visit corrects itself a second later without the
+     user waiting for it up front.
+
+     Failures here are deliberately quiet: the page is usable, the cache is
+     what it is, and the sync indicator carries the state. */
+  async function refreshInBackground(inflight) {
+    const FEE_CACHE = 'savills-ppm-fee-db:v1';
+    const p = inflight || { projects: pullRemote(), rates: pullRates(), studio: pullStudio(), revenue: pullRevenue() };
+    const [projectsR, ratesR, studioR, revenueR] = await Promise.allSettled([
+      p.projects, p.rates, p.studio, p.revenue,
+    ]);
+    let changed = false;
+    if (projectsR.status === 'fulfilled' && projectsR.value) {
+      try {
+        const local = JSON.parse(localStorage.getItem(FEE_CACHE) || 'null');
+        const merged = local ? mergeDb(projectsR.value, local) : projectsR.value;
+        Store.hydrateFromRemote(merged);
+        changed = true;
+      } catch (e) { console.warn('background project merge failed', e); }
+    }
+    if (ratesR.status === 'fulfilled' && ratesR.value) {
+      try { if (window.RATES_CATALOG && window.RATES_CATALOG.hydrate) window.RATES_CATALOG.hydrate(ratesR.value); }
+      catch (e) { console.warn('background rates hydrate failed', e); }
+    }
+    if (studioR.status === 'fulfilled') {
+      try { Store.hydrateStudioFromRemote(studioR.value); } catch (e) {}
+    }
+    Store.attachStudioRemote(scheduleStudioPush);
+    if (revenueR.status === 'fulfilled') {
+      try { Store.hydrateRevenueFromRemote(mergeRevenueDb(revenueR.value, Store.readRevenue())); } catch (e) {}
+    }
+    Store.attachRevenueRemote(scheduleRevenuePush);
+    weeklyBackup();
+    emitSync(projectsR.status === 'fulfilled' ? 'synced' : 'error',
+             projectsR.status === 'fulfilled' ? '' : 'Could not refresh from Box — showing the last copy');
+    if (changed) {
+      try { document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true, background: true } })); } catch (e) {}
+    }
+  }
+
   async function boot() {
     if (!BOX_CONFIG.enabled) { emitSync('local', ''); return { ok: true, backend: 'local' }; }
     Perf.phase('boot start');
@@ -1003,35 +1044,70 @@
        allSettled, not all: a failing studio or revenue pull must not take the
        whole boot down, exactly as the individual try/catches used to ensure. */
     const FEE_CACHE = 'savills-ppm-fee-db:v1';
-    const [meR, projectsR, ratesR, studioR, revenueR] = await Promise.allSettled([
-      getIdentity(),
-      (async () => await unchangedSince(BOX_CONFIG.dataFileId, FEE_CACHE) ? null : pullRemote())(),
-      pullRates(),
-      pullStudio(),
-      pullRevenue(),
+
+    /* ---------- FAST PATH: render from cache, refresh behind ----------
+       Measurement says every Box content call costs ~800ms regardless of
+       size, that the whole dataset is well under 100KB, and that
+       parse/merge/hydrate is 0ms. So the entire wait is round trips — and
+       waiting for them before showing anything is the actual slowness.
+
+       IDENTITY IS STILL AWAITED. It decides what the access wall lets
+       through, so rendering before it resolves could show one person the
+       previous user's book on a shared machine. One ~200ms call is a price
+       worth paying; the other ~800ms of waiting is not.
+
+       After that: if this browser already holds a project cache AND a rate
+       grid, hydrate from them, let the page render, and refresh from Box in
+       the background — pages already listen for ufc:remote-updated and
+       redraw when it lands. */
+    /* Start every pull NOW, before awaiting identity. On the fast path these
+       in-flight requests simply BECOME the background refresh — nothing is
+       wasted and nothing is fetched twice. On a cold boot they overlap the
+       identity call instead of queueing behind it. */
+    const inflight = {
+      projects: pullRemote(), rates: pullRates(), studio: pullStudio(), revenue: pullRevenue(),
+    };
+    // Attach catch handlers now so a rejection can never surface as an
+    // unhandled promise rejection while we are awaiting something else.
+    Object.keys(inflight).forEach(k => { inflight[k].catch(() => {}); });
+
+    let me = null;
+    try { me = await getIdentity(); Store.setRealIdentity({ username: me.login, name: me.name }); }
+    catch (e) { console.warn('identity failed', e); }
+    Perf.phase('identity');
+
+    const cachedRates = readRatesCache();
+    if (cachedRates && localStorage.getItem(FEE_CACHE)) {
+      try {
+        if (window.RATES_CATALOG && window.RATES_CATALOG.hydrate) window.RATES_CATALOG.hydrate(cachedRates);
+        /* The store reads localStorage directly, so the project book is
+           already live — there is nothing to hydrate for it here. */
+        Store.attachRemote(schedulePush);
+        Perf.phase('served from cache');
+        Perf.finish();
+        emitSync('syncing', 'Refreshing from Box…');
+        refreshInBackground(inflight);               // deliberately not awaited
+        return { ok: true, backend: 'box', fromCache: true };
+      } catch (e) {
+        console.warn('cache fast-path failed, falling back to a full boot', e);
+      }
+    }
+
+    const [projectsR, ratesR, studioR, revenueR] = await Promise.allSettled([
+      inflight.projects, inflight.rates, inflight.studio, inflight.revenue,
     ]);
     Perf.phase('all pulls settled (parallel)');
 
-    // Identity FIRST — it decides what the access wall lets through.
-    if (meR.status === 'fulfilled' && meR.value) {
-      Store.setRealIdentity({ username: meR.value.login, name: meR.value.name });
-    } else { console.warn('identity failed', meR.reason); }
-    Perf.phase('identity');
 
     // projects.json — null means the etag matched, so the local cache already
     // holds this exact content and there is nothing to merge.
     try {
       if (projectsR.status === 'rejected') throw projectsR.reason;
-      if (projectsR.value) {
-        const remote = projectsR.value;
-        const local = JSON.parse(localStorage.getItem(FEE_CACHE) || 'null');
-        const merged = local ? mergeDb(remote, local) : remote;
-        Store.hydrateFromRemote(merged);
-        rememberEtag(BOX_CONFIG.dataFileId, _etag);
-        Perf.phase('projects.json merged + hydrated');
-      } else {
-        Perf.phase('projects.json unchanged (skipped download)');
-      }
+      const remote = projectsR.value;
+      const local = JSON.parse(localStorage.getItem(FEE_CACHE) || 'null');
+      const merged = local ? mergeDb(remote, local) : remote;
+      Store.hydrateFromRemote(merged);
+      Perf.phase('projects.json merged + hydrated');
       emitSync('synced', '');
     } catch (e) {
       emitSync('error', 'Could not load from Box — showing local cache');
