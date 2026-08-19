@@ -292,7 +292,11 @@
     }
     return {
       enabled: true,
-      req(path, ms, bytes, status) { reqs.push({ label: label(path), ms: Math.round(ms), bytes: bytes || 0, status, at: Math.round(now()) }); },
+      req(path, ms, bytes, status) {
+        const rec = { label: label(path), ms: Math.round(ms), bytes: bytes || 0, status, at: Math.round(now()) };
+        reqs.push(rec);
+        return rec;
+      },
       phase(l) { phases.push({ label: l, at: Math.round(now()) }); },
       finish() {
         bootMs = Math.round(now());
@@ -302,30 +306,54 @@
       totals() {
         const netMs = reqs.reduce((a, r) => a + r.ms, 0);
         const bytes = reqs.reduce((a, r) => a + r.bytes, 0);
-        return { bootMs, requests: reqs.length, networkMs: Math.round(netMs), bytes,
-                 /* Serial boot means request time ~= boot time. The gap is
-                    parse + merge + hydrate; a big gap points at the data
-                    layer, a small one points at the network. */
-                 nonNetworkMs: Math.max(0, bootMs - Math.round(netMs)) };
+        /* Requests run in PARALLEL now, so summing them says nothing about how
+           long boot actually waited — the old build subtracted that sum, which
+           on a parallel boot went negative, clamped to zero, and reported
+           "parse/merge/hydrate 0 ms" no matter what the data layer was doing.
+           (With nothing recorded yet it did the opposite and blamed the whole
+           boot on parsing.)
+
+           What we want is the wall-clock stretch with at least one request in
+           flight: merge the [start, end] intervals and total the union. Time
+           outside that union is boot doing its own work — parsing, merging,
+           hydrating — and is the number worth chasing. */
+        const spans = reqs.map(r => [r.at - r.ms, r.at]).sort((a, b) => a[0] - b[0]);
+        let busy = 0, from = null, to = null;
+        for (const [s, e] of spans) {
+          if (from === null) { from = s; to = e; }
+          else if (s <= to) { to = Math.max(to, e); }        // overlaps — extend
+          else { busy += to - from; from = s; to = e; }      // gap — bank it
+        }
+        if (from !== null) busy += to - from;
+        return { bootMs, requests: reqs.length, networkMs: Math.round(netMs),
+                 waitingMs: Math.round(busy), bytes,
+                 appMs: Math.max(0, bootMs - Math.round(busy)) };
       },
       data() { return { reqs: reqs.slice(), phases: phases.slice(), totals: this.totals() }; },
       report() {
         const t = this.totals();
         const kb = (n) => (n / 1024).toFixed(0) + ' KB';
-        console.log('%c⏱ Boot: ' + t.bootMs + ' ms  ·  ' + t.requests + ' Box requests  ·  '
-          + t.networkMs + ' ms waiting on Box  ·  ' + kb(t.bytes) + ' downloaded',
+        console.log('%c⏱ Boot: ' + t.bootMs + ' ms  ·  ' + t.waitingMs + ' ms waiting on Box  ·  '
+          + t.appMs + ' ms app work  ·  ' + t.requests + ' request'
+          + (t.requests === 1 ? '' : 's') + '  ·  ' + kb(t.bytes),
           'font-weight:700;color:#0E7C7B');
         if (console.table) console.table(reqs.map(r => ({ request: r.label, ms: r.ms, KB: +(r.bytes / 1024).toFixed(1), status: r.status, 'at ms': r.at })));
         if (console.table) console.table(phases);
-        console.log('Non-network time (parse / merge / hydrate): ' + t.nonNetworkMs + ' ms');
+        console.log('"Waiting on Box" is wall-clock time with at least one request open, '
+          + 'not the sum of ' + t.networkMs + ' ms across ' + t.requests + ' parallel requests.');
+        console.log('NOTE: boot returns as soon as the page can render — the background refresh '
+          + 'keeps going, so anything that finishes later is not in the table above. '
+          + 'Call UFC_Perf.report() again in a second to see it.');
       },
       overlay() {
         const t = this.totals();
         const el = document.createElement('div');
         el.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:2147483647;background:#25273A;color:#fff;font:12px/1.5 ui-monospace,Menlo,monospace;padding:12px 14px;max-width:420px;box-shadow:0 4px 18px rgba(0,0,0,.3)';
         el.innerHTML = '<div style="font-weight:700;color:#FFDF00;margin-bottom:6px">Boot ' + t.bootMs + ' ms</div>'
-          + '<div>' + t.requests + ' requests · ' + t.networkMs + ' ms on Box · ' + (t.bytes / 1024).toFixed(0) + ' KB</div>'
-          + '<div style="opacity:.7">parse/merge/hydrate ' + t.nonNetworkMs + ' ms</div>'
+          + '<div>' + t.waitingMs + ' ms waiting on Box · ' + t.appMs + ' ms app work</div>'
+          + '<div style="opacity:.7">' + t.requests + ' request' + (t.requests === 1 ? '' : 's')
+          + ' · ' + (t.bytes / 1024).toFixed(0) + ' KB</div>'
+          + '<div style="opacity:.55;margin-top:4px">background refresh may still be running</div>'
           + '<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,.2);padding-top:6px">'
           + reqs.map(r => r.label + '  <b>' + r.ms + 'ms</b>' + (r.bytes ? '  ' + (r.bytes / 1024).toFixed(0) + 'KB' : '')).join('<br>')
           + '</div>';
@@ -347,12 +375,17 @@
        call and a multi-megabyte download look identical until the body is
        drained, and the download is usually the story. Cloning keeps the
        response usable by the caller. */
+    /* Record the moment the RESPONSE lands, not when its body finishes being
+       read. Waiting for arrayBuffer() meant a request that completed during
+       boot was often logged AFTER the summary printed — which is why the
+       overlay could claim "0 requests" on a boot that plainly made one. The
+       byte count is patched into the same record if it arrives later. */
     try {
+      const ms = (performance.now ? performance.now() : Date.now()) - t;
       const len = Number(res.headers.get('content-length')) || 0;
-      if (len) { Perf.req(path, (performance.now ? performance.now() : Date.now()) - t, len, res.status); }
-      else {
-        const c = res.clone();
-        c.arrayBuffer().then(b => Perf.req(path, (performance.now ? performance.now() : Date.now()) - t, b.byteLength, res.status)).catch(() => {});
+      const rec = Perf.req(path, ms, len, res.status);
+      if (!len && rec) {
+        res.clone().arrayBuffer().then(bufr => { rec.bytes = bufr.byteLength; }).catch(() => {});
       }
     } catch (e) {}
     return res;
