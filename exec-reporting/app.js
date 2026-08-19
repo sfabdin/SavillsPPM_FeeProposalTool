@@ -173,6 +173,7 @@
     { key: 'rates', label: 'Rates' },
     { key: 'locations', label: 'Locations' },
     { key: 'clockify', label: 'Delivery & Effort' },
+    { key: 'revdiff', label: 'Revenue Diff' },
     { key: 'confidence', label: 'Confidence', internal: true },
     { key: 'glossary', label: 'Definitions', internal: true },
   ];
@@ -213,6 +214,7 @@
     else if (activeTab === 'clockify') body = tabClockify();
     else if (activeTab === 'rates') body = tabRates();
     else if (activeTab === 'locations') body = tabLocations();
+    else if (activeTab === 'revdiff') body = tabRevDiff();
     else if (activeTab === 'confidence') body = tabConfidence();
     else if (activeTab === 'glossary') body = tabGlossary();
     else body = tabStub(activeTab);
@@ -234,6 +236,185 @@
     if (!DATA.ratesMapped || !DATA.ratesMapped.ok) return null;
     return (DATA.tab4 = CORE.tab4Data(DATA.ratesMapped, DATA.mapped, delivery(), DATA.overview.year));
   };
+
+  /* ---------------- TAB · Revenue Diff ----------------
+     What the forecast said then, against what it says now.
+
+     Every other tab reads the CURRENT book. This one reads dated copies of
+     it, so the question it answers is different in kind: not "what do we
+     expect?" but "what changed, and which deals moved it?".
+
+     Its data lives in history.json, which is the only store the app does
+     not pull at boot — it grows forever and one tab reads it, so it loads
+     when you open this tab and not before. */
+  const RD = { loaded: false, loading: false, error: '', from: '', to: '', year: '', busy: '' };
+
+  /** Load history.json once per page, on first open of this tab. */
+  function rdEnsureLoaded() {
+    if (RD.loaded || RD.loading) return;
+    if (!window.UFC_Box || !window.UFC_Box.pullHistory) { RD.loaded = true; return; }
+    RD.loading = true;
+    window.UFC_Box.pullHistory()
+      .then(() => { RD.loaded = true; RD.loading = false; if (activeTab === 'revdiff') renderTab(); })
+      .catch((e) => { RD.loading = false; RD.loaded = true; RD.error = (e && e.message) || String(e); if (activeTab === 'revdiff') renderTab(); });
+  }
+
+  const rdSnaps = () => (window.UFC_Store && window.UFC_Store.listBookSnapshots) ? window.UFC_Store.listBookSnapshots() : [];
+
+  function tabRevDiff() {
+    rdEnsureLoaded();
+    const S = window.UFC_Store;
+    const cap = 'What it is: the forward book as it stood on two different dates, compared. The rating split says whether revenue moved because deals converted or because the number was rewritten; the movers list names the projects behind it. Where it comes from: dated snapshots of the project book — the weekly backups in Box for history, and a capture at each cycle milestone going forward. Read with care: booked (rating 1) figures are frozen at their contract, so those comparisons are exact. Unbooked pursuits re-price through today\'s rate grid, so movement in ratings 2-4 mixes real change with rate drift.';
+
+    if (RD.loading) return panel('Revenue Diff', { kind: 'live', text: 'LOADING' }, '', cap,
+      '<div class="note">Reading the snapshot history from Box…</div>');
+    if (RD.error) return panel('Revenue Diff', { kind: 'demo', text: 'UNAVAILABLE' }, '', cap,
+      '<div class="note">Could not read history.json from Box: ' + esc(RD.error) + '</div>');
+
+    const snaps = rdSnaps();
+    const controls = rdSetupBar(snaps);
+
+    if (snaps.length < 2) {
+      return panel('Revenue Diff', { kind: 'demo', text: snaps.length ? 'ONE SNAPSHOT' : 'NO HISTORY' }, '', cap,
+        '<div class="note">' + (snaps.length
+          ? 'One snapshot so far (' + esc(snaps[0].id) + '). A comparison needs two — take another at the next cycle milestone, or backfill from the dated backups in Box.'
+          : 'No snapshots yet. Backfill from the dated projects-backup files in Box to recover what history still exists, then capture at each cycle milestone from here on.') +
+        '</div>' + controls);
+    }
+
+    // Default to the widest comparison available: oldest → newest.
+    const ids = snaps.map((s) => s.id);
+    if (!RD.to || ids.indexOf(RD.to) < 0) RD.to = ids[0];                      // newest first
+    if (!RD.from || ids.indexOf(RD.from) < 0) RD.from = ids[ids.length - 1];
+    const a = S.getBookSnapshot(RD.from), b = S.getBookSnapshot(RD.to);
+
+    // Month window: a single year, or everything both snapshots know about.
+    const allMonths = [...new Set([...Object.keys(a.totals || {}), ...Object.keys(b.totals || {})])].sort();
+    const years = [...new Set(allMonths.map((m) => m.slice(0, 4)))].sort();
+    if (RD.year && years.indexOf(RD.year) < 0) RD.year = '';
+    const win = RD.year ? allMonths.filter((m) => m.slice(0, 4) === RD.year) : allMonths;
+    const d = S.diffBookSnapshots(a, b, win);
+
+    const picker =
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin:8px 0 14px">' +
+      rdSelect('rd-from', 'Compare from', snaps, RD.from) +
+      rdSelect('rd-to', 'to', snaps, RD.to) +
+      '<label style="font-size:11px;color:var(--mut)">Window<br><select id="rd-year" style="font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--hairline)">' +
+      '<option value="">All months</option>' +
+      years.map((y) => '<option value="' + y + '"' + (y === RD.year ? ' selected' : '') + '>' + y + '</option>').join('') +
+      '</select></label></div>';
+
+    const headline =
+      '<div class="kpirow">' +
+      rdKpi(esc(a.asOf), fm(d.from)) +
+      rdKpi(esc(b.asOf), fm(d.to)) +
+      rdKpi('Movement', (d.delta >= 0 ? '↑ ' : '↓ ') + fm(Math.abs(d.delta))) +
+      '</div>';
+
+    // Rating movement — the point of the whole tab.
+    const rrows = d.ratings.filter((r) => r.from || r.to).map((r) =>
+      '<tr><td>R' + r.rating + ' · ' + esc(r.label) + '</td>' +
+      '<td class="num">' + fm(r.from) + '</td><td class="num">' + fm(r.to) + '</td>' +
+      '<td class="num">' + (r.delta ? arrowCell(r.delta) : '<span style="color:var(--mut)">—</span>') + '</td></tr>').join('');
+    const ratingTable =
+      '<table class="vtable"><thead><tr><th>Rating</th><th class="num">' + esc(a.asOf) + '</th>' +
+      '<th class="num">' + esc(b.asOf) + '</th><th class="num">Movement</th></tr></thead><tbody>' + rrows +
+      '<tr style="font-weight:700;border-top:2px solid var(--hairline)"><td>Total</td><td class="num">' + fm(d.from) +
+      '</td><td class="num">' + fm(d.to) + '</td><td class="num">' + arrowCell(d.delta) + '</td></tr></tbody></table>';
+
+    // Movers — 25 is enough to explain a total; the rest is noise.
+    const movers = d.projects.slice(0, 25);
+    const mrows = movers.map((m) => {
+      const tag = m.added ? '<span class="dflag live">NEW</span>'
+        : m.removed ? '<span class="dflag demo">GONE</span>'
+        : m.rerated ? '<span class="dflag demo">R' + m.fromRating + '→R' + m.toRating + '</span>' : '';
+      return '<tr><td><a href="#" data-project="' + esc(m.id) + '" title="Open this deal\'s box score">' + esc(m.name) + '</a> ' + tag + '</td>' +
+        '<td>' + esc(m.client) + '</td><td class="num">' + fm(m.from) + '</td><td class="num">' + fm(m.to) + '</td>' +
+        '<td class="num">' + (m.delta ? arrowCell(m.delta) : '<span style="color:var(--mut)">—</span>') + '</td></tr>';
+    }).join('');
+    const moverTable = movers.length
+      ? '<table class="vtable"><thead><tr><th>Project</th><th>Client</th><th class="num">' + esc(a.asOf) +
+        '</th><th class="num">' + esc(b.asOf) + '</th><th class="num">Movement</th></tr></thead><tbody>' + mrows + '</tbody></table>' +
+        (d.projects.length > movers.length ? '<div class="note">' + (d.projects.length - movers.length) + ' smaller movements not shown.</div>' : '')
+      : '<div class="note">No project changed between these two snapshots.</div>';
+
+    const scopeNote = 'Comparing ' + esc(a.asOf) + ' (' + a.projects + ' projects) with ' + esc(b.asOf) +
+      ' (' + b.projects + ' projects)' + (RD.year ? ', ' + RD.year + ' only' : ', all months') + '.';
+
+    return panel('Revenue Diff · what the book said then and now', { kind: 'live', text: 'LIVE' }, esc(scopeNote), cap,
+      picker + headline + ratingTable +
+      '<h4 style="margin:18px 0 6px;font-size:13px">What moved it</h4>' + moverTable) + controls;
+  }
+
+  function rdKpi(label, value) {
+    return '<div class="kpi"><div class="lbl">' + label + '</div><div class="val">' + value + '</div></div>';
+  }
+  function rdSelect(id, label, snaps, sel) {
+    return '<label style="font-size:11px;color:var(--mut)">' + esc(label) + '<br><select id="' + id +
+      '" style="font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--hairline);max-width:280px">' +
+      snaps.map((s) => '<option value="' + esc(s.id) + '"' + (s.id === sel ? ' selected' : '') + '>' +
+        esc(s.asOf + (s.label ? ' · ' + s.label : '') + (s.source === 'backup' ? ' (backup)' : '')) + '</option>').join('') +
+      '</select></label>';
+  }
+
+  /** The maintenance zone: take a snapshot now, or recover the ones that
+      only exist as dated backups in Box. Kept below the report because it is
+      a once-in-a-while action, not something to read. */
+  function rdSetupBar(snaps) {
+    const S = window.UFC_Store;
+    const canWrite = !!(S && S.isAdmin && S.isAdmin(S.getCurrentUser()));
+    if (!canWrite) return '';
+    const rows = snaps.slice(0, 12).map((s) =>
+      '<tr><td>' + esc(s.asOf) + '</td><td>' + esc(s.label || '') + '</td>' +
+      '<td>' + esc(s.source === 'backup' ? 'from backup' : 'milestone') + '</td>' +
+      '<td class="num">' + s.projects + '</td>' +
+      '<td class="num">' + fm(Object.keys(s.totals || {}).reduce((t, k) => t + s.totals[k], 0)) + '</td>' +
+      '<td><a href="#" data-rd-del="' + esc(s.id) + '" style="color:var(--mut)">remove</a></td></tr>').join('');
+    return panel('Snapshots', { kind: 'live', text: 'ADMIN' }, RD.busy ? esc(RD.busy) : '',
+      'Capture writes today\'s book as a milestone snapshot. Backfill reads the dated projects-backup files already in Box and derives a snapshot from each — those backups are the only record of what the forecast said before snapshots existed, so this is a one-time recovery of history that would otherwise be lost. Re-running it is safe: a snapshot is keyed by its date and overwrites rather than duplicating.',
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin:6px 0 12px">' +
+      '<label style="font-size:11px;color:var(--mut)">Milestone<br><select id="rd-label" style="font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--hairline)">' +
+      (S.FLASH_LABELS || []).map((l) => '<option value="' + esc(l) + '">' + esc(l) + '</option>').join('') +
+      '</select></label>' +
+      '<button id="rd-capture" ' + (RD.busy ? 'disabled ' : '') + 'style="font:inherit;font-size:12px;border:1px solid var(--hairline);background:#fff;padding:6px 12px;cursor:pointer">Capture today\'s book</button>' +
+      '<button id="rd-backfill" ' + (RD.busy ? 'disabled ' : '') + 'style="font:inherit;font-size:12px;border:1px solid var(--hairline);background:#fff;padding:6px 12px;cursor:pointer">Backfill from Box backups</button>' +
+      '</div>' +
+      (snaps.length ? '<table class="vtable"><thead><tr><th>As of</th><th>Label</th><th>Source</th><th class="num">Projects</th><th class="num">Book</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : ''));
+  }
+
+  /** Derive a snapshot from each dated backup in Box. Human-triggered, never
+      automatic — it reads a dozen multi-hundred-KB files. */
+  async function rdBackfill() {
+    const S = window.UFC_Store;
+    const B = window.UFC_Box;
+    if (!B || !B.listBackups) { alert('Box is not connected in this session.'); return; }
+    const files = await B.listBackups();
+    if (!files.length) { RD.busy = ''; alert('No dated backup files found in the Box folder.'); renderTab(); return; }
+    let made = 0, failed = 0;
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      RD.busy = 'Reading ' + f.name + ' (' + (i + 1) + ' of ' + files.length + ')…';
+      renderTab();
+      try {
+        const book = await B.readBackup(f.id);
+        const body = S.snapshotBook(book, window.RATES_CATALOG);
+        S.putBookSnapshot(Object.assign({
+          id: f.date, asOf: f.date, cycle: f.date.slice(0, 7),
+          label: '', source: 'backup', sourceFile: f.name,
+          takenAt: new Date().toISOString(), takenBy: 'backfill',
+        }, body));
+        made++;
+      } catch (e) { console.warn('backfill failed for ' + f.name, e); failed++; }
+    }
+    RD.busy = 'Saving…';
+    renderTab();
+    try { if (B.flushHistory) await B.flushHistory(); } catch (e) { console.warn('history flush failed', e); }
+    RD.busy = '';
+    RD.from = ''; RD.to = '';
+    renderTab();
+    alert('Backfill complete: ' + made + ' snapshot' + (made === 1 ? '' : 's') + ' recovered' +
+      (failed ? ', ' + failed + ' file' + (failed === 1 ? '' : 's') + ' could not be read (see the console)' : '') + '.');
+  }
 
   function tabStub(key) {
     const t = TABS.find((x) => x.key === key);
@@ -1310,6 +1491,40 @@
     host.querySelectorAll('[data-export]').forEach((b) => b.addEventListener('click', () => {
       if (b.dataset.export === 'pdf') window.print();
       else exportTab(activeTab).catch((e) => alert('Export failed: ' + (e && e.message)));
+    }));
+    // Revenue Diff
+    ['rd-from', 'rd-to', 'rd-year'].forEach((id) => {
+      const el = $('#' + id, host);
+      if (el) el.addEventListener('change', () => { RD[id.slice(3)] = el.value; renderTab(); });
+    });
+    const rdCap = $('#rd-capture', host);
+    if (rdCap) rdCap.addEventListener('click', async () => {
+      const S = window.UFC_Store;
+      const label = ($('#rd-label', host) || {}).value || '';
+      const today = new Date().toISOString().slice(0, 10);
+      const existing = S.getBookSnapshot(today + (label ? ' · ' + label : ''));
+      if (existing && !confirm('A "' + label + '" snapshot already exists for today. Replace it with the current book?')) return;
+      RD.busy = 'Capturing…'; renderTab();
+      try {
+        S.captureBookSnapshot(label, window.RATES_CATALOG);
+        if (window.UFC_Box && window.UFC_Box.flushHistory) await window.UFC_Box.flushHistory();
+        RD.busy = ''; RD.from = ''; RD.to = ''; renderTab();
+      } catch (e) { RD.busy = ''; renderTab(); alert('Could not capture: ' + (e && e.message)); }
+    });
+    const rdBf = $('#rd-backfill', host);
+    if (rdBf) rdBf.addEventListener('click', async () => {
+      if (!confirm('Read every dated backup in Box and derive a snapshot from each?\n\nThis downloads each file once and can take a minute. Existing snapshots for the same dates are replaced.')) return;
+      RD.busy = 'Listing backups…'; renderTab();
+      try { await rdBackfill(); }
+      catch (e) { RD.busy = ''; renderTab(); alert('Backfill failed: ' + (e && e.message)); }
+    });
+    host.querySelectorAll('[data-rd-del]').forEach((a) => a.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      const id = a.dataset.rdDel;
+      if (!confirm('Remove the snapshot taken ' + id + '? This cannot be undone from here.')) return;
+      window.UFC_Store.deleteBookSnapshot(id);
+      if (window.UFC_Box && window.UFC_Box.flushHistory) { try { await window.UFC_Box.flushHistory(); } catch (e) {} }
+      RD.from = ''; RD.to = ''; renderTab();
     }));
     host.querySelectorAll('[data-locfilter]').forEach((s) => s.addEventListener('change', () => {
       LOCFILTER[s.dataset.locfilter] = s.value;

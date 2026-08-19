@@ -1380,6 +1380,108 @@
     });
   })();
 
+  /* ============ REVENUE DIFF · BOOK SNAPSHOTS ============
+     A snapshot is only worth anything if it measures the book it was
+     handed. The tests that matter are the ones proving it never quietly
+     reads the LIVE store instead — that failure mode would look like a
+     working feature reporting confident nonsense. */
+  (function () {
+    const mkP = (id, rating, ym, amt) => ({
+      id, project: { name: id, client: 'C', status: 'submitted', rating },
+      financials: { byMonth: [{ ym, net: amt, broker: 0, passCost: 0, passClient: 0 }] },
+      timeline: {}, phases: [], groups: [], roles: [], assumptions: {},
+    });
+
+    test('RevDiff', 'a snapshot is built from the book it is GIVEN, not the live store', () => {
+      // Nothing here was ever saved. If snapshotBook reached into readDb()
+      // it would return the suite's projects instead of these two.
+      const book = [mkP('a', 1, '2026-03', 1000), mkP('b', 4, '2026-03', 500)];
+      const s = S.snapshotBook(book, null);
+      return eq(s.projects, 2, 'saw ' + s.projects + ' projects') &&
+             eq(s.totals['2026-03'], 1500, 'March total');
+    });
+
+    test('RevDiff', 'revenue lands in the bucket for its rating', () => {
+      const s = S.snapshotBook([mkP('a', 1, '2026-03', 1000), mkP('b', 4, '2026-03', 500)], null);
+      return eq(s.byRating[1]['2026-03'], 1000, 'R1') && eq(s.byRating[4]['2026-03'], 500, 'R4');
+    });
+
+    test('RevDiff', 'by-rating always sums to the month total', () => {
+      const s = S.snapshotBook([mkP('a', 1, '2026-03', 1000), mkP('b', 4, '2026-03', 500), mkP('c', 4, '2026-04', 250)], null);
+      let bad = '';
+      Object.keys(s.totals).forEach(ym => {
+        let t = 0;
+        Object.keys(s.byRating).forEach(r => { t += s.byRating[r][ym] || 0; });
+        if (t !== s.totals[ym]) bad += ym + ' ';
+      });
+      return eq(bad, '', 'months that disagree: ' + bad);
+    });
+
+    test('RevDiff', 'a change order is folded into its parent, never counted as its own row', () => {
+      const co = mkP('co1', 1, '2026-03', 400);
+      co.changeOrder = { parentId: 'a', coNumber: 1 };
+      const s = S.snapshotBook([mkP('a', 1, '2026-03', 1000), co], null);
+      return eq(s.projects, 1, 'rows (the CO must not be one)');
+    });
+
+    test('RevDiff', 'a deleted record is left out of the snapshot', () => {
+      const dead = mkP('z', 1, '2026-03', 999);
+      dead.project.deletedAt = '2026-02-01T00:00:00Z';
+      const s = S.snapshotBook([mkP('a', 1, '2026-03', 1000), dead], null);
+      return eq(s.projects, 1, 'rows') && eq(s.totals['2026-03'], 1000, 'the tombstone must not add revenue');
+    });
+
+    test('RevDiff', 'one malformed record costs only itself, not the whole snapshot', () => {
+      // An old backup is the ONLY copy of that day — a single bad record
+      // must never take the rest of the book down with it.
+      const broken = { id: 'bad', project: { name: 'bad', rating: 2 }, financials: { byMonth: 'not-an-array' } };
+      Object.defineProperty(broken, 'assumptions', { get() { throw new Error('boom'); } });
+      const s = S.snapshotBook([mkP('a', 1, '2026-03', 1000), broken], null);
+      return eq(s.projects, 1, 'good rows kept') && eq(s.skipped, 1, 'skipped count');
+    });
+
+    test('RevDiff', 'the diff reports movement per rating and names the movers', () => {
+      const a = Object.assign({ id: 'A', asOf: '2026-06-01' }, S.snapshotBook([mkP('p1', 4, '2026-03', 1000)], null));
+      const b = Object.assign({ id: 'B', asOf: '2026-07-01' }, S.snapshotBook([mkP('p1', 1, '2026-03', 1200)], null));
+      const d = S.diffBookSnapshots(a, b);
+      const r1 = d.ratings.find(r => r.rating === 1), r4 = d.ratings.find(r => r.rating === 4);
+      const mover = d.projects.find(p => p.id === 'p1');
+      return eq(d.delta, 200, 'total movement') &&
+             eq(r4.delta, -1000, 'R4 empties') && eq(r1.delta, 1200, 'R1 fills') &&
+             eq(mover.rerated, true, 'flagged as re-rated') &&
+             eq(mover.fromRating, 4, 'rating it moved from') &&
+             eq(mover.toRating, 1, 'rating it moved to');
+    });
+
+    test('RevDiff', 'projects that appeared or vanished between snapshots are called out', () => {
+      const a = Object.assign({ id: 'A', asOf: '2026-06-01' }, S.snapshotBook([mkP('gone', 2, '2026-03', 100)], null));
+      const b = Object.assign({ id: 'B', asOf: '2026-07-01' }, S.snapshotBook([mkP('new', 2, '2026-03', 300)], null));
+      const d = S.diffBookSnapshots(a, b);
+      const gone = d.projects.find(p => p.id === 'gone'), fresh = d.projects.find(p => p.id === 'new');
+      return eq(gone.removed, true, 'removed flag') && eq(fresh.added, true, 'added flag');
+    });
+
+    test('RevDiff', 'the month window narrows the comparison', () => {
+      const a = Object.assign({ id: 'A', asOf: '2026-06-01' }, S.snapshotBook([mkP('p1', 2, '2026-03', 100), mkP('p2', 2, '2027-03', 900)], null));
+      const b = Object.assign({ id: 'B', asOf: '2026-07-01' }, S.snapshotBook([mkP('p1', 2, '2026-03', 400), mkP('p2', 2, '2027-03', 900)], null));
+      const all = S.diffBookSnapshots(a, b);
+      const only26 = S.diffBookSnapshots(a, b, ['2026-03']);
+      return eq(all.from, 1000, 'unwindowed from') && eq(only26.from, 100, 'windowed to 2026-03 only') &&
+             eq(only26.delta, 300, 'windowed movement');
+    });
+
+    test('RevDiff', 'history merges by id — a teammate\'s snapshots union in, newer capture wins', () => {
+      const remote = { schemaVersion: 1, snapshots: {
+        '2026-05-01': { id: '2026-05-01', projects: 1, takenAt: '2026-05-01T00:00:00Z' },
+        '2026-06-01': { id: '2026-06-01', projects: 111, takenAt: '2026-05-30T00:00:00Z' } } };
+      const local = { schemaVersion: 1, snapshots: {
+        '2026-06-01': { id: '2026-06-01', projects: 222, takenAt: '2026-06-01T00:00:00Z' } } };
+      const m = S.mergeHistory(remote, local);
+      return eq(Object.keys(m.snapshots).sort().join(','), '2026-05-01,2026-06-01', 'union of ids') &&
+             eq(m.snapshots['2026-06-01'].projects, 222, 'the newer capture survives');
+    });
+  })();
+
   /* ---- render ---- */
   const pass = results.filter(r => r.ok).length;
   const fail = results.length - pass;

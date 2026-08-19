@@ -231,7 +231,7 @@
        rate grid too, which is precisely why they are all listed here rather
        than one being singled out. */
     ['savills-ppm-fee-db:v1', 'savills-ppm-staff-db:v1', 'savills-ppm-studio-db:v1',
-     'savills-ppm-revenue-db:v1', RATES_CACHE_KEY, 'ufc_box_etags_v1'
+     'savills-ppm-revenue-db:v1', 'savills-ppm-history-db:v1', RATES_CACHE_KEY, 'ufc_box_etags_v1'
     ].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
   }
 
@@ -967,6 +967,130 @@
     const merged = mergeRevenueDb(remote, Store.readRevenue());
     Store.hydrateRevenueFromRemote(merged);
     return true;
+  };
+
+  /* ---- Revenue Diff history (history.json) — LAZY BY DESIGN ---------------
+     The one file the app never pulls on boot.
+
+     Every other store is on the critical path because some page needs it to
+     draw. This one is read by a single tab in Executive Reporting, it grows
+     forever on purpose, and it is the only store whose size is unbounded —
+     so putting it in boot would mean every page in the app paid, every load,
+     for data almost nobody is looking at. Call Box.pullHistory() when the
+     Revenue Diff tab opens; nothing else touches it.
+
+     Self-configuring by name, same as revenue.json: no Box setup, and every
+     admin lands on the same file. ---- */
+  let _histEtag = null, _histId = null;
+  async function resolveHistoryFileId() {
+    if (_histId) return _histId;
+    try { const c = localStorage.getItem('ufc_history_file_id'); if (c) return (_histId = c); } catch (e) {}
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    if (res.ok) {
+      const j = await res.json();
+      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === 'history.json');
+      if (hit) { _histId = hit.id; try { localStorage.setItem('ufc_history_file_id', hit.id); } catch (e) {} return hit.id; }
+    }
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'history.json', parent: { id: BOX_CONFIG.folderId } }));
+    form.append('file', new Blob([JSON.stringify({ schemaVersion: 1, snapshots: {} })], { type: 'application/json' }), 'history.json');
+    const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+    if (up.status === 409) {
+      try { const j = await up.json(); const cid = j.context_info && j.context_info.conflicts && j.context_info.conflicts.id; if (cid) { _histId = cid; try { localStorage.setItem('ufc_history_file_id', cid); } catch (e) {} return cid; } } catch (e) {}
+      throw new Error('history.json create conflict — reload to retry');
+    }
+    if (!up.ok) throw new Error('could not create history.json: HTTP ' + up.status);
+    const j = await up.json(); const nid = j.entries && j.entries[0] && j.entries[0].id;
+    if (!nid) throw new Error('history.json create returned no id');
+    _histId = nid; try { localStorage.setItem('ufc_history_file_id', nid); } catch (e) {}
+    return nid;
+  }
+  const EMPTY_HIST = () => ({ schemaVersion: 1, snapshots: {} });
+  async function pullHistory() {
+    const id = await resolveHistoryFileId();
+    if (!id) return EMPTY_HIST();
+    const res = await boxFetch('/files/' + id + '/content');
+    if (res.status === 404) return EMPTY_HIST();
+    if (!res.ok) throw new Error('history pull failed: ' + res.status);
+    _histEtag = res.headers.get('etag') || _histEtag;
+    const txt = await res.text();
+    if (!txt.trim()) return EMPTY_HIST();
+    const parsed = JSON.parse(txt);
+    parsed.snapshots = parsed.snapshots || {};
+    return parsed;
+  }
+  async function uploadHistory(h, depth) {
+    const id = await resolveHistoryFileId();
+    if (!id) return;
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'history.json' }));
+    form.append('file', new Blob([JSON.stringify(h)], { type: 'application/json' }), 'history.json');
+    const res = await fetch('https://upload.box.com/api/2.0/files/' + id + '/content', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, ...(_histEtag ? { 'If-Match': _histEtag } : {}) },
+      body: form,
+    });
+    if (res.status === 412) {
+      /* A teammate wrote first. Snapshots are immutable once taken, so the
+         merge is a plain union by id — no field-level conflict to resolve. */
+      if ((depth || 0) >= 2) throw new Error('history push failed: repeated conflicts');
+      const remote = await pullHistory();
+      const merged = Store.mergeHistory(remote, h);
+      Store.hydrateHistoryFromRemote(merged);
+      return uploadHistory(merged, (depth || 0) + 1);
+    }
+    if (!res.ok) throw new Error('history upload failed: ' + res.status);
+    const j = await res.json(); if (j.entries && j.entries[0]) _histEtag = j.entries[0].etag;
+  }
+  let _histTimer = null, _histPending = null;
+  function scheduleHistoryPush(h) {
+    _histPending = h;
+    clearTimeout(_histTimer);
+    _histTimer = setTimeout(historyPushNow, BOX_CONFIG.pushDebounceMs);
+  }
+  async function historyPushNow() {
+    if (!_histPending) return;
+    const tok = await ensureToken(); if (!tok) return;
+    const h = _histPending; _histPending = null;
+    try { await uploadHistory(h); } catch (e) { _histPending = h; console.warn('history push failed', e); }
+  }
+  /** Load history.json into the local store and start mirroring writes back.
+      Idempotent — the Revenue Diff tab calls it every time it opens. */
+  Box.pullHistory = async function () {
+    const remote = await pullHistory();
+    const merged = Store.mergeHistory(remote, Store.readHistory());
+    Store.hydrateHistoryFromRemote(merged);
+    Store.attachHistoryRemote(scheduleHistoryPush);
+    return merged;
+  };
+  /** Flush any debounced history write immediately — the backfill writes a
+      lot at once and shouldn't rely on the tab staying open. */
+  Box.flushHistory = async function () { clearTimeout(_histTimer); await historyPushNow(); };
+
+  /* ---- Reading the dated backups ------------------------------------------
+     These are ordinary Box copies of projects.json, and until now nothing
+     read them back. For Revenue Diff they are the raw material: the only
+     record of what the forecast said before today. ---- */
+  /** Dated backups, oldest first: [{ id, name, date }]. */
+  Box.listBackups = async function () {
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name,size&limit=1000');
+    if (!res.ok) throw new Error('could not list the backup folder: ' + res.status);
+    const j = await res.json();
+    return (j.entries || [])
+      .filter(e => e.type === 'file' && e.name.indexOf(BACKUP_PREFIX) === 0 && /\.json$/.test(e.name))
+      .map(e => ({ id: e.id, name: e.name, size: e.size || 0,
+                   date: e.name.slice(BACKUP_PREFIX.length, BACKUP_PREFIX.length + 10) }))
+      .filter(e => /^\d{4}-\d{2}-\d{2}$/.test(e.date))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  };
+  /** The parsed project book out of one backup file. */
+  Box.readBackup = async function (fileId) {
+    const res = await boxFetch('/files/' + fileId + '/content');
+    if (!res.ok) throw new Error('could not read backup ' + fileId + ': ' + res.status);
+    const parsed = JSON.parse(await res.text());
+    return parsed && parsed.projects ? parsed.projects : {};
   };
 
   /* ---- Rolling weekly backup ----------------------------------------------

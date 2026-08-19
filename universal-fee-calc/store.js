@@ -2884,6 +2884,200 @@
     return out.sort((a, b) => a.year - b.year || a.month - b.month);
   }
 
+  /* ============================================================
+     REVENUE DIFF · BOOK SNAPSHOTS
+     ------------------------------------------------------------
+     The flash snapshots above capture ONE MONTH mid-close, to see a
+     figure move between the flash and the final. This is the other
+     axis: the WHOLE forward book as it stood on a date, so you can
+     ask "what did we think 2026 looked like in June, versus now?"
+     and see which ratings moved.
+
+     PURE ON PURPOSE. It takes an array of records, not the live
+     store, because its main job is reading OLD BOOKS — the dated
+     projects-backup-*.json copies in Box are the only record of what
+     the forecast used to say. Anything reaching into readDb() here
+     would silently measure today's book while claiming to measure
+     June's, which is the one mistake this feature cannot survive.
+
+     Same reason it goes through billingSeries() and changeOrderDelta()
+     rather than reimplementing the month math: a snapshot that
+     disagreed with Revenue Projections would be worse than no
+     snapshot, because the disagreement would look like a real change.
+
+     WHAT IT STORES. Revenue by rating by month, plus one total per
+     project — NOT the full per-project-per-month grid. That grid is
+     ~8,500 numbers a snapshot; weekly forever it would outgrow the
+     book it describes. By-rating answers the question actually being
+     asked, and the per-project totals say which projects moved.
+
+     ONE HONEST LIMITATION, worth knowing before you trust a number:
+     historical books are re-priced through TODAY'S rate grid, because
+     rates.json is not versioned alongside them. Records booked with
+     frozen financials (most of the book) are unaffected — billingSeries
+     reads their stored snapshot. Unbooked pursuits that recompute live
+     will reflect current rates. So rating-1 comparisons are exact;
+     movement in ratings 2–4 mixes real change with rate drift.
+     ============================================================ */
+
+  /** Revenue by rating × month for an arbitrary book. `records` is a plain
+      array of project records — from readDb().projects, or straight out of a
+      dated backup file. */
+  function snapshotBook(records, catalog) {
+    const all = Array.isArray(records) ? records : Object.values(records || {});
+    const live = all.filter(p => p && p.project && !p.project.deletedAt);
+    /* Change orders fold into their parent's revised curve, exactly as
+       Revenue Projections does — never as rows of their own. The index is
+       built from THIS book so a CO approved after the backup was taken
+       cannot leak into it. */
+    const cosByParent = {};
+    live.filter(isChangeOrder).forEach(co => {
+      (cosByParent[co.changeOrder.parentId] = cosByParent[co.changeOrder.parentId] || []).push(co);
+    });
+    const byRating = {}, totals = {}, rows = [];
+    let skipped = 0;
+    live.filter(p => !isChangeOrder(p)).forEach(p => {
+      const rating = ratingFor(p);
+      const bucket = byRating[rating] = byRating[rating] || {};
+      let total = 0;
+      const add = (ym, amt) => {
+        if (!amt) return;
+        bucket[ym] = (bucket[ym] || 0) + amt;
+        totals[ym] = (totals[ym] || 0) + amt;
+        total += amt;
+      };
+      try {
+        (billingSeries(p, catalog) || []).forEach(s => add(s.ym, s.invoice));
+        (cosByParent[p.id] || []).filter(co =>
+          BOOKED_STATUSES.has(co.project && co.project.status) && co.financials && !co.financials.stale
+        ).forEach(co => {
+          (changeOrderDelta(co).byMonth || []).forEach(x => add(padYM(x.ym), x.net));
+        });
+      } catch (e) {
+        /* A single malformed record in an old backup must not cost us the
+           whole snapshot — the rest of that book is still the only copy of
+           that day. Count it, report it, move on. */
+        skipped++;
+        return;
+      }
+      const pj = p.project || {};
+      rows.push({ id: p.id, name: pj.name || 'Untitled', client: pj.client || '',
+                  rating, placeholder: isPlaceholder(p) || undefined, total: Math.round(total) });
+    });
+    // Round once, at the end — accumulating rounded cents drifts.
+    Object.keys(byRating).forEach(r => Object.keys(byRating[r]).forEach(ym => { byRating[r][ym] = Math.round(byRating[r][ym]); }));
+    Object.keys(totals).forEach(ym => { totals[ym] = Math.round(totals[ym]); });
+    return { projects: rows.length, skipped, byRating, totals,
+             rows: rows.sort((a, b) => a.rating - b.rating || b.total - a.total) };
+  }
+
+  /* ---- The stored series of those snapshots ----
+     Its OWN store, and deliberately not part of projects.json. This grows
+     forever by design, it is read by exactly one page, and nothing on the
+     boot path needs it — so it must never be parsed on the way to drawing
+     a page. See box-adapter's history.json, which is pulled on demand. */
+  const HIST_KEY = 'savills-ppm-history-db:v1';
+  function readHistory() {
+    try {
+      const raw = localStorage.getItem(HIST_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed || !parsed.snapshots) return { schemaVersion: 1, snapshots: {} };
+      return parsed;
+    } catch (e) { console.error('History read failed', e); return { schemaVersion: 1, snapshots: {} }; }
+  }
+  let _histRemote = null;
+  function attachHistoryRemote(fn) { _histRemote = fn; }
+  function writeHistory(db) {
+    try { localStorage.setItem(HIST_KEY, JSON.stringify(db)); }
+    catch (e) { console.error('History write failed', e); }
+    if (_histRemote) { try { _histRemote(db); } catch (e) { console.warn('history push failed', e); } }
+    return db;
+  }
+  function hydrateHistoryFromRemote(db) {
+    if (!db || !db.snapshots) return;
+    try { localStorage.setItem(HIST_KEY, JSON.stringify(db)); } catch (e) {}
+  }
+
+  /** Snapshots newest first. Each is {id, asOf, source, label, cycle, ...}. */
+  function listBookSnapshots() {
+    const s = readHistory().snapshots || {};
+    return Object.keys(s).map(k => s[k]).sort((a, b) => String(b.asOf).localeCompare(String(a.asOf)));
+  }
+  function getBookSnapshot(id) { return (readHistory().snapshots || {})[id] || null; }
+  /** Store one. `id` is the as-of date (YYYY-MM-DD) plus, for a milestone,
+      its label — so a backfill re-run overwrites rather than duplicates. */
+  function putBookSnapshot(snap) {
+    if (!snap || !snap.id) throw new Error('a snapshot needs an id');
+    const db = readHistory();
+    db.snapshots = db.snapshots || {};
+    db.snapshots[snap.id] = snap;
+    writeHistory(db);
+    return snap;
+  }
+  function deleteBookSnapshot(id) {
+    const db = readHistory();
+    if (db.snapshots && db.snapshots[id]) { delete db.snapshots[id]; writeHistory(db); return true; }
+    return false;
+  }
+  /** Union by ID, newest write wins. Snapshots are immutable once taken, so a
+      teammate's backfill and yours merge cleanly without a conflict rule. */
+  function mergeHistory(remote, local) {
+    const out = { schemaVersion: 1, snapshots: {} };
+    const rs = (remote && remote.snapshots) || {}, ls = (local && local.snapshots) || {};
+    Object.keys(rs).forEach(k => { out.snapshots[k] = rs[k]; });
+    Object.keys(ls).forEach(k => {
+      const r = out.snapshots[k];
+      if (!r || String(ls[k].takenAt || '') > String(r.takenAt || '')) out.snapshots[k] = ls[k];
+    });
+    return out;
+  }
+
+  /** Capture the CURRENT book as a snapshot under a cycle milestone. */
+  function captureBookSnapshot(label, catalog, opts) {
+    const o = opts || {};
+    const asOf = o.asOf || new Date().toISOString().slice(0, 10);
+    const body = snapshotBook(allProjectsRaw ? allProjectsRaw() : listProjects(), catalog);
+    const cu = getCurrentUser() || {};
+    return putBookSnapshot(Object.assign({
+      id: o.id || (asOf + (label ? ' · ' + label : '')),
+      asOf, label: label || '', cycle: asOf.slice(0, 7),
+      source: o.source || 'milestone',
+      takenAt: new Date().toISOString(),
+      takenBy: cu.name || cu.username || '',
+    }, body));
+  }
+
+  /** Compare two snapshots over a month window. Returns per-rating and
+      per-project movement, so "the forecast dropped $2M" can be answered with
+      "because these four projects moved". */
+  function diffBookSnapshots(a, b, months) {
+    if (!a || !b) return null;
+    const win = (months && months.length) ? months
+      : [...new Set([...Object.keys(a.totals || {}), ...Object.keys(b.totals || {})])].sort();
+    const sum = (snap, r) => win.reduce((t, ym) => t + (((r == null ? snap.totals : (snap.byRating || {})[r]) || {})[ym] || 0), 0);
+    const ratings = RATINGS.map(rt => {
+      const from = sum(a, rt.n), to = sum(b, rt.n);
+      return { rating: rt.n, label: rt.label, from, to, delta: to - from };
+    });
+    const idx = (snap) => { const m = {}; (snap.rows || []).forEach(r => { m[r.id] = r; }); return m; };
+    const ia = idx(a), ib = idx(b);
+    const ids = [...new Set([...Object.keys(ia), ...Object.keys(ib)])];
+    const projects = ids.map(id => {
+      const ra = ia[id], rb = ib[id];
+      return {
+        id, name: (rb || ra).name, client: (rb || ra).client,
+        fromRating: ra ? ra.rating : null, toRating: rb ? rb.rating : null,
+        from: ra ? ra.total : 0, to: rb ? rb.total : 0,
+        delta: (rb ? rb.total : 0) - (ra ? ra.total : 0),
+        added: !ra && !!rb, removed: !!ra && !rb,
+        rerated: !!(ra && rb && ra.rating !== rb.rating),
+      };
+    }).filter(x => x.delta || x.rerated || x.added || x.removed)
+      .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+    return { window: win, from: sum(a, null), to: sum(b, null),
+             delta: sum(b, null) - sum(a, null), ratings, projects };
+  }
+
   /** Record (or update) a slip on a project. Keyed by the ledger cell it came
       from, so re-picking the carry month moves the existing slip instead of
       stacking a second one on top. */
@@ -3316,6 +3510,10 @@
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
     allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity, describeChanges,
+    // Revenue Diff — book snapshots and their own store
+    snapshotBook, captureBookSnapshot, diffBookSnapshots,
+    listBookSnapshots, getBookSnapshot, putBookSnapshot, deleteBookSnapshot,
+    readHistory, writeHistory, hydrateHistoryFromRemote, attachHistoryRemote, mergeHistory,
     saveVersion, listVersions, versionDiff, restoreVersionRecord, rosterDiff,
     reconcileToGrid, commitReconcile,
     proposalHealth,
