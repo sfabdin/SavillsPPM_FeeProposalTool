@@ -574,6 +574,7 @@
       full   = every sheet dumped with markers, so Claude can correlate rates that
                live on separate scenario/fee sheets. */
   async function xlsxToText(file) {
+    await window.UFC_Vendor.xlsx();
     const XLSX = await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm');
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
     const sheetRows = sn => XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, blankrows: false, defval: '' });

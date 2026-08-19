@@ -7,6 +7,7 @@
    ============================================================ */
 
 window.UFC_buildAndDownloadExcel = async function () {
+  await window.UFC_Vendor.excel();
   const S = window.__UFC__;
   const state = S.getState();
   const wb = new ExcelJS.Workbook();

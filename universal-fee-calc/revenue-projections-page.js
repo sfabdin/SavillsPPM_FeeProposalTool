@@ -367,6 +367,7 @@
 
   /* ---------- Excel export — mirrors the matrix exactly as viewed ---------- */
   async function exportProjections() {
+    await window.UFC_Vendor.excel();
     if (typeof ExcelJS === 'undefined') { alert('Excel library not loaded.'); return; }
     if (!LAST_VIEW || !LAST_VIEW.rows.length) { alert('Nothing to export — adjust the filters so projects are visible.'); return; }
     const V = LAST_VIEW;
@@ -633,6 +634,7 @@
     alert(`Captured "${label}" snapshot for ${MONTH_NAMES[month-1]} ${year}.`);
   }
   async function exportFlash() {
+    await window.UFC_Vendor.excel();
     if (typeof ExcelJS === 'undefined') { alert('Excel library not loaded.'); return; }
     const { year, month } = flashPeriod();
     const snaps = STORE.getSnapshots(year, month);

@@ -208,6 +208,7 @@
 
   /* ---------- EXPORT ---------- */
   async function buildWorkbook() {
+    await window.UFC_Vendor.excel();
     if (typeof ExcelJS === 'undefined') throw new Error('Excel library not loaded on this page.');
     const st = STORE();
     const projects = st.listProjects().slice().sort((a, b) =>
@@ -390,6 +391,7 @@
   }
 
   async function parseWorkbook(file) {
+    await window.UFC_Vendor.excel();
     if (typeof ExcelJS === 'undefined') throw new Error('Excel library not loaded on this page.');
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(await file.arrayBuffer());

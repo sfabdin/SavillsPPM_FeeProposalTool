@@ -87,6 +87,7 @@
   }
 
 window.UFC_buildAndDownloadStaffingSnapshot = async function () {
+  await window.UFC_Vendor.excel();
   const S = window.UFC_Staff;
   const STORE = window.UFC_Store;
   const wb = new ExcelJS.Workbook();
@@ -788,6 +789,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
 
 /** Standalone Clockify Reporting download — the tab plus a flat detail sheet. */
 window.UFC_buildAndDownloadTimeEntryExport = async function (monthsList, opts) {
+  await window.UFC_Vendor.excel();
   const S = window.UFC_Staff;
   const STORE = window.UFC_Store;
   const wb = new ExcelJS.Workbook();
