@@ -2105,12 +2105,33 @@
     }
   }
 
+  /** Show the placeholder tick only where it can mean something.
+      On booked work the dollars are contractual by definition, so the
+      question doesn't arise and the field is hidden.
+
+      This is DISPLAY ONLY — it never writes to the record. Clearing a
+      stale flag here would mark a project dirty the instant you opened
+      it, which reads as "someone changed something" when nobody did.
+      Reads are already safe: STORE.isPlaceholder() refuses to call
+      booked work a placeholder no matter what the field says. The
+      rating handler does the actual cleanup, because that is the moment
+      a human made the change. */
+  function updatePlaceholderField() {
+    const field = $('#ph-field'), hint = $('#ph-hint'), box = $('#pm-placeholder');
+    if (!field || !box) return;
+    const booked = STORE.ratingMeta(STORE.ratingFor(state)).booked;
+    field.style.display = booked ? 'none' : '';
+    if (hint) hint.style.display = booked ? 'none' : '';
+    box.checked = !booked && !!state.project.placeholder;
+  }
+
   function updateStatusRatingHints() {
     updateIntakeButton();
     updateIntakeCallout();
     updateChangeOrderBanner();
     const rh = $('#rating-hint');
     if (rh) rh.textContent = ratingGuidanceText(state.project.status);
+    updatePlaceholderField();
     const sh = $('#status-hint');
     if (sh) {
       const aged = monthsSinceLastBilling() >= 2;   // last billing > ~60 days ago
@@ -3039,7 +3060,19 @@
       markDirty();
     });
     const ratingSelEl = $('#pm-rating');
-    if (ratingSelEl) ratingSelEl.addEventListener('change', e => { state.project.rating = parseInt(e.target.value) || null; updateStatusRatingHints(); markDirty(); });
+    if (ratingSelEl) ratingSelEl.addEventListener('change', e => {
+      state.project.rating = parseInt(e.target.value) || null;
+      /* Rating a project Booked settles the dollars question: they are
+         contractual now. Drop any placeholder flag rather than leaving one
+         behind on a record whose UI no longer shows it. */
+      if (STORE.ratingMeta(STORE.ratingFor(state)).booked) delete state.project.placeholder;
+      updateStatusRatingHints(); markDirty();
+    });
+    const phBox = $('#pm-placeholder');
+    if (phBox) phBox.addEventListener('change', e => {
+      if (e.target.checked) state.project.placeholder = true; else delete state.project.placeholder;
+      markDirty();
+    });
     $('#pm-firstProposal').addEventListener('input', e => { state.project.firstProposalDate = e.target.value; markDirty(); });
     $('#pm-signed').addEventListener('input', e => { state.project.signedContractDate = e.target.value; markDirty(); });
     const sfidInput = $('#pm-sfid');

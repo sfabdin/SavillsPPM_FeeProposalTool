@@ -75,6 +75,31 @@
   }
   function ratingMeta(n) { return RATINGS.find(r => r.n === n) || RATINGS[RATINGS.length - 1]; }
 
+  /* ------------------------------------------------------------
+     PLACEHOLDER — "this revenue is a guess, not a contract"
+     ------------------------------------------------------------
+     A rating tells you how likely we are to WIN the work. It says
+     nothing about whether the dollar figure was priced or invented.
+     Those come apart on big unsigned pursuits: a rating-4 line can
+     carry a round $127k/month that somebody typed to hold the space,
+     and on the projection it looks exactly like contracted revenue.
+
+     This flag is the difference, set by a human on the record. It
+     changes no math anywhere — a placeholder still forecasts at its
+     rating weight, because excluding it would understate the pipeline
+     just as badly as dressing it up overstates it. It only makes the
+     number say what it is.
+
+     Booked work cannot be a placeholder: if it is signed, the dollars
+     are contractual, and leaving a stale flag on it would be the very
+     misread this exists to prevent. isPlaceholder() enforces that, so
+     no caller has to remember.                                     */
+  function isPlaceholder(p) {
+    const pj = (p && p.project) || {};
+    if (!pj.placeholder) return false;
+    return !ratingMeta(ratingFor(p)).booked;
+  }
+
   /* Controlled service-line list — the service area a group's fees roll up to.
      Each group in a project carries a serviceLine; roles inherit their group's.
      Drives the by-service-line projection roll-up. */
@@ -405,6 +430,9 @@
     const lead = (p) => { const pj = p.project || {}; const raw = pj.leadId || pj.lead; return raw ? (leaderDisplay ? leaderDisplay(raw) : raw) : ''; };
     if (lead(prev) !== lead(next)) out.push({ field: 'Revenue leader', from: shortVal(lead(prev)), to: shortVal(lead(next)) });
     if ((a.rating || '') !== (b.rating || '')) out.push({ field: 'Rating', from: shortVal(a.rating), to: shortVal(b.rating) });
+    if (!!a.placeholder !== !!b.placeholder) {
+      out.push({ field: 'Placeholder estimate', from: a.placeholder ? 'yes' : 'no', to: b.placeholder ? 'yes' : 'no' });
+    }
     // Timeline
     const tl = (p) => { const t = p.timeline || {}; return [t.startYear, t.startMonth, t.endYear, t.endMonth].join('/'); };
     if (tl(prev) !== tl(next)) {
@@ -3284,7 +3312,7 @@
     fmtMoney,
     SCHEMA, STATUSES, STATUS_LABELS, ASSUMPTION_LIBRARY, projectTypeSubs, addVocab, readVocab,
     accessGrantList, parseAccessEmails,
-    RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING,
+    RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING, isPlaceholder,
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
     allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity, describeChanges,

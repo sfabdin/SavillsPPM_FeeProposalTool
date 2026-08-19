@@ -1346,6 +1346,40 @@
     });
   })();
 
+  /* ============ PLACEHOLDER ESTIMATE ============
+     The flag that separates "we priced this" from "we typed a number to
+     hold the space". Its whole value is that a reader can trust it, so
+     the booked-work guard is the test that matters most. */
+  (function () {
+    const mk = (rating, placeholder, status) => ({ project: { name: 'x', status: status || 'submitted', rating, placeholder } });
+
+    test('Placeholder', 'an unbooked record carrying the flag reads as a placeholder', () =>
+      eq(S.isPlaceholder(mk(4, true)), true, 'rating 4 + flag'));
+
+    test('Placeholder', 'without the flag it does not', () =>
+      eq(S.isPlaceholder(mk(4, false)) || S.isPlaceholder(mk(4, undefined)), false, 'rating 4, no flag'));
+
+    test('Placeholder', 'BOOKED work is never a placeholder, even carrying a stale flag', () =>
+      eq(S.isPlaceholder(mk(1, true)), false, 'rating 1 + stale flag must read false'));
+
+    test('Placeholder', 'the booked guard follows the RATING, not the status field', () => {
+      // status 'active' defaults to rating 1 — the guard must catch that too,
+      // otherwise a record that never had an explicit rating slips through.
+      const implicit = { project: { name: 'x', status: 'active', placeholder: true } };
+      return eq(S.isPlaceholder(implicit), false, 'implicit booked rating');
+    });
+
+    test('Placeholder', 'it changes no math — the rating weight is untouched', () => {
+      const w = S.ratingMeta(4).weight;
+      return eq(S.ratingMeta(S.ratingFor(mk(4, true))).weight, w, 'flagged rating-4 still weights ' + w);
+    });
+
+    test('Placeholder', 'flipping the flag is recorded in the change log', () => {
+      const fields = S.describeChanges(mk(4, false), mk(4, true)).map(d => d.field);
+      return eq(fields.indexOf('Placeholder estimate') >= 0, true, 'got: ' + fields.join(', '));
+    });
+  })();
+
   /* ---- render ---- */
   const pass = results.filter(r => r.ok).length;
   const fail = results.length - pass;
