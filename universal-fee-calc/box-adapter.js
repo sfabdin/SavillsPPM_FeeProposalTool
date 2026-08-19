@@ -358,50 +358,19 @@
     return res.json();   // { login: 'esobel@savills.us', name: 'Emily Sobel' }
   }
 
-  /* ---------- persisted etags: skip a download that cannot have changed ----------
-     Box hands back an etag per file. The adapter already read it, but kept it
-     in a MODULE-LEVEL variable — which is reset on every page load, so across
-     a navigation it was always null and the full file was re-downloaded every
-     single time. Persisting it means a page-to-page move costs one ~2KB
-     metadata call instead of re-pulling the whole book.
-
-     The skip is only safe when we still hold a local cache to fall back on;
-     with no cache there is nothing to display, so we download regardless. */
-  const ETAG_KEY = 'ufc_box_etags_v1';
-  function readEtags() { try { return JSON.parse(localStorage.getItem(ETAG_KEY)) || {}; } catch (e) { return {}; } }
-  function rememberEtag(fileId, tag) {
-    if (!fileId) return;
-    const m = readEtags();
-    if (tag) m[fileId] = tag; else delete m[fileId];
-    try { localStorage.setItem(ETAG_KEY, JSON.stringify(m)); } catch (e) {}
-  }
-  async function remoteEtag(fileId) {
-    try {
-      const res = await boxFetch('/files/' + fileId + '?fields=etag');
-      if (!res.ok) return null;
-      const j = await res.json();
-      return j.etag || null;
-    } catch (e) { return null; }
-  }
-  function hasLocalCache(key) { try { return !!localStorage.getItem(key); } catch (e) { return false; } }
-  /** True when the remote file is byte-identical to what this browser last
-      downloaded AND we still have that copy. Records the etag either way. */
-  async function unchangedSince(fileId, cacheKey) {
-    if (!fileId) return false;
-    const tag = await remoteEtag(fileId);
-    const known = readEtags()[fileId];
-    const same = !!(tag && known && tag === known && hasLocalCache(cacheKey));
-    if (tag && !same) rememberEtag(fileId, tag);
-    return same;
-  }
-
   // Download projects.json + capture its etag for concurrency.
   let _etag = null;
   let _remoteCount = 0;   // project count last seen in Box — drives the shrink guard
   async function pullRemote() {
-    const meta = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '?fields=etag');
-    if (meta.ok) { const m = await meta.json(); _etag = m.etag; }
+    /* One round trip, not two. This used to ask for the etag and THEN download,
+       which made sense when the file was assumed to be large — but production
+       measurement says projects.json is ~73KB and a Box request costs 200-900ms
+       regardless of size. At that ratio an extra round trip to maybe avoid a
+       73KB transfer is a straight loss. The etag comes off the content
+       response instead; if Box omits it, _etag stays null and the periodic
+       refresh simply pulls, which is the old safe behaviour. */
     const res = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '/content');
+    try { const tag = res.headers.get('etag'); if (tag) _etag = tag.replace(/^W\//, '').replace(/"/g, ''); } catch (e) {}
     if (res.status === 404) return Store.defaultDb();
     if (!res.ok) throw new Error('pull failed: ' + res.status);
     let db;
@@ -1005,7 +974,7 @@
     const FEE_CACHE = 'savills-ppm-fee-db:v1';
     const [meR, projectsR, ratesR, studioR, revenueR] = await Promise.allSettled([
       getIdentity(),
-      (async () => await unchangedSince(BOX_CONFIG.dataFileId, FEE_CACHE) ? null : pullRemote())(),
+      pullRemote(),
       pullRates(),
       pullStudio(),
       pullRevenue(),
@@ -1022,16 +991,11 @@
     // holds this exact content and there is nothing to merge.
     try {
       if (projectsR.status === 'rejected') throw projectsR.reason;
-      if (projectsR.value) {
-        const remote = projectsR.value;
-        const local = JSON.parse(localStorage.getItem(FEE_CACHE) || 'null');
-        const merged = local ? mergeDb(remote, local) : remote;
-        Store.hydrateFromRemote(merged);
-        rememberEtag(BOX_CONFIG.dataFileId, _etag);
-        Perf.phase('projects.json merged + hydrated');
-      } else {
-        Perf.phase('projects.json unchanged (skipped download)');
-      }
+      const remote = projectsR.value;
+      const local = JSON.parse(localStorage.getItem(FEE_CACHE) || 'null');
+      const merged = local ? mergeDb(remote, local) : remote;
+      Store.hydrateFromRemote(merged);
+      Perf.phase('projects.json merged + hydrated');
       emitSync('synced', '');
     } catch (e) {
       emitSync('error', 'Could not load from Box — showing local cache');
