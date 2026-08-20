@@ -341,7 +341,10 @@
   /* System navigation */
   .system-nav {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    /* One column per card that actually renders. This was repeat(5, 1fr)
+       against four cards, which left a permanently empty fifth slot on the
+       right — the row looked broken rather than deliberately short. */
+    grid-template-columns: repeat(4, 1fr);
     gap: 12px;
     margin-bottom: 36px;
   }
@@ -510,7 +513,7 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
       <option value="">All leads</option>
     </select>
     <div class="actions-group">
-      <button class="btn btn-ghost" id="seed-btn" title="Add a demo 383M project to see the system populated">Seed demo data</button>
+      <button class="btn btn-ghost" id="export-view-btn" title="Download the rows currently shown — the filters above decide what goes in">↓ Export this view</button>
       <button class="btn btn-ghost" id="clear-btn" title="Clear all filters">Clear filters</button>
       <button class="btn btn-ghost" id="qe-btn" hidden title="Superuser only — edit Lead PE, Project type and Industry directly in the table. Each change saves instantly and lands in the Change Log.">✎ Quick edit</button>
     </div>
@@ -529,6 +532,9 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
 
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
+<!-- Lazy Excel loader. ExcelJS itself is ~950KB and is fetched only when
+     someone actually clicks Export this view, never on page load. -->
+<script src="universal-fee-calc/vendor-lazy.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/boot.js"></script>
 <script src="universal-fee-calc/sync-status.js"></script>

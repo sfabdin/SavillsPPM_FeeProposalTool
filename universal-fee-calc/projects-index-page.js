@@ -20,6 +20,7 @@
   };
   let sort = { col: 'updatedAt', dir: 'desc' };
   let quickEdit = false;   // superuser-only inline editing of Lead PE / type / industry
+  let LAST_VIEW = null;    // the rows currently on screen — what "Export this view" writes
 
   /* ---------- Helpers ---------- */
   function $(s, r = document) { return r.querySelector(s); }
@@ -303,16 +304,24 @@
     renderKpis(all);
     renderClientRollup(all);
     const filtered = applySort(applyFilters(all));
+    /* What "Export this view" writes. Captured HERE, after the access wall,
+       the filters and the sort — so the workbook is the table you are looking
+       at, in the order you are looking at it, and a member can never export
+       rows the page would not show them. */
+    LAST_VIEW = { rows: filtered.filter(p => !STORE.isChangeOrder(p)), filters: { ...filters }, sort: { ...sort },
+                  /* Count the same way the rows do — change orders fold into
+                     their parent and are never rows, so counting them in the
+                     denominator made an unfiltered export read "249 of 253". */
+                  total: all.filter(p => !STORE.isChangeOrder(p)).length };
 
     const host = $('#table-host');
     if (!all.length) {
       host.innerHTML = `
         <div class="empty-state">
           <h3>Your project database is empty.</h3>
-          <p>Start by creating a new proposal in the calculator, importing a JSON backup of an existing database, or seeding a demo project (the 383M migration) to see the system populated.</p>
+          <p>Start by creating a new proposal in the calculator, or importing a JSON backup of an existing database.</p>
           <div class="actions">
             <button class="btn btn-primary" onclick="document.getElementById('new-btn').click()">+ Create first project</button>
-            <button class="btn btn-ghost" onclick="document.getElementById('seed-btn').click()">Seed demo data</button>
             <button class="btn btn-ghost" onclick="document.getElementById('import-btn').click()">Import JSON</button>
           </div>
         </div>`;
@@ -555,6 +564,123 @@
     const date = new Date().toISOString().slice(0, 10);
     STORE.downloadJson(`savills-ppm-fee-db-${date}.json`, json);
   });
+  /* ---------- Export this view ----------
+     The page promises "searchable, benchmarkable, exportable", but the only
+     export here was a JSON database dump — a maintenance artifact nobody
+     opens in a spreadsheet. This writes the table you are actually looking
+     at: same rows, same order, same filters.
+
+     It reads LAST_VIEW rather than re-running the query, so what lands in
+     the workbook cannot drift from what is on screen — including the access
+     wall, which is applied before LAST_VIEW is captured. */
+  $('#export-view-btn')?.addEventListener('click', async () => {
+    const btn = $('#export-view-btn');
+    if (!LAST_VIEW || !LAST_VIEW.rows.length) {
+      alert('Nothing to export — no projects match the current filters.');
+      return;
+    }
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    try {
+      await window.UFC_Vendor.excel();
+      await buildViewWorkbook();
+    } catch (e) {
+      console.error('view export failed', e);
+      alert('Export failed: ' + ((e && e.message) || e));
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+    }
+  });
+
+  async function buildViewWorkbook() {
+    const V = LAST_VIEW;
+    const NAVY = 'FF25273A', YEL = 'FFFFDF00', STEEL = 'FF79828C', WHITE = 'FFFFFFFF', CREAM = 'FFEEE8E3';
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Savills PPM';
+    const ws = wb.addWorksheet('Projects', {
+      views: [{ state: 'frozen', ySplit: 4 }],
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+    });
+
+    // Title + provenance. Which filters produced this matters as much as the
+    // rows: a sheet of 12 projects with no context reads as the whole book.
+    ws.mergeCells('A1:K1');
+    ws.getCell('A1').value = 'Savills PPM — Projects Index';
+    ws.getCell('A1').font = { name: 'Calibri', bold: true, size: 16, color: { argb: NAVY } };
+    ws.getRow(1).height = 24;
+
+    const f = V.filters || {};
+    const bits = [];
+    if (f.search) bits.push('Search: "' + f.search + '"');
+    if (f.status) bits.push('Status: ' + (STORE.STATUS_LABELS[f.status] || f.status));
+    if (f.industry) bits.push('Industry: ' + f.industry);
+    if (f.ptype) bits.push('Type: ' + f.ptype);
+    if (f.lead) bits.push('Lead: ' + f.lead);
+    ws.mergeCells('A2:K2');
+    ws.getCell('A2').value = V.rows.length + ' of ' + V.total + ' projects'
+      + (bits.length ? '  ·  ' + bits.join('  ·  ') : '  ·  no filters applied')
+      + '  ·  exported ' + new Date().toLocaleString();
+    ws.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
+
+    const cols = [
+      ['Project', 34], ['Client', 24], ['Location', 18], ['Status', 14],
+      ['Industry', 18], ['Project type', 22], ['Lead PE', 18],
+      ['Period', 18], ['Net fee', 14], ['FTE-months', 12], ['Last updated', 14],
+    ];
+    cols.forEach((c, i) => { ws.getColumn(i + 1).width = c[1]; });
+    const head = ws.getRow(4);
+    cols.forEach((c, i) => {
+      const cell = head.getCell(i + 1);
+      cell.value = c[0];
+      cell.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+      cell.alignment = { horizontal: i >= 8 && i <= 9 ? 'right' : 'left' };
+    });
+
+    let net = 0, fte = 0;
+    V.rows.forEach((p) => {
+      const pj = p.project || {};
+      const fin = projectFee(p);
+      const rc = STORE.revisedContract(p.id);
+      // A project with approved change orders is worth its REVISED contract —
+      // the same figure the on-screen row shows, not the original baseline.
+      const rowNet = rc.coCount ? rc.revisedNet : fin.net;
+      net += rowNet || 0; fte += fin.fteMonths || 0;
+      const r = ws.addRow([
+        (pj.name || 'Untitled') + (rc.coCount ? '  (incl. ' + rc.coCount + ' CO' + (rc.coCount === 1 ? '' : 's') + ')' : ''),
+        pj.client || '', pj.location || '',
+        STORE.STATUS_LABELS[pj.status] || pj.status || '',
+        pj.industry || '', pj.projectType || '', pj.lead || '',
+        fmtPeriod(p), rowNet || 0, +(fin.fteMonths || 0).toFixed(1),
+        p.updatedAt ? new Date(p.updatedAt).toLocaleDateString() : '',
+      ]);
+      r.getCell(9).numFmt = '"$"#,##0';
+      r.getCell(10).numFmt = '#,##0.0';
+      r.getCell(1).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+      if (STORE.isPlaceholder && STORE.isPlaceholder(p)) {
+        // Carry the estimate caveat into the workbook — a badge that only
+        // exists on screen is one nobody downstream ever sees.
+        r.getCell(9).font = { name: 'Calibri', italic: true, color: { argb: STEEL } };
+        r.getCell(9).note = 'Placeholder — these dollars were assumed to hold the space, not priced from scope.';
+      }
+    });
+
+    const tot = ws.addRow(['TOTAL', '', '', '', '', '', '', '', net, +fte.toFixed(1), '']);
+    tot.eachCell((c) => { c.font = { name: 'Calibri', bold: true, color: { argb: NAVY } }; });
+    tot.getCell(9).numFmt = '"$"#,##0';
+    tot.getCell(10).numFmt = '#,##0.0';
+    [9, 10].forEach((i) => { tot.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } }; });
+    tot.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Savills PPM Projects ' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  }
+
   $('#import-btn')?.addEventListener('click', () => $('#import-input').click());
   $('#import-input')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -578,162 +704,6 @@
     reader.readAsText(file);
     e.target.value = '';
   });
-
-  $('#seed-btn')?.addEventListener('click', () => {
-    seedDemoData();
-    render();
-  });
-
-  /* ---------- Demo seed ---------- */
-  function seedDemoData() {
-    const demos = buildDemoProjects();
-    demos.forEach(p => STORE.saveProject(p));
-  }
-
-  function buildDemoProjects() {
-    const mkFte = (phases, vals) => {
-      const out = {};
-      phases.forEach((p, i) => out[p.id] = vals[i] || 0);
-      return out;
-    };
-    const p1Phases = [
-      { id: 'p1a', name: 'Ramp-up',  length: 1 },
-      { id: 'p1b', name: 'Kickoff',  length: 2 },
-      { id: 'p1c', name: 'Planning', length: 6 },
-      { id: 'p1d', name: 'Execution',length: 3 },
-      { id: 'p1e', name: 'Closeout', length: 2 },
-    ];
-    const p1 = {
-      project: {
-        name: '383 Madison Migration ’27',
-        client: 'JPMorgan Chase',
-        lead: 'Kathy Spiegel',
-        proposalDate: '2026-04-15',
-        location: 'New York, NY',
-        status: 'won',
-        industry: 'Financial Services',
-        firstProposalDate: '2026-03-01',
-        signedContractDate: '2026-05-20',
-        clientContact: 'M. Roberts · Real Estate',
-        clientRelOwner: 'Hoffman',
-      },
-      timeline: { startMonth: 1, startYear: 2027, endMonth: 2, endYear: 2028 },
-      phases: p1Phases,
-      groups: [
-        { id: 'core',  name: 'Core team' },
-        { id: 'field', name: 'Field team' },
-        { id: 'pic',   name: 'PIC / Advisory' },
-      ],
-      roles: [
-        { id: 'r1', titleId: 'pe',     tierId: 'sr',  resource: 'Kathy Spiegel',  groupId: 'core', fte: mkFte(p1Phases, [50,75,75,100,50]) },
-        { id: 'r2', titleId: 'pm',     tierId: 'mid', resource: 'Sarah Alim',     groupId: 'core', fte: mkFte(p1Phases, [50,100,100,100,75]) },
-        { id: 'r3', titleId: 'lf',     tierId: 'sr',  resource: 'Mike DiLeo',     groupId: 'core', fte: mkFte(p1Phases, [25,50,75,100,50]) },
-        { id: 'r4', titleId: 'tem',    tierId: 'std', resource: 'TBD 2Q ’27',     groupId: 'field',fte: mkFte(p1Phases, [0,0,0,100,0]) },
-        { id: 'r5', titleId: 'tem',    tierId: 'std', resource: 'TBD 2Q ’27',     groupId: 'field',fte: mkFte(p1Phases, [0,0,0,100,0]) },
-        { id: 'r6', titleId: 'tem',    tierId: 'std', resource: 'TBD 2Q ’27',     groupId: 'field',fte: mkFte(p1Phases, [0,0,0,100,0]) },
-        { id: 'r7', titleId: 'pic',    tierId: 'std', resource: 'Hoffman/Santoro',groupId: 'pic',  fte: mkFte(p1Phases, [10,10,10,10,10]) },
-      ],
-      assumptions: { hrsPerMo: 173.33, escalation: 3.0, discount: 0, rateLock: false, catalogBaseYear: 2025 },
-    };
-
-    const p2Phases = [
-      { id: 'p2a', name: 'Mobilization', length: 1 },
-      { id: 'p2b', name: 'Delivery',     length: 4 },
-      { id: 'p2c', name: 'Closeout',     length: 1 },
-    ];
-    const p2 = {
-      project: {
-        name: 'Hudson Yards Build-out',
-        client: 'Pfizer',
-        lead: 'Michael Glatt',
-        proposalDate: '2026-02-10',
-        location: 'New York, NY',
-        status: 'active',
-        industry: 'Life Sciences',
-        firstProposalDate: '2026-01-15',
-        signedContractDate: '2026-03-05',
-        clientContact: 'J. Chen · Facilities',
-        clientRelOwner: 'Glatt',
-      },
-      timeline: { startMonth: 4, startYear: 2026, endMonth: 9, endYear: 2026 },
-      phases: p2Phases,
-      groups: [
-        { id: 'core',  name: 'Core team' },
-        { id: 'field', name: 'Field team' },
-      ],
-      roles: [
-        { id: 'r1', titleId: 'pe',  tierId: 'sr',  resource: 'Michael Glatt', groupId: 'core', fte: mkFte(p2Phases, [50,50,25]) },
-        { id: 'r2', titleId: 'pm',  tierId: 'sr',  resource: 'Jess White',    groupId: 'core', fte: mkFte(p2Phases, [75,100,50]) },
-        { id: 'r3', titleId: 'bc',  tierId: 'sr',  resource: 'TBD',            groupId: 'core', fte: mkFte(p2Phases, [50,75,25]) },
-        { id: 'r4', titleId: 'tem', tierId: 'std', resource: 'TBD',            groupId: 'field',fte: mkFte(p2Phases, [0,100,25]) },
-      ],
-      assumptions: { hrsPerMo: 173.33, escalation: 3.0, discount: 5, rateLock: false, catalogBaseYear: 2025 },
-    };
-
-    const p3Phases = [
-      { id: 'p3a', name: 'Discovery', length: 2 },
-      { id: 'p3b', name: 'Design',    length: 3 },
-      { id: 'p3c', name: 'Build',     length: 4 },
-      { id: 'p3d', name: 'Closeout',  length: 1 },
-    ];
-    const p3 = {
-      project: {
-        name: 'Tech Campus Phase 2',
-        client: 'Meta Platforms',
-        lead: 'Hudson Grieve',
-        proposalDate: '2026-05-01',
-        location: 'Menlo Park, CA',
-        status: 'submitted',
-        industry: 'TAMI',
-        firstProposalDate: '2026-04-10',
-        signedContractDate: '',
-        clientContact: 'K. Patel · Workplace',
-        clientRelOwner: 'Grieve',
-      },
-      timeline: { startMonth: 7, startYear: 2026, endMonth: 4, endYear: 2027 },
-      phases: p3Phases,
-      groups: [
-        { id: 'core',  name: 'Core team' },
-        { id: 'field', name: 'Field team' },
-      ],
-      roles: [
-        { id: 'r1', titleId: 'pe',  tierId: 'sr',  resource: 'Hudson Grieve', groupId: 'core', fte: mkFte(p3Phases, [50,75,100,50]) },
-        { id: 'r2', titleId: 'pm',  tierId: 'sr',  resource: 'TBD',            groupId: 'core', fte: mkFte(p3Phases, [75,100,100,75]) },
-        { id: 'r3', titleId: 'cm',  tierId: 'sr',  resource: 'TBD',            groupId: 'core', fte: mkFte(p3Phases, [25,75,100,25]) },
-        { id: 'r4', titleId: 'tem', tierId: 'std', resource: 'TBD',            groupId: 'field',fte: mkFte(p3Phases, [0,0,100,0]) },
-      ],
-      assumptions: { hrsPerMo: 173.33, escalation: 3.0, discount: 0, rateLock: true, catalogBaseYear: 2025 },
-    };
-
-    const p4Phases = [
-      { id: 'p4a', name: 'Owner Rep', length: 8 },
-    ];
-    const p4 = {
-      project: {
-        name: 'Park Avenue HQ Refit',
-        client: 'Citi',
-        lead: 'Kathy Spiegel',
-        proposalDate: '2025-11-20',
-        location: 'New York, NY',
-        status: 'lost',
-        industry: 'Financial Services',
-        firstProposalDate: '2025-10-15',
-        signedContractDate: '',
-        clientContact: 'A. Brown · Corporate RE',
-        clientRelOwner: 'Spiegel',
-      },
-      timeline: { startMonth: 1, startYear: 2026, endMonth: 8, endYear: 2026 },
-      phases: p4Phases,
-      groups: [{ id: 'core', name: 'Core team' }],
-      roles: [
-        { id: 'r1', titleId: 'pe', tierId: 'sr', resource: 'Kathy Spiegel', groupId: 'core', fte: mkFte(p4Phases, [50]) },
-        { id: 'r2', titleId: 'pm', tierId: 'mid', resource: 'TBD',           groupId: 'core', fte: mkFte(p4Phases, [100]) },
-      ],
-      assumptions: { hrsPerMo: 173.33, escalation: 3.0, discount: 10, rateLock: false, catalogBaseYear: 2025 },
-    };
-
-    return [p1, p2, p3, p4];
-  }
 
   // Wait for the data layer (instant on localStorage; pulls from Box when enabled).
   function boot() {
