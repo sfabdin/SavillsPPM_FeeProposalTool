@@ -1743,6 +1743,20 @@ html, body {
 .ver-row .vr-restore { border: 1px solid var(--sav-navy); background: #fff; color: var(--sav-navy); font-family: var(--font-display); font-size: 11px; font-weight: 700; padding: 4px 11px; cursor: pointer; }
 .ver-row .vr-restore:hover { background: var(--sav-navy); color: #fff; }
 
+/* ===== Placeholder estimate ===== *
+   Sits under the projection rating, and only appears on unbooked work.
+   Deliberately quieter than .pt-toggle: this is an annotation on a number,
+   not a mode switch that changes the math. */
+.ph-toggle { display: inline-flex; align-items: center; gap: 9px; margin-top: 9px;
+  font-family: var(--font-display); font-weight: 700; font-size: 13px; color: var(--sav-navy); cursor: pointer; }
+.ph-toggle input { width: 15px; height: 15px; accent-color: var(--sav-navy); cursor: pointer; }
+
+/* The badge those records carry wherever revenue is listed. */
+.ph-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 2px;
+  background: rgba(37,39,58,0.07); border: 1px solid rgba(37,39,58,0.18);
+  font-family: var(--font-display); font-weight: 800; font-size: 9.5px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--sav-steel); vertical-align: middle; white-space: nowrap; }
+
 /* ===== Pass-through / principal billing ===== */
 .pt-block { margin: 22px 0 8px; border: 1px solid rgba(37,39,58,0.14); background: #fff; }
 .pt-head { display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap; padding: 18px 22px; background: #f7f8fa; border-bottom: 1px solid rgba(37,39,58,0.10); }

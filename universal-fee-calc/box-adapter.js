@@ -231,7 +231,7 @@
        rate grid too, which is precisely why they are all listed here rather
        than one being singled out. */
     ['savills-ppm-fee-db:v1', 'savills-ppm-staff-db:v1', 'savills-ppm-studio-db:v1',
-     'savills-ppm-revenue-db:v1', RATES_CACHE_KEY, 'ufc_box_etags_v1'
+     'savills-ppm-revenue-db:v1', 'savills-ppm-history-db:v1', RATES_CACHE_KEY, 'ufc_box_etags_v1'
     ].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
   }
 
@@ -292,7 +292,11 @@
     }
     return {
       enabled: true,
-      req(path, ms, bytes, status) { reqs.push({ label: label(path), ms: Math.round(ms), bytes: bytes || 0, status, at: Math.round(now()) }); },
+      req(path, ms, bytes, status) {
+        const rec = { label: label(path), ms: Math.round(ms), bytes: bytes || 0, status, at: Math.round(now()) };
+        reqs.push(rec);
+        return rec;
+      },
       phase(l) { phases.push({ label: l, at: Math.round(now()) }); },
       finish() {
         bootMs = Math.round(now());
@@ -302,30 +306,54 @@
       totals() {
         const netMs = reqs.reduce((a, r) => a + r.ms, 0);
         const bytes = reqs.reduce((a, r) => a + r.bytes, 0);
-        return { bootMs, requests: reqs.length, networkMs: Math.round(netMs), bytes,
-                 /* Serial boot means request time ~= boot time. The gap is
-                    parse + merge + hydrate; a big gap points at the data
-                    layer, a small one points at the network. */
-                 nonNetworkMs: Math.max(0, bootMs - Math.round(netMs)) };
+        /* Requests run in PARALLEL now, so summing them says nothing about how
+           long boot actually waited — the old build subtracted that sum, which
+           on a parallel boot went negative, clamped to zero, and reported
+           "parse/merge/hydrate 0 ms" no matter what the data layer was doing.
+           (With nothing recorded yet it did the opposite and blamed the whole
+           boot on parsing.)
+
+           What we want is the wall-clock stretch with at least one request in
+           flight: merge the [start, end] intervals and total the union. Time
+           outside that union is boot doing its own work — parsing, merging,
+           hydrating — and is the number worth chasing. */
+        const spans = reqs.map(r => [r.at - r.ms, r.at]).sort((a, b) => a[0] - b[0]);
+        let busy = 0, from = null, to = null;
+        for (const [s, e] of spans) {
+          if (from === null) { from = s; to = e; }
+          else if (s <= to) { to = Math.max(to, e); }        // overlaps — extend
+          else { busy += to - from; from = s; to = e; }      // gap — bank it
+        }
+        if (from !== null) busy += to - from;
+        return { bootMs, requests: reqs.length, networkMs: Math.round(netMs),
+                 waitingMs: Math.round(busy), bytes,
+                 appMs: Math.max(0, bootMs - Math.round(busy)) };
       },
       data() { return { reqs: reqs.slice(), phases: phases.slice(), totals: this.totals() }; },
       report() {
         const t = this.totals();
         const kb = (n) => (n / 1024).toFixed(0) + ' KB';
-        console.log('%c⏱ Boot: ' + t.bootMs + ' ms  ·  ' + t.requests + ' Box requests  ·  '
-          + t.networkMs + ' ms waiting on Box  ·  ' + kb(t.bytes) + ' downloaded',
+        console.log('%c⏱ Boot: ' + t.bootMs + ' ms  ·  ' + t.waitingMs + ' ms waiting on Box  ·  '
+          + t.appMs + ' ms app work  ·  ' + t.requests + ' request'
+          + (t.requests === 1 ? '' : 's') + '  ·  ' + kb(t.bytes),
           'font-weight:700;color:#0E7C7B');
         if (console.table) console.table(reqs.map(r => ({ request: r.label, ms: r.ms, KB: +(r.bytes / 1024).toFixed(1), status: r.status, 'at ms': r.at })));
         if (console.table) console.table(phases);
-        console.log('Non-network time (parse / merge / hydrate): ' + t.nonNetworkMs + ' ms');
+        console.log('"Waiting on Box" is wall-clock time with at least one request open, '
+          + 'not the sum of ' + t.networkMs + ' ms across ' + t.requests + ' parallel requests.');
+        console.log('NOTE: boot returns as soon as the page can render — the background refresh '
+          + 'keeps going, so anything that finishes later is not in the table above. '
+          + 'Call UFC_Perf.report() again in a second to see it.');
       },
       overlay() {
         const t = this.totals();
         const el = document.createElement('div');
         el.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:2147483647;background:#25273A;color:#fff;font:12px/1.5 ui-monospace,Menlo,monospace;padding:12px 14px;max-width:420px;box-shadow:0 4px 18px rgba(0,0,0,.3)';
         el.innerHTML = '<div style="font-weight:700;color:#FFDF00;margin-bottom:6px">Boot ' + t.bootMs + ' ms</div>'
-          + '<div>' + t.requests + ' requests · ' + t.networkMs + ' ms on Box · ' + (t.bytes / 1024).toFixed(0) + ' KB</div>'
-          + '<div style="opacity:.7">parse/merge/hydrate ' + t.nonNetworkMs + ' ms</div>'
+          + '<div>' + t.waitingMs + ' ms waiting on Box · ' + t.appMs + ' ms app work</div>'
+          + '<div style="opacity:.7">' + t.requests + ' request' + (t.requests === 1 ? '' : 's')
+          + ' · ' + (t.bytes / 1024).toFixed(0) + ' KB</div>'
+          + '<div style="opacity:.55;margin-top:4px">background refresh may still be running</div>'
           + '<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,.2);padding-top:6px">'
           + reqs.map(r => r.label + '  <b>' + r.ms + 'ms</b>' + (r.bytes ? '  ' + (r.bytes / 1024).toFixed(0) + 'KB' : '')).join('<br>')
           + '</div>';
@@ -347,12 +375,17 @@
        call and a multi-megabyte download look identical until the body is
        drained, and the download is usually the story. Cloning keeps the
        response usable by the caller. */
+    /* Record the moment the RESPONSE lands, not when its body finishes being
+       read. Waiting for arrayBuffer() meant a request that completed during
+       boot was often logged AFTER the summary printed — which is why the
+       overlay could claim "0 requests" on a boot that plainly made one. The
+       byte count is patched into the same record if it arrives later. */
     try {
+      const ms = (performance.now ? performance.now() : Date.now()) - t;
       const len = Number(res.headers.get('content-length')) || 0;
-      if (len) { Perf.req(path, (performance.now ? performance.now() : Date.now()) - t, len, res.status); }
-      else {
-        const c = res.clone();
-        c.arrayBuffer().then(b => Perf.req(path, (performance.now ? performance.now() : Date.now()) - t, b.byteLength, res.status)).catch(() => {});
+      const rec = Perf.req(path, ms, len, res.status);
+      if (!len && rec) {
+        res.clone().arrayBuffer().then(bufr => { rec.bytes = bufr.byteLength; }).catch(() => {});
       }
     } catch (e) {}
     return res;
@@ -719,9 +752,13 @@
   async function pullStudio() {
     const id = BOX_CONFIG.studioFileId;
     if (!id || /PASTE/.test(id)) return Store.defaultStudio();   // not configured yet → local only
-    const meta = await boxFetch('/files/' + id + '?fields=etag');
-    if (meta.ok) { const m = await meta.json(); _studioEtag = m.etag; }
+    /* No metadata pre-call. It existed only to capture the etag for the next
+       upload's If-Match, and the content response carries the same etag in a
+       header — so the extra round trip bought nothing and cost a full one.
+       Every Box call is ~800ms in production regardless of payload size, so
+       this halves the wait for the one page that reads this file. */
     const res = await boxFetch('/files/' + id + '/content');
+    _studioEtag = res.headers.get('etag') || _studioEtag;
     if (res.status === 404) return Store.defaultStudio();
     if (!res.ok) throw new Error('studio pull failed: ' + res.status);
     return JSON.parse(await res.text());
@@ -839,9 +876,10 @@
   async function pullRevenue() {
     const id = await resolveRevenueFileId();
     if (!id) return Store.defaultRevenue();
-    const meta = await boxFetch('/files/' + id + '?fields=etag');
-    if (meta.ok) { const m = await meta.json(); _revEtag = m.etag; }
+    // Etag off the content response — see pullStudio for why the separate
+    // metadata call was pure cost.
     const res = await boxFetch('/files/' + id + '/content');
+    _revEtag = res.headers.get('etag') || _revEtag;
     if (res.status === 404) return Store.defaultRevenue();
     if (!res.ok) throw new Error('revenue pull failed: ' + res.status);
     const txt = await res.text();
@@ -936,6 +974,130 @@
     return true;
   };
 
+  /* ---- Revenue Diff history (history.json) — LAZY BY DESIGN ---------------
+     The one file the app never pulls on boot.
+
+     Every other store is on the critical path because some page needs it to
+     draw. This one is read by a single tab in Executive Reporting, it grows
+     forever on purpose, and it is the only store whose size is unbounded —
+     so putting it in boot would mean every page in the app paid, every load,
+     for data almost nobody is looking at. Call Box.pullHistory() when the
+     Revenue Diff tab opens; nothing else touches it.
+
+     Self-configuring by name, same as revenue.json: no Box setup, and every
+     admin lands on the same file. ---- */
+  let _histEtag = null, _histId = null;
+  async function resolveHistoryFileId() {
+    if (_histId) return _histId;
+    try { const c = localStorage.getItem('ufc_history_file_id'); if (c) return (_histId = c); } catch (e) {}
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    if (res.ok) {
+      const j = await res.json();
+      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === 'history.json');
+      if (hit) { _histId = hit.id; try { localStorage.setItem('ufc_history_file_id', hit.id); } catch (e) {} return hit.id; }
+    }
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'history.json', parent: { id: BOX_CONFIG.folderId } }));
+    form.append('file', new Blob([JSON.stringify({ schemaVersion: 1, snapshots: {} })], { type: 'application/json' }), 'history.json');
+    const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+    if (up.status === 409) {
+      try { const j = await up.json(); const cid = j.context_info && j.context_info.conflicts && j.context_info.conflicts.id; if (cid) { _histId = cid; try { localStorage.setItem('ufc_history_file_id', cid); } catch (e) {} return cid; } } catch (e) {}
+      throw new Error('history.json create conflict — reload to retry');
+    }
+    if (!up.ok) throw new Error('could not create history.json: HTTP ' + up.status);
+    const j = await up.json(); const nid = j.entries && j.entries[0] && j.entries[0].id;
+    if (!nid) throw new Error('history.json create returned no id');
+    _histId = nid; try { localStorage.setItem('ufc_history_file_id', nid); } catch (e) {}
+    return nid;
+  }
+  const EMPTY_HIST = () => ({ schemaVersion: 1, snapshots: {} });
+  async function pullHistory() {
+    const id = await resolveHistoryFileId();
+    if (!id) return EMPTY_HIST();
+    const res = await boxFetch('/files/' + id + '/content');
+    if (res.status === 404) return EMPTY_HIST();
+    if (!res.ok) throw new Error('history pull failed: ' + res.status);
+    _histEtag = res.headers.get('etag') || _histEtag;
+    const txt = await res.text();
+    if (!txt.trim()) return EMPTY_HIST();
+    const parsed = JSON.parse(txt);
+    parsed.snapshots = parsed.snapshots || {};
+    return parsed;
+  }
+  async function uploadHistory(h, depth) {
+    const id = await resolveHistoryFileId();
+    if (!id) return;
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: 'history.json' }));
+    form.append('file', new Blob([JSON.stringify(h)], { type: 'application/json' }), 'history.json');
+    const res = await fetch('https://upload.box.com/api/2.0/files/' + id + '/content', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, ...(_histEtag ? { 'If-Match': _histEtag } : {}) },
+      body: form,
+    });
+    if (res.status === 412) {
+      /* A teammate wrote first. Snapshots are immutable once taken, so the
+         merge is a plain union by id — no field-level conflict to resolve. */
+      if ((depth || 0) >= 2) throw new Error('history push failed: repeated conflicts');
+      const remote = await pullHistory();
+      const merged = Store.mergeHistory(remote, h);
+      Store.hydrateHistoryFromRemote(merged);
+      return uploadHistory(merged, (depth || 0) + 1);
+    }
+    if (!res.ok) throw new Error('history upload failed: ' + res.status);
+    const j = await res.json(); if (j.entries && j.entries[0]) _histEtag = j.entries[0].etag;
+  }
+  let _histTimer = null, _histPending = null;
+  function scheduleHistoryPush(h) {
+    _histPending = h;
+    clearTimeout(_histTimer);
+    _histTimer = setTimeout(historyPushNow, BOX_CONFIG.pushDebounceMs);
+  }
+  async function historyPushNow() {
+    if (!_histPending) return;
+    const tok = await ensureToken(); if (!tok) return;
+    const h = _histPending; _histPending = null;
+    try { await uploadHistory(h); } catch (e) { _histPending = h; console.warn('history push failed', e); }
+  }
+  /** Load history.json into the local store and start mirroring writes back.
+      Idempotent — the Revenue Diff tab calls it every time it opens. */
+  Box.pullHistory = async function () {
+    const remote = await pullHistory();
+    const merged = Store.mergeHistory(remote, Store.readHistory());
+    Store.hydrateHistoryFromRemote(merged);
+    Store.attachHistoryRemote(scheduleHistoryPush);
+    return merged;
+  };
+  /** Flush any debounced history write immediately — the backfill writes a
+      lot at once and shouldn't rely on the tab staying open. */
+  Box.flushHistory = async function () { clearTimeout(_histTimer); await historyPushNow(); };
+
+  /* ---- Reading the dated backups ------------------------------------------
+     These are ordinary Box copies of projects.json, and until now nothing
+     read them back. For Revenue Diff they are the raw material: the only
+     record of what the forecast said before today. ---- */
+  /** Dated backups, oldest first: [{ id, name, date }]. */
+  Box.listBackups = async function () {
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name,size&limit=1000');
+    if (!res.ok) throw new Error('could not list the backup folder: ' + res.status);
+    const j = await res.json();
+    return (j.entries || [])
+      .filter(e => e.type === 'file' && e.name.indexOf(BACKUP_PREFIX) === 0 && /\.json$/.test(e.name))
+      .map(e => ({ id: e.id, name: e.name, size: e.size || 0,
+                   date: e.name.slice(BACKUP_PREFIX.length, BACKUP_PREFIX.length + 10) }))
+      .filter(e => /^\d{4}-\d{2}-\d{2}$/.test(e.date))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  };
+  /** The parsed project book out of one backup file. */
+  Box.readBackup = async function (fileId) {
+    const res = await boxFetch('/files/' + fileId + '/content');
+    if (!res.ok) throw new Error('could not read backup ' + fileId + ': ' + res.status);
+    const parsed = JSON.parse(await res.text());
+    return parsed && parsed.projects ? parsed.projects : {};
+  };
+
   /* ---- Rolling weekly backup ----------------------------------------------
      Box already versions projects.json on every upload (first-line recovery:
      Box → projects.json → Version History). This adds a SECOND line: a dated
@@ -982,6 +1144,62 @@
     } catch (e) { /* backups must never break boot */ }
   }
 
+  /* ---- OPT-IN STORES ------------------------------------------------------
+     studio.json and revenue.json used to be pulled by every page in the app,
+     on every load. Exactly one page reads each: Executive Reporting reads the
+     budget baselines, Revenue Reconciliation reads the actuals ledger. The
+     other twenty pages fetched them, parsed them, and never looked at them —
+     and boot re-polled studio.json every three minutes on all of them.
+
+     So a page now DECLARES what it needs, before boot.js runs:
+
+       <script>window.UFC_NEEDS = ['revenue'];</script>
+
+     and boot waits for those and nothing else.
+
+     AWAITED, NOT BACKGROUNDED, and that is the important part. These two
+     stores are read-write: the page that reads them also saves to them. If
+     the page rendered before the pull landed, a save could push a local-only
+     copy over a teammate's — and with no etag held yet, `If-Match` would be
+     omitted and the overwrite would be blind. Waiting keeps the semantics
+     byte-for-byte identical to what boot did before; the only thing that
+     changed is WHO pays for it.
+
+     Idempotent: repeated calls share the first promise. ---- */
+  const _ensured = {};
+  const STORES = {
+    studio: async () => {
+      const remote = await pullStudio();
+      try { Store.hydrateStudioFromRemote(remote); } catch (e) { console.warn('studio hydrate failed', e); }
+      Store.attachStudioRemote(scheduleStudioPush);
+    },
+    revenue: async () => {
+      const remote = await pullRevenue();
+      try { Store.hydrateRevenueFromRemote(mergeRevenueDb(remote, Store.readRevenue())); }
+      catch (e) { console.warn('revenue hydrate failed', e); }
+      Store.attachRevenueRemote(scheduleRevenuePush);
+    },
+  };
+  /** Load one opt-in store, once per page. */
+  Box.ensureStore = function (name) {
+    if (!STORES[name]) return Promise.reject(new Error('unknown store: ' + name));
+    if (_ensured[name]) return _ensured[name];
+    /* A failure must leave the page usable — the local cache is still there
+       and the sync indicator carries the state — but it must NOT be cached as
+       success, or a later retry would be swallowed. */
+    return (_ensured[name] = STORES[name]().then(
+      () => { Perf.phase(name + '.json'); return true; },
+      (e) => { delete _ensured[name]; console.warn(name + ' pull failed — this page is on its local cache', e); return false; }
+    ));
+  };
+  /** Load several, in parallel. Used by boot.js for window.UFC_NEEDS. */
+  Box.ensureStores = function (names) {
+    return Promise.all((names || []).map(n => Box.ensureStore(n).catch(() => false)));
+  };
+  /** True once a store has been asked for on this page — lets the live-refresh
+      loop poll only what someone is actually looking at. */
+  Box.storeLoaded = function (name) { return !!_ensured[name]; };
+
   // ---- Boot: auth → pull → identity → attach push ----
   /* The other half of the fast path. The page is already on screen from
      cache; this pulls the real thing and folds it in. Every page in the app
@@ -993,10 +1211,8 @@
      what it is, and the sync indicator carries the state. */
   async function refreshInBackground(inflight) {
     const FEE_CACHE = 'savills-ppm-fee-db:v1';
-    const p = inflight || { projects: pullRemote(), rates: pullRates(), studio: pullStudio(), revenue: pullRevenue() };
-    const [projectsR, ratesR, studioR, revenueR] = await Promise.allSettled([
-      p.projects, p.rates, p.studio, p.revenue,
-    ]);
+    const p = inflight || { projects: pullRemote(), rates: pullRates() };
+    const [projectsR, ratesR] = await Promise.allSettled([p.projects, p.rates]);
     let changed = false;
     if (projectsR.status === 'fulfilled' && projectsR.value) {
       try {
@@ -1010,14 +1226,6 @@
       try { if (window.RATES_CATALOG && window.RATES_CATALOG.hydrate) window.RATES_CATALOG.hydrate(ratesR.value); }
       catch (e) { console.warn('background rates hydrate failed', e); }
     }
-    if (studioR.status === 'fulfilled') {
-      try { Store.hydrateStudioFromRemote(studioR.value); } catch (e) {}
-    }
-    Store.attachStudioRemote(scheduleStudioPush);
-    if (revenueR.status === 'fulfilled') {
-      try { Store.hydrateRevenueFromRemote(mergeRevenueDb(revenueR.value, Store.readRevenue())); } catch (e) {}
-    }
-    Store.attachRevenueRemote(scheduleRevenuePush);
     weeklyBackup();
     emitSync(projectsR.status === 'fulfilled' ? 'synced' : 'error',
              projectsR.status === 'fulfilled' ? '' : 'Could not refresh from Box — showing the last copy');
@@ -1064,12 +1272,21 @@
        in-flight requests simply BECOME the background refresh — nothing is
        wasted and nothing is fetched twice. On a cold boot they overlap the
        identity call instead of queueing behind it. */
-    const inflight = {
-      projects: pullRemote(), rates: pullRates(), studio: pullStudio(), revenue: pullRevenue(),
-    };
+    const inflight = { projects: pullRemote(), rates: pullRates() };
     // Attach catch handlers now so a rejection can never surface as an
     // unhandled promise rejection while we are awaiting something else.
     Object.keys(inflight).forEach(k => { inflight[k].catch(() => {}); });
+
+    /* Start any store this page declared IN PARALLEL with the two above,
+       rather than after boot finishes. boot.js still awaits them before
+       resolving ufcReady — but by then they have been in flight the whole
+       time, so the page that needs one waits roughly as long as a page that
+       needs none. Starting them afterwards, which is the obvious way to write
+       this, made Revenue Reconciliation pay three round trips end to end. */
+    try {
+      const needs = window.UFC_NEEDS;
+      if (Array.isArray(needs) && needs.length) Box.ensureStores(needs);
+    } catch (e) { /* a page that declares nothing is the common case */ }
 
     let me = null;
     try { me = await getIdentity(); Store.setRealIdentity({ username: me.login, name: me.name }); }
@@ -1093,9 +1310,7 @@
       }
     }
 
-    const [projectsR, ratesR, studioR, revenueR] = await Promise.allSettled([
-      inflight.projects, inflight.rates, inflight.studio, inflight.revenue,
-    ]);
+    const [projectsR, ratesR] = await Promise.allSettled([inflight.projects, inflight.rates]);
     Perf.phase('all pulls settled (parallel)');
 
 
@@ -1133,20 +1348,10 @@
     Store.attachRemote(schedulePush);
     weeklyBackup();   // fire and forget; failures never affect boot
 
-    if (studioR.status === 'fulfilled') {
-      try { Store.hydrateStudioFromRemote(studioR.value); Perf.phase('studio.json'); }
-      catch (e) { console.warn('studio hydrate failed', e); }
-    } else { console.warn('studio pull failed', studioR.reason); }
-    Store.attachStudioRemote(scheduleStudioPush);
-
-    if (revenueR.status === 'fulfilled') {
-      try {
-        const mergedRev = mergeRevenueDb(revenueR.value, Store.readRevenue());
-        Store.hydrateRevenueFromRemote(mergedRev);
-        Perf.phase('revenue.json');
-      } catch (e) { console.warn('revenue hydrate failed', e); }
-    } else { console.warn('revenue pull failed — reconciliation is local-only this session', revenueR.reason); }
-    Store.attachRevenueRemote(scheduleRevenuePush);
+    /* studio.json and revenue.json are NOT pulled here any more — see the
+       opt-in stores above. Pages that read them declare window.UFC_NEEDS and
+       boot.js awaits them; everyone else no longer pays for two files they
+       never open. */
     Perf.phase('boot done');
     Perf.finish();
     return { ok: true, backend: 'box' };

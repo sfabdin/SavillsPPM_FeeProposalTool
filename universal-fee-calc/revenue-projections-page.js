@@ -239,7 +239,12 @@
         ? `<select class="rtag-edit r${r.rating}" data-pid="${r.p.id}" title="Projection rating">${STORE.RATINGS.map(rt => `<option value="${rt.n}" ${rt.n===r.rating?'selected':''}>${rt.n}</option>`).join('')}</select>`
         : `<span class="rtag r${r.rating}">${r.rating}</span>`;
       const coMeta = r.coCount ? ` · <span style="color:var(--sav-teal);">incl. ${r.coCount} CO${r.coCount === 1 ? '' : 's'}</span>` : '';
-      html += `<td class="proj-cell">${ratingCell}<a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a><div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}${coMeta}${dupIds.has(r.p.id) ? '<span class="dup-badge" title="This row\u2019s monthly figure equals the sum of this client\u2019s other rows — it may be a roll-up counted on top of its own parts. Check before trusting the total.">⚠ possible double count</span>' : ''}<span class="open-link"> · open →</span></div></td>`;
+      /* Estimated dollars, flagged as such on the record. The row still
+         counts at full value — a placeholder is a real expectation, just
+         not a priced one — so this labels the number without moving it. */
+      const phBadge = STORE.isPlaceholder(r.p)
+        ? '<span class="ph-badge" title="The dollars on this row were assumed to hold the space, not priced from scope. It still counts toward the forecast at its rating weight — but treat the amount as an estimate.">estimate</span>' : '';
+      html += `<td class="proj-cell">${ratingCell}<a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a>${phBadge}<div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}${coMeta}${dupIds.has(r.p.id) ? '<span class="dup-badge" title="This row\u2019s monthly figure equals the sum of this client\u2019s other rows — it may be a roll-up counted on top of its own parts. Check before trusting the total.">⚠ possible double count</span>' : ''}<span class="open-link"> · open →</span></div></td>`;
       let rvt = 0;
       cols.forEach((c, i) => {
         const v = r.map[c.key] || 0;
@@ -495,8 +500,15 @@
       ws.getCell(r, 1).alignment = { vertical:'middle' };
       ws.getCell(r, 2).value = pj.client || '';
       ws.getCell(r, 2).font = { name:'Calibri', size:10, color:{argb: excluded ? STEEL : NAVY} };
-      ws.getCell(r, 3).value = row.rating + ' · ' + (meta.short || meta.label || '');
+      ws.getCell(r, 3).value = row.rating + ' · ' + (meta.short || meta.label || '')
+        + (STORE.isPlaceholder(row.p) ? ' · ESTIMATE' : '');
       ws.getCell(r, 3).font = { name:'Calibri', size:10, color:{argb: RCOL[row.rating] || NAVY}, bold:true };
+      /* The export is where Finance actually reads these numbers, so the
+         caveat has to travel with the workbook — a badge that only exists
+         on screen is a badge nobody downstream ever sees. */
+      if (STORE.isPlaceholder(row.p)) {
+        ws.getCell(r, 3).note = 'The dollars on this row were assumed to hold the space, not priced from scope. Counted at full value; treat the amount as an estimate.';
+      }
       ws.getCell(r, 4).value = leaderName(pj);
       ws.getCell(r, 4).font = { name:'Calibri', size:10, color:{argb: STEEL} };
       let rvt = 0;
