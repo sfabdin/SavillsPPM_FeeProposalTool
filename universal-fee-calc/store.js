@@ -1151,6 +1151,10 @@
      already have.
      ------------------------------------------------------------ */
   let _revenuePush = null;
+  /* Bumped on every write to revenue.json. The allocation index is derived
+     from the whole book and rebuilt only when this moves — without it the
+     grid re-walks every year's rows for each of 176 projects × 12 months. */
+  let _revRev = 0;
   function attachRevenueRemote(pushFn) { _revenuePush = typeof pushFn === 'function' ? pushFn : null; }
   function defaultRevenue() { return { schemaVersion: SCHEMA, ledger: {} }; }
   /* The close sheet prints its own grand-total line among the data rows
@@ -1190,6 +1194,7 @@
   function writeRevenue(r) {
     r.schemaVersion = SCHEMA;
     r.updatedAt = new Date().toISOString();
+    _revRev++;
     localStorage.setItem(REVENUE_KEY, JSON.stringify(r));
     if (typeof _revenuePush === 'function') { try { _revenuePush(r); } catch (e) { console.warn('revenue push failed', e); } }
   }
@@ -1198,6 +1203,7 @@
     r.schemaVersion = SCHEMA;
     r.ledger = r.ledger || {};
     scrubSummaryRows(r);       // a remote copy may still carry the sheet's total line
+    _revRev++;
     localStorage.setItem(REVENUE_KEY, JSON.stringify(r));
   }
   /** One-time lift: early builds kept the ledger inside projects.json. Move it
@@ -1209,6 +1215,7 @@
       const db = readDb();
       if (db && db.ledger && Object.keys(db.ledger).length) {
         out.ledger = db.ledger;
+        _revRev++;
         localStorage.setItem(REVENUE_KEY, JSON.stringify(out));
         delete db.ledger;
         writeDb(db);                                  // pushes the slimmed projects.json
@@ -1260,10 +1267,21 @@
         carryTo:    { ...((old && old.carryTo) || {}) },
         pid: (old && old.pidManual) ? old.pid : r.pid,     // a human's match outranks the matcher
         pidManual: !!(old && old.pidManual),
+        year: yk,                                          // allocations cross year ends; a row has to know its own
       };
     });
+    /* The mapping book is the authority on what a line IS. Laying it over the
+       fresh rows here means a line mapped last year arrives already mapped,
+       and a line someone ruled out of scope does not come back as a gap. */
+    const book = (rev.mapping && rev.mapping.entries) || {};
+    const ignoredKeys = (rev.mapping && rev.mapping.ignored) || {};
+    Object.entries(out).forEach(([k, r]) => {
+      if (ignoredKeys[k]) { r.pid = null; r.pidManual = false; return; }
+      const e = book[k];
+      if (e && e.pid) { r.pid = e.pid; r.pidManual = e.via !== 'auto'; }
+    });
     // Rows that existed before but are absent from this tab keep their history.
-    Object.entries(prev.rows || {}).forEach(([k, r]) => { if (!out[k]) out[k] = r; });
+    Object.entries(prev.rows || {}).forEach(([k, r]) => { if (!out[k]) out[k] = { ...r, year: yk }; });
     const cu = getCurrentUser() || {};
     const stamp = new Date().toISOString();
     Object.values(out).forEach(r => { r.updatedAt = r.updatedAt || stamp; });
@@ -1376,13 +1394,339 @@
   function ledgerCoverage(year) {
     const y = getLedgerYear(year);
     if (!y) return null;
-    let mapped = 0, unmapped = 0, mappedAmt = 0, unmappedAmt = 0;
-    Object.values(y.rows || {}).forEach(r => {
+    let mapped = 0, unmapped = 0, ignored = 0, mappedAmt = 0, unmappedAmt = 0, ignoredAmt = 0;
+    const out = ((readRevenue().mapping || {}).ignored) || {};
+    Object.entries(y.rows || {}).forEach(([key, r]) => {
       let amt = 0;
-      for (let m = 1; m <= 12; m++) amt += cellRecognised(r, m);
-      if (r.pid) { mapped++; mappedAmt += amt; } else { unmapped++; unmappedAmt += amt; }
+      for (let m = 1; m <= 12; m++) amt += cellRecognised(r, m, year);
+      if (r.pid) { mapped++; mappedAmt += amt; }
+      // A line someone has ruled out of scope is answered, not missing —
+      // otherwise "unmapped" never reaches zero and stops being read.
+      else if (out[key]) { ignored++; ignoredAmt += amt; }
+      else { unmapped++; unmappedAmt += amt; }
     });
-    return { mapped, unmapped, total: mapped + unmapped, mappedAmt, unmappedAmt };
+    return { mapped, unmapped, ignored, total: mapped + unmapped + ignored,
+             mappedAmt, unmappedAmt, ignoredAmt };
+  }
+
+  /* ============================================================
+     PROJECT MAPPING — the ledger line ⇄ fee-tool project book
+     ------------------------------------------------------------
+     Nothing else on this page means anything until the line Finance
+     billed and the project the fee tool prices are known to be the
+     same job. An unmapped line has no EARNED figure to reconcile
+     against, so it reads as revenue nobody forecast; a line mapped to
+     the WRONG project is worse, because it moves real money onto
+     someone else's forecast and makes two projects wrong instead of
+     one. Mapping is therefore the precondition for the whole page,
+     not a tidy-up at the end of it.
+
+     THE MAPPING IS ITS OWN BOOK, NOT A FIELD ON A YEAR
+       revenue.mapping = {
+         entries: { "<key>": { pid, via, score, at, by, name, client, code } },
+         ignored: { "<key>": { at, by, reason } }
+       }
+     Keyed by the ledger row key — the customer account code where the
+     sheet carries one, otherwise the normalised project name — which
+     is stable across years and across re-imports. Map a line once and
+     every year of the book, and every future close, inherits it. A pid
+     living only on a year's row would have to be re-established every
+     January, which is exactly when nobody has time to do it.
+
+     IGNORED IS A DECISION, NOT A GAP
+     Some lines genuinely have no project: intercompany allocations, a
+     holding code, revenue booked to the office rather than to a job.
+     Recording that explicitly is the only way "unmapped" can ever
+     reach zero and stay there — otherwise the coverage figure is
+     permanently short by a handful of lines and everyone learns to
+     ignore it.
+     ============================================================ */
+  const MAP_STOP = new Set(['the', 'of', 'and', 'a', 'an', 'for', 'to', 'at', 'in', 'on',
+    'llc', 'inc', 'corp', 'project', 'phase', 'ltd', 'lp', 'co', 'company', 'the']);
+  function mapTokens(s) {
+    return String(s || '').toLowerCase().replace(/&/g, ' and ')
+      .split(/[^a-z0-9]+/).filter(t => t && t.length > 1 && !MAP_STOP.has(t));
+  }
+  /** 0–1, symmetric-ish: how much of the shorter name is present in the
+      longer one, with a prefix match counting for three quarters so
+      "Redevelopmt" still finds "Redevelopment". */
+  function mapScore(a, b) {
+    const ta = mapTokens(a), tb = mapTokens(b);
+    if (!ta.length || !tb.length) return 0;
+    const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+    let hit = 0;
+    small.forEach(t => {
+      if (big.includes(t)) { hit += 1; return; }
+      if (big.some(bt => (bt.length >= 3 && t.startsWith(bt)) || (t.length >= 3 && bt.startsWith(t)))) hit += 0.75;
+    });
+    return hit / small.length;
+  }
+  const mapCode = (s) => String(s == null ? '' : s).trim().toUpperCase();
+
+  /** Every project a ledger line could be mapped to. Change orders are
+      excluded — their revenue belongs to the parent contract, which is the
+      record Finance's line actually corresponds to. */
+  function projectMatchIndex() {
+    return listProjects().filter(p => !isChangeOrder(p)).map(p => ({
+      id: p.id,
+      name: (p.project && p.project.name) || '',
+      client: (p.project && p.project.client) || '',
+      code: mapCode((p.project && (p.project.projectId365 || p.project.salesforceId)) || ''),
+      status: (p.project && p.project.status) || '',
+    }));
+  }
+
+  /** Ranked candidates for one ledger line. A customer account code that
+      matches is not a guess and comes back at 1.0; everything else is a
+      name score weighted 80/20 with the client name, because two jobs for
+      the same client are the case the name alone gets wrong. */
+  function mappingCandidates(row, idx, limit) {
+    const list = idx || projectMatchIndex();
+    const code = mapCode(row && row.code);
+    const out = [];
+    list.forEach(p => {
+      if (code && p.code && p.code === code) { out.push({ ...p, score: 1, via: 'code' }); return; }
+      let s = mapScore(row && row.name, p.name);
+      if (row && row.client && p.client) s = s * 0.8 + mapScore(row.client, p.client) * 0.2;
+      if (s > 0.2) out.push({ ...p, score: Math.round(s * 1000) / 1000, via: 'name' });
+    });
+    out.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    return out.slice(0, limit || 6);
+  }
+
+  /* ---- the book itself ---- */
+  function mappingBook() {
+    const rev = readRevenue();
+    rev.mapping = rev.mapping || {};
+    rev.mapping.entries = rev.mapping.entries || {};
+    rev.mapping.ignored = rev.mapping.ignored || {};
+    return rev.mapping;
+  }
+  /** The mapping for one key, or null. A pid pointing at a project that has
+      since been deleted is not a mapping — it is a dangling reference, and
+      reporting it as mapped would hide a real gap. */
+  function mappingFor(key) {
+    const e = mappingBook().entries[key];
+    if (!e || !e.pid) return null;
+    return getProject(e.pid) ? e : null;
+  }
+  const mappingIgnored = (key) => !!mappingBook().ignored[key];
+
+  /** Write the pid onto every year's row carrying this key, so the book and
+      the ledger can never drift apart. Returns how many rows moved. */
+  function pushMappingToLedger(rev, key, pid, manual) {
+    let n = 0;
+    Object.values(rev.ledger || {}).forEach(y => {
+      const row = (y.rows || {})[key];
+      if (!row) return;
+      row.pid = pid || null;
+      row.pidManual = !!manual && !!pid;
+      row.updatedAt = new Date().toISOString();
+      n++;
+    });
+    return n;
+  }
+
+  /** Map a ledger line to a project — for good, and across every year. */
+  function setMapping(key, pid, meta) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can map a revenue line.');
+    if (!key) throw new Error('No line to map.');
+    if (pid && !getProject(pid)) throw new Error('That project no longer exists.');
+    const rev = readRevenue();
+    rev.mapping = rev.mapping || { entries: {}, ignored: {} };
+    rev.mapping.entries = rev.mapping.entries || {};
+    rev.mapping.ignored = rev.mapping.ignored || {};
+    const cu = getCurrentUser() || {};
+    if (!pid) delete rev.mapping.entries[key];
+    else rev.mapping.entries[key] = {
+      pid,
+      via: (meta && meta.via) || 'manual',
+      score: (meta && meta.score) != null ? +meta.score : null,
+      name: (meta && meta.name) || '', client: (meta && meta.client) || '', code: mapCode(meta && meta.code),
+      at: new Date().toISOString(), by: cu.name || cu.username || 'admin',
+    };
+    delete rev.mapping.ignored[key];
+    const rows = pushMappingToLedger(rev, key, pid, (meta && meta.via) !== 'auto');
+    writeRevenue(rev);
+    logActivity('ledger-map', pid || null, { key, via: (meta && meta.via) || 'manual', rows });
+    return rev.mapping.entries[key] || null;
+  }
+  const clearMapping = (key) => setMapping(key, null);
+
+  /** Say out loud that a line has no project — and why. Ignored lines drop
+      out of the unmapped count, which is the only way that count can reach
+      zero and mean something. */
+  function ignoreLedgerRow(key, reason) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can rule a revenue line out of scope.');
+    const rev = readRevenue();
+    rev.mapping = rev.mapping || { entries: {}, ignored: {} };
+    rev.mapping.entries = rev.mapping.entries || {};
+    rev.mapping.ignored = rev.mapping.ignored || {};
+    const cu = getCurrentUser() || {};
+    rev.mapping.ignored[key] = { at: new Date().toISOString(), by: cu.name || cu.username || 'admin',
+                                 reason: String(reason || '').trim() || 'not a project' };
+    delete rev.mapping.entries[key];
+    pushMappingToLedger(rev, key, null, false);
+    writeRevenue(rev);
+    logActivity('ledger-map-ignore', null, { key, reason: rev.mapping.ignored[key].reason });
+    return rev.mapping.ignored[key];
+  }
+  function unignoreLedgerRow(key) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can change a mapping.');
+    const rev = readRevenue();
+    if (rev.mapping && rev.mapping.ignored) delete rev.mapping.ignored[key];
+    writeRevenue(rev);
+    return true;
+  }
+
+  /** Lay the book back over the ledger. Called after an import so a newly
+      arrived line inherits the mapping someone made last year, and callable
+      on its own when a mapping and a year's rows have drifted. */
+  function applyMappingBook(year) {
+    const rev = readRevenue();
+    const book = (rev.mapping && rev.mapping.entries) || {};
+    const ignored = (rev.mapping && rev.mapping.ignored) || {};
+    let applied = 0;
+    const years = year == null ? Object.keys(rev.ledger || {}) : [String(year)];
+    years.forEach(yk => {
+      const y = (rev.ledger || {})[yk];
+      if (!y) return;
+      Object.entries(y.rows || {}).forEach(([key, row]) => {
+        if (ignored[key]) { if (row.pid) { row.pid = null; row.pidManual = false; applied++; } return; }
+        const e = book[key];
+        if (!e || !e.pid) return;
+        if (row.pid === e.pid && row.pidManual) return;
+        row.pid = e.pid;
+        row.pidManual = e.via !== 'auto';
+        applied++;
+      });
+    });
+    if (applied) writeRevenue(rev);
+    return applied;
+  }
+
+  /** Seed the book from matches a year's rows already carry, so a ledger
+      mapped before the book existed does not have to be redone by hand. */
+  function seedMappingFromLedger() {
+    const rev = readRevenue();
+    rev.mapping = rev.mapping || { entries: {}, ignored: {} };
+    rev.mapping.entries = rev.mapping.entries || {};
+    rev.mapping.ignored = rev.mapping.ignored || {};
+    const cu = getCurrentUser() || {};
+    let seeded = 0;
+    Object.values(rev.ledger || {}).forEach(y => {
+      Object.entries(y.rows || {}).forEach(([key, row]) => {
+        if (!row.pid || rev.mapping.entries[key] || rev.mapping.ignored[key]) return;
+        if (!getProject(row.pid)) return;
+        rev.mapping.entries[key] = { pid: row.pid, via: row.pidManual ? 'manual' : 'auto', score: null,
+          name: row.name || '', client: row.client || '', code: mapCode(row.code),
+          at: new Date().toISOString(), by: cu.name || cu.username || 'admin' };
+        seeded++;
+      });
+    });
+    if (seeded) writeRevenue(rev);
+    return seeded;
+  }
+
+  /* How sure the matcher has to be before it maps a line without being
+     asked. A near-tie is the dangerous case — two jobs for the same client,
+     one letter apart — so a confident match must also be clearly ahead of
+     the runner-up. A code match is not a guess and skips both tests. */
+  const MAP_AUTO_MIN = 0.82;
+  const MAP_AUTO_GAP = 0.15;
+
+  /** Map every line the matcher is sure about, and report on the rest.
+      Nothing here overwrites a human: a line already mapped by hand, or
+      ruled out of scope, is left exactly as it is. */
+  function autoMapLedger(year, opts) {
+    if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can map revenue lines.');
+    const o = opts || {};
+    const min = o.min != null ? +o.min : MAP_AUTO_MIN;
+    const gap = o.gap != null ? +o.gap : MAP_AUTO_GAP;
+    const idx = projectMatchIndex();
+    const rev = readRevenue();
+    rev.mapping = rev.mapping || { entries: {}, ignored: {} };
+    rev.mapping.entries = rev.mapping.entries || {};
+    rev.mapping.ignored = rev.mapping.ignored || {};
+    const y = (rev.ledger || {})[String(year)];
+    if (!y) return { applied: 0, ambiguous: [], unmatched: [], considered: 0 };
+    const cu = getCurrentUser() || {};
+    const stamp = new Date().toISOString();
+    let applied = 0, considered = 0;
+    const ambiguous = [], unmatched = [];
+    Object.entries(y.rows || {}).forEach(([key, row]) => {
+      if (rev.mapping.ignored[key]) return;
+      if (rev.mapping.entries[key] && getProject(rev.mapping.entries[key].pid)) return;
+      if (row.pidManual && row.pid) return;
+      considered++;
+      const cands = mappingCandidates(row, idx, 4);
+      const best = cands[0], second = cands[1];
+      const clear = best && (best.via === 'code'
+        || (best.score >= min && (!second || best.score - second.score >= gap)));
+      if (clear) {
+        rev.mapping.entries[key] = { pid: best.id, via: best.via === 'code' ? 'code' : 'auto',
+          score: best.score, name: row.name || '', client: row.client || '', code: mapCode(row.code),
+          at: stamp, by: cu.name || cu.username || 'admin' };
+        pushMappingToLedger(rev, key, best.id, false);
+        applied++;
+      } else if (best) ambiguous.push({ key, name: row.name || '', client: row.client || '', candidates: cands });
+      else unmatched.push({ key, name: row.name || '', client: row.client || '' });
+    });
+    if (applied) { writeRevenue(rev); logActivity('ledger-automap', null, { year: String(year), applied, considered }); }
+    return { applied, considered, ambiguous, unmatched };
+  }
+
+  /** The mapping workspace's whole data set: every line in a year, what it
+      is mapped to, what it is worth, and what it could be mapped to. */
+  function mappingReport(year) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    const idx = projectMatchIndex();
+    const book = mappingBook();
+    const lines = Object.entries(y.rows || {}).map(([key, row]) => {
+      let amount = 0, earnedMonths = 0;
+      for (let m = 1; m <= 12; m++) { amount += cellRecognised(row, m); if (cellHasValue(row, m)) earnedMonths++; }
+      const entry = book.entries[key];
+      const live = entry && entry.pid && getProject(entry.pid) ? entry : null;
+      const p = live ? getProject(live.pid) : (row.pid ? getProject(row.pid) : null);
+      const ign = book.ignored[key] || null;
+      return {
+        key, row, name: row.name || '', client: row.client || '', code: row.code || '',
+        amount: Math.round(amount * 100) / 100, months: earnedMonths,
+        pid: (p && p.id) || null,
+        projectName: (p && p.project && p.project.name) || '',
+        projectClient: (p && p.project && p.project.client) || '',
+        via: live ? live.via : (row.pid ? (row.pidManual ? 'manual' : 'auto') : null),
+        score: live ? live.score : null,
+        dangling: !!(entry && entry.pid && !getProject(entry.pid)),
+        ignored: ign, isFeeShare: !!row.isFeeShare,
+        candidates: (p || ign) ? [] : mappingCandidates(row, idx, 5),
+      };
+    });
+    lines.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+    const stat = { total: lines.length, mapped: 0, ignored: 0, unmapped: 0,
+                   mappedAmt: 0, ignoredAmt: 0, unmappedAmt: 0, dangling: 0 };
+    lines.forEach(l => {
+      if (l.dangling) stat.dangling++;
+      if (l.pid) { stat.mapped++; stat.mappedAmt += l.amount; }
+      else if (l.ignored) { stat.ignored++; stat.ignoredAmt += l.amount; }
+      else { stat.unmapped++; stat.unmappedAmt += l.amount; }
+    });
+    stat.pct = stat.total ? Math.round(((stat.mapped + stat.ignored) / stat.total) * 100) : 100;
+    return { year: String(year), lines, stat };
+  }
+
+  /** The other direction: fee-tool projects with revenue in the year that no
+      ledger line points at. A project the tool says earned money and Finance
+      never billed is a question, and it is invisible from the ledger side. */
+  function unclaimedProjects(year, earnedLookup) {
+    const y = getLedgerYear(year);
+    const claimed = new Set();
+    Object.values((y && y.rows) || {}).forEach(r => { if (r.pid) claimed.add(r.pid); });
+    return projectMatchIndex().filter(p => !claimed.has(p.id)).map(p => {
+      const earned = typeof earnedLookup === 'function' ? (+earnedLookup(p.id) || 0) : 0;
+      return { ...p, earned };
+    }).filter(p => !earnedLookup || p.earned).sort((a, b) => b.earned - a.earned);
   }
 
   function deleteLedgerYear(year) {
@@ -1550,56 +1894,177 @@
   }
 
   /* ============================================================
-     ALLOCATION — every earned dollar gets an accrual month and an
-     invoice month, at the same amount
+     ALLOCATION — every earned month gets an accrual month, a billed
+     month and a realized month, at one amount
      ------------------------------------------------------------
-     Left to float, accrual and billing double-count. Earn 45,000 in
-     January, accrue 45,000 in January, invoice 45,000 in January and
-     the naive sum is 90,000 for one month's work — the same trap at
-     three months' remove gives 135,000.
+     Left to float, the calendars double-count. Earn 45,000 in January,
+     accrue 45,000 in January, invoice 45,000 in January and the naive
+     sum is 90,000 for one month's work — the same trap at three
+     months' remove gives 135,000.
 
      So allocation is the model, not a nicety. Each EARNED month's
-     amount is assigned:
-         alloc[earnedMonth] = { amount, accrueIn, invoiceIn }
-     accrueIn and invoiceIn may be the same month or different ones,
-     but the amount is one amount, spent once.
+     amount is assigned three destinations:
 
-     Revenue is realized on the ACCRUAL calendar — realized in month m
-     is the sum of allocations whose accrueIn is m. Same-month earn /
-     accrue / invoice therefore counts once by construction, not by a
-     subtraction that has to be remembered. The invoice calendar is
-     cash, and is reconciled separately against what the sheet says
-     actually went out.
+         alloc[earnedMonth] = { amount, accrue, bill, realize }
+
+     each a MONTH AND A YEAR ("2026-11"), because the interesting cases
+     cross a year end: work earned in December is invoiced in January
+     and lands in next year's cash, and an accrual raised in December
+     is released against a January invoice. A model that only carried
+     a month number could not say that, and every December would have
+     to be reconciled by hand against a file that already knows.
+
+     Any of the three may equal any other. The common shape is all
+     three in the earned month; the next most common is accrue and
+     realize together with the bill a month or two later.
+
+     THE FOUR VIEWS ARE THE FOUR CALENDARS
+       EARNED   — the fee tool's own schedule, by earned month. This is
+                  where the work and the staffing sit, and it is the
+                  only one of the four that does not come out of the
+                  allocation: it comes out of the project record.
+       ACCRUED  — by `accrue`: when the revenue was raised as earned
+                  but unbilled.
+       BILLED   — by `bill`: when the invoice actually goes out.
+       REALIZED — by `realize`: when the revenue lands in the numbers
+                  Finance reports. This is the view that has to agree
+                  with the finance team's report, and `realizationCheck`
+                  is what proves it does.
+
+     Realized defaults to the accrual month, because that is what
+     Finance does unless something makes them do otherwise — but it is
+     stated separately precisely so the exceptions can be recorded
+     instead of argued about.
      ============================================================ */
   const allocOf = (row) => (row && row.alloc) || {};
   const hasAllocations = (row) => Object.keys(allocOf(row)).length > 0;
   const allocAmount = (a) => (a && isFinite(+a.amount)) ? +a.amount : 0;
+  const ALLOC_LANES = ['accrue', 'bill', 'realize'];
+  const ALLOC_LANE_LABEL = { accrue: 'Accrued', bill: 'Billed', realize: 'Realized' };
+
+  /* A month and a year, as one sortable string. Year 0 is the "no year
+     stated" case — a row from before the ledger stamped its year, whose
+     allocations can only ever mean months inside its own year. */
+  const ymStr = (y, m) => String(y == null ? 0 : y).padStart(4, '0') + '-' + String(m).padStart(2, '0');
+  function ymParse(v) {
+    const m = /^(\d{1,4})-(\d{1,2})$/.exec(String(v == null ? '' : v));
+    if (!m) return null;
+    const mm = +m[2];
+    return (mm >= 1 && mm <= 12) ? { year: +m[1], month: mm } : null;
+  }
+  const ymMonth = (v) => { const p = ymParse(v); return p ? p.month : null; };
+  const ymYear = (v) => { const p = ymParse(v); return p ? p.year : null; };
+  /** Sortable ordinal, so "is the bill before the accrual" is one comparison
+      that works across a year end. */
+  const ymIndex = (v) => { const p = ymParse(v); return p ? p.year * 12 + p.month : null; };
+  const ymShift = (v, n) => { const p = ymParse(v); if (!p) return v;
+    const i = p.year * 12 + (p.month - 1) + (+n || 0);
+    return ymStr(Math.floor(i / 12), (i % 12) + 1); };
+
+  /** One allocation entry in full, whatever shape it was written in.
+      Older entries carry bare month numbers (`accrueIn`, `invoiceIn`) and no
+      realized month at all; they mean months inside `year`, and realized
+      means the accrual month. Reading them through here is what lets the
+      three-calendar model land on a book that was written with two. */
+  function normAlloc(entry, year, earnedMonth) {
+    if (!entry) return null;
+    const Y = (year == null || year === '') ? 0 : +year;
+    const asYm = (v, fallback) => {
+      const p = ymParse(v);
+      if (p) return ymStr(p.year, p.month);
+      const m = +v || +fallback || +earnedMonth || 1;
+      return ymStr(Y, m);
+    };
+    const accrue = entry.accrue ? asYm(entry.accrue) : asYm(entry.accrueIn, earnedMonth);
+    const bill = entry.bill ? asYm(entry.bill) : asYm(entry.invoiceIn, ymMonth(accrue));
+    const realize = entry.realize ? asYm(entry.realize) : accrue;
+    return {
+      earned: ymStr(Y, +earnedMonth || 1), earnedMonth: +earnedMonth || 1, srcYear: Y,
+      amount: allocAmount(entry), accrue, bill, realize,
+      // The month-only shape the rest of the app has always spoken.
+      accrueIn: ymMonth(accrue), invoiceIn: ymMonth(bill), realizeIn: ymMonth(realize),
+    };
+  }
+  /** Every allocation on a row, normalised. */
+  function rowAllocations(row, year) {
+    const a = allocOf(row);
+    const Y = year != null ? year : (row && row.year);
+    return Object.keys(a).map(m => normAlloc(a[m], Y, +m)).filter(Boolean);
+  }
+
+  /* ------------------------------------------------------------
+     A book-wide index of every allocation, by ledger key. A December
+     2026 allocation that bills in January 2027 belongs to 2027's
+     BILLED column, and 2027's rows have never heard of it — only an
+     index across the years can put it where it goes. Rebuilt whenever
+     revenue.json is written, which is the only thing that can change
+     it, so the grid does not re-walk the book 176 × 12 × 4 times.
+     ------------------------------------------------------------ */
+  let _allocIdx = null, _allocIdxRev = -1;
+  /* Anything that writes revenue.json behind the store's back — a test
+     fixture resetting localStorage, a future importer — has to say so, or the
+     index keeps answering from a book that no longer exists. Every write
+     inside the store already does this for itself. */
+  function invalidateRevenueCache() { _revRev++; _allocIdx = null; _allocIdxRev = -1; }
+  function allocIndex() {
+    if (_allocIdx && _allocIdxRev === _revRev) return _allocIdx;
+    const byKey = {};
+    Object.entries(readLedger()).forEach(([yk, y]) => {
+      Object.entries((y && y.rows) || {}).forEach(([key, row]) => {
+        const list = rowAllocations(row, +yk);
+        if (!list.length) return;
+        (byKey[key] || (byKey[key] = [])).push(...list);
+      });
+    });
+    _allocIdx = byKey; _allocIdxRev = _revRev;
+    return _allocIdx;
+  }
+  /** What lands in this lane, in this month of this year, for one ledger
+      line — counting allocations made in any year. */
+  function ledgerLaneIn(key, lane, year, month) {
+    const list = (allocIndex()[key] || []);
+    const want = ymStr(year, month);
+    let sum = 0;
+    list.forEach(a => { if (a[lane] === want) sum += a.amount; });
+    return Math.round(sum * 100) / 100;
+  }
+  /** The same question asked of a row in hand. The row answers for its own
+      year from its own entries — it is the copy the caller is holding, and it
+      may be ahead of the stored book — and the index supplies only what OTHER
+      years' rows send into this one, which is the whole point of carrying a
+      year on each destination. */
+  function laneIn(row, lane, month, year) {
+    const Y = year != null ? year : (row && row.year);
+    const want = ymStr(Y, month);
+    let sum = 0;
+    rowAllocations(row, Y).forEach(a => { if (a[lane] === want) sum += a.amount; });
+    if (row && row.key && Y != null) {
+      (allocIndex()[row.key] || []).forEach(a => { if (+a.srcYear !== +Y && a[lane] === want) sum += a.amount; });
+    }
+    return Math.round(sum * 100) / 100;
+  }
 
   /** Realized in this month: everything whose ACCRUAL lands here. */
-  function allocatedAccruedIn(row, month) {
-    const a = allocOf(row);
-    let sum = 0;
-    Object.keys(a).forEach(e => { if (+a[e].accrueIn === +month) sum += allocAmount(a[e]); });
-    return sum;
-  }
+  const allocatedAccruedIn = (row, month, year) => laneIn(row, 'accrue', month, year);
   /** What our story says should be invoiced in this month. */
-  function allocatedInvoicedIn(row, month) {
-    const a = allocOf(row);
-    let sum = 0;
-    Object.keys(a).forEach(e => { if (+a[e].invoiceIn === +month) sum += allocAmount(a[e]); });
-    return sum;
-  }
+  const allocatedInvoicedIn = (row, month, year) => laneIn(row, 'bill', month, year);
+  /** What Finance's report should show in this month. */
+  const allocatedRealizedIn = (row, month, year) => laneIn(row, 'realize', month, year);
+
   /** Still earned, still not invoiced, as at the end of `month`. */
-  function allocatedOutstandingAt(row, month) {
-    const a = allocOf(row);
+  function allocatedOutstandingAt(row, month, year) {
+    const Y = year != null ? year : (row && row.year);
+    const at = ymIndex(ymStr(Y, month));
     let sum = 0;
-    Object.keys(a).forEach(e => {
-      const al = a[e];
-      if (+al.accrueIn <= +month && +al.invoiceIn > +month) sum += allocAmount(al);
+    rowAllocations(row, Y).forEach(a => {
+      if (ymIndex(a.accrue) <= at && ymIndex(a.bill) > at) sum += a.amount;
     });
-    return sum;
+    return Math.round(sum * 100) / 100;
   }
 
+  /** Write one earned month's allocation. Accepts either the three-calendar
+      shape ({ accrue, bill, realize } as "YYYY-MM") or the month-number shape
+      the page used to speak; either way it is stored in full. */
   function setEarnedAllocation(year, key, earnedMonth, alloc) {
     if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can allocate revenue.');
     const rev = readRevenue();
@@ -1610,12 +2075,15 @@
     if (!alloc) delete row.alloc[earnedMonth];
     else {
       const amount = Number(alloc.amount) || 0;
-      const accrueIn = +alloc.accrueIn || +earnedMonth;
-      const invoiceIn = +alloc.invoiceIn || accrueIn;
-      if (accrueIn < 1 || accrueIn > 12 || invoiceIn < 1 || invoiceIn > 12) throw new Error('Months must be inside the year.');
-      if (invoiceIn < accrueIn) throw new Error('An invoice cannot go out before the revenue is accrued.');
+      const n = normAlloc({ ...alloc, amount }, year, earnedMonth);
+      const inRange = (v) => { const p = ymParse(v); return p && p.year >= LEDGER_FIRST_YEAR - 1 && p.year <= LEDGER_FIRST_YEAR + 30; };
+      if (!inRange(n.accrue) || !inRange(n.bill) || !inRange(n.realize))
+        throw new Error('Accrual, billing and realized months must be real months near this year.');
+      if (ymIndex(n.bill) < ymIndex(n.accrue)) throw new Error('An invoice cannot go out before the revenue is accrued.');
       if (!amount) delete row.alloc[earnedMonth];
-      else row.alloc[earnedMonth] = { amount, accrueIn, invoiceIn };
+      else row.alloc[earnedMonth] = { amount, accrue: n.accrue, bill: n.bill, realize: n.realize,
+                                      // kept so an older build reading the same file still sees the pair
+                                      accrueIn: n.accrueIn, invoiceIn: n.invoiceIn };
     }
     row.updatedAt = new Date().toISOString();
     writeRevenue(rev);
@@ -1624,19 +2092,22 @@
 
   /** Is every earned dollar spoken for? `earnedByMonth` comes from the caller
       because the fee tool's schedule lives on the project, not the ledger. */
-  function allocationAudit(row, earnedByMonth) {
+  function allocationAudit(row, earnedByMonth, year) {
     const a = allocOf(row);
+    const Y = year != null ? year : (row && row.year);
     const months = [];
     let earnedTotal = 0, allocatedTotal = 0;
     for (let m = 1; m <= 12; m++) {
       const earned = Number((earnedByMonth || {})[m]) || 0;
       const al = a[m];
-      const amount = allocAmount(al);
+      const n = al ? normAlloc(al, Y, m) : null;
+      const amount = n ? n.amount : 0;
       earnedTotal += earned; allocatedTotal += amount;
       if (!earned && !amount) continue;
       months.push({
         month: m, earned, amount,
-        accrueIn: al ? +al.accrueIn : null, invoiceIn: al ? +al.invoiceIn : null,
+        accrue: n ? n.accrue : null, bill: n ? n.bill : null, realize: n ? n.realize : null,
+        accrueIn: n ? n.accrueIn : null, invoiceIn: n ? n.invoiceIn : null, realizeIn: n ? n.realizeIn : null,
         ok: Math.abs(earned - amount) < 0.5 && !!al,
         gap: Math.round((earned - amount) * 100) / 100,
       });
@@ -1652,10 +2123,11 @@
   }
 
   /** Allocate every earned month in one action: accrue it in the month it was
-      earned, and invoice it in the first month at or after that where the
-      sheet actually shows billing — falling back to the earned month itself.
-      A starting point that is right most of the time and visibly wrong when
-      it is not, which is the only kind of default worth having here. */
+      earned, realize it there too, and bill it in the first month at or after
+      that where the sheet actually shows billing — falling back to the earned
+      month itself. A starting point that is right most of the time and
+      visibly wrong when it is not, which is the only kind of default worth
+      having here. */
   function autoAllocate(year, key, earnedByMonth) {
     if (!isAdmin(getCurrentUser())) throw new Error('Only an admin can allocate revenue.');
     const rev = readRevenue();
@@ -1672,7 +2144,8 @@
       for (let k = mm; k <= 12; k++) {
         if (Math.abs(billedOf(row, k) + feeShareOf(row, k)) > 0.005) { invoiceIn = k; break; }
       }
-      row.alloc[mm] = { amount: earned, accrueIn: mm, invoiceIn };
+      row.alloc[mm] = { amount: earned, accrue: ymStr(year, mm), bill: ymStr(year, invoiceIn),
+                        realize: ymStr(year, mm), accrueIn: mm, invoiceIn };
       touched++;
     });
     if (touched) { row.updatedAt = new Date().toISOString(); writeRevenue(rev); }
@@ -1687,11 +2160,58 @@
     if (!y) return null;
     let rows = 0, gapAmt = 0, gapMonths = 0;
     Object.entries(y.rows || {}).forEach(([key, r]) => {
-      const audit = allocationAudit(r, (earnedLookup && earnedLookup(r)) || {});
+      const audit = allocationAudit(r, (earnedLookup && earnedLookup(r)) || {}, year);
       if (!audit.months.length) return;
       if (!audit.complete) { rows++; gapMonths += audit.unallocated.length; gapAmt += audit.gap; }
     });
     return { rows, gapMonths, gapAmt: Math.round(gapAmt * 100) / 100 };
+  }
+
+  /** What the finance team's own report says a month is worth, straight off
+      the close file: what was invoiced, plus the movement in accruals, less
+      the accruals settling into that invoice. No allocation involved — this
+      is the figure the page has to agree with, not one it produces. */
+  function financeRealized(row, month) {
+    return billedOf(row, month) + feeShareOf(row, month) + accruedOf(row, month)
+         - accrualSettling(row, month);
+  }
+
+  /** REALIZED against Finance, month by month. The REALIZED view is only
+      worth having if it lands on the finance team's report, and the only
+      honest way to claim that is to subtract the two and show the remainder.
+      A row that has no allocation is not a variance — it simply has not been
+      placed yet, and `unplaced` says so separately. */
+  function realizationCheck(year) {
+    const y = getLedgerYear(year);
+    if (!y) return null;
+    const blank = () => Array.from({ length: 13 }, () => 0);
+    const tool = blank(), finance = blank(), unplaced = blank();
+    const offenders = [];
+    Object.entries(y.rows || {}).forEach(([key, r]) => {
+      const placed = hasAllocations(r);
+      let rowTool = 0, rowFin = 0;
+      for (let m = 1; m <= 12; m++) {
+        const f = financeRealized(r, m);
+        finance[m] += f; rowFin += f;
+        if (placed) { const t = ledgerLaneIn(key, 'realize', +year, m) + feeShareOf(r, m); tool[m] += t; rowTool += t; }
+        else unplaced[m] += f;
+      }
+      if (placed && Math.abs(rowTool - rowFin) > 1)
+        offenders.push({ key, name: r.name || '', client: r.client || '',
+                         tool: Math.round(rowTool), finance: Math.round(rowFin),
+                         diff: Math.round(rowTool - rowFin) });
+    });
+    const sum = (a) => Math.round(a.reduce((x, z) => x + z, 0) * 100) / 100;
+    const variance = blank();
+    for (let m = 1; m <= 12; m++) variance[m] = Math.round((tool[m] - finance[m] + unplaced[m]) * 100) / 100;
+    offenders.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+    return {
+      tool, finance, unplaced, variance,
+      total: { tool: sum(tool), finance: sum(finance), unplaced: sum(unplaced),
+               variance: Math.round((sum(tool) + sum(unplaced) - sum(finance)) * 100) / 100 },
+      offenders: offenders.slice(0, 25),
+      agrees: Math.abs(sum(tool) + sum(unplaced) - sum(finance)) < 1,
+    };
   }
 
   /** Recognised revenue for one project in one month.
@@ -1704,14 +2224,14 @@
       April; April bills 37,800. Without the term April reads 37,800 and the
       three months total 63,600 against 37,800 actually invoiced. With it,
       April recognises its own 12,000 and the three months foot exactly. */
-  function cellRecognised(row, month) {
+  function cellRecognised(row, month, year) {
     if (!row) return 0;
-    // Allocated rows are realized on the accrual calendar, so a month that
-    // earns, accrues AND invoices the same dollars counts it once — by
-    // construction, not by a subtraction someone has to remember.
-    if (hasAllocations(row)) return allocatedAccruedIn(row, month) + feeShareOf(row, month);
-    return billedOf(row, month) + feeShareOf(row, month) + accruedOf(row, month)
-         - accrualSettling(row, month);
+    // Allocated rows are realized on the REALIZED calendar — which defaults
+    // to the accrual month — so a month that earns, accrues AND invoices the
+    // same dollars counts it once by construction, not by a subtraction
+    // someone has to remember.
+    if (hasAllocations(row)) return allocatedRealizedIn(row, month, year) + feeShareOf(row, month);
+    return financeRealized(row, month);
   }
   /** Has anything at all happened in this cell? */
   const cellHasValue = (row, month) => !!(billedOf(row, month) || feeShareOf(row, month) || accruedOf(row, month));
@@ -1774,18 +2294,28 @@
     const y = getLedgerYear(year);
     if (!y) return null;
     const blank = () => Array.from({ length: 13 }, () => 0);
-    const t = { billed: blank(), feeShare: blank(), accrued: blank(), plan: blank(), recognised: blank(), rows: 0 };
-    Object.values(y.rows || {}).forEach(r => {
+    const t = { billed: blank(), feeShare: blank(), accrued: blank(), plan: blank(), recognised: blank(),
+                // The three allocation calendars, counting allocations made in
+                // ANY year that land in this one.
+                laneAccrued: blank(), laneBilled: blank(), laneRealized: blank(), rows: 0 };
+    Object.entries(y.rows || {}).forEach(([key, r]) => {
       t.rows++;
+      const placed = hasAllocations(r);
       for (let m = 1; m <= 12; m++) {
         t.billed[m] += billedOf(r, m);
         t.feeShare[m] += feeShareOf(r, m);
         t.accrued[m] += accruedOf(r, m);
-        t.recognised[m] += cellRecognised(r, m);
+        t.recognised[m] += cellRecognised(r, m, year);
+        if (placed) {
+          t.laneAccrued[m] += ledgerLaneIn(key, 'accrue', +year, m);
+          t.laneBilled[m] += ledgerLaneIn(key, 'bill', +year, m);
+          t.laneRealized[m] += ledgerLaneIn(key, 'realize', +year, m);
+        }
       }
     });
     const sum = (a) => a.reduce((x, y2) => x + y2, 0);
-    t.total = { billed: sum(t.billed), feeShare: sum(t.feeShare), accrued: sum(t.accrued), recognised: sum(t.recognised) };
+    t.total = { billed: sum(t.billed), feeShare: sum(t.feeShare), accrued: sum(t.accrued), recognised: sum(t.recognised),
+                laneAccrued: sum(t.laneAccrued), laneBilled: sum(t.laneBilled), laneRealized: sum(t.laneRealized) };
     // The unallocated remainder across the book — money Finance has accrued
     // that nobody has placed in a month yet.
     t.unallocated = Object.values(y.rows || {}).reduce((a, r) => { const c = accrualCheck(r); return a + (c.imported - c.allocated); }, 0);
@@ -3526,8 +4056,16 @@
     cellRecognised, cellHasValue, billedOf, accruedOf, feeShareOf, accrualCheck,
     accrualPromised, accrualSettling, billingComposition, monthBillingComposition, accrualsAwaitingInvoiceMonth,
     explainCell, setCellNote, cellNote, accrueAsEarned,
-    hasAllocations, allocOf, allocatedAccruedIn, allocatedInvoicedIn, allocatedOutstandingAt,
+    hasAllocations, allocOf, allocatedAccruedIn, allocatedInvoicedIn, allocatedRealizedIn, allocatedOutstandingAt,
     setEarnedAllocation, allocationAudit, autoAllocate, ledgerAllocationGaps,
+    ALLOC_LANES, ALLOC_LANE_LABEL, normAlloc, rowAllocations, ledgerLaneIn, laneIn,
+    ymStr, ymParse, ymMonth, ymYear, ymIndex, ymShift,
+    financeRealized, realizationCheck, invalidateRevenueCache,
+    // Project mapping — the ledger line to fee-tool project book
+    projectMatchIndex, mappingCandidates, mappingBook, mappingFor, mappingIgnored,
+    setMapping, clearMapping, ignoreLedgerRow, unignoreLedgerRow,
+    applyMappingBook, seedMappingFromLedger, autoMapLedger, mappingReport, unclaimedProjects,
+    MAP_AUTO_MIN, MAP_AUTO_GAP,
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     computeFinancials, financialsInputsHash, restampFinancials,

@@ -196,9 +196,11 @@
   table.ws td.alloc-c.gap { background:#fdeaea; }
   table.ws td.alloc-c.ok { background:#eef7f1; }
   table.ws td.alloc-c .al-amt { font-weight:700; font-size:11px; font-variant-numeric:tabular-nums; }
-  table.ws td.alloc-c .al-pair { display:flex; gap:3px; justify-content:flex-end; margin-top:2px; }
-  table.ws td.alloc-c .al-pair label { font-family:var(--font-body); font-size:8.5px; color:var(--sav-steel);
-        display:inline-flex; align-items:center; gap:2px; }
+  table.ws td.alloc-c .al-trip { display:flex; flex-direction:column; gap:1px; align-items:flex-end; margin-top:2px; }
+  table.ws td.alloc-c .al-trip label { font-family:var(--font-body); font-size:8.5px; color:var(--sav-steel);
+        display:inline-flex; align-items:center; gap:3px; width:100%; justify-content:flex-end; }
+  table.ws tr.lane td.l .lane-key { display:block; font-family:var(--font-display); font-size:8px;
+        letter-spacing:.08em; text-transform:uppercase; color:#b3b8c2; margin-top:2px; }
   table.ws td.alloc-c select { font-family:var(--font-body); font-size:9.5px; border:1px solid var(--hair-strong);
         background:#fff; color:var(--sav-navy); padding:1px 2px; }
   table.ws td.alloc-c .al-fix { display:block; width:100%; margin-top:3px; font-family:var(--font-display);
@@ -207,6 +209,46 @@
   .coverage .cv-alloc { margin-top:9px; padding-top:9px; border-top:1px solid rgba(37,39,58,.15);
         font-family:var(--font-body); font-size:12px; color:var(--sav-navy); line-height:1.5; }
   .coverage .cv-alloc b { font-family:var(--font-display); }
+  .coverage .cv-realize { margin-top:9px; padding-top:9px; border-top:1px solid rgba(37,39,58,.15);
+        font-family:var(--font-body); font-size:12px; line-height:1.5; color:var(--sav-navy); }
+  .coverage .cv-realize b { font-family:var(--font-display); }
+  .coverage .cv-realize.ok { color:#166b45; }
+  .coverage .cv-realize.off { color:var(--sav-red); }
+  .coverage .cv-realize .cv-unplaced { display:block; color:var(--sav-steel); font-style:italic; font-size:11px; }
+
+  /* ---- mapping workspace ---- */
+  .map-ws .mp-sum { border:1px solid var(--hair-strong); border-left-width:5px; padding:11px 14px; margin-bottom:12px; }
+  .map-ws .mp-sum.off { border-left-color:var(--sav-red); background:#fdeaea; }
+  .map-ws .mp-sum.ok { border-left-color:var(--st-billed); background:#e6f3ea; }
+  .map-ws .mp-bar { height:6px; background:rgba(37,39,58,.12); margin-bottom:9px; }
+  .map-ws .mp-bar span { display:block; height:6px; background:var(--st-billed); }
+  .map-ws .mp-sum.off .mp-bar span { background:var(--sav-red); }
+  .map-ws .mp-nums { display:flex; gap:18px; flex-wrap:wrap; font-family:var(--font-body); font-size:12px; }
+  .map-ws .mp-n b { font-family:var(--font-display); font-size:14px; }
+  .map-ws .mp-n.bad { color:var(--sav-red); }
+  .map-ws .mp-say { margin-top:7px; font-family:var(--font-body); font-size:11.5px; font-style:italic; color:var(--sav-steel); }
+  .map-ws .map-ctl { align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .map-ws .map-ctl input[type=search] { font-family:var(--font-body); font-size:12px; padding:5px 8px;
+        border:1px solid var(--hair-strong); min-width:220px; }
+  .map-ws .mp-row { border:1px solid var(--hair); border-left-width:4px; padding:8px 11px; margin-bottom:6px; background:#fff; }
+  .map-ws .mp-row.open { border-left-color:var(--sav-red); }
+  .map-ws .mp-row.done { border-left-color:var(--st-billed); }
+  .map-ws .mp-row.skip { border-left-color:var(--sav-steel); background:#fafbfc; }
+  .map-ws .mp-head { display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  .map-ws .mp-name { font-family:var(--font-display); font-weight:700; font-size:12.5px; color:var(--sav-navy); }
+  .map-ws .mp-name em { font-style:normal; font-size:9px; letter-spacing:.06em; text-transform:uppercase;
+        color:var(--sav-red); border:1px solid rgba(206,24,30,.35); padding:0 3px; }
+  .map-ws .mp-meta { font-family:var(--font-body); font-size:11px; color:var(--sav-steel); }
+  .map-ws .mp-act { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px; }
+  .map-ws .mp-to { font-family:var(--font-body); font-size:11.5px; color:var(--sav-navy); }
+  .map-ws .mp-to em { font-style:normal; color:var(--sav-steel); font-size:10px; margin-left:5px; }
+  .map-ws .mp-cand { font-family:var(--font-body); font-size:11px; border:1px solid var(--hair-strong);
+        background:#fff; color:var(--sav-navy); padding:4px 8px; cursor:pointer; display:inline-flex; gap:6px; align-items:baseline; }
+  .map-ws .mp-cand:hover { background:var(--sav-yellow); border-color:var(--sav-navy); }
+  .map-ws .mp-cand em { font-style:normal; font-family:var(--font-display); font-size:9px; color:var(--sav-teal); }
+  .map-ws .mp-none { font-family:var(--font-body); font-size:11px; font-style:italic; color:var(--sav-steel); }
+  .map-ws .mp-empty { font-family:var(--font-body); font-size:12px; color:var(--sav-steel); padding:14px; text-align:center; }
+  .map-ws .mp-more { display:block; width:100%; margin-top:4px; }
 
   /* commentary cell */
   .note-cell { min-width:280px; white-space:normal !important; vertical-align:top; }
@@ -494,16 +536,40 @@
   <div class="glossary" id="glossary">
     <button type="button" class="gl" data-mode="earned"><b>Earned</b> what the fee tool says the month is worth — the staffing grid is tied to this month</button>
     <button type="button" class="gl" data-mode="accrued"><b>Accrued</b> earned but not yet invoiced — an accounting term for <em>when</em> revenue is realized</button>
-    <button type="button" class="gl" data-mode="invoiced"><b>Invoiced</b> an invoice went out — it can carry earlier accruals finally settling</button>
-    <span class="gl def"><b>Allocation</b> every earned dollar gets an accrual month and an invoice month, at the same
-      amount — same month or different, but spent once</span>
-    <button type="button" class="gl strong" data-mode="realized"><b>Realized revenue</b> follows the accrual month, so nothing is counted twice</button>
+    <button type="button" class="gl" data-mode="billed"><b>Billed</b> the invoice went out — it can carry earlier accruals finally settling</button>
+    <span class="gl def"><b>Allocation</b> every earned month gets an accrual month, a billed month and a realized
+      month — <b>with the year</b>, because December's work bills in January — at one amount, spent once</span>
+    <button type="button" class="gl strong" data-mode="realized"><b>Realized</b> the month it lands in the finance team's report — this is the view that has to agree with them</button>
     <span class="gl eg">Jan earns 45K and accrues it, due March · Feb the same · March earns 45K and 135K is invoiced.
       March is <b>not</b> worth 135K — it is 90K of Jan and Feb going out plus 45K of its own. <b>Realized 45K.</b>
-      <span class="gl-hint">Click a term above to show the grid on that calendar.</span></span>
+      <span class="gl-hint">Click a term above to read the grid on that calendar. EARNED comes from the fee tool;
+        the other three come from how each earned month has been allocated.</span></span>
   </div>
 
   <div class="kpis" id="kpis"></div>
+
+  <section class="card map-ws" id="map-card" hidden>
+    <h2>Map every line to the fee tool <span class="owner">Do this first — nothing else on the page is true until it is done</span></h2>
+    <div class="cbody">
+      <p class="intro">
+        Every figure on this page is arithmetic on top of one assumption: that the line Finance billed and the project
+        the fee tool prices are <b>the same job</b>. A line with no project has no <b>EARNED</b> figure to reconcile
+        against, so it reads as revenue nobody forecast; a line pointed at the <b>wrong</b> project is worse, because it
+        moves real money onto someone else's forecast and makes two projects wrong instead of one.
+        There are only three answers: <b>this project</b>, <b>a project we do not have yet</b>, or
+        <b>not a project at all</b> — and the third is a decision worth recording, not a gap.
+        A mapping is kept in its own book, so it carries into every future close instead of being made again each January.
+      </p>
+      <div id="map-summary"></div>
+      <div class="frow map-ctl">
+        <button class="btn btn-primary" id="map-auto">Auto-map the confident matches</button>
+        <button class="btn sm" id="map-seed" title="Write matches already on this year's rows into the mapping book">Carry existing matches into the book</button>
+        <label class="ctl-toggle"><input type="checkbox" id="map-only-open" checked> Only lines still to answer</label>
+        <input type="search" id="map-search-q" placeholder="Search lines and projects" aria-label="Search lines">
+      </div>
+      <div id="map-list"></div>
+    </div>
+  </section>
 
   <section class="card">
     <h2>Import the year-to-date actuals <span class="owner">Finance owns this — the only way actuals enter the system</span></h2>

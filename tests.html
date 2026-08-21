@@ -488,6 +488,9 @@
   function freshDb() {
     localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
     localStorage.removeItem('savills-ppm-revenue-db:v1');
+    // The allocation index is derived from the whole book; wiping the book
+    // behind the store's back has to tell it so.
+    S.invalidateRevenueCache();
   }
   const feeDb = () => JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1') || '{}');
   const revDb = () => JSON.parse(localStorage.getItem('savills-ppm-revenue-db:v1') || 'null');
@@ -1091,6 +1094,188 @@
     S.setRowMatch(2026, 'A', 'proj_two');
     const r = S.getLedgerYear(2026).rows.A;
     return (r.pid === 'proj_two' && r.pidManual) || 'pid ' + r.pid;
+  });
+
+
+  /* ---- three calendars: accrual, billed and realized, each with a year ---- */
+
+  test('Calendars · three', 'an earned month carries an accrual, a billed and a realized month', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 4: 45000 } })], { closeMonth: 4 });
+    S.setEarnedAllocation(2026, 'A', 1, { amount: 45000, accrue: '2026-02', bill: '2026-04', realize: '2026-03' });
+    const a = S.allocOf(S.getLedgerYear(2026).rows.A)[1];
+    if (a.accrue !== '2026-02' || a.bill !== '2026-04' || a.realize !== '2026-03') return JSON.stringify(a);
+    const r = S.getLedgerYear(2026).rows.A;
+    if (!near(S.allocatedAccruedIn(r, 2, 2026), 45000)) return 'accrued lands in ' + round(S.allocatedAccruedIn(r, 2, 2026));
+    if (!near(S.allocatedInvoicedIn(r, 4, 2026), 45000)) return 'billed lands in ' + round(S.allocatedInvoicedIn(r, 4, 2026));
+    return eq(S.allocatedRealizedIn(r, 3, 2026), 45000, 'realized month');
+  });
+
+  test('Calendars · three', 'realized defaults to the accrual month, so an old two-calendar entry still reads', () => {
+    // Everything written before the realized month existed means "realized
+    // when it accrued" — the assumption Finance makes unless told otherwise.
+    const r = arow({ year: 2026, alloc: { 5: { amount: 30000, accrueIn: 5, invoiceIn: 8 } } });
+    if (!near(S.allocatedRealizedIn(r, 5, 2026), 30000)) return 'May ' + round(S.allocatedRealizedIn(r, 5, 2026));
+    return eq(S.cellRecognised(r, 5, 2026), 30000, 'recognised on the legacy entry');
+  });
+
+  test('Calendars · three', 'REALIZED is read on its own month, not the accrual month', () => {
+    const r = arow({ year: 2026, alloc: { 1: { amount: 20000, accrue: '2026-01', bill: '2026-06', realize: '2026-06' } } });
+    if (!near(S.cellRecognised(r, 1, 2026), 0)) return 'January realized ' + round(S.cellRecognised(r, 1, 2026));
+    return eq(S.cellRecognised(r, 6, 2026), 20000, 'June realized');
+  });
+
+  test('Calendars · three', 'December work billing in January lands in the NEXT year', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 12: 0 } })], { closeMonth: 12 });
+    S.postLedgerYear(2027, [lrow({ key: 'A', billed: { 1: 60000 } })], { closeMonth: 1 });
+    S.setEarnedAllocation(2026, 'A', 12, { amount: 60000, accrue: '2026-12', bill: '2027-01', realize: '2026-12' });
+    if (!near(S.ledgerLaneIn('A', 'accrue', 2026, 12), 60000)) return 'accrual not in Dec 2026';
+    if (!near(S.ledgerLaneIn('A', 'bill', 2027, 1), 60000)) return 'the January 2027 invoice was lost: ' + round(S.ledgerLaneIn('A', 'bill', 2027, 1));
+    return eq(S.ledgerLaneIn('A', 'bill', 2026, 1), 0, 'and it must not appear in January 2026');
+  });
+
+  test('Calendars · three', 'an invoice still cannot go out before its accrual, across a year end', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2027, [lrow({ key: 'A', billed: { 2: 1000 } })], { closeMonth: 2 });
+    try { S.setEarnedAllocation(2027, 'A', 2, { amount: 1000, accrue: '2027-02', bill: '2026-12' }); return 'accepted a December invoice against a February accrual'; }
+    catch (e) { return /before the revenue is accrued/i.test(e.message) || 'wrong error: ' + e.message; }
+  });
+
+  test('Calendars · three', 'auto-allocate fills all three, realizing where it accrues', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 3: 90000 } })], { closeMonth: 3 });
+    S.autoAllocate(2026, 'A', { 1: 45000, 2: 45000 });
+    const a = S.allocOf(S.getLedgerYear(2026).rows.A);
+    if (a[1].accrue !== '2026-01' || a[1].realize !== '2026-01' || a[1].bill !== '2026-03') return JSON.stringify(a[1]);
+    return a[2].bill === '2026-03' || JSON.stringify(a[2]);
+  });
+
+  test('Calendars · three', 'REALIZED reconciles against the finance team\'s own report', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    // Finance's file: 135,000 invoiced in March, nothing accrued.
+    S.postLedgerYear(2026, [lrow({ key: 'A', billed: { 3: 135000 } })], { closeMonth: 3 });
+    let rc = S.realizationCheck(2026);
+    if (!near(rc.total.finance, 135000)) return 'finance total ' + round(rc.total.finance);
+    if (!near(rc.total.unplaced, 135000)) return 'an unallocated line should read straight off the file: ' + round(rc.total.unplaced);
+    if (!rc.agrees) return 'an untouched book should already agree';
+    // Now say it was earned over three months and realized as it accrued.
+    S.autoAllocate(2026, 'A', { 1: 45000, 2: 45000, 3: 45000 });
+    rc = S.realizationCheck(2026);
+    if (!near(rc.total.tool, 135000)) return 'realized total ' + round(rc.total.tool);
+    if (!near(rc.tool[1], 45000)) return 'January realized ' + round(rc.tool[1]);
+    return rc.agrees || 'the year no longer foots to Finance: ' + round(rc.total.variance);
+  });
+
+  test('Calendars · three', 'realizing revenue into a month Finance did not report shows up as a variance', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [lrow({ key: 'A', name: 'Drifting Job', billed: { 3: 100000 } })], { closeMonth: 3 });
+    S.setEarnedAllocation(2026, 'A', 3, { amount: 60000, accrue: '2026-03', bill: '2026-03', realize: '2026-03' });
+    const rc = S.realizationCheck(2026);
+    if (rc.agrees) return 'a 40,000 shortfall was reported as agreeing';
+    if (!near(rc.total.variance, -40000)) return 'variance ' + round(rc.total.variance);
+    return (rc.offenders[0] && rc.offenders[0].name === 'Drifting Job') || 'the offending line was not named';
+  });
+
+  /* ---- the mapping book ---- */
+
+  const mproj = (name, client, code) => S.saveProject(base({
+    project: { name, client, status: 'active', projectId365: code || '' },
+  }));
+
+  test('Mapping · book', 'a mapping is kept in its own book and carries across years', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    const p = mproj('Acme Tower Fitout', 'Acme');
+    S.postLedgerYear(2026, [lrow({ key: 'P001', billed: { 1: 1000 } })], { closeMonth: 1 });
+    S.setMapping('P001', p.id, { via: 'manual' });
+    if (S.getLedgerYear(2026).rows.P001.pid !== p.id) return 'the 2026 row was not updated';
+    // Next year's close arrives with the same line and no pid on it.
+    S.postLedgerYear(2027, [lrow({ key: 'P001', billed: { 1: 2000 } })], { closeMonth: 1 });
+    return S.getLedgerYear(2027).rows.P001.pid === p.id || 'the mapping did not carry into 2027';
+  });
+
+  test('Mapping · book', 'a mapping pointing at a deleted project is not counted as mapped', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    const p = mproj('Ghost Job', 'Acme');
+    S.postLedgerYear(2026, [lrow({ key: 'P001', billed: { 1: 1000 } })], { closeMonth: 1 });
+    S.setMapping('P001', p.id, { via: 'manual' });
+    S.deleteProject(p.id);
+    if (S.mappingFor('P001')) return 'a dangling mapping was reported as live';
+    const rep = S.mappingReport(2026);
+    return rep.stat.dangling === 1 || 'dangling not reported: ' + JSON.stringify(rep.stat);
+  });
+
+  test('Mapping · book', 'a line ruled out of scope stops being a gap', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [
+      lrow({ key: 'A', name: 'Real Job', billed: { 1: 10000 } }),
+      lrow({ key: 'IC', name: 'Intercompany Allocation', billed: { 1: 5000 } }),
+    ], { closeMonth: 1 });
+    S.ignoreLedgerRow('IC', 'intercompany allocation');
+    const c = S.ledgerCoverage(2026);
+    if (c.ignored !== 1 || !near(c.ignoredAmt, 5000)) return `ignored ${c.ignored} / ${round(c.ignoredAmt)}`;
+    return c.unmapped === 1 || 'unmapped ' + c.unmapped;
+  });
+
+  test('Mapping · auto', 'an exact project number is mapped without being asked', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    const p = mproj('Something Else Entirely', 'Acme', 'P001');
+    S.postLedgerYear(2026, [lrow({ key: 'P001', code: 'P001', name: 'Acme Tower', billed: { 1: 1000 } })], { closeMonth: 1 });
+    const res = S.autoMapLedger(2026);
+    if (res.applied !== 1) return 'applied ' + res.applied;
+    return S.getLedgerYear(2026).rows.P001.pid === p.id || 'mapped to the wrong project';
+  });
+
+  test('Mapping · auto', 'two projects a hair apart are left for a human', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    mproj('Acme Tower Fitout Phase One', 'Acme');
+    mproj('Acme Tower Fitout Phase Two', 'Acme');
+    S.postLedgerYear(2026, [lrow({ key: 'name:acme tower fitout', code: '', name: 'Acme Tower Fitout', client: 'Acme', billed: { 1: 1000 } })], { closeMonth: 1 });
+    const res = S.autoMapLedger(2026);
+    if (res.applied) return 'a near-tie was mapped anyway';
+    return res.ambiguous.length === 1 || 'the tie was not reported: ' + JSON.stringify(res);
+  });
+
+  test('Mapping · auto', 'auto-mapping never overwrites a mapping made by hand', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    const right = mproj('Deliberate Choice', 'Acme');
+    mproj('Acme Tower Fitout', 'Acme', 'P001');
+    S.postLedgerYear(2026, [lrow({ key: 'P001', code: 'P001', name: 'Acme Tower Fitout', billed: { 1: 1000 } })], { closeMonth: 1 });
+    S.setMapping('P001', right.id, { via: 'manual' });
+    S.autoMapLedger(2026);
+    return S.getLedgerYear(2026).rows.P001.pid === right.id || 'the auto pass overrode a human';
+  });
+
+  test('Mapping · auto', 'a line ruled out of scope is never auto-mapped back in', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    mproj('Acme Tower Fitout', 'Acme', 'P001');
+    S.postLedgerYear(2026, [lrow({ key: 'P001', code: 'P001', name: 'Acme Tower Fitout', billed: { 1: 1000 } })], { closeMonth: 1 });
+    S.ignoreLedgerRow('P001', 'holding code');
+    S.autoMapLedger(2026);
+    return !S.getLedgerYear(2026).rows.P001.pid || 'an out-of-scope line was mapped';
+  });
+
+  test('Mapping · report', 'the report ranks by what is riding on the answer', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    S.postLedgerYear(2026, [
+      lrow({ key: 'SMALL', name: 'Small', billed: { 1: 1000 } }),
+      lrow({ key: 'BIG', name: 'Big', billed: { 1: 900000 } }),
+    ], { closeMonth: 1 });
+    const rep = S.mappingReport(2026);
+    if (rep.lines[0].key !== 'BIG') return 'ordered ' + rep.lines.map(l => l.key).join(',');
+    return (rep.stat.unmapped === 2 && near(rep.stat.unmappedAmt, 901000)) || JSON.stringify(rep.stat);
+  });
+
+  test('Mapping · report', 'existing matches can be carried into the book in one pass', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    const p = mproj('Acme Tower Fitout', 'Acme');
+    S.postLedgerYear(2026, [lrow({ key: 'P001', billed: { 1: 1000 } })], { closeMonth: 1 });
+    S.setRowMatch(2026, 'P001', p.id);            // the old, year-local way
+    if (S.mappingFor('P001')) return 'setRowMatch should not write the book on its own';
+    const n = S.seedMappingFromLedger();
+    if (n !== 1) return 'seeded ' + n;
+    const e = S.mappingFor('P001');
+    return (e && e.pid === p.id) || 'the book did not pick it up';
   });
 
   /* ---- workbook parser: the piece that breaks when Finance's file moves ---- */

@@ -27,10 +27,13 @@ confidential rate grid (`rates.json`) is pulled from Box only after sign-in and 
   client profile
 
 **Admin**
-- `Revenue Reconciliation.html` — the monthly close, Finance-owned: import the
-  actuals workbook, reconcile billed vs accrued vs forecast per project, fee
-  shares as their own deduction line, disposition every variance, export the
-  monthly flash to Excel. One calendar year at a time, 2026 forward
+- `Revenue Reconciliation.html` — the monthly close, Finance-owned: map every
+  line in the close file to a fee-tool project, import the actuals workbook,
+  give each earned month an accrual / billed / realized month, disposition
+  every variance, export the monthly flash to Excel. Four views —
+  **EARNED** (the fee tool), **ACCRUED**, **BILLED**, **REALIZED** (the finance
+  team's report) — are the same dollars read on four calendars. One calendar
+  year at a time, 2026 forward
 - `Import Revenues.html` — bulk-import monthly billing (admin only)
 
 **Docs**
@@ -39,7 +42,8 @@ confidential rate grid (`rates.json`) is pulled from Box only after sign-in and 
 ## Modules — `universal-fee-calc/`
 - `revenue-reconcile.js` — Revenue Reconciliation: close-workbook parser (columns
   found by header text, rows footed against the sheet's own reported revenue),
-  project matching, disposition queue, flash + Excel export
+  the mapping workspace, the three-calendar allocation lane, disposition queue,
+  flash + Excel export
 - `store.js` — data layer: projects + studio stores, the calc engines
   (`computeFinancials`, `monthlySeries`, `projectFinancials`), the **revenue ledger**
   (its own store, backed by `revenue.json`; `recognised = billed + fee share + accrued`),
@@ -83,7 +87,9 @@ its file id is set in `box-adapter.js` config.
 - `studio.json` — retired Revenue Studio baselines + scenarios (kept in Box for the Budget/RF baseline decision; no page writes it).
 - `staff.json` — the living staffing matrix.
 - `revenue.json` — Revenue Reconciliation's actuals ledger, keyed by year then
-  project. **Self-configuring**: with no file id set it is found by name in the
+  project, plus the **mapping book** (`mapping.entries` / `mapping.ignored`,
+  keyed by ledger line rather than by year, so a line mapped once carries into
+  every future close). **Self-configuring**: with no file id set it is found by name in the
   shared folder and created on first run, so every admin lands on the same file.
   Merged per ROW (each carries `updatedAt`), because everything lives under one
   year — a whole-year newest-wins would let two admins erase each other.

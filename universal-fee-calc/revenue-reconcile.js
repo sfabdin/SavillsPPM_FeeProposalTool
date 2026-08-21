@@ -60,7 +60,7 @@
 
   let CATALOG = null;
   let YEAR = null;
-  let MODE = 'earned';        // which calendar the grid shows: earned | accrued | invoiced
+  let MODE = 'earned';        // which calendar the grid shows: earned | accrued | billed | realized
   let LEADER = '';            // revenue leader filter
   let FOCUS = 0;              // 0 = whole year, 1–12 = one month
   let NAV_NEXT = null;        // cell to re-focus after a keyboard commit re-renders
@@ -250,26 +250,17 @@
   /* ============================================================
      2 · MATCH TO projects.json + SUGGEST A STATUS
      ============================================================ */
-  function projectIndex() {
-    return STORE.listProjects().filter(p => !STORE.isChangeOrder(p)).map(p => ({
-      id: p.id,
-      name: (p.project && p.project.name) || '',
-      client: (p.project && p.project.client) || '',
-      code: String((p.project && (p.project.projectId365 || p.project.salesforceId)) || '').trim().toUpperCase(),
-    }));
-  }
+  /* One matcher for the whole system, in the store, so the preview at import
+     and the mapping workspace can never disagree about what a line looks
+     like. A mapping already in the book outranks anything the matcher says. */
+  const projectIndex = () => STORE.projectMatchIndex();
   function matchRow(idx, row) {
-    if (row.code) {
-      const hit = idx.find(p => p.code && p.code === row.code);
-      if (hit) return { pid: hit.id, via: 'code' };
-    }
-    let best = null, bestScore = 0;
-    idx.forEach(p => {
-      let s = tokenScore(row.name, p.name);
-      if (row.client && p.client) s = s * 0.8 + tokenScore(row.client, p.client) * 0.2;
-      if (s > bestScore) { bestScore = s; best = p; }
-    });
-    if (best && bestScore >= 0.6) return { pid: best.id, via: 'name', score: Math.round(bestScore * 100) };
+    const booked = STORE.mappingFor(row.key);
+    if (booked) return { pid: booked.pid, via: booked.via || 'book' };
+    if (STORE.mappingIgnored(row.key)) return { pid: null, via: 'ignored' };
+    const best = STORE.mappingCandidates(row, idx, 2)[0];
+    if (best && (best.via === 'code' || best.score >= 0.6))
+      return { pid: best.id, via: best.via, score: Math.round(best.score * 100) };
     return { pid: null, via: null };
   }
 
@@ -372,11 +363,21 @@
     if (existing && !confirm(`${YEAR} already has actuals posted.\n\nThis refreshes the figures from the sheet and keeps every billing status you have already set. Continue?`)) return;
     try {
       STORE.postLedgerYear(YEAR, p.rows, { file: PENDING.file, sheet: p.sheet, closeMonth: p.closeMonth });
+      // Mapping first, arithmetic second: a line with no project has no EARNED
+      // figure to reconcile against, so every other number on the page is
+      // provisional until the book is mapped.
+      STORE.seedMappingFromLedger();
+      const mapped = STORE.autoMapLedger(YEAR);
       autoStatus();
       FOCUS = p.closeMonth || FOCUS;      // land on the month just closed
       PENDING = null;
       $('#sheet-row').hidden = true; $('#close-file').value = '';
-      $('#import-msg').innerHTML = `<div class="msg ok">${YEAR} posted through ${MONTHS[p.closeMonth - 1]}.</div>`;
+      const cov = STORE.ledgerCoverage(YEAR) || {};
+      $('#import-msg').innerHTML = `<div class="msg ok">${YEAR} posted through ${MONTHS[p.closeMonth - 1]}.
+          ${mapped.applied} line${mapped.applied === 1 ? '' : 's'} mapped to a project automatically.</div>`
+        + (cov.unmapped ? `<div class="msg warn"><b>${cov.unmapped} line${cov.unmapped === 1 ? '' : 's'} still have no home</b>
+            (${money(cov.unmappedAmt)}). Answer them in <b>Map every line to the fee tool</b> below — nothing else on this
+            page is trustworthy until they are.</div>` : '');
       render();
     } catch (err) { $('#import-msg').innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
   }
@@ -394,6 +395,152 @@
         const s = suggestStatus(r, m, planFor(r.pid, YEAR, m));
         if (s === 'feeshare' || s === 'billed') STORE.setCellStatus(YEAR, key, m, s);
       }
+    });
+  }
+
+
+  /* ============================================================
+     3b · MAPPING — every line in the book gets a home in the fee tool
+     ------------------------------------------------------------
+     The rest of this page is arithmetic on top of one assumption: that
+     the line Finance billed and the project the fee tool prices are
+     the same job. Until that is true for every line, EARNED is missing
+     revenue and REALIZED is measuring projects nobody is accountable
+     for — so the mapping gets its own workspace rather than a button
+     hidden on a row.
+
+     Three answers, and only three: it is this project, it is a project
+     we do not have yet (create it), or it is not a project at all
+     (say so, with a reason). Anything else leaves the book unreconciled.
+     ============================================================ */
+  let MAP_OPEN_ONLY = true;
+  let MAP_Q = '';
+  let MAP_SHOW = 40;
+
+  function renderMapping() {
+    const card = $('#map-card');
+    if (!card) return;
+    const rep = STORE.mappingReport(YEAR);
+    if (!rep) { card.hidden = true; return; }
+    card.hidden = false;
+    const st = rep.stat;
+    const open = rep.lines.filter(l => !l.pid && !l.ignored);
+    const openAmt = open.reduce((a, l) => a + l.amount, 0);
+
+    $('#map-summary').innerHTML = `
+      <div class="mp-sum ${st.unmapped ? 'off' : 'ok'}">
+        <div class="mp-bar"><span style="width:${st.pct}%"></span></div>
+        <div class="mp-nums">
+          <span class="mp-n"><b>${st.mapped}</b> mapped</span>
+          <span class="mp-n"><b>${st.ignored}</b> ruled out of scope</span>
+          <span class="mp-n ${st.unmapped ? 'bad' : ''}"><b>${st.unmapped}</b> still without a home</span>
+          <span class="mp-n">${money(openAmt)} of revenue riding on the answer</span>
+          ${st.dangling ? `<span class="mp-n bad"><b>${st.dangling}</b> pointing at a deleted project</span>` : ''}
+        </div>
+        <div class="mp-say">${st.unmapped
+          ? 'Until these are answered, EARNED is short by whatever they are worth and REALIZED is counting work nobody is measured on.'
+          : 'Every line in the book has an answer. EARNED and REALIZED are measuring the same set of projects.'}</div>
+      </div>`;
+
+    const q = MAP_Q.toLowerCase();
+    const list = rep.lines
+      .filter(l => !MAP_OPEN_ONLY || (!l.pid && !l.ignored))
+      .filter(l => !q || (l.name + ' ' + l.client + ' ' + l.code + ' ' + l.projectName).toLowerCase().includes(q));
+    const shown = list.slice(0, MAP_SHOW);
+
+    $('#map-list').innerHTML = shown.length ? shown.map(l => {
+      const head = `<div class="mp-head">
+          <span class="mp-name">${esc(l.name || '(unnamed)')}${l.isFeeShare ? ' <em>fee share</em>' : ''}</span>
+          <span class="mp-meta">${esc(l.client || 'no client')}${l.code ? ' · ' + esc(l.code) : ''}
+            · ${l.months} month${l.months === 1 ? '' : 's'} · <b>${money(l.amount)}</b></span>
+        </div>`;
+      if (l.pid) {
+        return `<div class="mp-row done" data-key="${esc(l.key)}">${head}
+          <div class="mp-act">
+            <span class="mp-to">→ ${esc(l.projectName)}${l.projectClient ? ' · ' + esc(l.projectClient) : ''}
+              <em>${l.via === 'code' ? 'matched on project number' : l.via === 'manual' ? 'set by hand'
+                   : 'auto-matched' + (l.score ? ' ' + Math.round(l.score * 100) + '%' : '')}</em></span>
+            <a class="proj-link" href="Universal Fee Calculator.html?project=${encodeURIComponent(l.pid)}">open ↗</a>
+            <button class="btn sm mp-change" data-key="${esc(l.key)}">change</button>
+            <button class="btn sm mp-unmap" data-key="${esc(l.key)}">unmap</button>
+          </div></div>`;
+      }
+      if (l.ignored) {
+        return `<div class="mp-row skip" data-key="${esc(l.key)}">${head}
+          <div class="mp-act"><span class="mp-to">not a project — <em>${esc(l.ignored.reason)}</em>,
+            ruled by ${esc(l.ignored.by || '')}</span>
+            <button class="btn sm mp-unskip" data-key="${esc(l.key)}">bring it back</button>
+          </div></div>`;
+      }
+      const cands = (l.candidates || []).filter(c => c.score >= 0.3);
+      return `<div class="mp-row open" data-key="${esc(l.key)}">${head}
+        <div class="mp-act">
+          ${cands.length ? cands.map(c => `<button class="mp-cand" data-key="${esc(l.key)}" data-pid="${esc(c.id)}"
+              title="${esc(c.client || '')}">${esc(c.name)}<em>${c.via === 'code' ? 'project #' : Math.round(c.score * 100) + '%'}</em></button>`).join('')
+            : '<span class="mp-none">nothing in the fee tool looks like this line</span>'}
+          <button class="btn sm mp-search" data-key="${esc(l.key)}">search all projects…</button>
+          <button class="btn sm mp-create" data-key="${esc(l.key)}">create the project</button>
+          <button class="btn sm mp-skip" data-key="${esc(l.key)}">not a project</button>
+        </div></div>`;
+    }).join('') + (list.length > shown.length
+      ? `<button class="btn sm mp-more">Show ${Math.min(40, list.length - shown.length)} more of ${list.length - shown.length}</button>` : '')
+      : `<div class="mp-empty">${MAP_OPEN_ONLY ? 'Nothing left to answer.' : 'No lines match that search.'}</div>`;
+  }
+
+  function afterMapping(msg) {
+    _planCache = {};
+    if (msg) UFC_UI.toast(msg, 'ok');
+    render();
+  }
+
+  function wireMapping() {
+    const card = $('#map-card');
+    if (!card) return;
+    $('#map-auto').addEventListener('click', () => {
+      let res;
+      try { res = STORE.autoMapLedger(YEAR); } catch (e) { UFC_UI.toast(e.message); return; }
+      const parts = [`${res.applied} line${res.applied === 1 ? '' : 's'} mapped`];
+      if (res.ambiguous.length) parts.push(`${res.ambiguous.length} too close to call — they are listed below`);
+      if (res.unmatched.length) parts.push(`${res.unmatched.length} with nothing to match`);
+      afterMapping(parts.join(' · '));
+    });
+    $('#map-seed').addEventListener('click', () => {
+      let n = 0;
+      try { n = STORE.seedMappingFromLedger(); } catch (e) { UFC_UI.toast(e.message); return; }
+      afterMapping(n ? `${n} existing match${n === 1 ? '' : 'es'} written into the mapping book — they will carry into every future close.`
+                     : 'Nothing to carry over — the book already holds every match on this year.');
+    });
+    $('#map-only-open').addEventListener('change', e => { MAP_OPEN_ONLY = e.target.checked; MAP_SHOW = 40; renderMapping(); });
+    $('#map-search-q').addEventListener('input', e => { MAP_Q = e.target.value; MAP_SHOW = 40; renderMapping(); });
+
+    $('#map-list').addEventListener('click', (e) => {
+      const more = e.target.closest('.mp-more');
+      if (more) { MAP_SHOW += 40; renderMapping(); return; }
+      const btn = e.target.closest('button[data-key]');
+      if (!btn) return;
+      const key = btn.dataset.key;
+      const led = STORE.getLedgerYear(YEAR);
+      const row = led && led.rows[key];
+      try {
+        if (btn.classList.contains('mp-cand')) {
+          STORE.setMapping(key, btn.dataset.pid, { via: 'manual', name: row && row.name, client: row && row.client, code: row && row.code });
+          afterMapping('Mapped. It will carry into every future close.');
+        } else if (btn.classList.contains('mp-unmap')) {
+          STORE.clearMapping(key); afterMapping('Unmapped.');
+        } else if (btn.classList.contains('mp-create')) {
+          const saved = STORE.createProjectFromLedgerRow(YEAR, key);
+          STORE.setMapping(key, saved.id, { via: 'manual', name: row && row.name, client: row && row.client, code: row && row.code });
+          afterMapping('Project created from the line and mapped to it. Price it properly in the calculator when you can.');
+        } else if (btn.classList.contains('mp-skip')) {
+          const why = prompt('Why is this line not a project?\n\n(e.g. intercompany allocation, office overhead, holding code)', 'not a project');
+          if (why == null) return;
+          STORE.ignoreLedgerRow(key, why); afterMapping('Ruled out of scope.');
+        } else if (btn.classList.contains('mp-unskip')) {
+          STORE.unignoreLedgerRow(key); afterMapping('Back in the queue.');
+        } else if (btn.classList.contains('mp-search') || btn.classList.contains('mp-change')) {
+          openMapMenu(btn);
+        }
+      } catch (err) { UFC_UI.toast(err.message); }
     });
   }
 
@@ -418,15 +565,29 @@
   const cellMoved = (r, m) => STORE.cellHasValue(r, m);
   const rowActive = (r) => { for (let m = 1; m <= 12; m++) if (cellMoved(r, m) || planFor(r.pid, YEAR, m)) return true; return false; };
 
-  /* The three calendars. Earned is the fee tool — where the work and the
-     staffing sit. Accrued is where revenue is realized. Invoiced is what the
-     close file says actually went out. Reconciliation is making the first
-     account for the other two. */
+  /* THE FOUR CALENDARS. Each earned month is allocated an accrual month, a
+     billed month and a realized month — any of which may be the same month,
+     and any of which may fall in another year. The view is just a question of
+     which of those four dates the same dollars are read on:
+
+       EARNED    the fee tool's own schedule — from the project record, the
+                 one lane the ledger does not produce. The staffing sits here.
+       ACCRUED   the month the revenue was raised as earned but unbilled.
+       BILLED    the month the invoice actually goes out.
+       REALIZED  the month it lands in the finance team's report.
+
+     A row nobody has allocated yet has no calendar of its own, so it falls
+     back to what the close file literally says. That is not a failure — it is
+     the state every line starts in — but it is why REALIZED is checked
+     against Finance separately rather than assumed to agree. */
+  const laneIn = (r, lane, m) => STORE.ledgerLaneIn(r.key, lane, YEAR, m);
   function cellValue(r, m) {
     if (MODE === 'earned') return planFor(r.pid, YEAR, m);
-    if (MODE === 'realized') return STORE.cellRecognised(r, m);
-    if (MODE === 'accrued') return STORE.hasAllocations(r) ? STORE.allocatedAccruedIn(r, m) : STORE.accruedOf(r, m);
-    return STORE.billedOf(r, m) + STORE.feeShareOf(r, m);      // invoiced — the sheet's own fact
+    const placed = STORE.hasAllocations(r);
+    if (MODE === 'accrued') return placed ? laneIn(r, 'accrue', m) : STORE.accruedOf(r, m);
+    if (MODE === 'billed') return placed ? laneIn(r, 'bill', m) + STORE.feeShareOf(r, m)
+                                         : STORE.billedOf(r, m) + STORE.feeShareOf(r, m);
+    return STORE.cellRecognised(r, m, YEAR);                   // realized
   }
   /** Earned in this month that has not been given an accrual and invoice
       month. This is the monthly reconciliation: everything else is bookkeeping. */
@@ -490,17 +651,41 @@
     const c = STORE.ledgerCoverage(YEAR);
     if (!c || !c.total) { el.hidden = true; return; }
     el.hidden = false;
-    const pct = Math.round((c.mapped / c.total) * 100);
+    const answered = c.mapped + (c.ignored || 0);
+    const pct = Math.round((answered / c.total) * 100);
     el.className = 'coverage ' + (c.unmapped ? 'off' : 'ok');
     el.innerHTML = `
       <div class="cv-top">
         <span class="cv-t">${c.unmapped ? 'Unmapped revenue' : 'Every line has a home'}</span>
         <span class="cv-sub">${c.mapped} of ${c.total} lines mapped to a project on Revenue Projections`
+      + ((c.ignored || 0) ? `, ${c.ignored} ruled out of scope` : '')
       + (c.unmapped ? ` — <b>${c.unmapped} still without one, ${money(c.unmappedAmt)} of recognised revenue nobody is measured on</b>.` : ' — the billed book reconciles.')
       + `</span>
         ${c.unmapped ? '<button class="cv-btn" id="cv-jump">Show only unmapped</button>' : ''}
       </div>
       <div class="cv-bar"><span style="width:${pct}%"></span></div>`
+      + (() => {
+        /* REALIZED is only worth having if it lands on the finance team's own
+           report. Claiming that without showing the subtraction is how a
+           reconciliation quietly stops reconciling. */
+        const rc = STORE.realizationCheck(YEAR);
+        if (!rc) return '';
+        const v = rc.total.variance;
+        const cls = Math.abs(v) < 1 ? 'ok' : 'off';
+        return `<div class="cv-realize ${cls}">
+          <b>REALIZED ${compact(rc.total.tool + rc.total.unplaced)}</b> against Finance's
+          <b>${compact(rc.total.finance)}</b>`
+          + (Math.abs(v) < 1
+            ? ' — the two agree to the dollar.'
+            : ` — <b>${compact(v)} apart</b>. `
+              + (rc.offenders.length
+                ? `Worst: ${rc.offenders.slice(0, 3).map(o => esc(o.name) + ' ' + compact(o.diff)).join(', ')}.`
+                : 'The difference is in lines nobody has allocated yet.'))
+          + (rc.total.unplaced
+            ? ` <span class="cv-unplaced">${compact(rc.total.unplaced)} of it is still read straight off the close file — those lines have no allocation, so they have no realized month of their own.</span>`
+            : '')
+          + `</div>`;
+      })()
       + (() => {
         const g = STORE.ledgerAllocationGaps(YEAR, (r) => { const e = {}; for (let m = 1; m <= 12; m++) { const v = planFor(r.pid, YEAR, m); if (v) e[m] = v; } return e; });
         if (!g || !g.rows) return '';
@@ -557,6 +742,53 @@
       <div class="k-val ${c.cls || ''}">${c.v}</div><div class="k-sub">${c.s}</div></div>`).join('');
   }
 
+  /** What the fee tool says this line earns, month by month. */
+  function earnedOf(r) {
+    const e = {};
+    for (let m = 1; m <= 12; m++) { const v = planFor(r.pid, YEAR, m); if (v) e[m] = v; }
+    return e;
+  }
+  /* Month options spanning the year on either side, because the cases that
+     matter cross a year end: December's work invoices in January, and the
+     December accrual is released against that January invoice. Out-of-year
+     months carry their year so a mis-click is visible rather than silent. */
+  function ymOptions(sel) {
+    let o = '';
+    for (let y = YEAR - 1; y <= YEAR + 1; y++) {
+      for (let i = 0; i < 12; i++) {
+        const v = STORE.ymStr(y, i + 1);
+        o += `<option value="${v}" ${sel === v ? 'selected' : ''}>${MONTHS[i]}${y === YEAR ? '' : ' ’' + String(y).slice(2)}</option>`;
+      }
+    }
+    return o;
+  }
+  /** The allocation lane's real content, built when a row is opened. */
+  function allocLaneHtml(r) {
+    const audit = STORE.allocationAudit(r, earnedOf(r), YEAR);
+    let x = `<td class="l">Allocation<span class="lane-hint">`
+      + (audit.complete ? 'every earned dollar placed' : money(audit.gap) + ' unplaced')
+      + `<span class="lane-key">acc · bil · rea</span></span></td>`;
+    for (let m = 1; m <= 12; m++) {
+      const row = audit.months.find(z => z.month === m);
+      const focus = FOCUS === m ? 'focus-c' : '';
+      if (!row) { x += `<td class="num zero ${focus}">—</td>`; continue; }
+      const dflt = STORE.ymStr(YEAR, m);
+      const pick = (lane, label, sel, title) => `<label>${label}<select class="al-lane" data-lane="${lane}"`
+        + ` data-key="${esc(r.key)}" data-m="${m}" aria-label="${title} for ${MONTHS[m - 1]} ${esc(r.name || '')}">`
+        + `${ymOptions(sel || dflt)}</select></label>`;
+      x += `<td class="alloc-c ${row.ok ? 'ok' : 'gap'} ${focus}">
+          <div class="al-amt">${money(row.earned)}</div>
+          <div class="al-trip">
+            ${pick('accrue', 'acc', row.accrue, 'Accrual month')}
+            ${pick('bill', 'bil', row.bill, 'Billed month')}
+            ${pick('realize', 'rea', row.realize, 'Realized month')}
+          </div>
+          ${row.ok ? '' : `<button class="al-fix" data-key="${esc(r.key)}" data-m="${m}" data-amt="${row.earned}">place ${money(row.earned)}</button>`}
+        </td>`;
+    }
+    return x + '<td class="num"></td><td class="acc-c"></td>';
+  }
+
   function renderGrid() {
     const rows = ledgerRows()
       .filter(r => SHOW_ZERO || rowActive(r) || (r.children || []).some(rowActive))
@@ -577,9 +809,9 @@
     });
     h += `<th>${YEAR}</th><th class="acc-h">Accrual<span class="sub">IMPORTED</span></th></tr></thead><tbody>`;
     $('#mode-label').textContent = MODE === 'earned' ? 'Showing EARNED — what the fee tool says each month is worth'
-      : MODE === 'accrued' ? 'Showing ACCRUED — the month revenue is realized'
-      : MODE === 'realized' ? 'Showing REALIZED — accrued + billed-in-month, every dollar counted once'
-      : 'Showing INVOICED — what the close file says went out the door';
+      : MODE === 'accrued' ? 'Showing ACCRUED — read on each allocation’s accrual month'
+      : MODE === 'billed' ? 'Showing BILLED — read on each allocation’s invoice month'
+      : 'Showing REALIZED — read on each allocation’s realized month, the calendar Finance reports on';
 
     /* One figure per project-month — recognised revenue, with a stripe under it
        saying how it settled. The three lanes behind that figure open on click,
@@ -631,30 +863,21 @@
 
       /* The three lanes — hidden until the row is opened. Billed and Accrued
          are typed into here; Tool writes a reconcilable plan adjustment. */
-      /* Every earned dollar needs an accrual month and an invoice month, at
-         the same amount. Without that, accrual and billing float free and a
-         month that earns, accrues and invoices the same work counts it twice. */
+      /* Every earned dollar needs an accrual month, a billed month and a
+         realized month, at the same amount. Without that the three calendars
+         float free and a month that earns, accrues and invoices the same work
+         counts it three times.
+
+         The lane is a SHELL until the row is opened. Three year-aware selects
+         on each of twelve months, across a book of 176 projects, is a quarter
+         of a million option nodes nobody has asked to see. */
       const allocLane = (r, ri) => {
-        const earned = {}; for (let m = 1; m <= 12; m++) { const v = planFor(r.pid, YEAR, m); if (v) earned[m] = v; }
-        const audit = STORE.allocationAudit(r, earned);
-        if (!audit.months.length) return '';
-        let x = `<tr class="lane lane-alloc lane-of-${ri}" hidden><td class="l">Allocation`
-          + `<span class="lane-hint">${audit.complete ? 'every earned dollar placed' : money(audit.gap) + ' unplaced'}</span></td>`;
-        for (let m = 1; m <= 12; m++) {
-          const row = audit.months.find(z => z.month === m);
-          const focus = FOCUS === m ? 'focus-c' : '';
-          if (!row) { x += `<td class="num zero ${focus}">—</td>`; continue; }
-          const opts = (sel) => MONTHS.map((mn, i) => `<option value="${i + 1}" ${+sel === i + 1 ? 'selected' : ''}>${mn}</option>`).join('');
-          x += `<td class="alloc-c ${row.ok ? 'ok' : 'gap'} ${focus}">
-              <div class="al-amt">${money(row.earned)}</div>
-              <div class="al-pair">
-                <label>acc<select class="al-acc" data-key="${esc(r.key)}" data-m="${m}" aria-label="Accrual month for ${MONTHS[m - 1]}">${opts(row.accrueIn || m)}</select></label>
-                <label>inv<select class="al-inv" data-key="${esc(r.key)}" data-m="${m}" aria-label="Invoice month for ${MONTHS[m - 1]}">${opts(row.invoiceIn || m)}</select></label>
-              </div>
-              ${row.ok ? '' : `<button class="al-fix" data-key="${esc(r.key)}" data-m="${m}" data-amt="${row.earned}">place ${money(row.earned)}</button>`}
-            </td>`;
-        }
-        return x + '<td class="num"></td><td class="acc-c"></td></tr>';
+        let any = false;
+        for (let m = 1; m <= 12; m++) if (planFor(r.pid, YEAR, m) || STORE.allocOf(r)[m]) { any = true; break; }
+        if (!any) return '';
+        return `<tr class="lane lane-alloc lane-of-${ri}" data-key="${esc(r.key)}" data-lazy="1" hidden>`
+          + `<td class="l">Allocation<span class="lane-hint">opening…</span></td>`
+          + `<td class="num" colspan="14"></td></tr>`;
       };
 
       const lane = (kind, label, hint) => {
@@ -721,9 +944,27 @@
       const i = row.dataset.i;
       const open = row.classList.toggle('open');
       row.querySelector('.pcell')?.setAttribute('aria-expanded', String(open));
-      $$('#grid .lane-of-' + i).forEach(el => { el.hidden = !open; });
+      $$('#grid .lane-of-' + i).forEach(el => {
+        // The allocation lane is a shell until someone actually looks at it.
+        if (open && el.dataset.lazy) {
+          const led = STORE.getLedgerYear(YEAR);
+          const r = led && led.rows[el.dataset.key];
+          if (r) { el.innerHTML = allocLaneHtml({ key: el.dataset.key, ...r }); delete el.dataset.lazy; }
+        }
+        el.hidden = !open;
+      });
     };
-    const reAlloc = () => { buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage(); };
+    /* Re-render, then put back whatever the user had open. Allocating is a
+       run of small edits down one row; closing it under them after each one
+       makes the three destinations unusable. */
+    const reAlloc = () => {
+      const openKeys = $$('#grid tr.prow.open').map(x => x.dataset.key);
+      buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage(); renderMapping();
+      openKeys.forEach(k => {
+        const r = $(`#grid tr.prow[data-key="${CSS.escape(k)}"]`);
+        if (r && !r.classList.contains('open')) r.querySelector('.pcell')?.click();
+      });
+    };
 
     t.addEventListener('click', (e) => {
       const mapBtn = e.target.closest('.map-btn');
@@ -734,9 +975,13 @@
       if (alFix) {
         e.stopPropagation();
         const key = alFix.dataset.key, m = +alFix.dataset.m;
-        const cur = STORE.allocOf(STORE.getLedgerYear(YEAR).rows[key])[m] || {};
-        try { STORE.setEarnedAllocation(YEAR, key, m, { amount: +alFix.dataset.amt, accrueIn: cur.accrueIn || m, invoiceIn: cur.invoiceIn || m }); }
-        catch (err) { UFC_UI.toast(err.message); return; }
+        const cur = STORE.allocOf(STORE.getLedgerYear(YEAR).rows[key])[m];
+        const n = cur ? STORE.normAlloc(cur, YEAR, m) : null;
+        const dflt = STORE.ymStr(YEAR, m);
+        try {
+          STORE.setEarnedAllocation(YEAR, key, m, { amount: +alFix.dataset.amt,
+            accrue: (n && n.accrue) || dflt, bill: (n && n.bill) || dflt, realize: (n && n.realize) || dflt });
+        } catch (err) { UFC_UI.toast(err.message); return; }
         reAlloc(); return;
       }
       const accBtn = e.target.closest('.acc-earned-btn');
@@ -810,20 +1055,30 @@
       }
     });
 
-    const pairChange = (sel, field) => {
-      const key = sel.dataset.key, m = +sel.dataset.m;
+    /** Move one of the three destinations for one earned month. */
+    const laneChange = (sel) => {
+      const key = sel.dataset.key, m = +sel.dataset.m, lane = sel.dataset.lane;
       const row = STORE.getLedgerYear(YEAR).rows[key];
       const cur = STORE.allocOf(row)[m];
-      const earned = planFor(row.pid, YEAR, m);
-      const next = { amount: cur ? cur.amount : earned, accrueIn: cur ? cur.accrueIn : m, invoiceIn: cur ? cur.invoiceIn : m };
-      next[field] = +sel.value;
-      if (field === 'accrueIn' && next.invoiceIn < next.accrueIn) next.invoiceIn = next.accrueIn;
+      const base = cur ? STORE.normAlloc(cur, YEAR, m) : null;
+      const dflt = STORE.ymStr(YEAR, m);
+      const next = {
+        amount: base ? base.amount : planFor(row.pid, YEAR, m),
+        accrue: (base && base.accrue) || dflt,
+        bill: (base && base.bill) || dflt,
+        realize: (base && base.realize) || dflt,
+      };
+      next[lane] = sel.value;
+      // An invoice cannot go out before the revenue is accrued. Pushing the
+      // accrual past the invoice takes the invoice with it rather than being
+      // refused — the refusal would just make the pair impossible to reorder.
+      if (lane === 'accrue' && STORE.ymIndex(next.bill) < STORE.ymIndex(next.accrue)) next.bill = next.accrue;
       try { STORE.setEarnedAllocation(YEAR, key, m, next); } catch (err) { UFC_UI.toast(err.message); return; }
       reAlloc();
     };
     t.addEventListener('change', (e) => {
-      if (e.target.closest('.al-acc')) pairChange(e.target.closest('.al-acc'), 'accrueIn');
-      else if (e.target.closest('.al-inv')) pairChange(e.target.closest('.al-inv'), 'invoiceIn');
+      const sel = e.target.closest('.al-lane');
+      if (sel) laneChange(sel);
     });
   }
 
@@ -906,7 +1161,10 @@
 
   /* ---- per-cell status popover ---- */
   function closeMenus() { $$('.popover').forEach(p => p.remove()); }
-  document.addEventListener('click', (e) => { if (!e.target.closest('.popover') && !e.target.closest('.map-btn') && !e.target.closest('.spread-btn')) closeMenus(); });
+  /* The buttons that OPEN a popover have to be excluded here, or the same
+     click that opens one closes it on the way up. */
+  const OPENERS = '.popover, .map-btn, .spread-btn, .mp-search, .mp-change';
+  document.addEventListener('click', (e) => { if (!e.target.closest(OPENERS)) closeMenus(); });
 
   function openStatusMenu(td, ev) {
     ev.stopPropagation(); closeMenus();
@@ -1063,7 +1321,8 @@
       <div class="pop-list map-list">
         ${idx.map(p => `<button class="pop-opt ${p.id === row.pid ? 'on' : ''}" data-pid="${p.id}"><span class="mp-n">${esc(p.name)}</span><span class="mp-c">${esc(p.client)}${p.code ? ' · ' + esc(p.code) : ''}</span></button>`).join('')}
       </div>
-      <button class="pop-opt clear" data-pid="">Leave unmapped</button>`;
+      <button class="pop-opt clear" data-pid="">Leave unmapped</button>
+      <button class="pop-opt skip" data-skip="1">This is not a project <em>rules it out of the gap count</em></button>`;
     document.body.appendChild(pop);
     const rect = btn.getBoundingClientRect();
     pop.style.top = (rect.bottom + window.scrollY + 4) + 'px';
@@ -1076,11 +1335,21 @@
     search.focus();
     pop.querySelectorAll('.pop-opt').forEach(b => b.addEventListener('click', () => {
       try {
-        if (b.dataset.create) STORE.createProjectFromLedgerRow(YEAR, key);
-        else STORE.setRowMatch(YEAR, key, b.dataset.pid || null);
+        if (b.dataset.create) {
+          const saved = STORE.createProjectFromLedgerRow(YEAR, key);
+          STORE.setMapping(key, saved.id, { via: 'manual', name: row.name, client: row.client, code: row.code });
+        } else if (b.dataset.skip) {
+          const why = prompt('Why is this line not a project?\n\n(e.g. intercompany allocation, office overhead, holding code)', 'not a project');
+          if (why == null) return;
+          STORE.ignoreLedgerRow(key, why);
+        } else {
+          // Through the mapping book, not the row, so the answer carries into
+          // next year's close instead of being made again every January.
+          STORE.setMapping(key, b.dataset.pid || null, { via: 'manual', name: row.name, client: row.client, code: row.code });
+        }
       } catch (e) { UFC_UI.toast(e.message); return; }
       _planCache = {};
-      closeMenus(); buildBar(); kpis(); renderGrid(); renderFlash(); renderLeader(); renderCoverage();
+      closeMenus(); render();
     }));
   }
 
@@ -1236,10 +1505,15 @@
     [
       ['Earned', 'What the fee tool says the work is worth in that month — the contract’s own schedule.',
        'The staffing grid is tied to this month. Effort, roster and earned revenue sit together.'],
-      ['Accrued', 'Earned revenue that has not been invoiced yet. An accounting term for WHEN revenue is realized.',
-       'Usually the month the work happened; sometimes not, which is why it is stated separately.'],
-      ['Invoiced', 'An invoice actually went out in that month.', 'It can carry earlier accruals finally going out, so it is not that month’s work.'],
-      ['Realized revenue', 'Accrued + billed for that month’s own work.', 'What the month is worth on the P&L. This is the number the year is measured on.'],
+      ['Accrued', 'The month the revenue was raised as earned but not yet invoiced.',
+       'Usually the month the work happened; sometimes not, which is why it is assigned rather than assumed.'],
+      ['Billed', 'The month the invoice actually goes out.', 'It can carry earlier accruals finally going out, so it is not that month’s work.'],
+      ['Realized', 'The month the revenue lands in the finance team’s report.',
+       'This is the view that has to agree with Finance. The “Realized vs Finance” sheet is the subtraction that proves it does.'],
+      ['Allocation', 'Every earned month is assigned an accrual month, a billed month and a realized month — each with its YEAR — at one amount.',
+       'Any of the three may be the same month. Stating all three with a year is what lets December’s work bill in January without being counted twice.'],
+      ['Mapping', 'Which fee-tool project a line in the close file belongs to.',
+       'An unmapped line has no EARNED figure to reconcile against. See the Mapping sheet for what is still unanswered.'],
       ['', '', ''],
       ['Worked example', 'Jan earns 45,000 and accrues it, invoice due March. Feb the same. March earns 45,000 and 135,000 is invoiced.',
        'March is NOT worth 135,000. It is 90,000 of Jan and Feb finally going out plus 45,000 of its own — realized 45,000.'],
@@ -1254,38 +1528,123 @@
     const NAVY = 'FF25273A', RED = 'FFCE181E', GRN = 'FF1F8A5B', YEL = 'FFFFDF00';
     const fmt = '"$"#,##0;[Red]("$"#,##0)';
     const ws = wb.addWorksheet('Allocation');
-    ws.mergeCells('A1:H1');
-    ws.getCell('A1').value = `${YEAR} — every earned month, its accrual month and its invoice month`;
+    ws.mergeCells('A1:J1');
+    ws.getCell('A1').value = `${YEAR} — every earned month, and the accrual, billed and realized months it is assigned to`;
     ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
-    ws.mergeCells('A2:H2');
-    ws.getCell('A2').value = 'Revenue is realized in the ACCRUAL month. A month that earns, accrues and invoices the same work counts it once.';
+    ws.mergeCells('A2:J2');
+    ws.getCell('A2').value = 'Each earned month has an accrual month, a billed month and a realized month — any of them may be the same, and any may fall in another year. The amount is spent once.';
     ws.getCell('A2').font = { italic: true, size: 10, color: { argb: 'FF79828C' } };
     ws.addRow([]);
-    const h = ws.addRow(['Project', 'Client', 'Revenue leader', 'Earned in', 'Earned', 'Allocated', 'Accrues in', 'Invoices in', 'Status']);
+    const h = ws.addRow(['Project', 'Client', 'Revenue leader', 'Earned in', 'Earned', 'Allocated',
+      'Accrues in', 'Billed in', 'Realized in', 'Status']);
     h.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
     const rows = ledgerRows();
     const flat = []; rows.forEach(r => { flat.push(r); (r.children || []).forEach(f => flat.push(f)); });
+    // Months carry their year, because the ones worth reading cross a year end.
+    const ymLabel = (v) => { const p = v ? STORE.ymParse(v) : null;
+      return p ? MONTHS[p.month - 1] + (p.year === +YEAR ? '' : ' ' + p.year) : ''; };
     let earnedT = 0, allocT = 0;
     flat.forEach(r => {
       const earned = {}; for (let m = 1; m <= 12; m++) { const v = planFor(r.pid, YEAR, m); if (v) earned[m] = v; }
-      const audit = STORE.allocationAudit(r, earned);
+      const audit = STORE.allocationAudit(r, earned, YEAR);
       audit.months.forEach(x => {
         earnedT += x.earned; allocT += x.amount;
         const row = ws.addRow([r.name || '', r.client || '', leaderOf(r.pid) || '', MONTHS[x.month - 1], x.earned || null, x.amount || null,
-          x.accrueIn ? MONTHS[x.accrueIn - 1] : '', x.invoiceIn ? MONTHS[x.invoiceIn - 1] : '',
+          ymLabel(x.accrue), ymLabel(x.bill), ymLabel(x.realize),
           x.ok ? 'placed' : (x.amount ? 'amount does not match earned' : 'NOT ALLOCATED')]);
         row.getCell(5).numFmt = fmt; row.getCell(6).numFmt = fmt;
-        if (!x.ok) { row.getCell(9).font = { bold: true, color: { argb: RED } };
-                     row.getCell(9).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEAEA' } }; }
-        else row.getCell(9).font = { color: { argb: GRN } };
+        if (!x.ok) { row.getCell(10).font = { bold: true, color: { argb: RED } };
+                     row.getCell(10).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEAEA' } }; }
+        else row.getCell(10).font = { color: { argb: GRN } };
       });
     });
-    const t = ws.addRow(['TOTAL', '', '', '', earnedT, allocT, '', '', Math.abs(earnedT - allocT) < 0.5 ? 'every earned dollar placed' : 'UNPLACED ' + Math.round(earnedT - allocT)]);
+    const t = ws.addRow(['TOTAL', '', '', '', earnedT, allocT, '', '', '', Math.abs(earnedT - allocT) < 0.5 ? 'every earned dollar placed' : 'UNPLACED ' + Math.round(earnedT - allocT)]);
     t.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
     t.getCell(5).numFmt = fmt; t.getCell(6).numFmt = fmt;
     t.getCell(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } };
     t.getCell(6).font = { bold: true, color: { argb: NAVY } };
-    ws.columns = [{ width: 42 }, { width: 26 }, { width: 20 }, { width: 11 }, { width: 14 }, { width: 14 }, { width: 12 }, { width: 12 }, { width: 30 }];
+    ws.columns = [{ width: 42 }, { width: 26 }, { width: 20 }, { width: 11 }, { width: 14 }, { width: 14 },
+                  { width: 13 }, { width: 13 }, { width: 13 }, { width: 30 }];
+    ws.views = [{ state: 'frozen', ySplit: 4 }];
+  }
+
+  /** The mapping, written down. Anyone auditing this book will ask the same
+      first question the page does — which fee-tool project is this line? —
+      and the answer has to travel with the file. */
+  function xlMapping(wb) {
+    const NAVY = 'FF25273A', RED = 'FFCE181E', GRN = 'FF1F8A5B', STEEL = 'FF79828C';
+    const fmt = '"$"#,##0;[Red]("$"#,##0)';
+    const rep = STORE.mappingReport(YEAR);
+    if (!rep) return;
+    const ws = wb.addWorksheet('Mapping');
+    ws.mergeCells('A1:H1');
+    ws.getCell('A1').value = `${YEAR} — every line in the close file and the fee-tool project it belongs to`;
+    ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
+    ws.mergeCells('A2:H2');
+    ws.getCell('A2').value = `${rep.stat.mapped} mapped · ${rep.stat.ignored} ruled out of scope · `
+      + `${rep.stat.unmapped} still without a home (${money(rep.stat.unmappedAmt)}). An unmapped line has no EARNED figure to reconcile against.`;
+    ws.getCell('A2').font = { italic: true, size: 10, color: { argb: rep.stat.unmapped ? RED : STEEL } };
+    ws.addRow([]);
+    const h = ws.addRow(['Line (close file)', 'Client', 'Project #', 'Realized ' + YEAR, 'Mapped to', 'Project client', 'How', 'State']);
+    h.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+    rep.lines.forEach(l => {
+      const state = l.pid ? 'mapped' : l.ignored ? 'out of scope — ' + l.ignored.reason : 'NO HOME';
+      const how = l.pid ? (l.via === 'code' ? 'project number' : l.via === 'manual' ? 'by hand'
+                          : 'auto' + (l.score ? ' ' + Math.round(l.score * 100) + '%' : ''))
+                : (l.candidates || []).slice(0, 2).map(c => c.name + ' ' + Math.round(c.score * 100) + '%').join(' / ');
+      const row = ws.addRow([l.name, l.client, l.code, l.amount || null, l.projectName, l.projectClient, how, state]);
+      row.getCell(4).numFmt = fmt;
+      if (!l.pid && !l.ignored) {
+        row.getCell(8).font = { bold: true, color: { argb: RED } };
+        row.getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEAEA' } };
+      } else if (l.pid) row.getCell(8).font = { color: { argb: GRN } };
+      else row.getCell(8).font = { italic: true, color: { argb: STEEL } };
+    });
+    ws.columns = [{ width: 44 }, { width: 26 }, { width: 12 }, { width: 15 }, { width: 40 }, { width: 24 }, { width: 34 }, { width: 34 }];
+    ws.views = [{ state: 'frozen', ySplit: 4 }];
+  }
+
+  /** REALIZED against the finance team's own report, month by month. The
+      REALIZED view claims to be their number; this is the subtraction that
+      either proves it or names the lines that break it. */
+  function xlRealization(wb) {
+    const NAVY = 'FF25273A', RED = 'FFCE181E', GRN = 'FF1F8A5B', YEL = 'FFFFDF00';
+    const fmt = '"$"#,##0;[Red]("$"#,##0)';
+    const rc = STORE.realizationCheck(YEAR);
+    if (!rc) return;
+    const ws = wb.addWorksheet('Realized vs Finance');
+    ws.mergeCells('A1:F1');
+    ws.getCell('A1').value = `${YEAR} — REALIZED against the finance team's report`;
+    ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
+    ws.mergeCells('A2:F2');
+    ws.getCell('A2').value = rc.agrees
+      ? 'The two agree. Every allocated dollar realizes in the month Finance reports it.'
+      : `Apart by ${Math.round(rc.total.variance).toLocaleString()} — the lines below say where.`;
+    ws.getCell('A2').font = { italic: true, size: 10, color: { argb: rc.agrees ? GRN : RED } };
+    ws.addRow([]);
+    const h = ws.addRow(['Month', 'Realized (allocated)', 'Not yet allocated', 'Finance reported', 'Variance']);
+    h.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+    for (let m = 1; m <= 12; m++) {
+      const row = ws.addRow([MONTHS[m - 1], rc.tool[m] || null, rc.unplaced[m] || null, rc.finance[m] || null, rc.variance[m] || null]);
+      [2, 3, 4, 5].forEach(i => row.getCell(i).numFmt = fmt);
+      if (Math.abs(rc.variance[m]) > 1) row.getCell(5).font = { bold: true, color: { argb: RED } };
+    }
+    const t = ws.addRow(['TOTAL', rc.total.tool, rc.total.unplaced, rc.total.finance, rc.total.variance]);
+    t.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+    [2, 3, 4, 5].forEach(i => t.getCell(i).numFmt = fmt);
+    t.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rc.agrees ? YEL : 'FFFDEAEA' } };
+    t.getCell(5).font = { bold: true, color: { argb: rc.agrees ? NAVY : RED } };
+    if (rc.offenders.length) {
+      ws.addRow([]);
+      const oh = ws.addRow(['Project', 'Realized (allocated)', '', 'Finance reported', 'Variance']);
+      oh.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+      rc.offenders.forEach(o => {
+        const row = ws.addRow([o.name, o.tool, '', o.finance, o.diff]);
+        [2, 4, 5].forEach(i => row.getCell(i).numFmt = fmt);
+        row.getCell(5).font = { bold: true, color: { argb: RED } };
+      });
+    }
+    ws.columns = [{ width: 42 }, { width: 20 }, { width: 18 }, { width: 20 }, { width: 16 }];
     ws.views = [{ state: 'frozen', ySplit: 4 }];
   }
 
@@ -1400,7 +1759,9 @@
     rec.getCell(17).font = { bold: true, color: { argb: NAVY } };
     ws.columns = [{ width: 42 }, { width: 26 }, { width: 11 }, { width: 20 }, ...MONTHS.map(() => ({ width: 13 })), { width: 15 }, { width: 14 }, { width: 14 }];
     ws.views = [{ state: 'frozen', ySplit: 4, xSplit: 4 }];
+    xlMapping(wb);
     xlAllocation(wb);
+    xlRealization(wb);
     xlCommentary(wb);
     xlGlossary(wb);
     xlUnruled(wb);
@@ -1517,7 +1878,7 @@
   /* ============================================================
      6 · BOOT
      ============================================================ */
-  function render() { buildBar(); renderCoverage(); kpis(); renderGrid(); renderFlash(); renderLeader();
+  function render() { buildBar(); renderCoverage(); renderMapping(); kpis(); renderGrid(); renderFlash(); renderLeader();
     $$('#glossary .gl[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === MODE));
     (function () {
       const sel = $('#leader-pick'); if (!sel) return;
@@ -1557,6 +1918,7 @@
       STORE.deleteLedgerYear(YEAR); render();
     });
     wireImport();
+    wireMapping();
     render();
   }
 
