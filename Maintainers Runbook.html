@@ -164,6 +164,7 @@
     <tr><td class="k">Proposal Analytics.html</td><td>Win/loss hit rates with lost reasons, discount analytics, proposal funnel, client profiles, health score.</td></tr>
     <tr><td class="k">Import Revenues.html</td><td><strong>Moved.</strong> Now a redirect stub into <code>Ingestion Studio.html?mode=bulk</code> — the bulk revenue import lives inside Ingestion Studio, which diffs the workbook against existing records and lets the admin pick exactly which projects land (re-imports no longer duplicate).</td></tr>
     <tr><td class="k">Ingestion Studio.html</td><td><strong>Admin-only.</strong> Import a historical proposal (PDF/text) via Claude into a structured record. Also hosts the bulk revenue-workbook import (<code>?mode=bulk</code>) with diff-and-select.</td></tr>
+    <tr><td class="k">Bulk Editor.html</td><td><strong>Superuser only.</strong> The project book as one Excel workbook: export it, scrub it (roles, phases, teams and monthly revenue are all editable), and put it back &mdash; nothing is written until you review the full diff. Project ID is the join key and is never edited; a row with no ID (or <code>Action = NEW</code>) creates a project and <code>Action = REMOVE</code> soft-deletes it, so a stray sort-and-delete in Excel cannot wipe records. Sheets are authoritative per project. Pair it with <b>maintenance mode</b> &mdash; the same page can pause everyone else's saves while the book is out of the building. Built for a deliberate one-off cleanup, not daily edits.</td></tr>
     <tr><td class="k">Benchmarking Dashboard.html</td><td>"What have we charged before?" — rate spreads, comparables, and side-by-side project comparison with a scope &amp; assumptions matrix.</td></tr>
     <tr><td class="k">Staffing Matrix.html</td><td><strong>Admin-only.</strong> Staffing &amp; Bandwidth — allocation by named resource × project × month (Compare / By Project / By Person / Allocations / Insights tabs), over/under-load flags, planned vs. Clockify actual hours, title pinning, fee-link mapping, entry-lateness stats. Carries the <strong>contract ↔ staffing bridge</strong>: contract demand not yet allocated surfaces on the Allocations tab (confirm-gated, alias-aware, open roles prompt for a name), top-ups flag inline on the person's row, and empty fee rosters can be seeded from the matrix at $0 contracted rates. When Reconciliation shifts a project's schedule, the contract staffing moves with it and the project is flagged (<code>staffingShiftPending</code>) — this page shows a red banner offering a one-click shift of the named-people allocation rows to match, so the people always follow the contract. 3-sheet Excel snapshot export for version control. Writes to <code>staff.json</code>.</td></tr>
     <tr><td class="k">Profitability.html</td><td><strong>Admin-only.</strong> The whole revenue projection with Clockify burn (hours × cost rate by title) laid against it by month — margin per project per month. Reads <code>projects.json</code> + <code>staff.json</code> + <code>rates.json</code>.</td></tr>
@@ -174,7 +175,7 @@
     <tr><td class="k">Import Small Works.html</td><td><strong>Admin-only.</strong> Loads the small-works book as pass-through-only records — contractor WO billed at cost + markup, managed vendor billed as the fee alone.</td></tr>
     <tr><td class="k">Data Repair.html</td><td><strong>Admin-only.</strong> Scan-and-fix for known staffing-data damage: straggler renamed rows, exact duplicates, edited twins, stale bridge rows, duplicate person records (merged with tombstones so they can't resurrect on merge), sparse seeded months zero-filled. Preview-first; also surfaces a "needs human review" list it deliberately won't auto-fix.</td></tr>
     <tr><td class="k">Getting Started.html</td><td>The revenue-leader orientation — flow, expectations, glossary. Linked from the one-time welcome banner (<code>first-run.js</code>) on the pages leaders land on.</td></tr>
-    <tr><td class="k">tests.html</td><td>Regression suite — 24 assertions on the pricing engine and data layer, run against an in-memory store (never touches real data). <strong>Run before every deploy.</strong></td></tr>
+    <tr><td class="k">tests.html</td><td>Regression suite &mdash; <strong>158 assertions across 37 groups</strong> covering the pricing engine (waterfall, rate lock, broker direction, monthly decomposition, NTE), the data layer (tombstones, migrations, activity log), the revenue ledger, allocations, the three calendars, mapping, the close-file parser, staffing and the revenue diff. Runs against an in-memory storage shim and a synthetic rate grid, so it never touches real data or the confidential grid. Open it in a browser, or run it headless with <code>node scripts/run-tests.mjs</code> (exits non-zero on any failure). CI runs the same runner on every push and PR. <strong>Run before every deploy.</strong></td></tr>
     <tr><td class="k">Maintainers Runbook.html<br>docs/ (repo only)</td><td>Internal reference docs. This runbook ships with the app; the migration guide, roadmap and readiness report live in the repo's <code>docs/</code> folder and are not deployed.</td></tr>
   </table>
   <p>Every page carries a shared hamburger navigation (<code>nav.js</code>); admin-only links are hidden from non-admins.</p>
@@ -185,9 +186,12 @@
 ├── Projects Index.html
 ├── Universal Fee Calculator.html
 ├── Revenue Projections.html
+├── Revenue Reconciliation.html    <span class="c">← admin/finance · the monthly close</span>
 ├── Proposal Analytics.html
-├── Import Revenues.html          <span class="c">← admin-only</span>
+├── Import Revenues.html          <span class="c">← redirect stub → Ingestion Studio.html?mode=bulk</span>
 ├── Ingestion Studio.html
+├── Bulk Editor.html               <span class="c">← superuser · whole-book Excel round trip</span>
+├── Executive Reporting.html       <span class="c">← leadership · read-only reporting module</span>
 ├── Benchmarking Dashboard.html
 ├── Staffing Matrix.html            <span class="c">← admin-only · bandwidth + actuals</span>
 ├── Profitability.html             <span class="c">← admin-only · revenue vs. burn</span>
@@ -212,10 +216,16 @@
 │   ├── boot.js                   <span class="c">gates each page on auth + data load · runs migrations</span>
 │   ├── nav.js                    <span class="c">shared hamburger navigation</span>
 │   ├── sync-status.js            <span class="c">the "Synced to Box" indicator</span>
+│   ├── vendor-lazy.js            <span class="c">loads ExcelJS/SheetJS on first use, never at page load</span>
 │   ├── app.js                    <span class="c">the calculator engine + UI</span>
 │   ├── intake.js                 <span class="c">Salesforce intake email + drift detection</span>
 │   ├── export-excel.js           <span class="c">the Excel export (live formulas)</span>
 │   ├── proposal-analytics.js     <span class="c">Proposal Analytics</span>
+│   ├── projects-index-page.js    <span class="c">Projects Index</span>
+│   ├── revenue-projections-page.js  <span class="c">Revenue Projections</span>
+│   ├── revenue-reconcile.js      <span class="c">Revenue Reconciliation: close parser, mapping, allocation, flash export</span>
+│   ├── revenue-import.js         <span class="c">Ingestion Studio bulk mode — projections workbook diff + import</span>
+│   ├── bulk-excel.js             <span class="c">Bulk Editor — projects.json ⇄ .xlsx round trip</span>
 │   ├── staff.js / staffing-page.js  <span class="c">staffing matrix data layer + page (bridge, aliases, rename healing)</span>
 │   ├── staffing-export.js        <span class="c">3-sheet static Excel snapshot of the matrix</span>
 │   ├── first-run.js              <span class="c">one-time Getting Started banner</span>
@@ -225,9 +235,24 @@
 │   ├── guide.js                  <span class="c">the ⓘ inline help markers</span>
 │   ├── doc-page.js               <span class="c">print/paged shell used by the guides</span>
 │   ├── ingest.js / bench*.js     <span class="c">Ingestion + Benchmarking</span>
-│   └── styles.css
+│   ├── ui.js                     <span class="c">toasts</span>
+│   ├── staff-seed.js             <span class="c">staffing seed data</span>
+│   └── styles.css                <span class="c">(studio.css is a leftover — no page loads it)</span>
 │
+├── exec-reporting/               <span class="c">← Executive Reporting module · READ-ONLY, own namespace</span>
+│   ├── core.js                   <span class="c">domain rulings + pure mappers over the Box files</span>
+│   ├── app.js                    <span class="c">the tabs and panels</span>
+│   ├── verify-core.mjs           <span class="c">dev-only harness (needs the sibling fixtures repo)</span>
+│   └── BUILD-STATE.md            <span class="c">port history + watchpoints</span>
+│
+├── vendor/                       <span class="y">ExcelJS + SheetJS, vendored — never a CDN at runtime</span>
+├── scripts/run-tests.mjs         <span class="c">headless runner for tests.html</span>
+├── .github/workflows/tests.yml   <span class="c">CI — runs the suite on every push and PR</span>
+├── docs/                         <span class="c">repo-only reference (not deployed)</span>
 ├── design-system/               <span class="c">brand: colours, type, Gotham fonts, logo</span>
+├── CLAUDE.md                    <span class="c">conventions for anyone (or anything) editing this repo</span>
+├── README.md / DEPLOY.md
+├── vercel.json                  <span class="c">cache headers (must-revalidate on html/js/css/json)</span>
 ├── package.json
 ├── .vercelignore                <span class="c">keeps confidential files off the public origin</span>
 └── .gitignore
@@ -236,7 +261,8 @@
    rates.json      <span class="c">the PPM rate grid (rack rates, cost floors, discounts)</span>
    projects.json   <span class="c">all saved projects, incl. frozen $ snapshots on booked records</span>
    staff.json      <span class="c">living staffing matrix — allocations, notes, Clockify actuals, mappings</span>
-   studio.json     <span class="c">retired Revenue Studio baselines + scenarios (kept; see the retired-tools row)</span></div>
+   studio.json     <span class="c">retired Revenue Studio baselines + scenarios (kept; see the retired-tools row)</span>
+   revenue.json    <span class="c">Revenue Reconciliation's actuals ledger + the mapping book</span></div>
 
   <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 1 / 7</span></div>
 </div>
@@ -523,7 +549,8 @@
     <tr><td class="k">ratesFileId</td><td>box-adapter.js</td><td>Box file id of <code>rates.json</code></td></tr>
     <tr><td class="k">studioFileId</td><td>box-adapter.js</td><td>Box file id of <code>studio.json</code> (Studio baselines + scenarios). Blank = local-only.</td></tr>
     <tr><td class="k">staffFileId</td><td>box-adapter.js</td><td>Box file id of <code>staff.json</code>. <strong>Self-configuring</strong> — if blank, the file is found by name in the folder (created on first run) so every admin lands on the same one.</td></tr>
-    <tr><td class="k">actualsFileId</td><td>box-adapter.js</td><td>Optional <code>clockify-actuals.csv</code> in Box. Blank = the page pulls live through <code>/api/clockify</code> or takes a manual drop.</td></tr>
+    <tr><td class="k">revenueFileId</td><td>box-adapter.js</td><td>Box file id of <code>revenue.json</code> (the Revenue Reconciliation ledger + mapping book). <strong>Blank today, and deliberately so</strong> &mdash; same self-configuring path as <code>staffFileId</code>: found by name in the shared folder, created on first run, so every admin lands on the same file with no Box setup.</td></tr>
+      <tr><td class="k">actualsFileId</td><td>box-adapter.js</td><td>Optional <code>clockify-actuals.csv</code> in Box. Blank = the page pulls live through <code>/api/clockify</code> or takes a manual drop.</td></tr>
     <tr><td class="k">folderId</td><td>box-adapter.js</td><td>Box folder id (used to recreate a missing data file)</td></tr>
     <tr><td class="k">BOX_CLIENT_ID</td><td>Vercel env var</td><td>Box app client id</td></tr>
     <tr><td class="k">BOX_CLIENT_SECRET</td><td>Vercel env var</td><td>Box app secret — server-side only, used by <code>api/box-token.js</code></td></tr>

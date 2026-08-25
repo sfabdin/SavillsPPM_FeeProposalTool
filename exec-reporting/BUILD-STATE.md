@@ -1,8 +1,9 @@
 # Executive Reporting module - build state
 
-Branch: `claude/executive-reporting`. The module ports the Financial Analysis
-Part 2 production app (KYRI101/financial-analysis-2) into this repo as a
-read-only page over the four Box files. The bible for behaviour and notation
+Merged to `main` from `claude/executive-reporting` (PR #77). The module
+ports the Financial Analysis Part 2 production app
+(KYRI101/financial-analysis-2) into this repo as a read-only page over the
+four Box files it reads. The bible for behaviour and notation
 is the Part 2 App Build Spec; the production app is the reference
 implementation. Never write to projects/rates/staff/studio from here.
 
@@ -82,12 +83,19 @@ implementation. Never write to projects/rates/staff/studio from here.
 - Browser-proven: selection filters to a single book, a cost edit moves
   the blended readout, 51 bubbles, zero console errors.
 
-## Remaining before merge
+## Merged
 
-- KY's review of PR #77. Nothing on the page is marked port-in-progress
-  any more.
-- After acceptance: retire the separate local app, export the Supabase
-  vintage snapshots to an archive, then close Supabase (KY's call).
+PR #77 landed on `main` (commit `debb5c9`) and the module has shipped.
+Nothing on the page is marked port-in-progress. Commits since the merge:
+the plain-language pass below, the responsive pass, fixes from the first
+live Box run, the two panels the port had dropped, and the shared
+vendor-lazy / opt-in-store work that the module picked up along with every
+other page.
+
+Still open, and not a code task:
+
+- Retire the separate local app, export the Supabase vintage snapshots to
+  an archive, then close Supabase (KY's call).
 
 ## Watchpoints
 

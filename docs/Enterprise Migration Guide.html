@@ -251,7 +251,7 @@
         <div class="psub">Data stays in Savills' existing Box tenant; app hosted on Vercel.</div>
         <div class="lbl">How it works</div>
         <ul class="pros">
-          <li>The whole database is already plain JSON (that's what <strong>Export DB</strong> produces). It lives in a shared Box folder as four files: <code>projects.json</code> (fee records), <code>staff.json</code> (staffing matrix, actuals &amp; mappings), <code>rates.json</code> (the confidential grid), and <code>studio.json</code> (Revenue Studio baselines).</li>
+          <li>The whole database is already plain JSON (that's what <strong>Export DB</strong> produces). It lives in a shared Box folder as five files: <code>projects.json</code> (fee records), <code>staff.json</code> (staffing matrix, actuals &amp; mappings), <code>rates.json</code> (the confidential grid), <code>revenue.json</code> (the monthly-close ledger and its mapping book), and <code>studio.json</code> (retired Revenue Studio baselines, kept for the Budget/RF baseline).</li>
           <li><code>store.js</code> pulls it from Box on load, writes it back on save — via the Box API.</li>
           <li>Reporting (Projections, etc.) stays right here in the app.</li>
         </ul>
