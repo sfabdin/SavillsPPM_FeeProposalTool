@@ -146,6 +146,7 @@
     'Life Sciences',
     'Healthcare',
     'Industrial',
+    'Defense / Aerospace',
     'Public Sector',
     'Education',
     'Hospitality',
