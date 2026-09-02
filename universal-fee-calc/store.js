@@ -509,6 +509,20 @@
     return added;
   }
 
+  /** Take entries that arrived in projects.json's old array, put them in the
+      shards, and hand back an EMPTY array to write in their place.
+
+      Ingest first, clear second: the shards are the system of record and the
+      ingest is a union by id, so nothing is lost — and unless the array is
+      actually cleared, projects.json carries the trail's weight forever. The
+      previous version unioned it back on every merge and called that
+      "draining", which it was not: remote ∪ local re-populates from whichever
+      copy still has the entries, so the array would never have emptied. */
+  function drainLegacyActivity(entries) {
+    try { ingestActivityEntries(entries || []); } catch (e) {}
+    return [];
+  }
+
   /** One-time lift: the trail used to live in projects.json. Move whatever is
       still there into the shards and strip it out, so projects.json goes back
       to holding project records and stops carrying the log's weight on every
@@ -4329,7 +4343,7 @@
     // Activity trail — its own month-sharded store, never inside projects.json
     readActivityDb, writeActivityDb, defaultActivityDb, attachActivityRemote,
     activityShardKey, activityMonths, getActivityShard, mergeActivityShard, hydrateActivityShard,
-    ingestActivityEntries, migrateActivityOutOfProjects, activityCoverage,
+    ingestActivityEntries, migrateActivityOutOfProjects, drainLegacyActivity, activityCoverage,
     dirtyActivityShards, markActivityShardClean,
     accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING, isPlaceholder,

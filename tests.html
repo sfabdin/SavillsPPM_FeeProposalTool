@@ -543,6 +543,23 @@
     return fields.includes('Client') || 'recorded an edit with no fields: ' + JSON.stringify(fields);
   });
 
+  test('Data · activity', 'a trail arriving in the old array is kept, and the array is emptied', () => {
+    /* The sync used to union this array back on every merge and call that
+       draining. remote ∪ local re-populates from whichever copy still holds
+       the entries, so projects.json would have carried the trail's weight for
+       good. Ingest first, then hand back an empty array. */
+    localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] }));
+    const fromAnOlderBuild = [
+      { id: 'legacy1', ts: '2026-04-10T09:00:00.000Z', action: 'edit', actor: 'a@b.c', projectId: 'p3' },
+      { id: 'legacy2', ts: '2026-04-11T09:00:00.000Z', action: 'book', actor: 'a@b.c', projectId: 'p3' },
+    ];
+    const back = S.drainLegacyActivity(fromAnOlderBuild);
+    if (back.length !== 0) return 'the array was handed back with ' + back.length + ' entries still in it';
+    if (S.listActivity(null, 'p3').length !== 2) return 'the entries were dropped instead of moved';
+    // and it is safe to run again on the same entries
+    return S.drainLegacyActivity(fromAnOlderBuild).length === 0 || 'a second drain re-populated the array';
+  });
+
   test('Data · activity', 'a shard still owing Box a push survives a reload', () => {
     /* The push is debounced. Close the tab inside that window and an in-memory
        queue would be gone on the next load, leaving the entry in this browser

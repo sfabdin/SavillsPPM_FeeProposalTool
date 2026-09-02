@@ -527,18 +527,19 @@
       if (!rp || (lp.updatedAt || '') >= (rp.updatedAt || '')) all[id] = lp;
     });
     out.projects = all;
-    /* TRANSITIONAL. The audit trail has its own month-sharded store now and is
-       no longer written here — but a teammate on an older build still appends
-       to this array, and their work is history too. So union it (no cap, ever
-       again) and lift it into the shards, from where the trail is read. The
-       array drains to empty as browsers pick up the new build. */
+    /* The audit trail is its own set of files now and is never written here.
+       A teammate on an older build may still be appending to this array, and
+       their work is history too — so union both sides, move it into the shards
+       where the trail actually lives, and write back an EMPTY array. That last
+       part is the point: projects.json only sheds the weight if the array is
+       actually cleared, and the entries are safe because the ingest is a union
+       by id that has already run. */
     const seen = {};
     [...(remote.activity || []), ...(local.activity || [])].forEach(e => {
       if (e && e.id) seen[e.id] = e;
     });
     const carried = Object.values(seen).sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
-    try { if (carried.length && Store.ingestActivityEntries) Store.ingestActivityEntries(carried); } catch (e) {}
-    out.activity = carried;
+    out.activity = Store.drainLegacyActivity ? Store.drainLegacyActivity(carried) : [];
 
     /* Everything else on the db is dropped unless it is merged here — this is
        what silently ate the maintenance flag on every sync. */
