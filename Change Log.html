@@ -40,6 +40,7 @@
 .badge.restore{background:#1f7a44}
 .badge.ledger{background:#1D6B78}
 .badge.system{background:#5B3A8C}
+.badge.staff{background:#B25C00}
 .e-proj{font-family:var(--font-display);font-weight:700;font-size:14px;color:var(--sav-navy);text-decoration:none}
 .e-proj:hover{text-decoration:underline}
 .e-client{font-size:11.5px;color:#79828C}
@@ -95,6 +96,7 @@
       <option value="status">Status changed</option>
       <option value="book">Booked / approved</option>
       <option value="ledger">Reconciliation</option>
+      <option value="staff">Staffing</option>
       <option value="system">Admin &amp; system</option>
       <option value="delete">Deleted</option>
     </select>
@@ -154,6 +156,12 @@
     'baseline-save': 'Baseline saved', 'baseline-delete': 'Baseline deleted',
     'scenario-save': 'Scenario saved', 'scenario-delete': 'Scenario deleted',
     'activity-migrate': 'Trail moved to its own store',
+    'staff-alloc-add': 'Staffed', 'staff-alloc': 'Staffing changed', 'staff-alloc-remove': 'Unstaffed',
+    'staff-person-add': 'Person added', 'staff-person': 'Roster changed', 'staff-hours': 'Month hours',
+    'staff-import': 'Matrix imported', 'staff-reseed': 'Matrix re-seeded', 'staff-reset': 'Matrix reset',
+    'staff-actuals': 'Hours imported', 'staff-actuals-clear': 'Hours cleared',
+    'staff-titles': 'Titles filled', 'staff-rename': 'Projects renamed',
+    'staff-map': 'Mapping', 'staff-gap-dismiss': 'Gap dismissed', 'staff-gap-restore': 'Gap restored',
   };
   /* Which badge an action wears. Grouped by what the action DOES, not by which
      module raised it — a reader cares that money moved, not that it moved in
@@ -164,6 +172,7 @@
     : /^(book|co-approve)$/.test(a) ? 'book'
     : /^(status|slip|slip-remove)$/.test(a) ? 'status'
     : /^(maintenance|vocab|import|activity-migrate|ledger-migrate)$/.test(a) ? 'system'
+    : /^staff-/.test(a) ? 'staff'
     : /^(ledger-|plan-adjust$|schedule-shift$|reconcile-commit$)/.test(a) ? 'ledger'
     : 'edit';
   let search = '', who = '', action = '', rangeDays = 30, limit = 200;
@@ -187,8 +196,13 @@
   function projName(e) {
     const m = e.meta || {};
     if (m.name) return m.name;
+    if (m.project) return m.project;          // staffing lines carry their project as free text
     const p = e.projectId ? STORE.getProject(e.projectId) : null;
-    return (p && p.project && p.project.name) || '(project removed)';
+    if (p && p.project && p.project.name) return p.project.name;
+    /* An entry with no project is not a broken link — a mapping change, a
+       matrix import, maintenance mode genuinely have no project behind them.
+       Saying "(project removed)" for those reads as data loss. */
+    return e.projectId ? '(project removed)' : '—';
   }
   function projClient(e) {
     const m = e.meta || {};
@@ -329,6 +343,32 @@
     if (a === 'import') return 'Bulk <b>' + esc(m.mode || '') + '</b> import of <b>' + (m.projects || 0) + '</b> projects'
       + (m.replaced ? ' over ' + m.replaced + ' existing' : '');
     if (a === 'activity-migrate') return 'Moved <b>' + (m.entries || 0) + '</b> trail entries into the audit store';
+
+    /* The staffing matrix. "Who moved Jane off Tower Alpha in March" is the
+       question this store gets asked, so the person and the project lead. */
+    const span = (x) => (x.start || x.end) ? ' (' + esc(x.start || '?') + ' → ' + esc(x.end || 'open') + ')' : '';
+    if (a === 'staff-alloc-add') return '<b>' + esc(m.person || '') + '</b> staffed to <b>' + esc(m.project || '') + '</b>'
+      + (m.pct != null ? ' at <b>' + m.pct + '%</b>' : '') + span(m);
+    if (a === 'staff-alloc') return 'Staffing for <b>' + esc(m.person || '') + '</b> on <b>' + esc(m.project || '') + '</b> changed';
+    if (a === 'staff-alloc-remove') return '<b>' + esc(m.person || '') + '</b> taken off <b>' + esc(m.project || '') + '</b>'
+      + (m.pct != null ? ' (was ' + m.pct + '%)' : '') + span(m);
+    if (a === 'staff-person-add') return 'Added <b>' + esc(m.person || '') + '</b> to the roster';
+    if (a === 'staff-person') return 'Roster entry for <b>' + esc(m.person || '') + '</b> changed';
+    if (a === 'staff-hours') return 'Hours in a month <b>' + esc(String(m.from)) + '</b> → <b>' + esc(String(m.to))
+      + '</b> — every expected-hours, burn and compliance figure moves with this';
+    if (a === 'staff-import') return 'Imported the staffing matrix from <b>' + esc(m.source || 'a file') + '</b> — '
+      + (m.people || 0) + ' people, ' + (m.allocations || 0) + ' allocations, replacing ' + (m.replacedAllocations || 0);
+    if (a === 'staff-reseed') return 'Re-seeded the matrix — ' + (m.allocations || 0) + ' allocations, replacing ' + (m.replacedAllocations || 0);
+    if (a === 'staff-reset') return 'Reset the whole matrix — replaced ' + (m.replacedAllocations || 0) + ' allocations';
+    if (a === 'staff-actuals') return 'Imported Clockify hours (<b>' + esc(m.mode || '') + '</b>) for ' + esc(m.months || '')
+      + ' — ' + (m.written || 0) + ' cells written' + (m.skipped ? ', ' + m.skipped + ' unmatched' : '');
+    if (a === 'staff-actuals-clear') return 'Cleared <b>' + (m.cleared || 0) + '</b> cells of imported hours';
+    if (a === 'staff-titles') return 'Filled <b>' + (m.titles || 0) + '</b> blank roster titles from Clockify';
+    if (a === 'staff-rename') return 'Renamed projects across <b>' + (m.rows || 0) + '</b> allocations — ' + esc(m.pairs || '');
+    if (a === 'staff-map') return 'Mapping (' + esc(m.kind || '') + ') for <b>' + esc(m.key || '') + '</b> — '
+      + (m.from ? esc(String(m.from)) + ' → ' : '') + '<b>' + esc(m.to == null ? 'cleared' : String(m.to)) + '</b>';
+    if (a === 'staff-gap-dismiss') return 'Dismissed a contract staffing gap — ' + esc(m.reason || '');
+    if (a === 'staff-gap-restore') return 'Put a dismissed staffing gap back on the list';
 
     const n = (m.changes || []).length;
     return n ? ('Changed ' + n + ' field' + (n === 1 ? '' : 's')) : 'Saved changes';

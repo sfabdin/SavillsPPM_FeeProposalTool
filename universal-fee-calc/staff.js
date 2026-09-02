@@ -162,6 +162,77 @@
     if (_push) { try { _push(db); } catch (e) { console.warn('staff push failed', e); } }
   }
 
+
+  /* ===== Track changes ======================================================
+     The staffing matrix is a living document — who is on what, at what
+     percentage, from when — and until now every edit to it was anonymous. It
+     is also the one store where "who moved Jane off Tower Alpha in March" is
+     asked out loud, so it is exactly the store that needed a trail.
+
+     Entries go into the SAME audit trail as everything else
+     (UFC_Store.logActivity → activity-YYYY-MM.json), not a second log of its
+     own. One page to read, one filter, one export. Actions are prefixed
+     `staff-` so the Change Log can group them without having to know what
+     each one means.
+
+     WHERE THE ENTRY LANDS. An allocation names its project as free text; the
+     trail keys on a fee-record id. So an allocation resolves through the same
+     matcher the rest of this file uses, and the entry is filed against that
+     fee project — which is what makes a project's history show its staffing
+     changes next to its fee changes instead of in a separate place.
+
+     DIFFS COME OFF DISK, NOT OFF THE CACHE. readDb() hands out a cached object
+     graph and listAllocations() copies the ARRAY but not the rows in it, so a
+     page that edits a row it was handed is editing the stored row too. Diffing
+     against that gives "nothing changed" for every edit made the obvious way.
+     The previous state therefore comes from a fresh parse, which is the only
+     copy no caller can be holding. (Same trap, same fix, as saveProject.) */
+  function logStaff(action, meta, projectId) {
+    try {
+      const S2 = window.UFC_Store;
+      if (S2 && S2.logActivity) S2.logActivity(action, projectId || null, meta || null);
+    } catch (e) { /* the trail must never break a save */ }
+  }
+  /** The staff db as it is ON DISK — no cache, shared with no caller. */
+  function storedStaff() {
+    try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
+    catch (e) { return null; }
+  }
+  const storedPerson = (id) => { const d = storedStaff(); return (d && d.people && d.people[id]) || null; };
+  const storedAlloc = (id) => { const d = storedStaff(); return (d && (d.allocations || []).find(x => x.id === id)) || null; };
+
+  /** Which fee project this matrix line belongs to, so the entry files against
+      it. Best-effort: an unmatched line still gets logged, just without a home. */
+  function feeIdForAlloc(a) {
+    try {
+      const hits = matchFeeProjects(a.project, a.client) || [];
+      return hits.length === 1 ? hits[0].id : null;      // ambiguous is worse than none
+    } catch (e) { return null; }
+  }
+
+  const ALLOC_FIELDS = [
+    ['personName', 'Person'], ['project', 'Project'], ['client', 'Client'],
+    ['start', 'Start'], ['end', 'End'], ['pct', 'Allocation %'],
+    ['status', 'Status'], ['type', 'Type'], ['note', 'Note'],
+  ];
+  const PERSON_FIELDS = [
+    ['name', 'Name'], ['title', 'Title'], ['homeTeam', 'Home team'],
+    ['capacityPct', 'Capacity %'], ['nonBillable', 'Non-billable'], ['active', 'Active'],
+  ];
+  /** Field-level changes in the shape the Change Log already renders, so a
+      staffing edit reads the same way a fee edit does with no extra code. */
+  function diffFields(prev, next, fields) {
+    const out = [];
+    const show = (v) => v === true ? 'yes' : v === false ? 'no' : (v == null || v === '') ? '—' : String(v);
+    fields.forEach(([k, label]) => {
+      const a = prev ? prev[k] : undefined, b = next ? next[k] : undefined;
+      if (b === undefined) return;                       // a patch that does not mention the field
+      if (show(a) === show(b)) return;
+      out.push({ field: label, from: show(a), to: show(b) });
+    });
+    return out;
+  }
+
   /** Wipe + re-seed from the (possibly refreshed) window.STAFF_SEED. Keeps
       actuals and roster capacity edits? — no: full matrix reset. Actuals kept. */
   function reseedMatrix() {
@@ -171,20 +242,36 @@
     const fresh = seedFromMatrix(defaultDb());
     fresh.actuals = keepActuals;
     Object.values(fresh.people).forEach(p => { if (keepCaps[p.id]) Object.assign(p, keepCaps[p.id]); });
+    const was = (db.allocations || []).length;
     writeDb(fresh);
+    logStaff('staff-reseed', { replacedAllocations: was, allocations: (fresh.allocations || []).length });
     return fresh;
   }
 
-  function resetAll() { const db = seedFromMatrix(defaultDb()); writeDb(db); return db; }
+  function resetAll() {
+    const before = readDb();
+    const was = { people: Object.keys(before.people || {}).length, allocations: (before.allocations || []).length };
+    const db = seedFromMatrix(defaultDb()); writeDb(db);
+    logStaff('staff-reset', { replacedPeople: was.people, replacedAllocations: was.allocations });
+    return db;
+  }
 
   // ---------- roster ----------
   function listPeople() { return Object.values(readDb().people).sort((a, b) => a.name.localeCompare(b.name)); }
   function getPerson(id) { return readDb().people[id] || null; }
   function savePerson(person) {
     const db = readDb();
+    const isNew = !person.id || !storedPerson(person.id);
+    // Off disk, BEFORE the Object.assign below mutates the stored row in place.
+    const prev = person.id ? storedPerson(person.id) : null;
     if (!person.id) person.id = 'p_' + Math.random().toString(36).slice(2, 9);
     db.people[person.id] = Object.assign(db.people[person.id] || {}, person);
-    writeDb(db); return db.people[person.id];
+    writeDb(db);
+    const next = db.people[person.id];
+    const changes = diffFields(prev, next, PERSON_FIELDS);
+    if (isNew) logStaff('staff-person-add', { person: next.name || person.id });
+    else if (changes.length) logStaff('staff-person', { person: next.name || person.id, changes });
+    return next;
   }
   /** Mark a person as pure overhead (non-billable): their internal time is
       EXPECTED, so burn insights stop flagging it, and staffing-availability
@@ -217,7 +304,15 @@
     if (person.nonBillable) return 'internal';
     return (person.capacityPct != null && person.capacityPct < 100) ? 'part' : 'full';
   }
-  function setMonthHours(h) { const db = readDb(); db.meta.monthHours = +h || DEFAULT_MONTH_HOURS; writeDb(db); }
+  function setMonthHours(h) {
+    const db = readDb();
+    const was = db.meta.monthHours;
+    db.meta.monthHours = +h || DEFAULT_MONTH_HOURS;
+    writeDb(db);
+    // Every expected-hours, burn and compliance figure in the system is
+    // measured against this, so a quiet change moves every one of them.
+    if (was !== db.meta.monthHours) logStaff('staff-hours', { from: was, to: db.meta.monthHours });
+  }
   function monthHours() { return readDb().meta.monthHours || DEFAULT_MONTH_HOURS; }
 
   // ---------- allocations ----------
@@ -232,18 +327,35 @@
     }
     a.updatedAt = new Date().toISOString();
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u && u.username) a.updatedBy = u.username; } catch (e) {}
+    const prev = a.id ? storedAlloc(a.id) : null;
     if (!a.id) { a.id = 'al_' + Math.random().toString(36).slice(2, 9); db.allocations.push(a); }
     else { const i = db.allocations.findIndex(x => x.id === a.id); if (i >= 0) db.allocations[i] = a; else db.allocations.push(a); }
-    writeDb(db); return a;
+    writeDb(db);
+    const who = a.personName || (db.people[a.personId] || {}).name || a.personId || 'someone';
+    if (!prev) {
+      logStaff('staff-alloc-add', { person: who, project: a.project || '', client: a.client || '',
+        start: a.start || '', end: a.end || '', pct: a.pct }, feeIdForAlloc(a));
+    } else {
+      const changes = diffFields(prev, a, ALLOC_FIELDS);
+      if (changes.length) logStaff('staff-alloc', { person: who, project: a.project || '',
+        client: a.client || '', changes }, feeIdForAlloc(a));
+    }
+    return a;
   }
   /** Soft-delete: keep a tombstone so the deletion survives a merge with a
       teammate's copy instead of the row resurrecting from their file. */
   function deleteAllocation(id) {
     const db = readDb();
+    const gone = db.allocations.find(x => x.id === id) || storedAlloc(id);
     db.allocations = db.allocations.filter(x => x.id !== id);
     db.deleted = db.deleted || {};
     db.deleted[id] = new Date().toISOString();
     writeDb(db);
+    if (gone) logStaff('staff-alloc-remove', {
+      person: gone.personName || (db.people[gone.personId] || {}).name || gone.personId || '',
+      project: gone.project || '', client: gone.client || '',
+      start: gone.start || '', end: gone.end || '', pct: gone.pct,
+    }, feeIdForAlloc(gone));
   }
 
   /* ===== Multi-user merge =================================================
@@ -1016,13 +1128,22 @@
     });
     db.meta.clockifyImportedAt = new Date().toISOString();
     db.meta.clockifyMonths = [...new Set([...(db.meta.clockifyMonths || []), ...report.months])].sort();
+    // One entry for the run, not one per row: a Clockify import lands thousands
+    // of cells, and a trail nobody can read is a trail nobody reads.
+    logStaff('staff-actuals', { mode, months: (report.months || []).join(', '), written, skipped });
     // Clockify carries the job title — fill roster titles that are still blank.
     Object.entries(report.titles || {}).forEach(([pid, t]) => { if (db.people[pid] && !db.people[pid].title) db.people[pid].title = t; });
     writeDb(db);
     return { written, skipped };
   }
 
-  function clearActuals() { const db = readDb(); db.actuals = {}; delete db.meta.clockifyImportedAt; delete db.meta.clockifyMonths; writeDb(db); }
+  function clearActuals() {
+    const db = readDb();
+    const had = Object.keys(db.actuals || {}).length;
+    db.actuals = {}; delete db.meta.clockifyImportedAt; delete db.meta.clockifyMonths;
+    writeDb(db);
+    logStaff('staff-actuals-clear', { cleared: had });
+  }
 
   /* ---------- entry-lateness stats (from /api/clockify?lateness=1) ---------- */
   function setLateness(rows) { const db = readDb(); db.lateness = rows; db.meta.latenessAt = new Date().toISOString(); writeDb(db); }
@@ -1270,6 +1391,7 @@
     try { by = (S2 && S2.getCurrentUser) ? (S2.getCurrentUser().name || S2.getCurrentUser().username || '') : ''; } catch (e) {}
     db.dismissedGaps[key] = { at: new Date().toISOString(), by, reason: String(reason || '').trim() };
     writeDb(db);
+    logStaff('staff-gap-dismiss', { key, reason: db.dismissedGaps[key].reason || 'no reason given' });
     return db.dismissedGaps[key];
   }
   /** Put a dismissed row back on the working list. */
@@ -1278,6 +1400,7 @@
     if (!db.dismissedGaps || !db.dismissedGaps[key]) return false;
     delete db.dismissedGaps[key];
     writeDb(db);
+    logStaff('staff-gap-restore', { key });
     return true;
   }
   function contractStaffingGaps() {
@@ -1678,7 +1801,7 @@
       if (!person) person = Object.values(db.people).find(p => namesMatch(p.name, u.name));
       if (person && person.title !== t) { person.title = t; set++; }
     });
-    if (set) writeDb(db);
+    if (set) { writeDb(db); logStaff('staff-titles', { titles: set }); }
     return set;
   }
 
@@ -1789,12 +1912,18 @@
     if (titleId) db.mappings.titles[k] = { titleId, tierId: tierId || 'mid' };
     else delete db.mappings.titles[k];
     writeDb(db);
+    // Mappings decide how a name resolves — a wrong one silently moves hours
+    // and cost onto the wrong person or project, so who set it matters.
+    logStaff('staff-map', { kind: 'title', key: title, to: titleId ? titleId + ' / ' + (tierId || 'mid') : null });
   }
 
   function setUserMapping(clockifyName, personId) {
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    const was = db.mappings.users[nkey(clockifyName)] || null;
     if (personId) db.mappings.users[nkey(clockifyName)] = personId; else delete db.mappings.users[nkey(clockifyName)];
     writeDb(db);
+    logStaff('staff-map', { kind: 'person', key: clockifyName,
+      from: was && (db.people[was] || {}).name || was, to: personId && (db.people[personId] || {}).name || personId });
   }
   /** Explicit "this Clockify user is NOT this person" — blocks the fuzzy match. */
   function setUserExclusion(clockifyName, personId, on) {
@@ -1805,6 +1934,8 @@
     db.mappings.userX[k] = on ? [...new Set([...list, personId])] : list.filter(x => x !== personId);
     if (!db.mappings.userX[k].length) delete db.mappings.userX[k];
     writeDb(db);
+    logStaff('staff-map', { kind: 'person-exclusion', key: clockifyName,
+      to: ((db.people[personId] || {}).name || personId) + (on ? ' — blocked' : ' — unblocked') });
   }
   function userExcluded(clockifyName, personId) {
     const x = (readDb().mappings || {}).userX || {};
@@ -1827,6 +1958,8 @@
       });
     }
     writeDb(db);
+    logStaff('staff-map', { kind: 'project', key: clockifyName,
+      to: matrixProject === '__ignore__' ? 'ignored — hours dropped' : (matrixProject || null) });
   }
   /** Manual matrix-project → fee-tool-project link(s), shared via staff.json.
       A matrix project can be pinned to SEVERAL fee projects (their figures
@@ -1871,7 +2004,11 @@
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
     db.mappings.fee = db.mappings.fee || {};
     const key = nkey(matrixProject);
-    if (!feeProjectId) { delete db.mappings.fee[key]; writeDb(db); return; }
+    if (!feeProjectId) {
+      delete db.mappings.fee[key]; writeDb(db);
+      logStaff('staff-map', { kind: 'fee link', key: matrixProject, to: null });
+      return;
+    }
     let arr = db.mappings.fee[key];
     arr = Array.isArray(arr) ? arr.slice() : (arr ? [arr] : []);
     if (opts && opts.remove) {
@@ -1882,6 +2019,8 @@
       db.mappings.fee[key] = arr;
     }
     writeDb(db);
+    logStaff('staff-map', { kind: 'fee link', key: matrixProject,
+      to: (opts && opts.remove) ? 'unlinked' : 'linked' }, feeProjectId);
   }
 
   /** Persistent contract-name → roster-person link, shared via staff.json.
@@ -1894,6 +2033,8 @@
     db.mappings.personAliases = db.mappings.personAliases || {};
     db.mappings.personAliases[k] = personId;
     writeDb(db);
+    logStaff('staff-map', { kind: 'contract-name alias', key: contractName,
+      to: (db.people[personId] || {}).name || personId });
   }
   function personForContractName(name) {
     const db = readDb();
@@ -1939,6 +2080,9 @@
     });
     db.meta.canonSyncedAt = new Date().toISOString();
     writeDb(db);
+    if (n) logStaff('staff-rename', { rows: n,
+      pairs: pairs.filter(p => p && p.from && p.to && p.from !== p.to)
+        .map(p => p.from + ' → ' + p.to).slice(0, 12).join('; ') });
     return n;
   }
 
@@ -2076,7 +2220,11 @@
     });
     fresh.meta.matrixImportedAt = new Date().toISOString();
     fresh.meta.matrixSource = sourceName || 'upload';
+    const before = { people: Object.keys(db.people || {}).length, allocations: (db.allocations || []).length };
     writeDb(fresh);
+    logStaff('staff-import', { source: sourceName || 'upload',
+      people: Object.keys(fresh.people).length, allocations: fresh.allocations.length,
+      replacedPeople: before.people, replacedAllocations: before.allocations });
     return { people: Object.keys(fresh.people).length, allocations: fresh.allocations.length };
   }
 

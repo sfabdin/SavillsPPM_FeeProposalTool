@@ -85,7 +85,9 @@ its file id is set in `box-adapter.js` config.
 - `projects.json` — project records only. Nothing else is written here.
 - `rates.json` — the confidential rate grid (pulled post-login, never in this repo).
 - `studio.json` — retired Revenue Studio baselines + scenarios (kept in Box for the Budget/RF baseline decision; no page writes it).
-- `staff.json` — the living staffing matrix.
+- `staff.json` — the living staffing matrix. Every edit to it — allocations,
+  roster, mappings, Clockify imports, renames — is recorded in the shared audit
+  trail, not a log of its own.
 - `activity-YYYY-MM.json` — the audit trail, **one file per month**. It used to
   ride inside `projects.json`, which is why it had to be capped; a month per
   file means a writer only ever touches the current month, a past month is

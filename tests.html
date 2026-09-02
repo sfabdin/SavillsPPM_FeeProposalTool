@@ -1525,6 +1525,91 @@
     const ST = window.UFC_Staff;
     if (!ST) { test('Staffing', 'module loads', () => 'UFC_Staff not present'); return; }
 
+    /* TRACK CHANGES on the matrix. Every edit here used to be anonymous, in
+       the one store where "who moved Jane off Tower Alpha" gets asked out
+       loud. Entries go into the SAME trail as everything else. */
+    const freshTrail = () => {
+      localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] }));
+      localStorage.removeItem('savills-ppm-staff-db:v1');
+      ST.resetAll();
+      localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] }));
+    };
+    const trail = (act) => S.listActivity(null).filter(e => !act || e.action === act);
+
+    test('Staffing · trail', 'staffing someone onto a project is recorded', () => {
+      freshTrail();
+      ST.saveAllocation({ id: 'tr_1', personId: 'stp_jane', personName: 'Jane Tester',
+        project: 'Tower Alpha', client: 'Acme', start: '2026-03', end: '2026-06', pct: 60 });
+      const e = trail('staff-alloc-add')[0];
+      if (!e) return 'nothing logged: ' + trail().map(x => x.action).join(',');
+      return (e.meta.person === 'Jane Tester' && e.meta.project === 'Tower Alpha' && e.meta.pct === 60)
+        || JSON.stringify(e.meta);
+    });
+
+    test('Staffing · trail', 'an edit records the fields that actually moved', () => {
+      freshTrail();
+      ST.saveAllocation({ id: 'tr_2', personId: 'stp_jane', personName: 'Jane Tester',
+        project: 'Tower Alpha', client: 'Acme', start: '2026-03', end: '2026-06', pct: 60 });
+      // read it back the way a page does, mutate, save — the aliasing path
+      const live = ST.listAllocations().find(a => a.id === 'tr_2');
+      live.pct = 80; live.end = '2026-09';
+      ST.saveAllocation(live);
+      const e = trail('staff-alloc')[0];
+      if (!e) return 'the edit was not recorded at all';
+      const f = (e.meta.changes || []).map(c => c.field + ' ' + c.from + '→' + c.to);
+      if (!f.some(x => x.startsWith('Allocation % 60→80'))) return 'percentage change missing: ' + f.join(', ');
+      return f.some(x => x.startsWith('End 2026-06→2026-09')) || 'end-date change missing: ' + f.join(', ');
+    });
+
+    test('Staffing · trail', 'a save that changes nothing logs nothing', () => {
+      freshTrail();
+      ST.saveAllocation({ id: 'tr_3', personId: 'stp_jane', personName: 'Jane Tester',
+        project: 'Tower Alpha', client: 'Acme', start: '2026-03', end: '2026-06', pct: 60 });
+      const before = trail().length;
+      ST.saveAllocation(ST.listAllocations().find(a => a.id === 'tr_3'));
+      return trail().length === before || 'a no-op save added an entry';
+    });
+
+    test('Staffing · trail', 'taking someone off a project keeps what they were on', () => {
+      freshTrail();
+      ST.saveAllocation({ id: 'tr_4', personId: 'stp_jane', personName: 'Jane Tester',
+        project: 'Tower Beta', client: 'Acme', start: '2026-01', end: '2026-04', pct: 45 });
+      ST.deleteAllocation('tr_4');
+      const e = trail('staff-alloc-remove')[0];
+      if (!e) return 'the removal was not recorded';
+      return (e.meta.project === 'Tower Beta' && e.meta.pct === 45)
+        || 'the removal did not keep what was removed: ' + JSON.stringify(e.meta);
+    });
+
+    test('Staffing · trail', 'a bulk hours import is ONE entry, not thousands', () => {
+      freshTrail();
+      const before = trail().length;
+      const agg = {};
+      for (let i = 0; i < 500; i++) agg['p' + i + '|Tower Alpha|2026-01'] = 4;   // 500 DISTINCT cells
+      ST.commitClockify({ ok: true, months: ['2026-01'], agg, titles: {} }, 'merge');
+      const added = trail().length - before;
+      if (added !== 1) return 'a 500-cell import wrote ' + added + ' entries';
+      const e = trail('staff-actuals')[0];
+      return (e && e.meta.written === 500) || 'the summary lost the count: ' + JSON.stringify(e && e.meta);
+    });
+
+    test('Staffing · trail', 'changing the hours in a month is recorded — it moves every burn figure', () => {
+      freshTrail();
+      const was = ST.monthHours();
+      ST.setMonthHours(was + 8);
+      const e = trail('staff-hours')[0];
+      ST.setMonthHours(was);
+      return (e && e.meta.to === was + 8) || 'not recorded';
+    });
+
+    test('Staffing · trail', 'a mapping change says what it points at now', () => {
+      freshTrail();
+      ST.setProjectMapping('Clockify Tower', 'Tower Alpha');
+      const e = trail('staff-map')[0];
+      if (!e) return 'not recorded';
+      return (e.meta.kind === 'project' && e.meta.to === 'Tower Alpha') || JSON.stringify(e.meta);
+    });
+
     test('Staffing', 'capacity honors the part-time percentage', () => {
       ST.setMonthHours(172);
       const p = ST.savePerson({ id: 'stp_jane', name: 'Jane Tester', title: 'Project Manager', capacityPct: 50, active: true });
