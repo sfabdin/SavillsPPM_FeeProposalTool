@@ -236,7 +236,14 @@
     };
     (patch.admins || []).forEach(x => addEmail(v.admins, x, ADMINS));
     (patch.toolAdmins || []).forEach(x => addEmail(v.toolAdmins, x, TOOL_ADMINS));
-    if (added) writeDb(db);
+    if (added) {
+      writeDb(db);
+      logSystem('vocab', { added, industries: (patch.industries || []).length || undefined,
+        lossReasons: (patch.lossReasons || []).length || undefined,
+        projectTypes: (patch.projectTypes || []).length || undefined,
+        leaders: (patch.leaders || []).length || undefined,
+        admins: ((patch.admins || []).length + (patch.toolAdmins || []).length) || undefined });
+    }
     return added;
   }
   function projectTypeSubs(name) {
@@ -324,6 +331,7 @@
           by: ((getRealIdentity() || getCurrentUser() || {}).name) || ((getRealIdentity() || getCurrentUser() || {}).username) || 'superuser' }
       : { on: false, endedAt: new Date().toISOString() };
     writeDb(db);
+    logSystem('maintenance', { to: on ? 'on' : 'off', note: note || '' });
     return db.maintenance;
   }
   /** Throws unless writing is allowed right now. opts.maintenanceOverride is
@@ -359,49 +367,231 @@
     if (typeof _remotePush === 'function') { try { _remotePush(db); } catch (e) { console.warn('remote push failed', e); } }
   }
 
-  /* ===== Activity log — append-only audit trail =====
-     Rides inside projects.json (so it syncs to Box with the data). Union-merged
-     by entry id in box-adapter's mergeDb, capped to the most recent entries.
-     Records who did what: create, save, status change, book, delete, access grant.
+  /* ============================================================
+     ACTIVITY LOG — the audit trail, in its own store, by month
+     ------------------------------------------------------------
+     WHY IT MOVED OUT OF projects.json
+     The trail used to ride inside projects.json, the one file every
+     page in the app pulls on every load. That put an append-only log
+     that grows forever on the critical path of twenty pages that never
+     read it — so it had to be capped, and a capped audit trail is not
+     an audit trail. (It was capped at 500 in the Box merge while the
+     writer thought it had 1500, which is how "what changed last week"
+     quietly became "what changed since Monday".)
 
-     ONE CAP, READ FROM HERE BY EVERYONE. It used to be written out three times
-     — 1500 when an entry was appended, 500 in the Box merge, 500 again on
-     import — and the smallest number won, because the Box merge runs on every
-     page load and hydrates its own truncated copy straight back into local
-     storage. The log therefore held 500 entries however much room the writer
-     thought it had, and the Change Log page told people it held 1,500. Any new
-     reader of this cap imports it; nobody restates it. */
-  const ACTIVITY_CAP = 1500;
-  function logActivity(action, projectId, meta) {
+     WHY IT IS SHARDED BY MONTH
+     A log is append-only and time-ordered, and those two facts buy
+     everything:
+
+       · A WRITER only ever touches the CURRENT month. It never reads,
+         uploads or merges a single byte of history, however many years
+         have accumulated. The cost of logging does not grow with the
+         size of the log.
+       · A PAST MONTH is immutable the moment the month ends. It is
+         never re-uploaded and never re-merged, so keeping it costs
+         nothing at all — which is what makes "keep everything forever"
+         an honest promise rather than a bigger number.
+       · A READER pulls only the months it is showing. "Last 7 days" is
+         one small file no matter how far back the trail runs.
+
+     shape:
+       activity.shards = {
+         "2026-09": { month, updatedAt, entries: { <id>: entry } },
+         ...
+       }
+
+     ENTRIES ARE KEYED BY ID, NOT LISTED
+     Merging two copies of an append-only log is then a union of two
+     maps — associative, commutative, idempotent. Two admins logging at
+     the same moment cannot lose each other's entries, a push that is
+     retried cannot double-count, and a backfill can be run twice with
+     no effect the second time. None of that is true of an array, which
+     is why the array version needed a de-duplicating pass every load.
+
+     NOTHING IS EVER DELETED HERE. Every write path in this section is
+     additive. An audit trail that a bug can shorten is not one you can
+     rely on in the month you actually need it.
+     ============================================================ */
+  const ACT_KEY = 'savills-ppm-activity-db:v1';
+  /* Which shard a timestamp belongs to. UTC deliberately: the shard a
+     entry lands in must not depend on the timezone of whoever wrote it,
+     or the same moment files under two different months for two people. */
+  const activityShardKey = (ts) => String(ts || new Date().toISOString()).slice(0, 7);
+
+  let _actRemote = null;
+  function attachActivityRemote(fn) { _actRemote = typeof fn === 'function' ? fn : null; }
+  function defaultActivityDb() { return { schemaVersion: 1, shards: {}, dirty: [] }; }
+
+  function readActivityDb() {
+    try {
+      const raw = localStorage.getItem(ACT_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed || typeof parsed !== 'object' || !parsed.shards) return defaultActivityDb();
+      if (!Array.isArray(parsed.dirty)) parsed.dirty = [];
+      return parsed;
+    } catch (e) { return defaultActivityDb(); }
+  }
+  /* WHICH SHARDS STILL OWE BOX A PUSH — persisted, not held in memory.
+     A push is debounced by a second and a half. Close the tab inside that
+     window and an in-memory list would be gone on the next load, leaving the
+     entry sitting in this browser and nowhere else — the one failure mode an
+     audit trail cannot have. On disk, the next page load picks it back up. */
+  function markActivityShardDirty(db, month) {
+    db.dirty = db.dirty || [];
+    if (db.dirty.indexOf(month) < 0) db.dirty.push(month);
+  }
+  function writeActivityDb(db, opts) {
+    db.schemaVersion = 1;
+    try { localStorage.setItem(ACT_KEY, JSON.stringify(db)); }
+    catch (e) {
+      /* Out of local storage. The trail must not take the app down with it,
+         and it must not silently drop the entry either — so shed the OLDEST
+         shard (which is safely in Box) and try once more. */
+      const months = Object.keys(db.shards || {}).sort();
+      if (months.length > 1) {
+        delete db.shards[months[0]];
+        try { localStorage.setItem(ACT_KEY, JSON.stringify(db)); } catch (e2) { return db; }
+      } else return db;
+    }
+    if (!(opts && opts.quiet) && _actRemote) { try { _actRemote(db, (db.dirty || []).slice()); } catch (e) { console.warn('activity push failed', e); } }
+    return db;
+  }
+  const activityShard = (db, month) => (db.shards[month] || (db.shards[month] = { month, updatedAt: null, entries: {} }));
+  /** Months this browser is currently holding, oldest first. */
+  function activityMonths() { return Object.keys(readActivityDb().shards || {}).sort(); }
+  function getActivityShard(month) { return (readActivityDb().shards || {})[String(month)] || null; }
+  /** Shards written locally and not yet confirmed pushed. Survives a reload. */
+  function dirtyActivityShards() { return (readActivityDb().dirty || []).slice(); }
+  function markActivityShardClean(month) {
+    const db = readActivityDb();
+    const i = (db.dirty || []).indexOf(String(month));
+    if (i >= 0) { db.dirty.splice(i, 1); writeActivityDb(db, { quiet: true }); }
+  }
+
+  /** Union two copies of one shard. Never subtracts: an entry present on
+      either side is present in the result. */
+  function mergeActivityShard(remote, local) {
+    const month = (remote && remote.month) || (local && local.month) || '';
+    const out = { month, updatedAt: null, entries: {} };
+    [remote, local].forEach(s => {
+      Object.entries((s && s.entries) || {}).forEach(([id, e]) => { if (e) out.entries[id] = e; });
+      const u = s && s.updatedAt;
+      if (u && (!out.updatedAt || u > out.updatedAt)) out.updatedAt = u;
+    });
+    return out;
+  }
+  /** Fold a remote shard into the local copy. Used by the Box pull. */
+  function hydrateActivityShard(month, remote) {
+    const db = readActivityDb();
+    const m = String(month);
+    db.shards[m] = mergeActivityShard(remote, db.shards[m]);
+    writeActivityDb(db, { quiet: true });      // a pull must never bounce back as a push
+    return db.shards[m];
+  }
+
+  /** Add entries from anywhere — a migration, a backfill out of the weekly
+      backups, a teammate's file. Idempotent by entry id, so running it twice
+      changes nothing. Returns how many were genuinely new. */
+  function ingestActivityEntries(entries) {
+    const list = (entries || []).filter(e => e && e.id && e.ts);
+    if (!list.length) return 0;
+    const db = readActivityDb();
+    let added = 0;
+    list.forEach(e => {
+      const sh = activityShard(db, activityShardKey(e.ts));
+      if (sh.entries[e.id]) return;
+      sh.entries[e.id] = e;
+      sh.updatedAt = new Date().toISOString();
+      markActivityShardDirty(db, sh.month);
+      added++;
+    });
+    if (added) writeActivityDb(db);
+    return added;
+  }
+
+  /** One-time lift: the trail used to live in projects.json. Move whatever is
+      still there into the shards and strip it out, so projects.json goes back
+      to holding project records and stops carrying the log's weight on every
+      page load. Runs on read; converges even while an older tab is still
+      appending to the array, because the lift is a union by id. */
+  function migrateActivityOutOfProjects() {
+    let moved = 0;
     try {
       const db = readDb();
-      if (!Array.isArray(db.activity)) db.activity = [];
-      const cu = getCurrentUser() || {};
-      const ri = (typeof realIdentityLabel === 'function' ? realIdentityLabel() : null) || {};
-      const actor = ri.username || cu.username || 'unknown';
+      if (!Array.isArray(db.activity) || !db.activity.length) return 0;
+      moved = ingestActivityEntries(db.activity);
+      db.activity = [];
+      writeDb(db);
+      if (moved) logSystem('activity-migrate', { entries: moved });
+    } catch (e) { /* a failed lift must never block reading the trail */ }
+    return moved;
+  }
+
+  const ACTIVITY_CAP = 0;      // 0 = no cap. Kept as an export so nothing re-invents one.
+
+  /* ---- writing ---- */
+  function activityActor() {
+    const cu = getCurrentUser() || {};
+    const ri = (typeof realIdentityLabel === 'function' ? realIdentityLabel() : null) || {};
+    return { actor: ri.username || cu.username || 'unknown', actorName: ri.name || cu.name || '', cu };
+  }
+  function logActivity(action, projectId, meta) {
+    try {
+      const { actor, actorName, cu } = activityActor();
       const entry = {
-        id: 'act_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        id: 'act_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
         ts: new Date().toISOString(),
-        actor,
-        actorName: ri.name || cu.name || '',
+        actor, actorName,
         action, projectId: projectId || null, meta: meta || null,
       };
       // Record when an admin acted while previewing someone else's view.
       if (cu.impersonating && cu.username && cu.username !== actor) entry.viewingAs = cu.username;
-      db.activity.push(entry);
-      if (db.activity.length > ACTIVITY_CAP) db.activity = db.activity.slice(-ACTIVITY_CAP);
-      // write WITHOUT re-logging; go straight to storage + push
-      db.schemaVersion = SCHEMA;
-      localStorage.setItem(KEY, JSON.stringify(db));
-      if (typeof _remotePush === 'function') { try { _remotePush(db); } catch (e) {} }
-    } catch (e) { /* logging must never break a save */ }
+      const db = readActivityDb();
+      const sh = activityShard(db, activityShardKey(entry.ts));
+      sh.entries[entry.id] = entry;
+      sh.updatedAt = entry.ts;
+      markActivityShardDirty(db, sh.month);
+      writeActivityDb(db);
+      return entry;
+    } catch (e) { /* logging must never break a save */ return null; }
   }
+  /** An action with no project behind it — a vocabulary edit, maintenance
+      mode, an import. Same trail; `projectId` is simply null. */
+  const logSystem = (action, meta) => logActivity(action, null, meta);
+
+  /* ---- reading ---- */
+  /** Every entry this browser holds, newest first.
+
+      Reads the shards AND anything still sitting in projects.json, because a
+      teammate on an older build is still appending there and their work has to
+      show up in the same feed rather than vanishing until they upgrade. */
   function listActivity(limit, projectId) {
-    const db = readDb();
-    let a = Array.isArray(db.activity) ? db.activity.slice() : [];
+    const db = readActivityDb();
+    let a = [];
+    Object.values(db.shards || {}).forEach(sh => { a = a.concat(Object.values(sh.entries || {})); });
+    try {
+      const legacy = readDb().activity;
+      if (Array.isArray(legacy) && legacy.length) {
+        const seen = new Set(a.map(e => e.id));
+        legacy.forEach(e => { if (e && e.id && !seen.has(e.id)) a.push(e); });
+      }
+    } catch (e) {}
     if (projectId) a = a.filter(x => x.projectId === projectId);
     a.sort((x, y) => (y.ts || '').localeCompare(x.ts || ''));
     return limit ? a.slice(0, limit) : a;
+  }
+  /** What the trail actually covers: how many entries, and the span they run
+      across. The Change Log says this out loud, because a feed that stops on
+      Monday is otherwise indistinguishable from a quiet week. */
+  function activityCoverage() {
+    const all = listActivity(null);
+    if (!all.length) return { entries: 0, months: [], oldest: null, newest: null };
+    return {
+      entries: all.length,
+      months: activityMonths(),
+      oldest: all[all.length - 1].ts,
+      newest: all[0].ts,
+    };
   }
 
   /* ===== Field-level change description =====
@@ -574,9 +764,10 @@
     if (b.order == null) b.order = Object.keys(s.baselines).length;
     s.baselines[b.id] = b;
     writeStudio(s);
+    logSystem('baseline-save', { id: b.id, label: b.label || b.name || '' });
     return b;
   }
-  function deleteBaseline(id) { const s = readStudio(); delete s.baselines[id]; writeStudio(s); }
+  function deleteBaseline(id) { const s = readStudio(); delete s.baselines[id]; writeStudio(s); logSystem('baseline-delete', { id }); }
 
   /** Build a frozen baseline from a {client: annualAmount} map (the Budget sheet).
       Flatlines each client's annual ÷ 12 across the given year. */
@@ -621,9 +812,10 @@
     if (!sc.adjustments) sc.adjustments = [];
     s.scenarios[sc.id] = sc;
     writeStudio(s);
+    logSystem('scenario-save', { id: sc.id, label: sc.label || sc.name || '' });
     return sc;
   }
-  function deleteScenario(id) { const s = readStudio(); delete s.scenarios[id]; writeStudio(s); }
+  function deleteScenario(id) { const s = readStudio(); delete s.scenarios[id]; writeStudio(s); logSystem('scenario-delete', { id }); }
 
   function listProjects() {
     const db = readDb();
@@ -656,12 +848,34 @@
     return (p && !p._deleted) ? p : null;
   }
 
+  /** The stored record as it is ON DISK, parsed fresh and shared with nobody.
+
+      readDb() hands out a CACHED object graph, and getProject() returns a live
+      reference into it — so a page that does `const p = getProject(id);
+      p.project.client = 'New'; saveProject(p)` has, without knowing it, also
+      changed the record we would compare against. `prev === record`, the diff
+      comes back empty, and the save is recorded as "nothing changed" or not
+      recorded at all. That is invisible in the app and fatal in an audit trail:
+      the one question it exists to answer is what changed.
+
+      Re-parsing costs one JSON parse per save — saves are a human action, not a
+      loop — and it is the only version of `prev` no in-memory alias can reach.
+      The concurrency guard and the auto-version below want the same thing. */
+  function storedRecord(id) {
+    if (!id) return null;
+    try {
+      const raw = localStorage.getItem(KEY);
+      const d = raw ? JSON.parse(raw) : null;
+      return (d && d.projects && d.projects[id]) || null;
+    } catch (e) { return null; }
+  }
+
   function saveProject(record, opts) {
     opts = opts || {};
     assertWritable(opts);
     const db = readDb();
-    const prev = record.id ? db.projects[record.id] : null;
-    const isNew = !record.id;
+    const prev = storedRecord(record.id);
+    const isNew = !record.id || !prev;
     /* Optimistic concurrency. The editor tells us which version it started from
        (baseUpdatedAt). If the stored record has moved on since, someone else (or
        another tab) saved in the meantime — writing now would silently revert
@@ -767,7 +981,10 @@
   function restoreDeleted(id) {
     const db = readDb();
     const p = db.projects[id];
-    if (p && p._deleted) { delete db.projects[id]; writeDb(db); }
+    if (p && p._deleted) {
+      delete db.projects[id]; writeDb(db);
+      logActivity('purge', id, { name: (p.project && p.project.name) || '' });
+    }
     return null;
   }
 
@@ -1318,6 +1535,7 @@
     if (!y || !y.rows || !y.rows[key]) return null;
     const row = y.rows[key];
     row.status = row.status || {}; row.carryTo = row.carryTo || {};
+    const was = row.status[month] || '';
     if (status) row.status[month] = status; else delete row.status[month];
     if (extra && 'carryTo' in extra) {
       if (extra.carryTo) row.carryTo[month] = extra.carryTo; else delete row.carryTo[month];
@@ -1332,6 +1550,11 @@
     if (status !== 'accrued') delete row.billsIn[month];
     row.updatedAt = new Date().toISOString();          // row-level stamp drives the Box merge
     writeRevenue(rev);
+    logActivity('ledger-status', row.pid || null, {
+      name: row.name || '', client: row.client || '', year: String(year), month: +month,
+      from: DISPOSITION_LABEL(was) || (was || 'no status'), to: DISPOSITION_LABEL(status) || 'cleared',
+      billsIn: (extra && extra.billsIn) || undefined, carryTo: (extra && extra.carryTo) || undefined,
+    });
     return row;
   }
 
@@ -1342,10 +1565,14 @@
     const rev = readRevenue();
     const y = (rev.ledger || {})[String(year)];
     if (!y || !y.rows || !y.rows[key]) return null;
+    const wasPid = y.rows[key].pid || null;
     y.rows[key].pid = pid || null;
     y.rows[key].pidManual = !!pid;
     y.rows[key].updatedAt = new Date().toISOString();
     writeRevenue(rev);
+    logActivity('ledger-match', pid || wasPid || null, {
+      name: y.rows[key].name || '', year: String(year), key, from: wasPid, to: pid || null,
+    });
     return y.rows[key];
   }
 
@@ -1585,6 +1812,7 @@
     const rev = readRevenue();
     if (rev.mapping && rev.mapping.ignored) delete rev.mapping.ignored[key];
     writeRevenue(rev);
+    logActivity('ledger-map-restore', null, { key });
     return true;
   }
 
@@ -1851,9 +2079,14 @@
     if (!y || !y.rows || !y.rows[key]) return null;
     const row = y.rows[key];
     row.notes = row.notes || {};
+    const wasNote = row.notes[month] || '';
     if (text && String(text).trim()) row.notes[month] = String(text).trim(); else delete row.notes[month];
     row.updatedAt = new Date().toISOString();
     writeRevenue(rev);
+    logActivity('ledger-note', row.pid || null, {
+      name: row.name || '', client: row.client || '', year: String(year), month: +month,
+      from: wasNote, to: row.notes[month] || '',
+    });
     return row;
   }
   const cellNote = (row, month) => ((row && row.notes) || {})[month] || '';
@@ -1881,7 +2114,12 @@
       if (!row.status[mm]) row.status[mm] = 'accrued';
       touched++;
     });
-    if (touched) { row.updatedAt = new Date().toISOString(); writeRevenue(rev); }
+    if (touched) {
+      row.updatedAt = new Date().toISOString(); writeRevenue(rev);
+      logActivity('ledger-accrue-earned', row.pid || null, {
+        name: row.name || '', client: row.client || '', year: String(year), months: touched,
+      });
+    }
     return { row, touched };
   }
 
@@ -2096,6 +2334,13 @@
     }
     row.updatedAt = new Date().toISOString();
     writeRevenue(rev);
+    const now = row.alloc[earnedMonth];
+    logActivity('ledger-allocate', row.pid || null, {
+      name: row.name || '', client: row.client || '', year: String(year), month: +earnedMonth,
+      amount: now ? now.amount : null,
+      accrue: now ? now.accrue : null, bill: now ? now.bill : null, realize: now ? now.realize : null,
+      cleared: !now || undefined,
+    });
     return row;
   }
 
@@ -2157,7 +2402,12 @@
                         realize: ymStr(year, mm), accrueIn: mm, invoiceIn };
       touched++;
     });
-    if (touched) { row.updatedAt = new Date().toISOString(); writeRevenue(rev); }
+    if (touched) {
+      row.updatedAt = new Date().toISOString(); writeRevenue(rev);
+      logActivity('ledger-allocate-auto', row.pid || null, {
+        name: row.name || '', client: row.client || '', year: String(year), months: touched,
+      });
+    }
     return { row, touched };
   }
 
@@ -2268,10 +2518,16 @@
     const row = y.rows[key];
     const bucket = field === 'billed' ? 'billedEdit' : 'accrued';
     row[bucket] = row[bucket] || {};
+    const was = row[bucket][month];
     if (value == null || value === '') delete row[bucket][month];
     else row[bucket][month] = Number(value) || 0;
     row.updatedAt = new Date().toISOString();
     writeRevenue(rev);
+    logActivity('ledger-amount', row.pid || null, {
+      name: row.name || '', client: row.client || '', year: String(year), month: +month,
+      field: field === 'billed' ? 'Billed' : 'Accrued',
+      from: was == null ? null : Number(was), to: value == null || value === '' ? null : Number(value),
+    });
     return row;
   }
 
@@ -2294,6 +2550,10 @@
     row.accrued[b] = Math.round((total - each * (n - 1)) * 100) / 100;   // remainder on the last month
     row.updatedAt = new Date().toISOString();
     writeRevenue(rev);
+    logActivity('ledger-spread', row.pid || null, {
+      name: row.name || '', client: row.client || '', year: String(year),
+      fromMonth: a, toMonth: b, amount: total, each,
+    });
     return row;
   }
 
@@ -2357,8 +2617,13 @@
       // Never let an empty/near-empty file nuke a populated shared db.
       if (localCount > 0 && inCount === 0) throw new Error('Refusing to replace ' + localCount + ' project(s) with an empty file. Use merge, or delete projects individually.');
       // Preserve the audit trail across a replace.
-      incoming.activity = [...(db.activity || []), ...(incoming.activity || [])].slice(-ACTIVITY_CAP);
+      /* The trail is its own store now, so a replace of projects.json cannot
+         touch it — but an incoming file from an older build may still carry
+         one, and those entries are history too. */
+      ingestActivityEntries(incoming.activity || []);
+      incoming.activity = [];
       writeDb(incoming);
+      logSystem('import', { mode: 'replace', projects: inCount, replaced: localCount });
       return inCount;
     }
     // MERGE (default): newest-updatedAt wins per project, so importing an old
@@ -2368,6 +2633,7 @@
       if (!cur || ((ip && ip.updatedAt) || '') >= (cur.updatedAt || '')) db.projects[id] = ip;
     });
     writeDb(db);
+    logSystem('import', { mode: 'merge', projects: inCount });
     return inCount;
   }
 
@@ -2921,6 +3187,10 @@
     clone.createdAt = clone.updatedAt = now.toISOString();
     db.projects[clone.id] = clone;
     writeDb(db);
+    logActivity('co-create', clone.id, {
+      name: (clone.project && clone.project.name) || '', client: (clone.project && clone.project.client) || '',
+      parentId: (clone.source && clone.source.parentId) || (clone.changeOrder && clone.changeOrder.parentId) || null,
+    });
     return { ok: true, co: clone };
   }
 
@@ -2930,6 +3200,7 @@
     const db = readDb();
     const co = db.projects[id];
     if (!co || !isChangeOrder(co)) return { error: 'Not a change order.' };
+    const wasStatus = (co.project && co.project.status) || '';
     const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
     const fin = catalog && computeFinancials(co, catalog);
     if (!fin) return { error: 'Nothing priced to approve.' };
@@ -2939,6 +3210,13 @@
     co.project.status = 'active';
     co.updatedAt = new Date().toISOString();
     writeDb(db);
+    /* An approval changes the revised contract value. It was the largest thing
+       in the system that happened with no trace of who did it. */
+    logActivity('co-approve', co.id, {
+      name: (co.project && co.project.name) || '', client: (co.project && co.project.client) || '',
+      from: wasStatus, to: 'active',
+      fee: (() => { try { const d = changeOrderDelta(co); return d && { from: 0, to: d.net, delta: d.net }; } catch (e) { return undefined; } })(),
+    });
     return { ok: true, co };
   }
 
@@ -3154,6 +3432,9 @@
     if (fin) { fin.inputsHash = financialsInputsHash(r2); fin.stale = false; fin.basis = r2.financials?.basis || 'booked'; r2.financials = fin; }
     r2.updatedAt = new Date().toISOString();
     const db2 = readDb(); db2.projects[id] = r2; writeDb(db2);
+    logActivity('reconcile-commit', id, {
+      name: (r2.project && r2.project.name) || '', client: (r2.project && r2.project.client) || '',
+    });
     return r2;
   }
 
@@ -4044,7 +4325,12 @@
   window.UFC_Store = {
     fmtMoney,
     SCHEMA, STATUSES, STATUS_LABELS, ASSUMPTION_LIBRARY, projectTypeSubs, addVocab, readVocab,
-    ACTIVITY_CAP,
+    ACTIVITY_CAP, logSystem,
+    // Activity trail — its own month-sharded store, never inside projects.json
+    readActivityDb, writeActivityDb, defaultActivityDb, attachActivityRemote,
+    activityShardKey, activityMonths, getActivityShard, mergeActivityShard, hydrateActivityShard,
+    ingestActivityEntries, migrateActivityOutOfProjects, activityCoverage,
+    dirtyActivityShards, markActivityShardClean,
     accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING, isPlaceholder,
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,

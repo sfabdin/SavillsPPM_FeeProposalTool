@@ -527,20 +527,18 @@
       if (!rp || (lp.updatedAt || '') >= (rp.updatedAt || '')) all[id] = lp;
     });
     out.projects = all;
-    /* Union the append-only activity logs by id, keeping the store's cap.
-       This merge runs on EVERY page load, and its result is hydrated back into
-       local storage and pushed to Box on the next save — so whatever number is
-       used here is the log's real retention, no matter what the writer keeps.
-       It said 500 while the writer kept 1500 and the Change Log page promised
-       1,500, which is why history only ever reached back a couple of days. */
-    const CAP = Store.ACTIVITY_CAP || 1500;
+    /* TRANSITIONAL. The audit trail has its own month-sharded store now and is
+       no longer written here — but a teammate on an older build still appends
+       to this array, and their work is history too. So union it (no cap, ever
+       again) and lift it into the shards, from where the trail is read. The
+       array drains to empty as browsers pick up the new build. */
     const seen = {};
     [...(remote.activity || []), ...(local.activity || [])].forEach(e => {
       if (e && e.id) seen[e.id] = e;
     });
-    out.activity = Object.values(seen)
-      .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''))
-      .slice(-CAP);
+    const carried = Object.values(seen).sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+    try { if (carried.length && Store.ingestActivityEntries) Store.ingestActivityEntries(carried); } catch (e) {}
+    out.activity = carried;
 
     /* Everything else on the db is dropped unless it is merged here — this is
        what silently ate the maintenance flag on every sync. */
@@ -1104,6 +1102,210 @@
     return parsed && parsed.projects ? parsed.projects : {};
   };
 
+
+  /* ---- Activity trail (activity-YYYY-MM.json) — ONE FILE PER MONTH ---------
+     The audit trail used to ride inside projects.json, which is why it had to
+     be capped: an append-only log that grows forever cannot sit on the critical
+     path of twenty pages that never read it.
+
+     It is a file per month now, and the shape does the work:
+
+       A WRITER touches only the CURRENT month. It never sees a byte of history,
+       so logging costs the same in year five as on day one.
+
+       A PAST MONTH is finished. Nothing re-uploads it, nothing re-merges it,
+       so keeping every year costs nothing — which is what makes "we keep
+       everything" true rather than just a larger number.
+
+       A READER (the Change Log) pulls only the months it is showing.
+
+     MERGES ARE UNIONS AND NOTHING IS EVER DELETED. Entries are keyed by a
+     unique id, so merging two copies is a union of two maps: order-independent,
+     safe to repeat, and impossible to lose an entry in. Two admins logging in
+     the same second keep both entries; a retried push double-counts nothing; a
+     backfill can be re-run with no effect.
+
+     NEVER UPLOAD WITHOUT A MERGE BASE. If we hold no etag for a shard, we have
+     not seen what is in Box, and PUTting our copy would erase whatever a
+     teammate wrote. Every upload path below pulls first in that case. An audit
+     trail that a sync bug can shorten is worth nothing in the month you need it.
+     ---- */
+  const ACT_PREFIX = 'activity-';
+  const ACT_IDS_KEY = 'ufc_activity_file_ids';
+  let _actEtags = {};                      // month -> etag of the copy we last saw
+  let _actIds = null;                      // month -> Box file id
+
+  function actIds() {
+    if (_actIds) return _actIds;
+    try { _actIds = JSON.parse(localStorage.getItem(ACT_IDS_KEY) || '{}') || {}; } catch (e) { _actIds = {}; }
+    return _actIds;
+  }
+  function rememberActId(month, id) {
+    const m = actIds(); m[month] = id;
+    try { localStorage.setItem(ACT_IDS_KEY, JSON.stringify(m)); } catch (e) {}
+  }
+  function forgetActId(month) {
+    const m = actIds(); delete m[month];
+    try { localStorage.setItem(ACT_IDS_KEY, JSON.stringify(m)); } catch (e) {}
+  }
+  const actName = (month) => ACT_PREFIX + month + '.json';
+
+  /** Which months exist in Box. One folder listing, no downloads — this is how
+      the Change Log knows how far the trail reaches before fetching any of it. */
+  Box.listActivityMonths = async function () {
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    if (!res.ok) return [];
+    const j = await res.json();
+    const out = [];
+    (j.entries || []).forEach(e => {
+      if (e.type !== 'file') return;
+      const m = /^activity-(\d{4}-\d{2})\.json$/.exec(e.name || '');
+      if (!m) return;
+      rememberActId(m[1], e.id);
+      out.push(m[1]);
+    });
+    return out.sort();
+  };
+
+  /** The Box id for one month's file. `create` makes it if missing — only the
+      writer of the current month ever asks for that. */
+  async function resolveActShardId(month, create) {
+    const cached = actIds()[month];
+    if (cached) return cached;
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    if (res.ok) {
+      const j = await res.json();
+      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === actName(month));
+      if (hit) { rememberActId(month, hit.id); return hit.id; }
+    }
+    if (!create) return null;
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const seed = JSON.stringify({ schemaVersion: 1, month, updatedAt: null, entries: {} });
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: actName(month), parent: { id: BOX_CONFIG.folderId } }));
+    form.append('file', new Blob([seed], { type: 'application/json' }), actName(month));
+    const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+    if (up.status === 409) {                                   // raced a teammate — use theirs
+      try { const j = await up.json(); const cid = j.context_info && j.context_info.conflicts && j.context_info.conflicts.id;
+            if (cid) { rememberActId(month, cid); return cid; } } catch (e) {}
+      throw new Error(actName(month) + ' create conflict — reload to retry');
+    }
+    if (!up.ok) throw new Error('could not create ' + actName(month) + ': HTTP ' + up.status);
+    const j = await up.json(); const nid = j.entries && j.entries[0] && j.entries[0].id;
+    if (!nid) throw new Error(actName(month) + ' create returned no id');
+    rememberActId(month, nid);
+    return nid;
+  }
+
+  /** One month's file, as stored. null when it does not exist yet. */
+  async function pullActShard(month) {
+    const id = await resolveActShardId(month, false);
+    if (!id) return null;
+    const meta = await boxFetch('/files/' + id + '?fields=etag');
+    if (meta.ok) { const m = await meta.json(); _actEtags[month] = m.etag; }
+    const res = await boxFetch('/files/' + id + '/content');
+    if (res.status === 404) { forgetActId(month); delete _actEtags[month]; return null; }   // stale cached id
+    if (!res.ok) throw new Error('activity pull failed for ' + month + ': ' + res.status);
+    const txt = await res.text();
+    if (!txt || !txt.trim()) return null;
+    try { const p = JSON.parse(txt); return (p && p.entries) ? p : null; } catch (e) { return null; }
+  }
+
+  /** Push one month. Always merges onto what Box holds first — see the note
+      above about never uploading without a merge base. */
+  async function uploadActShard(month, depth) {
+    const local = Store.getActivityShard(month);
+    if (!local) return;
+    // No etag means we have never seen Box's copy of this month. Look first.
+    if (!_actEtags[month]) {
+      const remote = await pullActShard(month);
+      if (remote) Store.hydrateActivityShard(month, remote);
+    }
+    const merged = Store.getActivityShard(month) || local;
+    const id = await resolveActShardId(month, true);
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const body = JSON.stringify({ schemaVersion: 1, month, updatedAt: merged.updatedAt, entries: merged.entries });
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: actName(month) }));
+    form.append('file', new Blob([body], { type: 'application/json' }), actName(month));
+    const res = await fetch('https://upload.box.com/api/2.0/files/' + id + '/content', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, ...(_actEtags[month] ? { 'If-Match': _actEtags[month] } : {}) },
+      body: form,
+    });
+    if (res.status === 412) {
+      if ((depth || 0) >= 3) throw new Error('activity push failed: repeated conflicts on ' + month);
+      const remote = await pullActShard(month);                // also refreshes the etag
+      if (remote) Store.hydrateActivityShard(month, remote);   // union — their entries and ours
+      return uploadActShard(month, (depth || 0) + 1);
+    }
+    if (!res.ok) throw new Error('activity push failed for ' + month + ': ' + res.status);
+    try { const j = await res.json(); if (j.entries && j.entries[0]) _actEtags[month] = j.entries[0].etag; } catch (e) {}
+    Store.markActivityShardClean(month);
+  }
+
+  let _actTimer = null, _actPushing = null;
+  async function activityPushNow() {
+    if (_actPushing) return _actPushing;                       // never two in flight for the same shards
+    const months = Store.dirtyActivityShards();
+    if (!months.length) return;
+    _actPushing = (async () => {
+      for (const m of months) {
+        try { await uploadActShard(m); }
+        catch (e) { console.warn('activity shard push failed (it stays queued)', m, e); }
+      }
+    })().finally(() => { _actPushing = null; });
+    return _actPushing;
+  }
+  function scheduleActivityPush() {
+    clearTimeout(_actTimer);
+    _actTimer = setTimeout(activityPushNow, BOX_CONFIG.pushDebounceMs);
+  }
+  /** Flush now — the Change Log's backfill writes a lot at once and must not
+      depend on the tab staying open. */
+  Box.flushActivity = async function () { clearTimeout(_actTimer); await activityPushNow(); };
+
+  /** Pull specific months into the local store. The Change Log asks for the
+      window it is showing; nothing else asks at all. */
+  Box.pullActivityMonths = async function (months) {
+    const out = [];
+    for (const m of (months || [])) {
+      try { const sh = await pullActShard(m); if (sh) { Store.hydrateActivityShard(m, sh); out.push(m); } }
+      catch (e) { console.warn('activity month pull failed', m, e); }
+    }
+    return out;
+  };
+
+  /** Recover history out of the weekly backups.
+
+      Each projects-backup-YYYY-MM-DD.json is a whole copy of projects.json as
+      it stood that week, and back when the trail lived inside that file, it
+      carried whatever the trail held at the time. Those entries are the only
+      surviving record of the days the old 500-entry cap threw away.
+
+      Sampled, not continuous: a weekly copy taken while the cap held roughly
+      two days means roughly two days recovered per week. Re-running is free —
+      the ingest is a union by entry id. */
+  Box.backfillActivityFromBackups = async function (onProgress) {
+    const backups = await Box.listBackups();
+    let scanned = 0, found = 0, added = 0;
+    for (const b of backups) {
+      try {
+        const res = await boxFetch('/files/' + b.id + '/content');
+        if (!res.ok) continue;
+        const parsed = JSON.parse(await res.text());
+        scanned++;
+        const trail = Array.isArray(parsed && parsed.activity) ? parsed.activity : [];
+        if (!trail.length) continue;
+        found += trail.length;
+        added += Store.ingestActivityEntries(trail);
+      } catch (e) { /* one unreadable backup must not stop the sweep */ }
+      if (typeof onProgress === 'function') onProgress({ scanned, total: backups.length, found, added, at: b.date });
+    }
+    if (added) await Box.flushActivity();
+    return { backups: backups.length, scanned, found, added };
+  };
+
   /* ---- Rolling weekly backup ----------------------------------------------
      Box already versions projects.json on every upload (first-line recovery:
      Box → projects.json → Version History). This adds a SECOND line: a dated
@@ -1184,6 +1386,19 @@
       try { Store.hydrateRevenueFromRemote(mergeRevenueDb(remote, Store.readRevenue())); }
       catch (e) { console.warn('revenue hydrate failed', e); }
       Store.attachRevenueRemote(scheduleRevenuePush);
+    },
+    /* The audit trail. A page that only WRITES to it — every page that saves a
+       project — declares nothing and pays nothing: the push path pulls the one
+       month it is about to write, and only when there is something to write.
+       Declaring 'activity' is for the page that READS the trail, and even then
+       it takes only the current month; the Change Log asks for older months by
+       name as you widen the window. */
+    activity: async () => {
+      Store.attachActivityRemote(scheduleActivityPush);
+      Store.migrateActivityOutOfProjects();      // lift anything still in projects.json
+      const month = Store.activityShardKey();
+      try { const sh = await pullActShard(month); if (sh) Store.hydrateActivityShard(month, sh); }
+      catch (e) { console.warn('activity pull failed — this page is on its local cache', e); }
     },
   };
   /** Load one opt-in store, once per page. */
@@ -1306,6 +1521,7 @@
         /* The store reads localStorage directly, so the project book is
            already live — there is nothing to hydrate for it here. */
         Store.attachRemote(schedulePush);
+        Store.attachActivityRemote(scheduleActivityPush);   // see below — every page WRITES the trail
         Perf.phase('served from cache');
         Perf.finish();
         emitSync('syncing', 'Refreshing from Box…');
@@ -1352,6 +1568,11 @@
     // Attach the push hook so future writes mirror to Box (AFTER hydrate, so
     // hydrating cannot echo straight back out as an upload).
     Store.attachRemote(schedulePush);
+    /* And the trail's. EVERY page writes it — a save, a status change, a close
+       decision — so every page must be able to push it, whether or not it ever
+       reads it. Attaching costs nothing: the hook only fires when something is
+       actually logged, and the upload pulls the one month it is writing. */
+    Store.attachActivityRemote(scheduleActivityPush);
     weeklyBackup();   // fire and forget; failures never affect boot
 
     /* studio.json and revenue.json are NOT pulled here any more — see the

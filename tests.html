@@ -466,46 +466,107 @@
     return S.listActivity(null, p.id).length === before || 'an unchanged save created a log entry';
   });
 
-  /* The retention cap used to be written out three times — 1500 where entries
-     are appended, 500 in the Box merge, 500 again on import — and because the
-     Box merge runs on every page load and hydrates its own truncated copy back
-     into local storage, the smallest number silently won. The Change Log then
-     told people it held 1,500 while history reached back two days. There is one
-     constant now, and these hold every reader to it. */
+  /* The trail used to ride inside projects.json, capped, because it was on the
+     critical path of every page. It has its own month-sharded store now: a
+     writer only ever touches the current month, a past month is immutable, and
+     nothing is ever dropped. These hold that shape. */
 
-  test('Data · activity', 'the retention cap is published, not restated', () => {
-    return (typeof S.ACTIVITY_CAP === 'number' && S.ACTIVITY_CAP > 0)
-      || 'ACTIVITY_CAP is not exported, so every caller has to invent its own number';
+  test('Data · activity', 'the trail is uncapped and lives outside projects.json', () => {
+    if (S.ACTIVITY_CAP !== 0) return 'a cap is back: ' + S.ACTIVITY_CAP;
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {} }));
+    for (let i = 0; i < 1200; i++) S.logSystem('probe', { i });
+    const kept = S.listActivity(null).filter(e => e.action === 'probe').length;
+    if (kept !== 1200) return 'kept ' + kept + ' of 1200';
+    const db = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1'));
+    return !(db.activity || []).length || 'the trail is still being written into projects.json';
   });
 
-  test('Data · activity', 'the log keeps the cap, and keeps the NEWEST entries', () => {
-    const cap = S.ACTIVITY_CAP;
-    const acts = [];
-    for (let i = 0; i < cap + 40; i++) {
-      acts.push({ id: 'act_' + i, ts: new Date(Date.UTC(2026, 0, 1) + i * 60000).toISOString(),
-                  actor: 'x@y.z', actorName: 'X', action: 'edit', projectId: null, meta: null });
-    }
-    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: acts }));
-    S.saveProject(base());                       // any write trims the log
-    const kept = S.listActivity(null);
-    if (kept.length > cap) return 'kept ' + kept.length + ' against a cap of ' + cap;
-    const ids = new Set(kept.map(a => a.id));
-    if (ids.has('act_0')) return 'the oldest entry survived — the trim is taking from the wrong end';
-    return ids.has('act_' + (cap + 39)) || 'the newest entry was dropped';
+  test('Data · activity', 'entries file under the month they happened in', () => {
+    localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {} }));
+    S.ingestActivityEntries([
+      { id: 'a1', ts: '2026-07-14T10:00:00.000Z', action: 'edit', actor: 'x', projectId: 'p1' },
+      { id: 'a2', ts: '2026-08-02T10:00:00.000Z', action: 'edit', actor: 'x', projectId: 'p1' },
+      { id: 'a3', ts: '2026-08-30T10:00:00.000Z', action: 'edit', actor: 'x', projectId: 'p1' },
+    ]);
+    const months = S.activityMonths();
+    if (months.join(',') !== '2026-07,2026-08') return 'shards ' + months.join(',');
+    return Object.keys(S.getActivityShard('2026-08').entries).length === 2 || 'August shard is wrong size';
   });
 
-  test('Data · activity', 'a replace-mode import preserves the trail up to the cap', () => {
-    const cap = S.ACTIVITY_CAP;
-    const acts = [];
-    for (let i = 0; i < cap - 10; i++) {
-      acts.push({ id: 'act_' + i, ts: new Date(Date.UTC(2026, 0, 1) + i * 60000).toISOString(),
-                  actor: 'x@y.z', actorName: 'X', action: 'edit', projectId: null, meta: null });
-    }
-    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: acts }));
-    S.importDb(JSON.stringify({ schemaVersion: 2, projects: { keep_me: base({ id: 'keep_me' }) }, activity: [] }), 'replace');
-    const kept = S.listActivity(null).length;
-    // The old code cut this to 500 regardless of the cap.
-    return kept === cap - 10 || 'an import cut the trail to ' + kept + ' of ' + (cap - 10);
+  test('Data · activity', 'ingesting the same entries twice changes nothing', () => {
+    localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {} }));
+    const batch = [{ id: 'a1', ts: '2026-07-14T10:00:00.000Z', action: 'edit', actor: 'x', projectId: 'p1' }];
+    const first = S.ingestActivityEntries(batch);
+    const second = S.ingestActivityEntries(batch);
+    // A backfill has to be safe to re-run; that is what makes recovery a button
+    // rather than a one-shot decision.
+    return (first === 1 && second === 0) || `first ${first}, second ${second}`;
+  });
+
+  test('Data · activity', 'merging two copies of a month never loses either side', () => {
+    const mine = { month: '2026-08', entries: { a1: { id: 'a1', ts: '2026-08-01T00:00:00.000Z' } } };
+    const theirs = { month: '2026-08', entries: { a2: { id: 'a2', ts: '2026-08-02T00:00:00.000Z' } } };
+    const m1 = S.mergeActivityShard(theirs, mine), m2 = S.mergeActivityShard(mine, theirs);
+    const k1 = Object.keys(m1.entries).sort().join(','), k2 = Object.keys(m2.entries).sort().join(',');
+    if (k1 !== 'a1,a2') return 'merge lost an entry: ' + k1;
+    return k1 === k2 || 'the merge is not commutative: ' + k1 + ' vs ' + k2;
+  });
+
+  test('Data · activity', 'the old in-projects trail is lifted into the shards, not dropped', () => {
+    localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {} }));
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [
+      { id: 'old1', ts: '2026-06-01T09:00:00.000Z', action: 'edit', actor: 'a@b.c', actorName: 'A', projectId: 'p9', meta: null },
+      { id: 'old2', ts: '2026-06-02T09:00:00.000Z', action: 'create', actor: 'a@b.c', actorName: 'A', projectId: 'p9', meta: null },
+    ] }));
+    const moved = S.migrateActivityOutOfProjects();
+    if (moved !== 2) return 'lifted ' + moved;
+    if (!S.getActivityShard('2026-06')) return 'no June shard';
+    const db = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1'));
+    if ((db.activity || []).length) return 'projects.json still carries the trail';
+    return S.listActivity(null, 'p9').length === 2 || 'the lifted entries are not readable';
+  });
+
+  test('Data · activity', 'an edit made on a record read from the store is still diffed', () => {
+    /* getProject hands back a live reference into the read cache. A page that
+       mutates it and saves used to diff the record against ITSELF — empty
+       changes, and the save recorded as "nothing happened". */
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {} }));
+    const saved = S.saveProject(base());
+    const live = S.getProject(saved.id);          // the aliasing read
+    live.project.client = 'Renamed Client Ltd';
+    S.saveProject(live);
+    const edits = S.listActivity(null, saved.id).filter(a => a.action === 'edit');
+    if (!edits.length) return 'the edit was not recorded at all';
+    const fields = (edits[0].meta.changes || []).map(c => c.field);
+    return fields.includes('Client') || 'recorded an edit with no fields: ' + JSON.stringify(fields);
+  });
+
+  test('Data · activity', 'a shard still owing Box a push survives a reload', () => {
+    /* The push is debounced. Close the tab inside that window and an in-memory
+       queue would be gone on the next load, leaving the entry in this browser
+       and nowhere else — the one failure an audit trail cannot have. */
+    localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] }));
+    S.ingestActivityEntries([{ id: 'd1', ts: '2026-05-04T00:00:00.000Z', action: 'edit', actor: 'x' }]);
+    if (S.dirtyActivityShards().join(',') !== '2026-05') return 'not queued: ' + S.dirtyActivityShards().join(',');
+    // survive a "reload": the queue is read back off disk, not from memory
+    const onDisk = JSON.parse(localStorage.getItem('savills-ppm-activity-db:v1'));
+    if ((onDisk.dirty || []).join(',') !== '2026-05') return 'the queue was never written down';
+    S.markActivityShardClean('2026-05');
+    return S.dirtyActivityShards().length === 0 || 'still queued after a confirmed push';
+  });
+
+  test('Data · activity', 'coverage reports the span the trail actually holds', () => {
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {} }));
+    S.ingestActivityEntries([
+      { id: 'c1', ts: '2026-03-01T00:00:00.000Z', action: 'edit', actor: 'x' },
+      { id: 'c2', ts: '2026-09-01T00:00:00.000Z', action: 'edit', actor: 'x' },
+    ]);
+    const c = S.activityCoverage();
+    if (c.entries !== 2) return 'entries ' + c.entries;
+    return (c.oldest.slice(0, 7) === '2026-03' && c.newest.slice(0, 7) === '2026-09') || c.oldest + ' → ' + c.newest;
   });
 
   test('Data · activity', 'describeChanges reports the roster diff', () => {

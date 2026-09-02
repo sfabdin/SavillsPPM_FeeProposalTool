@@ -86,6 +86,12 @@ its file id is set in `box-adapter.js` config.
 - `rates.json` — the confidential rate grid (pulled post-login, never in this repo).
 - `studio.json` — retired Revenue Studio baselines + scenarios (kept in Box for the Budget/RF baseline decision; no page writes it).
 - `staff.json` — the living staffing matrix.
+- `activity-YYYY-MM.json` — the audit trail, **one file per month**. It used to
+  ride inside `projects.json`, which is why it had to be capped; a month per
+  file means a writer only ever touches the current month, a past month is
+  immutable and never re-uploaded, and the Change Log pulls only the months it
+  is showing. Nothing is discarded. Entries are keyed by id, so merging two
+  copies is a union — safe to repeat, impossible to lose an entry in.
 - `revenue.json` — Revenue Reconciliation's actuals ledger, keyed by year then
   project, plus the **mapping book** (`mapping.entries` / `mapping.ignored`,
   keyed by ledger line rather than by year, so a line mapped once carries into

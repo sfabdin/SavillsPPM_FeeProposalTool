@@ -38,6 +38,8 @@
 .badge.book{background:#1f7a44}
 .badge.delete{background:#C0392B}
 .badge.restore{background:#1f7a44}
+.badge.ledger{background:#1D6B78}
+.badge.system{background:#5B3A8C}
 .e-proj{font-family:var(--font-display);font-weight:700;font-size:14px;color:var(--sav-navy);text-decoration:none}
 .e-proj:hover{text-decoration:underline}
 .e-client{font-size:11.5px;color:#79828C}
@@ -54,6 +56,12 @@
 .empty h3{font-family:var(--font-display);font-weight:800;font-size:17px;margin:0 0 8px;color:var(--sav-navy)}
 .empty p{font-size:13px;color:#79828C;margin:0 auto;max-width:56ch;line-height:1.6}
 .more{margin-top:6px}
+.loading{font-size:11.5px;color:var(--sav-teal);font-style:italic}
+.recover{background:#FFF9E0;border:1px solid rgba(224,168,0,.45);border-left:5px solid #E0A800;padding:12px 16px;margin:0 0 20px}
+.recover h4{font-family:var(--font-display);font-weight:800;font-size:12px;margin:0 0 5px;color:var(--sav-navy);letter-spacing:.04em;text-transform:uppercase}
+.recover p{font-size:12.5px;color:var(--sav-navy);margin:0 0 9px;line-height:1.55;max-width:82ch}
+.recover .btn{margin-right:8px}
+.recover .out{font-size:12px;color:#79828C;margin-top:8px}
 @media print{.toolbar,.identity-bar{display:none!important}}
 </style>
 </head>
@@ -85,26 +93,32 @@
       <option value="create">Created</option>
       <option value="edit">Edited</option>
       <option value="status">Status changed</option>
-      <option value="book">Booked</option>
+      <option value="book">Booked / approved</option>
+      <option value="ledger">Reconciliation</option>
+      <option value="system">Admin &amp; system</option>
       <option value="delete">Deleted</option>
     </select>
     <select id="f-range">
       <option value="7">Last 7 days</option>
       <option value="30" selected>Last 30 days</option>
       <option value="90">Last 90 days</option>
+      <option value="365">Last 12 months</option>
       <option value="">All time</option>
     </select>
+    <span class="loading" id="loading" hidden>loading months…</span>
     <span class="grow"></span>
     <button class="btn" id="csv">⤓ CSV</button>
     <button class="btn btn-primary" onclick="window.print()">Print / PDF</button>
   </div>
 
   <p class="scope-note" id="scope-note"></p>
+  <div class="recover" id="recover" hidden></div>
 
   <div id="feed"></div>
 
 </div>
 
+<script>window.UFC_NEEDS = ['activity'];</script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
@@ -118,17 +132,56 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const money = (n) => '$' + Math.abs(Math.round(n)).toLocaleString();
 
-  const ACTION_LABEL = { create: 'Created', edit: 'Edited', status: 'Status', book: 'Booked', delete: 'Deleted', restore: 'Restored' };
+  /* Every action the trail can carry. One the page has never heard of still
+     renders, under its own raw name — a trail that silently hides entries it
+     does not recognise is worse than one that shows an odd word. */
+  const ACTION_LABEL = {
+    create: 'Created', edit: 'Edited', status: 'Status', book: 'Booked',
+    delete: 'Deleted', restore: 'Restored', purge: 'Purged',
+    'co-create': 'Change order', 'co-approve': 'CO approved',
+    'reconcile-commit': 'Reconciled to actuals',
+    'plan-adjust': 'Plan adjusted', 'schedule-shift': 'Schedule shifted',
+    slip: 'Slipped', 'slip-remove': 'Slip removed',
+    'ledger-post': 'Actuals posted', 'ledger-remove': 'Actuals removed',
+    'ledger-status': 'Billing status', 'ledger-amount': 'Figure corrected',
+    'ledger-allocate': 'Allocation', 'ledger-allocate-auto': 'Allocation (auto)',
+    'ledger-accrue-earned': 'Accrued as earned', 'ledger-spread': 'Accrual spread',
+    'ledger-note': 'Commentary', 'ledger-map': 'Mapped', 'ledger-match': 'Mapped',
+    'ledger-map-ignore': 'Ruled out of scope', 'ledger-map-restore': 'Back in scope',
+    'ledger-automap': 'Auto-mapped', 'project-from-ledger': 'Created from a ledger line',
+    'ledger-migrate': 'Ledger moved to its own store',
+    maintenance: 'Maintenance mode', vocab: 'Lists changed', import: 'Bulk import',
+    'baseline-save': 'Baseline saved', 'baseline-delete': 'Baseline deleted',
+    'scenario-save': 'Scenario saved', 'scenario-delete': 'Scenario deleted',
+    'activity-migrate': 'Trail moved to its own store',
+  };
+  /* Which badge an action wears. Grouped by what the action DOES, not by which
+     module raised it — a reader cares that money moved, not that it moved in
+     the ledger rather than the calculator. */
+  const ACTION_KIND = (a) =>
+    /^(create|co-create|project-from-ledger|restore)$/.test(a) ? 'create'
+    : /^(delete|purge|ledger-remove|baseline-delete|scenario-delete)$/.test(a) ? 'delete'
+    : /^(book|co-approve)$/.test(a) ? 'book'
+    : /^(status|slip|slip-remove)$/.test(a) ? 'status'
+    : /^(maintenance|vocab|import|activity-migrate|ledger-migrate)$/.test(a) ? 'system'
+    : /^(ledger-|plan-adjust$|schedule-shift$|reconcile-commit$)/.test(a) ? 'ledger'
+    : 'edit';
   let search = '', who = '', action = '', rangeDays = 30, limit = 200;
+  let remoteMonths = null, loading = false;
 
   /* Entries are scoped to the projects you're allowed to see. Admins see
      everything, including entries for projects that were since deleted. */
+  /* Read once per render. The trail is uncapped now, so walking it four times
+     to draw one page is the difference between instant and noticeable once a
+     few years have accumulated. */
+  let _scoped = null;
   function scopedEntries() {
+    if (_scoped) return _scoped;
     const all = STORE.listActivity ? STORE.listActivity(null) : [];
     const admin = STORE.seesAllProjects(STORE.getCurrentUser());
-    if (admin) return all;
+    if (admin) return (_scoped = all);
     const visible = new Set(STORE.visibleProjects(STORE.listProjects()).map(p => p.id));
-    return all.filter(e => e.projectId && visible.has(e.projectId));
+    return (_scoped = all.filter(e => e.projectId && visible.has(e.projectId)));
   }
 
   function projName(e) {
@@ -146,22 +199,137 @@
   function statusLabel(s) {
     return (STORE.STATUS_LABELS && STORE.STATUS_LABELS[s]) || s || '—';
   }
-  /* How far back the log actually reaches. Said out loud when the log is full,
-     because "it only goes back to Monday" is otherwise indistinguishable from
-     "nothing happened before Monday". */
-  function oldestDay(rows) {
-    if (!rows.length) return '—';
-    const ts = rows.reduce((a, e) => (a && a < e.ts ? a : e.ts), rows[0].ts);
-    return new Date(ts).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  const dayLabel = (ts) => ts ? new Date(ts).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) : '—';
+  const monthLabel = (m) => m ? (MON[+String(m).slice(5, 7) - 1] + ' ' + String(m).slice(0, 4)) : '—';
+
+  /* ---- Which months this page needs loaded -------------------------------
+     One file per month is what makes the trail affordable, and it is also what
+     makes "last 7 days" cheap when the trail runs back years: the page works
+     out the months its window touches and fetches only those. Widening the
+     range fetches the difference, never the whole thing again. ---- */
+  function monthsForRange(days) {
+    const out = [];
+    if (!days) return remoteMonths ? remoteMonths.slice() : out;      // all time
+    const now = new Date();
+    const first = new Date(now.getTime() - days * 86400000);
+    const d = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), 1));
+    while (d <= now) { out.push(d.toISOString().slice(0, 7)); d.setUTCMonth(d.getUTCMonth() + 1); }
+    return out;
   }
+  async function ensureMonthsLoaded() {
+    const Box = window.UFC_Box;
+    if (!Box || !Box.enabled || !Box.pullActivityMonths) return false;
+    if (loading) return false;
+    if (!remoteMonths && Box.listActivityMonths) {
+      try { remoteMonths = await Box.listActivityMonths(); } catch (e) { remoteMonths = []; }
+    }
+    const have = new Set(STORE.activityMonths());
+    const want = monthsForRange(rangeDays)
+      .filter(m => !have.has(m) && (!remoteMonths || remoteMonths.includes(m)));
+    if (!want.length) return false;
+    loading = true; $('#loading').hidden = false;
+    try { await Box.pullActivityMonths(want); }
+    finally { loading = false; $('#loading').hidden = true; }
+    return true;
+  }
+
+  /* ---- Recovering what the old cap threw away ---- */
+  function renderRecover(admin, cov) {
+    const el = $('#recover');
+    const Box = window.UFC_Box;
+    if (!el) return;
+    if (!admin || !Box || !Box.enabled || !Box.backfillActivityFromBackups) { el.hidden = true; return; }
+    if (el.dataset.done) return;                       // leave the result on screen
+    el.hidden = false;
+    el.innerHTML = '<h4>Recover older history</h4>'
+      + '<p>Until this release the trail was capped and rode inside the project file, so entries older than a couple of days '
+      + 'were discarded on every sync. The weekly Box backups each hold whatever the trail contained at the time — '
+      + 'so a sweep of them recovers <b>roughly the two days before each weekly copy</b>. It is a sampled record, not a '
+      + 'continuous one, and it is safe to run more than once: entries are merged by id, so a second run adds nothing.</p>'
+      + '<button class="btn" id="do-recover">Sweep the weekly backups</button>'
+      + '<span class="out" id="recover-out"></span>';
+    $('#do-recover').addEventListener('click', async () => {
+      const btn = $('#do-recover'), out = $('#recover-out');
+      btn.disabled = true;
+      out.textContent = 'Reading the backups…';
+      try {
+        const r = await Box.backfillActivityFromBackups((p) => {
+          out.textContent = `Read ${p.scanned} of ${p.total} backups (${p.at}) — ${p.added} entries recovered so far…`;
+        });
+        el.dataset.done = '1';
+        out.innerHTML = r.added
+          ? `Recovered <b>${r.added}</b> entries from ${r.scanned} weekly backups. Reload to see them in the feed.`
+          : `Swept ${r.scanned} backups — nothing to recover that the trail did not already hold.`;
+        remoteMonths = null;
+        render();
+      } catch (e) {
+        out.textContent = 'Could not read the backups: ' + e.message;
+        btn.disabled = false;
+      }
+    });
+  }
+
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  /** "January 2026" out of a stored "2026-01", or a bare month number. */
+  function ymLabel(v, year) {
+    if (v == null || v === '') return '—';
+    const s2 = String(v);
+    const m = /^(\d{4})-(\d{1,2})$/.exec(s2);
+    if (m) return MON[+m[2] - 1] + ' ' + m[1];
+    const n = +s2;
+    return (n >= 1 && n <= 12) ? MON[n - 1] + (year ? ' ' + year : '') : esc(s2);
+  }
+  const m$ = (n) => (n == null ? '—' : (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString());
 
   function headline(e) {
     const m = e.meta || {};
-    if (e.action === 'create') return 'Created this project' + (m.status ? ' as <b>' + esc(statusLabel(m.status)) + '</b>' : '');
-    if (e.action === 'delete') return 'Deleted this project';
-    if (e.action === 'restore') return 'Restored this project';
-    if (e.action === 'book') return 'Booked — status <b>' + esc(statusLabel(m.from)) + '</b> → <b>' + esc(statusLabel(m.to)) + '</b>';
-    if (e.action === 'status') return 'Status <b>' + esc(statusLabel(m.from)) + '</b> → <b>' + esc(statusLabel(m.to)) + '</b>';
+    const a = e.action;
+    if (a === 'create') return 'Created this project' + (m.status ? ' as <b>' + esc(statusLabel(m.status)) + '</b>' : '');
+    if (a === 'delete') return 'Deleted this project';
+    if (a === 'restore') return 'Restored this project';
+    if (a === 'purge') return 'Purged the deleted record for good';
+    if (a === 'book') return 'Booked — status <b>' + esc(statusLabel(m.from)) + '</b> → <b>' + esc(statusLabel(m.to)) + '</b>';
+    if (a === 'status') return 'Status <b>' + esc(statusLabel(m.from)) + '</b> → <b>' + esc(statusLabel(m.to)) + '</b>';
+    if (a === 'co-create') return 'Raised a change order against this contract';
+    if (a === 'co-approve') return 'Approved the change order — it now counts in the revised contract';
+    if (a === 'reconcile-commit') return 'Committed the staffing to match imported actuals';
+
+    /* The reconciliation actions. Each one says the DECISION, with the figures
+       either side of it, because "someone touched March" is not an audit. */
+    if (a === 'ledger-status') return 'Billing status for <b>' + ymLabel(m.month, m.year) + '</b> — '
+      + esc(m.from || 'no status') + ' → <b>' + esc(m.to || 'cleared') + '</b>'
+      + (m.billsIn ? ', invoice due <b>' + ymLabel(m.billsIn, m.year) + '</b>' : '')
+      + (m.carryTo ? ', moved to <b>' + ymLabel(m.carryTo, m.year) + '</b>' : '');
+    if (a === 'ledger-amount') return esc(m.field || 'Figure') + ' for <b>' + ymLabel(m.month, m.year) + '</b> — '
+      + m$(m.from) + ' → <b>' + m$(m.to) + '</b>';
+    if (a === 'ledger-allocate') return m.cleared
+      ? 'Cleared the allocation for <b>' + ymLabel(m.month, m.year) + '</b>'
+      : '<b>' + m$(m.amount) + '</b> earned in ' + ymLabel(m.month, m.year)
+        + ' — accrues <b>' + ymLabel(m.accrue) + '</b>, bills <b>' + ymLabel(m.bill) + '</b>, realized <b>' + ymLabel(m.realize) + '</b>';
+    if (a === 'ledger-allocate-auto') return 'Auto-allocated <b>' + (m.months || 0) + ' earned month'
+      + ((m.months === 1) ? '' : 's') + '</b> in ' + esc(m.year || '');
+    if (a === 'ledger-accrue-earned') return 'Accrued <b>' + (m.months || 0) + ' earned month'
+      + ((m.months === 1) ? '' : 's') + '</b> in ' + esc(m.year || '');
+    if (a === 'ledger-spread') return 'Spread <b>' + m$(m.amount) + '</b> of accrual across '
+      + ymLabel(m.fromMonth, m.year) + '–' + ymLabel(m.toMonth, m.year) + ' (' + m$(m.each) + ' each)';
+    if (a === 'ledger-note') return m.to
+      ? 'Commentary on ' + ymLabel(m.month, m.year) + ': “' + esc(m.to) + '”'
+      : 'Cleared the commentary on ' + ymLabel(m.month, m.year);
+    if (a === 'ledger-post') return 'Posted <b>' + esc(m.year || '') + '</b> actuals through <b>'
+      + ymLabel(m.closeMonth, m.year) + '</b> — ' + (m.rows || 0) + ' lines'
+      + (m.file ? ' from ' + esc(m.file) : '');
+    if (a === 'ledger-remove') return 'Removed all <b>' + esc(m.year || '') + '</b> actuals';
+    if (a === 'ledger-map' || a === 'ledger-match') return 'Mapped the close-file line <b>' + esc(m.key || m.name || '') + '</b> to this project';
+    if (a === 'ledger-map-ignore') return 'Ruled <b>' + esc(m.key || '') + '</b> out of scope — ' + esc(m.reason || '');
+    if (a === 'ledger-map-restore') return 'Put <b>' + esc(m.key || '') + '</b> back in the mapping queue';
+    if (a === 'ledger-automap') return 'Auto-mapped <b>' + (m.applied || 0) + '</b> of ' + (m.considered || 0) + ' unmapped lines';
+    if (a === 'project-from-ledger') return 'Created this project from a line in the ' + esc(m.year || '') + ' close file';
+    if (a === 'maintenance') return 'Maintenance mode <b>' + esc(m.to || '') + '</b>' + (m.note ? ' — ' + esc(m.note) : '');
+    if (a === 'vocab') return 'Added <b>' + (m.added || 0) + '</b> entr' + ((m.added === 1) ? 'y' : 'ies') + ' to the system lists';
+    if (a === 'import') return 'Bulk <b>' + esc(m.mode || '') + '</b> import of <b>' + (m.projects || 0) + '</b> projects'
+      + (m.replaced ? ' over ' + m.replaced + ' existing' : '');
+    if (a === 'activity-migrate') return 'Moved <b>' + (m.entries || 0) + '</b> trail entries into the audit store';
+
     const n = (m.changes || []).length;
     return n ? ('Changed ' + n + ' field' + (n === 1 ? '' : 's')) : 'Saved changes';
   }
@@ -191,7 +359,7 @@
       const cut = Date.now() - rangeDays * 86400000;
       rows = rows.filter(e => new Date(e.ts).getTime() >= cut);
     }
-    if (action) rows = rows.filter(e => e.action === action);
+    if (action) rows = rows.filter(e => ACTION_KIND(e.action) === action);
     if (who) rows = rows.filter(e => (e.actor || '') === who);
     if (search) {
       const q = search.toLowerCase();
@@ -248,6 +416,7 @@
   }
 
   function render() {
+    _scoped = null;                    // one read of the trail per render
     buildIdentityBar();
     const rows = filtered();
     buildWhoFilter(rows);
@@ -265,13 +434,25 @@
     ].map(k => '<div class="kpi-card ' + k.c + '"><div class="k-num">' + k.n + '</div><div class="k-lbl">' + k.l + '</div></div>').join('');
 
     const admin = STORE.seesAllProjects(STORE.getCurrentUser());
+    const cov = all.length
+      ? { entries: all.length, oldest: all[all.length - 1].ts, newest: all[0].ts }
+      : { entries: 0, oldest: null, newest: null };
+    /* Say what the trail actually holds. The whole reason this went unnoticed
+       for so long is that a feed which stops on Monday looks exactly like a
+       week in which nothing happened before Monday. */
     $('#scope-note').innerHTML = admin
-      ? 'Showing <b>all activity</b> across the system. The log holds the most recent '
-        + (STORE.ACTIVITY_CAP || 1500).toLocaleString() + ' entries and syncs to Box with the project data.'
-        + (all.length >= (STORE.ACTIVITY_CAP || 1500) - 1
-          ? ' It is <b>full</b> — the oldest entries are dropping off as new ones arrive, so history reaches back only as far as ' + esc(oldestDay(all)) + '.'
+      ? 'Showing <b>all activity</b> across the system. The trail is kept in full — nothing is discarded — '
+        + 'one file per month in Box, and this page loads only the months you ask for. '
+        + (cov.entries
+          ? '<b>' + cov.entries.toLocaleString() + '</b> entr' + (cov.entries === 1 ? 'y' : 'ies') + ' loaded, '
+            + esc(dayLabel(cov.oldest)) + ' → ' + esc(dayLabel(cov.newest)) + '.'
+          : 'Nothing loaded yet.')
+        + (remoteMonths && remoteMonths.length
+          ? ' Box holds <b>' + remoteMonths.length + ' month' + (remoteMonths.length === 1 ? '' : 's') + '</b> ('
+            + esc(monthLabel(remoteMonths[0])) + ' → ' + esc(monthLabel(remoteMonths[remoteMonths.length - 1])) + ').'
           : '')
       : 'Showing activity on <b>the projects you can see</b>. Admins see the full system log.';
+    renderRecover(admin, cov);
 
     const feed = $('#feed');
     if (!rows.length) {
@@ -314,7 +495,7 @@
             + '<div class="e-who"><b>' + esc(e.actorName || e.actor || 'Unknown') + '</b>'
               + (e.viewingAs ? '<span>while previewing ' + esc(e.viewingAs) + '</span>' : '') + '</div>'
             + '<div class="e-main">'
-              + '<div class="e-top"><span class="badge ' + esc(e.action) + '">' + esc(ACTION_LABEL[e.action] || e.action) + '</span>'
+              + '<div class="e-top"><span class="badge ' + esc(ACTION_KIND(e.action)) + '">' + esc(ACTION_LABEL[e.action] || e.action) + '</span>'
               + link + (cl ? '<span class="e-client">' + esc(cl) + '</span>' : '') + '</div>'
               + '<div class="e-line">' + headline(e) + '</div>'
               + chips(e)
@@ -354,11 +535,19 @@
     $('#search').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { search = e.target.value.trim(); limit = 200; render(); }, 160); });
     $('#f-who').addEventListener('change', e => { who = e.target.value; limit = 200; render(); });
     $('#f-action').addEventListener('change', e => { action = e.target.value; limit = 200; render(); });
-    $('#f-range').addEventListener('change', e => { rangeDays = e.target.value ? parseInt(e.target.value, 10) : 0; limit = 200; render(); });
+    $('#f-range').addEventListener('change', async e => {
+      rangeDays = e.target.value ? parseInt(e.target.value, 10) : 0; limit = 200;
+      render();                                   // draw what we have straight away
+      if (await ensureMonthsLoaded()) render();    // then again with the months just fetched
+    });
     $('#csv').addEventListener('click', exportCsv);
   }
 
-  function boot() { wire(); render(); }
+  async function boot() {
+    wire(); render();
+    // Boot pulled the current month; fetch whatever else the opening range wants.
+    if (await ensureMonthsLoaded()) render();
+  }
   if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
 })();
 </script>
