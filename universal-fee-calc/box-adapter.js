@@ -527,14 +527,20 @@
       if (!rp || (lp.updatedAt || '') >= (rp.updatedAt || '')) all[id] = lp;
     });
     out.projects = all;
-    // Union the append-only activity logs by id, keep most recent 500.
+    /* Union the append-only activity logs by id, keeping the store's cap.
+       This merge runs on EVERY page load, and its result is hydrated back into
+       local storage and pushed to Box on the next save — so whatever number is
+       used here is the log's real retention, no matter what the writer keeps.
+       It said 500 while the writer kept 1500 and the Change Log page promised
+       1,500, which is why history only ever reached back a couple of days. */
+    const CAP = Store.ACTIVITY_CAP || 1500;
     const seen = {};
     [...(remote.activity || []), ...(local.activity || [])].forEach(e => {
       if (e && e.id) seen[e.id] = e;
     });
     out.activity = Object.values(seen)
       .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''))
-      .slice(-500);
+      .slice(-CAP);
 
     /* Everything else on the db is dropped unless it is merged here — this is
        what silently ate the maintenance flag on every sync. */

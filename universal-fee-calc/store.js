@@ -362,7 +362,15 @@
   /* ===== Activity log — append-only audit trail =====
      Rides inside projects.json (so it syncs to Box with the data). Union-merged
      by entry id in box-adapter's mergeDb, capped to the most recent entries.
-     Records who did what: create, save, status change, book, delete, access grant. */
+     Records who did what: create, save, status change, book, delete, access grant.
+
+     ONE CAP, READ FROM HERE BY EVERYONE. It used to be written out three times
+     — 1500 when an entry was appended, 500 in the Box merge, 500 again on
+     import — and the smallest number won, because the Box merge runs on every
+     page load and hydrates its own truncated copy straight back into local
+     storage. The log therefore held 500 entries however much room the writer
+     thought it had, and the Change Log page told people it held 1,500. Any new
+     reader of this cap imports it; nobody restates it. */
   const ACTIVITY_CAP = 1500;
   function logActivity(action, projectId, meta) {
     try {
@@ -2349,7 +2357,7 @@
       // Never let an empty/near-empty file nuke a populated shared db.
       if (localCount > 0 && inCount === 0) throw new Error('Refusing to replace ' + localCount + ' project(s) with an empty file. Use merge, or delete projects individually.');
       // Preserve the audit trail across a replace.
-      incoming.activity = [...(db.activity || []), ...(incoming.activity || [])].slice(-500);
+      incoming.activity = [...(db.activity || []), ...(incoming.activity || [])].slice(-ACTIVITY_CAP);
       writeDb(incoming);
       return inCount;
     }
@@ -4036,6 +4044,7 @@
   window.UFC_Store = {
     fmtMoney,
     SCHEMA, STATUSES, STATUS_LABELS, ASSUMPTION_LIBRARY, projectTypeSubs, addVocab, readVocab,
+    ACTIVITY_CAP,
     accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING, isPlaceholder,
     SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,

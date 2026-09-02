@@ -146,6 +146,14 @@
   function statusLabel(s) {
     return (STORE.STATUS_LABELS && STORE.STATUS_LABELS[s]) || s || '—';
   }
+  /* How far back the log actually reaches. Said out loud when the log is full,
+     because "it only goes back to Monday" is otherwise indistinguishable from
+     "nothing happened before Monday". */
+  function oldestDay(rows) {
+    if (!rows.length) return '—';
+    const ts = rows.reduce((a, e) => (a && a < e.ts ? a : e.ts), rows[0].ts);
+    return new Date(ts).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  }
 
   function headline(e) {
     const m = e.meta || {};
@@ -258,7 +266,11 @@
 
     const admin = STORE.seesAllProjects(STORE.getCurrentUser());
     $('#scope-note').innerHTML = admin
-      ? 'Showing <b>all activity</b> across the system. The log holds the most recent 1,500 entries and syncs to Box with the project data.'
+      ? 'Showing <b>all activity</b> across the system. The log holds the most recent '
+        + (STORE.ACTIVITY_CAP || 1500).toLocaleString() + ' entries and syncs to Box with the project data.'
+        + (all.length >= (STORE.ACTIVITY_CAP || 1500) - 1
+          ? ' It is <b>full</b> — the oldest entries are dropping off as new ones arrive, so history reaches back only as far as ' + esc(oldestDay(all)) + '.'
+          : '')
       : 'Showing activity on <b>the projects you can see</b>. Admins see the full system log.';
 
     const feed = $('#feed');
