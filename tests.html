@@ -1659,6 +1659,18 @@
       return (e.meta.kind === 'project' && e.meta.to === 'Tower Alpha') || JSON.stringify(e.meta);
     });
 
+    test('Staffing · merge', 'a browser that has never synced takes Box\'s copy wholesale', () => {
+      // There is no shipped seed any more. An empty local store must not
+      // "merge" its nothing over a real team matrix from Box.
+      const fresh = ST.resetAll();          // what a browser that has never synced holds
+      if (Object.keys(fresh.people).length || fresh.allocations.length) return 'a fresh store is not empty: something is still seeding it';
+      const remote = { people: { p1: { id: 'p1', name: 'Real Person', capacityPct: 100, active: true } },
+        allocations: [{ id: 'al_r1', personId: 'p1', project: 'Real Job', start: '2026-01', end: '2026-06', pct: 50, updatedAt: '2026-08-01T00:00:00.000Z' }],
+        actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { updatedAt: '2026-08-01T00:00:00.000Z', monthHours: 172 } };
+      const merged = ST.mergeFromRemote(remote);
+      return (merged.allocations.length === 1 && !!merged.people.p1) || 'remote was not adopted: ' + JSON.stringify(Object.keys(merged.people));
+    });
+
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field

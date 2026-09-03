@@ -78,6 +78,11 @@
      hydrateFromRemote in this module, which refresh the cache. */
   let _dbCache = null;
 
+  /* The shipped seed (staff-seed.js) is gone: it was 255 real allocations,
+     ~105 named people and candid notes, served unauthenticated from the
+     public origin because the access wall runs after the file downloads.
+     A browser that has never synced now starts with an empty matrix until
+     the first Box pull or xlsx import — which is the truthful state. */
   function seedFromMatrix(db) {
     const seed = (typeof window !== 'undefined' && window.STAFF_SEED) || [];
     db.people = {}; db.allocations = [];
@@ -233,7 +238,7 @@
     return out;
   }
 
-  /** Wipe + re-seed from the (possibly refreshed) window.STAFF_SEED. Keeps
+  /** Wipe the matrix (there is no shipped seed any more, so this empties it). Keeps
       actuals and roster capacity edits? — no: full matrix reset. Actuals kept. */
   function reseedMatrix() {
     const db = readDb();

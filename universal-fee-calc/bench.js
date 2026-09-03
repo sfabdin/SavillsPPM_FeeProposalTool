@@ -16,7 +16,8 @@
   let PROJECTS = [], FACTS = [], PROJFACTS = [];
 
   function load() {
-    PROJECTS = STORE.listProjects();
+    // Same rule as every other leader page: you benchmark against what you can see.
+    PROJECTS = STORE.visibleProjects ? STORE.visibleProjects(STORE.listProjects()) : STORE.listProjects();
     PROJFACTS = BENCH.projectFacts(PROJECTS);
     FACTS = BENCH.roleFacts(PROJECTS);
   }

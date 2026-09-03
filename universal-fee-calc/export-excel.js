@@ -212,8 +212,10 @@ window.UFC_buildAndDownloadExcel = async function () {
     const noteParts = [];
     if (r.projectRole) noteParts.push('Project role: ' + r.projectRole);
     if (isContracted) noteParts.push('Contracted rate · bypasses industry adj');
-    else if (tier && !tier.isNoCharge) noteParts.push(`Rack $${tier.rate} · −${state.assumptions.industryAdj || 0}% adj`);
-    if (tier && !tier.isNoCharge && tier.costFloor) noteParts.push('Cost floor $' + tier.costFloor + '/hr');
+    /* Rack rate and cost floor deliberately NOT written: this workbook goes
+       to the client's procurement team, and the catalog declares both
+       confidential. The industry adjustment is still stated as a percentage. */
+    else if (tier && !tier.isNoCharge && state.assumptions.industryAdj) noteParts.push(`−${state.assumptions.industryAdj}% industry adj`);
     if (title?.note) noteParts.push(title.note);
     s1.getCell(`H${rn}`).value = noteParts.join('  ·  ');
     s1.getCell(`H${rn}`).font = { name: 'Calibri', size: 9, italic: true, color: { argb: STEEL } };
