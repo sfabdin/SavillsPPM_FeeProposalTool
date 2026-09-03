@@ -4394,7 +4394,7 @@
     const leader = resolveLeader(login);
     return {
       username: login,
-      name: leader ? leader.displayName : (fallbackName || login),
+      name: leader ? leader.displayName : (fallbackName || displayNameForLogin(login) || login),
       role: roleFor(login),
     };
   }
@@ -4421,11 +4421,49 @@
   function isAdmin(user) { return (user || getCurrentUser()).role === 'admin'; }
 
   /* People the SUPERUSER can impersonate: every leader + every admin (deduped). */
+  /* Display names for logins that are not in the leader directory. */
+  const LOGIN_NAMES = {
+    'sabdin@savills.us': 'Salim Abdin', 'salim@savills.us': 'Salim Abdin', 'kyerou@savills.us': 'Kyri Yerou',
+    'esobel@savills.us': 'Emily Sobel', 'jsantoro@savills.us': 'Jeff Santoro', 'mglatt@savills.us': 'Michael Glatt',
+    'mhadim@savills.us': 'Maria Hadim', 'eglatt@savills.us': 'Emily Glatt', 'cglatt@savills.us': 'Cara Glatt',
+    'bjosselson@savills.us': 'Benay Josselson',
+  };
+  /** A person's display name for any login: the leader directory first, then
+      the login's local part as a leader id, then the known-login table, then a
+      readable form of the address. Never the raw email when a name exists. */
+  function displayNameForLogin(login) {
+    const k = String(login || '').trim().toLowerCase();
+    if (!k) return '';
+    const l = resolveLeader(k) || leaderById(k.split('@')[0]);
+    if (l) return l.displayName;
+    if (LOGIN_NAMES[k]) return LOGIN_NAMES[k];
+    const local = k.split('@')[0].replace(/[._-]+/g, ' ').trim();
+    return local ? local.replace(/\b\w/g, c => c.toUpperCase()) : k;
+  }
+  /** One row per PERSON for the "Viewing as" switcher: the leader directory
+      plus every admin and tool admin, named, with a login that is a duplicate
+      of a person already listed (a second address, an email-shaped leader
+      entry) folded away. */
   function impersonationRoster() {
-    const seen = new Set(); const list = [];
-    allRevenueLeaders().forEach(l => { const k = String(l.username || '').toLowerCase(); if (k) seen.add(k); list.push({ username: l.username || '', name: l.displayName, role: roleFor(l.username || '') }); });
-    ADMINS.forEach(email => { if (!seen.has(email)) { seen.add(email); list.push({ username: email, name: email, role: 'admin' }); } });
-    return list.sort((a, b) => a.name.localeCompare(b.name));
+    const byLogin = new Map(); const names = new Set(); const list = [];
+    const add = (username, name, role) => {
+      const k = String(username || '').trim().toLowerCase();
+      const nm = String(name || '').trim();
+      const nk = nm.toLowerCase();
+      if (k && byLogin.has(k)) return;
+      if (nk && names.has(nk)) return;                   // same person, another login
+      if (k) byLogin.set(k, true);
+      if (nk) names.add(nk);
+      list.push({ username: k, name: nm || k, role });
+    };
+    allRevenueLeaders().forEach(l => {
+      const u = String(l.username || '').trim().toLowerCase();
+      const nm = /@/.test(l.displayName || '') ? displayNameForLogin(l.displayName) : l.displayName;
+      add(u, nm, roleFor(u));
+    });
+    const admins = new Set([...ADMINS, ...TOOL_ADMINS, ...vocabAdmins(), ...vocabToolAdmins()]);
+    admins.forEach(email => add(email, displayNameForLogin(email), 'admin'));
+    return list.filter(r => r.username).sort((a, b) => a.name.localeCompare(b.name));
   }
 
   /** Normalize a name for tolerant matching ("Kathy Spiegel" ~ "Spiegel"). */
@@ -4570,7 +4608,7 @@
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
-    setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster,
+    setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin,
     getMaintenance, setMaintenance, 
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,

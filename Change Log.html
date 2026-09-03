@@ -447,7 +447,7 @@
       const roster = STORE.impersonationRoster();
       const imp = STORE.getImpersonation();
       sel.innerHTML = ['<option value="__me__">Me — admin · all activity</option>']
-        .concat(roster.map(r => '<option value="' + esc(r.username) + '">' + esc(r.name) + ' · ' + r.role + '</option>')).join('');
+        .concat(roster.map(r => '<option value="' + esc(r.username) + '">' + esc(r.name) + (r.role === 'admin' ? ' · admin' : '') + '</option>')).join('');
       sel.value = imp ? esc(imp) : '__me__';
       if (sel.selectedIndex < 0) sel.value = '__me__';
       sel.onchange = () => {
