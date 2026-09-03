@@ -10,6 +10,7 @@
   const CATALOG = window.RATES_CATALOG;
   const MONTHS = window.UFC_UI.MONTHS, ymLabel = window.UFC_UI.ymLabel, monthLabel = window.UFC_UI.monthLabel;
   const $ = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
 
   const fmtFull = (n) => (n < 0 ? '-' : '') + '$' + Math.round(Math.abs(n)).toLocaleString();
   const fmtExact = (n) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -22,6 +23,35 @@
   }
 
   let showExcluded = true;
+  /* Column sort. Default: client, then project name — the rating stays on
+     every row as its own column. Click a header to sort by it; click again to
+     flip. Rating groups (the band headers) only appear when sorted by rating. */
+  const SORT_PREF = 'ufc_revproj_sort_v1';
+  let SORT = (() => { try { const s = JSON.parse(localStorage.getItem(SORT_PREF) || 'null'); if (s && s.key) return s; } catch (e) {} return { key: 'client', dir: 'asc' }; })();
+  function sortRows(rows) {
+    const d = SORT.dir === 'desc' ? -1 : 1;
+    const txt = (r, k) => String(((r.p.project || {})[k]) || '').toLowerCase();
+    const byName = (a, b) => txt(a, 'name').localeCompare(txt(b, 'name'));
+    const byClient = (a, b) => txt(a, 'client').localeCompare(txt(b, 'client')) || byName(a, b);
+    rows.sort((a, b) => {
+      let c = 0;
+      if (SORT.key === 'rating') c = (a.rating - b.rating) || byClient(a, b) / d;
+      else if (SORT.key === 'client') c = byClient(a, b);
+      else if (SORT.key === 'project') c = byName(a, b);
+      else if (SORT.key === 'total') c = (b.total - a.total) || byClient(a, b) / d;
+      else if (SORT.key.startsWith('m:')) { const k = SORT.key.slice(2); c = ((b.map[k] || 0) - (a.map[k] || 0)) || byClient(a, b) / d; }
+      return c * d;
+    });
+    return rows;
+  }
+  function setSort(key) {
+    if (SORT.key === key) SORT = { key, dir: SORT.dir === 'asc' ? 'desc' : 'asc' };
+    else SORT = { key, dir: (key === 'total' || key.startsWith('m:')) ? 'desc' : 'asc' };   // numbers: biggest first on the first click
+    try { localStorage.setItem(SORT_PREF, JSON.stringify(SORT)); } catch (e) {}
+    build();
+  }
+  const sortInd = (key) => SORT.key === key ? `<span class="sort-ind">${SORT.dir === 'asc' ? '▲' : '▼'}</span>` : '';
+  const sortTh = (key, label, cls, extra) => `<th class="sortable ${cls || ''}${SORT.key === key ? ' sorted' : ''}" data-sort="${key}" title="Sort by ${label.toLowerCase()}"${extra || ''}>${label}${sortInd(key)}</th>`;
   /* Closed-out projects are finished work whose earned months are still real
      revenue, so they stay IN by default — hiding them by default would move
      every year-to-date total on this page. The preference is remembered per
@@ -192,20 +222,22 @@
     const years = [];
     cols.forEach(c => { const last = years[years.length - 1]; if (last && last.y === c.y) last.span++; else years.push({ y: c.y, span: 1 }); });
 
-    // Sort: rating asc, then total desc
-    rows.sort((a, b) => a.rating - b.rating || b.total - a.total);
+    sortRows(rows);
+    const byRating = SORT.key === 'rating';
 
-    // ---- Header ----
+    // ---- Header: Rating · Client · Project (sticky), months, Total — every one sortable ----
     let html = '<thead>';
-    html += '<tr class="years"><th class="corner" rowspan="2">Project · ' + rows.length + '</th>';
+    html += '<tr class="years">' + sortTh('rating', 'R', 'corner c-rating', ' rowspan="2"')
+      + sortTh('client', 'Client', 'corner c-client', ' rowspan="2"')
+      + sortTh('project', 'Project · ' + rows.length, 'corner c-project', ' rowspan="2"');
     years.forEach((yr, i) => { html += `<th colspan="${yr.span}">${yr.y}</th>`; });
-    html += '<th class="totcol" rowspan="2">Total</th></tr>';
+    html += sortTh('total', 'Total', 'totcol', ' rowspan="2"') + '</tr>';
     html += '<tr>';
     const _now = new Date(); const _ck = _now.getFullYear() + '-' + (_now.getMonth() + 1);
     cols.forEach((c, i) => {
       const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
       const today = c.key === _ck ? ' today' : '';
-      html += `<th class="${(sep + today).trim()}">${c.key === _ck ? '<span class="today-tag">CURRENT</span>' : ''}${MONTHS[c.m - 1]}</th>`;
+      html += `<th class="sortable ${(sep + today).trim()}${SORT.key === 'm:' + c.key ? ' sorted' : ''}" data-sort="m:${c.key}" title="Sort by ${MONTHS[c.m - 1]} ${c.y}">${c.key === _ck ? '<span class="today-tag">CURRENT</span>' : ''}${MONTHS[c.m - 1]}${sortInd('m:' + c.key)}</th>`;
     });
     html += '</tr></thead><tbody>';
 
@@ -226,11 +258,11 @@
       // computed in a separate pass below, so skipping here is safe.)
       if (excluded && !showExcluded) return;
 
-      // Group header when rating changes (only for groups that will render)
-      if (r.rating !== lastRating) {
+      // Group header when rating changes — only when the table is sorted by rating
+      if (byRating && r.rating !== lastRating) {
         lastRating = r.rating;
         const gExcl = r.rating > 4 ? ' excluded' : '';
-        const colspan = cols.length + 2;
+        const colspan = cols.length + 4;
         html += `<tr class="group-row${gExcl}"><td colspan="${colspan}">${r.rating} · ${meta.label}${r.rating > 4 ? ' — excluded from totals' : ''}</td></tr>`;
       }
 
@@ -245,7 +277,8 @@
          not a priced one — so this labels the number without moving it. */
       const phBadge = STORE.isPlaceholder(r.p)
         ? '<span class="ph-badge" title="The dollars on this row were assumed to hold the space, not priced from scope. It still counts toward the forecast at its rating weight — but treat the amount as an estimate.">estimate</span>' : '';
-      html += `<td class="proj-cell">${ratingCell}<a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a>${phBadge}<div class="pmeta">${esc(pj.client || '')}${pj.client && pj.status ? ' · ' : ''}${STORE.STATUS_LABELS[pj.status] || ''}${coMeta}${dupIds.has(r.p.id) ? '<span class="dup-badge" title="This row\u2019s monthly figure equals the sum of this client\u2019s other rows — it may be a roll-up counted on top of its own parts. Check before trusting the total.">⚠ possible double count</span>' : ''}<span class="open-link"> · open →</span></div></td>`;
+      html += `<td class="proj-cell c-rating">${ratingCell}</td><td class="proj-cell c-client" title="${esc(pj.client || '')}">${esc(pj.client || '—')}</td>`;
+      html += `<td class="proj-cell c-project"><a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a>${phBadge}<div class="pmeta">${STORE.STATUS_LABELS[pj.status] || ''}${coMeta}${dupIds.has(r.p.id) ? '<span class="dup-badge" title="This row\u2019s monthly figure equals the sum of this client\u2019s other rows — it may be a roll-up counted on top of its own parts. Check before trusting the total.">⚠ possible double count</span>' : ''}<span class="open-link"> · open →</span></div></td>`;
       let rvt = 0;
       cols.forEach((c, i) => {
         const v = r.map[c.key] || 0;
@@ -269,7 +302,7 @@
       if (showBroker && r.feeSharePct > 0) {
         const bm = r.brokerMap || {};
         let rowBroker = 0;
-        html += `<tr class="broker-row"><td class="proj-cell">↳ Broker fee · ${r.feeSharePct}%</td>`;
+        html += `<tr class="broker-row"><td class="proj-cell" colspan="3">↳ Broker fee · ${r.feeSharePct}%</td>`;
         cols.forEach((c, i) => {
           const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
           const today = c.key === _ck ? ' today' : '';
@@ -284,7 +317,7 @@
       if (showPass && r.ptCost > 0) {
         const pm = r.passMap || {};
         let rowPass = 0;
-        html += `<tr class="pass-row"><td class="proj-cell">↳ Pass-through cost</td>`;
+        html += `<tr class="pass-row"><td class="proj-cell" colspan="3">↳ Pass-through cost</td>`;
         cols.forEach((c, i) => {
           const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
           const today = c.key === _ck ? ' today' : '';
@@ -302,36 +335,37 @@
     rows.forEach(r => { const w = STORE.ratingMeta(r.rating).weight; cols.forEach(c => { const v = (r.map[c.key] || 0); colWt[c.key] += v * w; grandWt += v * w; }); });
 
     // ---- Totals rows ----
-    html += '<tr class="totals"><td class="proj-cell">Projected (rated 1–4)</td>';
+    html += '<tr class="totals"><td class="proj-cell" colspan="3">Projected (rated 1–4)</td>';
     cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; html += `<td class="num${sep}"${colTot[c.key] ? ` title="${fmtExact(colTot[c.key])}"` : ''}>${colTot[c.key] ? fmtK(colTot[c.key]) : '·'}</td>`; });
     html += `<td class="rowtot num" title="${fmtExact(grandTot)}">${fmtK(grandTot)}</td></tr>`;
 
-    html += '<tr class="totals weighted"><td class="proj-cell">Probability-weighted (all)</td>';
+    html += '<tr class="totals weighted"><td class="proj-cell" colspan="3">Probability-weighted (all)</td>';
     cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; html += `<td class="num${sep}"${colWt[c.key] ? ` title="${fmtExact(colWt[c.key])}"` : ''}>${colWt[c.key] ? fmtK(colWt[c.key]) : '·'}</td>`; });
     html += `<td class="rowtot num" title="${fmtExact(grandWt)}">${fmtK(grandWt)}</td></tr>`;
 
     // Broker-fee rolled-up total (toggle)
     if (showBroker && grandBroker > 0) {
-      html += '<tr class="totals broker-total"><td class="proj-cell">↳ Broker fee · all splits</td>';
+      html += '<tr class="totals broker-total"><td class="proj-cell" colspan="3">↳ Broker fee · all splits</td>';
       cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const b = colBroker[c.key] || 0; html += `<td class="num${sep}">${b ? '−' + fmtK(b) : '·'}</td>`; });
       html += `<td class="rowtot num">−${fmtK(grandBroker)}</td></tr>`;
-      html += '<tr class="totals net-after-broker"><td class="proj-cell">Net of broker fee</td>';
+      html += '<tr class="totals net-after-broker"><td class="proj-cell" colspan="3">Net of broker fee</td>';
       cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const n = (colTot[c.key] || 0) - (colBroker[c.key] || 0); html += `<td class="num${sep}">${n ? fmtK(n) : '·'}</td>`; });
       html += `<td class="rowtot num">${fmtK(grandTot - grandBroker)}</td></tr>`;
     }
 
     // Pass-through rolled-up total (toggle) — cost billed through Savills, netted to revenue
     if (showPass && grandPass > 0) {
-      html += '<tr class="totals pass-total"><td class="proj-cell">↳ Pass-through cost · all lines</td>';
+      html += '<tr class="totals pass-total"><td class="proj-cell" colspan="3">↳ Pass-through cost · all lines</td>';
       cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const b = colPass[c.key] || 0; html += `<td class="num${sep}">${b ? '−' + fmtK(b) : '·'}</td>`; });
       html += `<td class="rowtot num">−${fmtK(grandPass)}</td></tr>`;
-      html += '<tr class="totals net-after-pass"><td class="proj-cell">Savills revenue · net of pass-through</td>';
+      html += '<tr class="totals net-after-pass"><td class="proj-cell" colspan="3">Savills revenue · net of pass-through</td>';
       cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const n = (colTot[c.key] || 0) - (colBroker[c.key] || 0) - (colPass[c.key] || 0); html += `<td class="num${sep}">${n ? fmtK(n) : '·'}</td>`; });
       html += `<td class="rowtot num">${fmtK(grandTot - grandBroker - grandPass)}</td></tr>`;
     }
 
     html += '</tbody>';
     $('#proj-table').innerHTML = html;
+    $$('#proj-table thead th.sortable').forEach(th => { th.onclick = () => setSort(th.dataset.sort); });
     if (editMode) wireEditing();
 
     // ---- KPIs (over filtered rows + visible columns) ----
@@ -485,7 +519,7 @@
       const excluded = row.rating > 4;
       if (excluded && !V.showExcluded) return;
       const meta = STORE.ratingMeta(row.rating);
-      if (row.rating !== lastRating) {
+      if (SORT.key === 'rating' && row.rating !== lastRating) {
         lastRating = row.rating;
         ws.mergeCells(r, 1, r, lastCol);
         const g = ws.getCell(r, 1);
