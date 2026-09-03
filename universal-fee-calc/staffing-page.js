@@ -1506,8 +1506,10 @@
   /* ---------- TIME ENTRY COMPLIANCE — who logs, who's behind ----------
      Works off committed Clockify actuals (person × project × month). A month
      counts as "logged" against capacity (monthHours × cap%); people with
-     allocations in a month but no hours are behind. Current month is judged
-     pro-rata by working days elapsed. ---------- */
+     allocations in a month but no hours are behind. The current month is
+     judged by working days elapsed less a one-week grace, and is not judged
+     at all until that grace is used up; the previous month is always fully
+     due (staff.js currentMonthExpectation). ---------- */
   /* ---------- CLOCKIFY REPORTING (was "Time Entry") ----------
      Rebuilt to answer one question first — who do I need to chase, and by
      how much — instead of opening on a wall of percentages. The month grid
@@ -1524,7 +1526,10 @@
     if (!S.hasActuals()) { $('#p-compliance').innerHTML = topBar + '<div class="empty">No Clockify actuals loaded — <a href="#" data-goto-tab="sources" style="font-weight:700">load them in Data Sources →</a>. This report is computed from logged hours by month.</div>'; wireLateness(); wireGoto('#p-compliance'); return; }
     const comp = S.complianceRows(months(), { clockifyUsers: state.clockifyUsers || [] });
     const ms = comp.months, rows = comp.rows, untracked = comp.untracked;
-    const nowYm = comp.nowYm, prorata = comp.prorata;
+    const nowYm = comp.nowYm, prorata = comp.prorata, expect = comp.expect || { early: false, elapsed: 0, total: 0, grace: 5 };
+    const dueLbl = expect.early
+      ? `${S.ymLabel(nowYm)} not yet due · counts from working day ${expect.grace + 1}`
+      : `${S.ymLabel(nowYm)} to date · working day ${expect.elapsed} of ${expect.total}, less a ${expect.grace}-day grace`;
     if (!ms.length) { $('#p-compliance').innerHTML = topBar + '<div class="empty">Window is entirely in the future — step back to see logged months.</div>'; wireLateness(); wireGoto('#p-compliance'); return; }
 
     // ---- lateness join: rows from the API, per person over the window ----
@@ -1545,15 +1550,22 @@
     const behindRows = rows.filter(r => r.behindHrs > 8);   // engine sorts behind-desc already
     let nowH = 0, nowEff = 0;
     // capM is ALREADY pro-rated for the current month by the engine — don't re-apply.
-    rows.forEach(r => { const c = r.byMonth[nowYm]; if (c && c !== 'leave') { nowH += c.h; nowEff += c.capM; } });
+    rows.forEach(r => { const c = r.byMonth[nowYm]; if (c && c !== 'leave' && !c.early) { nowH += c.h; nowEff += c.capM; } });
     const nowPct = nowEff ? Math.round(nowH / nowEff * 100) : null;
 
     // ---- chase list: the shortest path from this tab to fixed data ----
     const reasonFor = (r) => {
-      const nowCell = r.byMonth[nowYm];
       const lag = lagOf(r.person.id);
-      if (nowCell && nowCell !== 'leave' && nowCell.h === 0) return `Nothing at all logged for ${S.ymLabel(nowYm)} — the month is ${Math.round(prorata * 100)}% gone.`;
-      const expMs = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave');
+      // Months that are actually due — a current month still inside its grace is not one of them.
+      const expMs = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early);
+      const lastDue = expMs[expMs.length - 1];
+      if (lastDue && r.byMonth[lastDue].h === 0) {
+        return lastDue === nowYm
+          ? `Nothing logged yet for ${S.ymLabel(nowYm)} — working day ${expect.elapsed} of ${expect.total}, ${fmtH(r.byMonth[lastDue].capM)} h expected by now.`
+          : `Nothing logged for ${S.ymLabel(lastDue)} — the whole month, ${fmtH(r.byMonth[lastDue].capM)} h, is missing.`;
+      }
+      const zeroMs = expMs.filter(m => r.byMonth[m].h === 0);
+      if (zeroMs.length) return `Nothing logged for ${zeroMs.map(m => S.ymLabel(m)).join(', ')} — ${fmtH(zeroMs.reduce((s, m) => s + r.byMonth[m].capM, 0))} h missing outright.`;
       const under = expMs.filter(m => r.byMonth[m].pct < 0.8).length;
       if (r.compliance < 0.5 && r.expectedMonths >= 3) return `Under target ${under} of ${expMs.length} months — their projects read as under-served in Compare even if the work happened.`;
       const recent = expMs.slice(-3);
@@ -1591,12 +1603,13 @@
         const c = r.byMonth[m];
         if (c === 'leave') return '<i class="lv" style="height:20px" title="On leave"></i>';
         if (!c) return '<i class="na" style="height:4px" title="Not here yet / not expected"></i>';
+        if (c.early) return `<i class="na" style="height:6px" title="${esc(S.ymLabel(m))}: not yet due${c.h ? ' · ' + fmtH(c.h) + ' h logged so far' : ''}"></i>`;
         if (c.pct === 0) return `<i class="zero" style="height:3px" title="${esc(S.ymLabel(m))}: nothing logged"></i>`;
         const h = Math.max(3, Math.round(Math.min(c.pct, 1.25) / 1.25 * 20));
         return `<i${c.pct < 0.8 ? ' class="low"' : ''} style="height:${h}px" title="${esc(S.ymLabel(m))}: ${Math.round(c.pct * 100)}%"></i>`;
       }).join('') + '</span>';
       const trendWord = (r) => {
-        const exp = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave');
+        const exp = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early);
         if (!exp.length) return r.leaveMonths ? ['on leave', '#6b3fa0'] : ['—', 'var(--sav-steel)'];
         const pcts = exp.map(m => r.byMonth[m].pct);
         const last = pcts[pcts.length - 1];
@@ -1643,6 +1656,7 @@
       const cellFor = (c) => {
         if (c === 'leave') return '<td title="On leave of absence — no hours expected"><span class="cell" style="background:#efe6f7;color:#6b3fa0">🌴</span></td>';
         if (!c) return '<td><span class="cell u0">·</span></td>';
+        if (c.early) return `<td title="Not yet due — the month counts from working day ${expect.grace + 1}${c.h ? '; ' + fmtH(c.h) + ' h logged so far' : ''}"><span class="cell u0">${c.h ? fmtH(c.h) + 'h' : 'soon'}</span></td>`;
         const p = Math.round(c.pct * 100);
         const cls = p >= 100 ? 'u2' : p >= 80 ? 'u1' : p > 0 ? 'u3' : 'u5';
         return `<td title="${fmtH(c.h)} / ${fmtH(c.capM)} h"><span class="cell ${cls}" style="${p === 0 ? 'color:#fff' : ''}">${p}%</span></td>`;
@@ -1667,7 +1681,7 @@
       const arrow = (key) => sort.key === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : '';
       const sortTh = (key, label, extra) => `<th ${extra || ''} data-csort="${key}" style="cursor:pointer" title="Click to sort">${label}${arrow(key)}</th>`;
       bodyHtml = `${untracked.length ? `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#f4f2ef;border-left:3px solid #b0b5bc"><b>${untracked.length} ${untracked.length === 1 ? 'person is' : 'people are'} not tracked here</b> — no hours can arrive for them, so a 0% row would be meaningless: ${untracked.slice(0, 8).map(u => `${esc(u.person.name)} <span class="vmini">(${esc(u.reason)})</span>`).join(' · ')}${untracked.length > 8 ? ` · +${untracked.length - 8} more` : ''}. <a href="#" data-goto-tab="mapping">Map them in Mapping →</a></div>` : ''}
-        <div class="hm-wrap"><table class="hm"><thead><tr>${sortTh('name', 'Person', 'class="who"')}${ms.map(m => sortTh('ym:' + m, esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">pro-rata</div>' : ''))).join('')}${sortTh('behind', 'Behind', 'class="pk"')}${sortTh('target', 'Months on target', 'class="pk"')}</tr></thead><tbody>${body || `<tr><td colspan="${ms.length + 3}"><div class="empty" style="border:0">Nobody matches the filter.</div></td></tr>`}</tbody></table></div>
+        <div class="hm-wrap"><table class="hm"><thead><tr>${sortTh('name', 'Person', 'class="who"')}${ms.map(m => sortTh('ym:' + m, esc(S.ymLabel(m)) + (m === nowYm ? '<div class="vmini" style="text-transform:none">' + (expect.early ? 'not yet due' : 'to date') + '</div>' : ''))).join('')}${sortTh('behind', 'Behind', 'class="pk"')}${sortTh('target', 'Months on target', 'class="pk"')}</tr></thead><tbody>${body || `<tr><td colspan="${ms.length + 3}"><div class="empty" style="border:0">Nobody matches the filter.</div></td></tr>`}</tbody></table></div>
         <div class="legend"><span><span class="sw" style="background:#cfe6e4"></span>≥100%</span><span><span class="sw" style="background:#eef4f4"></span>80–99% on target</span><span><span class="sw" style="background:#fce7c2"></span>1–79% behind</span><span><span class="sw" style="background:#e4453a"></span>0% nothing logged</span><span><span class="sw" style="background:#efe6f7"></span>🌴 on leave — not expected</span><span>· = not allocated / not here yet</span><span>Months before someone's first-ever logged hour aren't expected of them ("joined" tag)</span></div>`;
     }
 
@@ -1675,7 +1689,7 @@
       <div class="kpi-strip">
         <div class="kpi-card ${totMissing > 40 ? 'warn' : 'accent'}"><div class="k-num">${fmtH(totMissing)} h</div><div class="k-lbl">Hours missing · this window · vs each person's own bar</div></div>
         <div class="kpi-card ${behindRows.length ? 'warn' : ''}"><div class="k-num">${behindRows.length}<span style="font-size:14px;font-weight:400;color:var(--sav-steel)"> of ${rows.length}</span></div><div class="k-lbl">People behind (&gt;8 h under their bar)</div></div>
-        <div class="kpi-card ${nowPct != null && nowPct < 80 ? 'warn' : ''}"><div class="k-num">${nowPct != null ? nowPct + '%' : '—'}</div><div class="k-lbl">Logged for ${esc(S.ymLabel(nowYm))} so far · month is ${Math.round(prorata * 100)}% gone</div></div>
+        <div class="kpi-card ${nowPct != null && nowPct < 80 ? 'warn' : ''}"><div class="k-num">${nowPct != null ? nowPct + '%' : '—'}</div><div class="k-lbl">${expect.early ? esc(dueLbl) : 'Logged for ' + esc(dueLbl)}</div></div>
         <div class="kpi-card"><div class="k-num">${teamLag != null ? teamLag.toFixed(1) + ' d' : '—'}</div><div class="k-lbl">Avg days to log an entry${teamLag == null ? ' · pull lateness in Data Sources' : ''}</div></div>
       </div>
       ${chaseHtml}

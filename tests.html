@@ -1889,6 +1889,32 @@
       return true;
     });
 
+    /* ---- Clockify reporting: what can fairly be expected of the current month ---- */
+    test('Staffing · compliance', 'the current month is not judged until a working week has passed', () => {
+      const e3 = ST.currentMonthExpectation(new Date('2026-09-03T12:00:00Z'));   // Thu 3 Sep: Tue, Wed elapsed
+      if (!e3.early || e3.frac !== 0 || e3.elapsed !== 2) return 'Sep 3 should be early: ' + JSON.stringify(e3);
+      const e9 = ST.currentMonthExpectation(new Date('2026-09-09T12:00:00Z'));   // Wed 9 Sep: 6 working days elapsed
+      if (e9.early || e9.elapsed !== 6 || Math.abs(e9.frac - 1 / e9.total) > 1e-9) return 'Sep 9 should expect one working day: ' + JSON.stringify(e9);
+      const e30 = ST.currentMonthExpectation(new Date('2026-09-30T12:00:00Z'));
+      return (e30.total === 22 && e30.elapsed === 21 && Math.abs(e30.frac - 16 / 22) < 1e-9) || JSON.stringify(e30);
+    });
+    test('Staffing · compliance', 'on the 3rd, an empty September is not missing hours — an empty August is', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'stp_c', name: 'Casey Logger', title: 'PM', capacityPct: 100 });
+      ST.saveAllocation({ id: 'al_c', personId: 'stp_c', personName: 'Casey Logger', project: 'Qx Compliance Fixture', start: '2026-06', end: '2026-12', pct: 100 });
+      // hours: June and July logged in full, August nothing, September nothing (it is the 3rd)
+      const cap = ST.capacityHours(ST.getPerson('stp_c'));
+      ST.commitClockify({ ok: true, months: ['2026-06', '2026-07', '2026-08'], agg: { 'stp_c|Qx Compliance Fixture|2026-06': cap, 'stp_c|Qx Compliance Fixture|2026-07': cap }, titles: {} }, 'merge');
+      const comp = ST.complianceRows(['2026-06', '2026-07', '2026-08', '2026-09'], { now: '2026-09-03T12:00:00Z' });
+      const r = comp.rows.find(x => x.person.id === 'stp_c');
+      if (!r) return 'person not measured: ' + JSON.stringify(comp.untracked.map(u => u.reason));
+      const sep = r.byMonth['2026-09'], aug = r.byMonth['2026-08'];
+      if (!sep || !sep.early) return 'September should be early: ' + JSON.stringify(sep);
+      if (!aug || aug.h !== 0 || Math.abs(aug.capM - cap) > 1e-6) return 'August should be fully due and empty: ' + JSON.stringify(aug);
+      if (Math.abs(r.behindHrs - cap) > 1e-6) return 'missing should equal one August, got ' + r.behindHrs + ' vs ' + cap;
+      return comp.expect.early === true;
+    });
+
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field
