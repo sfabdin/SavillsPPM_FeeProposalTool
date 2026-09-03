@@ -2238,7 +2238,8 @@
     if (imp && net === 0) {
       $('#sum-total').innerHTML = `${fmtMoney(impTotal)}<span class="unit" style="display:block;font-size:11px;color:var(--sav-teal);">imported · build staffing to reconcile</span>`;
     } else {
-      $('#sum-total').textContent = fmtMoney(net);
+      // "What the client pays": with an on-top fee share that is the bill, not the net.
+      $('#sum-total').textContent = fmtMoney(clientBillTotal());
     }
     $('#sum-discount-pct').textContent = `${state.assumptions.discount}% client discount — applied at total.`;
     $('#sum-lock-detail').textContent = state.assumptions.rateLock
