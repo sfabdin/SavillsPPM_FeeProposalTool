@@ -47,8 +47,10 @@
       agree on the first initial ("Eno Chen" ≠ "Mandy Chen"), and a bare
       surname token only matches if it's reasonably distinctive (>4 chars),
       so "Chen" alone doesn't glue every Chen together. */
+  /* "Tester, Jane" is "Jane Tester" — sheets and Clockify disagree on order. */
+  const flipComma = (s) => { const m = /^([^,]+),\s*(.+)$/.exec(String(s || '')); return m ? (m[2] + ' ' + m[1]) : s; };
   function namesMatch(a, b) {
-    const x = nkey(canonicalName(a)), y = nkey(canonicalName(b));
+    const x = nkey(flipComma(canonicalName(a))), y = nkey(flipComma(canonicalName(b)));
     if (!x || !y) return false;
     if (x === y) return true;
     const xp = x.split(' '), yp = y.split(' ');
@@ -62,7 +64,22 @@
 
   // ---------- month helpers ----------
   function ymOf(d) { return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
-  function ymLabel(ym) { const [y, m] = ym.split('-').map(Number); return MON[m - 1] + " '" + String(y).slice(2); }
+  /* A null or malformed month labels as a dash instead of throwing — one bad
+     row used to take the whole Allocations tab down through its label. */
+  function ymLabel(ym) {
+    const p = /^(\d{4})-(\d{1,2})$/.exec(String(ym || ''));
+    if (!p || +p[2] < 1 || +p[2] > 12) return '—';
+    return MON[+p[2] - 1] + " '" + p[1].slice(2);
+  }
+  /* AN ALLOCATION WITH NO END IS OPEN — active from its start onward. Three
+     functions used to disagree: one read a missing end as forever, two read
+     it as one month, so a person could read loaded in By Person and "logging,
+     not allocated" in Insights at the same time. allocEnd is the one answer;
+     enumerations clamp it to the window they are looking at. */
+  const OPEN_END = '9999-12';
+  const allocEnd = (a) => (a && a.end) || OPEN_END;
+  const isOpenEnded = (a) => !!(a && a.start && !a.end);
+  const clampPct = (v) => Math.max(0, Math.min(100, Number(v) || 0));
   function ymAdd(ym, n) { let [y, m] = ym.split('-').map(Number); m += n; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return y + '-' + String(m).padStart(2, '0'); }
   function ymCmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
   function monthsBetween(a, b) { const out = []; let c = a; let g = 0; while (c <= b && g++ < 240) { out.push(c); c = ymAdd(c, 1); } return out; }
@@ -281,6 +298,9 @@
     const prev = person.id ? storedPerson(person.id) : null;
     if (!person.id) person.id = 'p_' + Math.random().toString(36).slice(2, 9);
     db.people[person.id] = Object.assign(db.people[person.id] || {}, person);
+    /* Always stamped. Newest-wins merge compares updatedAt; a person edit
+       without one lost to any remote copy that had one. */
+    db.people[person.id].updatedAt = new Date().toISOString();
     writeDb(db);
     const next = db.people[person.id];
     const changes = diffFields(prev, next, PERSON_FIELDS);
@@ -340,6 +360,9 @@
     if (a.personId && !db.people[a.personId]) {
       db.people[a.personId] = { id: a.personId, name: a.personName || a.personId, isNewHire: false, isPool: /\bpool/i.test(a.personName || ''), title: '', homeTeam: '', capacityPct: 100, active: true };
     }
+    if (!a.start || !/^\d{4}-\d{2}$/.test(String(a.start))) throw new Error('An allocation needs a start month (YYYY-MM).');
+    if (a.end && String(a.end) < String(a.start)) throw new Error('An allocation cannot end before it starts.');
+    a.pct = clampPct(a.pct);
     a.updatedAt = new Date().toISOString();
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u && u.username) a.updatedBy = u.username; } catch (e) {}
     const prev = a.id ? storedAlloc(a.id) : null;
@@ -584,7 +607,7 @@
   }
 
   // ---------- ENGINE: bandwidth / utilization ----------
-  function allocActiveIn(a, ym) { return a.start && a.end ? (a.start <= ym && ym <= a.end) : (a.start ? a.start <= ym : false); }
+  function allocActiveIn(a, ym) { return !!(a && a.start && a.start <= ym && ym <= allocEnd(a)); }
 
   /* ---------- logging time with nothing planned against it ----------
      Two different holes, both of which end with real hours nobody is looking
@@ -618,8 +641,9 @@
       const person = db.people[e.pid];
       if (!person) return;
       if (person.nonBillable) return;                         // overhead staff need no allocation
-      const covers = (db.allocations || []).some(a => a.personId === e.pid &&
-        (!inWin.size || monthsBetween(a.start, a.end || a.start).some(m => inWin.has(m))));
+      const winEnd = inWin.size ? [...inWin].sort().pop() : null;
+      const covers = (db.allocations || []).some(a => a.personId === e.pid && a.start &&
+        (!inWin.size || monthsBetween(a.start, a.end || winEnd).some(m => inWin.has(m))));
       if (covers) return;
       out.push({
         person, hours: Math.round(e.hours * 10) / 10,
@@ -651,8 +675,8 @@
       (groups[a.personId + '|' + canon(a.project)] = groups[a.personId + '|' + canon(a.project)] || []).push(a);
     });
     const overlaps = (x, y) => {
-      const xs = x.start || '', xe = x.end || x.start || '';
-      const ys = y.start || '', ye = y.end || y.start || '';
+      const xs = x.start || '', xe = allocEnd(x);
+      const ys = y.start || '', ye = allocEnd(y);
       if (!xs || !ys) return false;
       return xs <= ye && ys <= xe;
     };
@@ -665,7 +689,7 @@
       const person = db.people[hit[0].personId] || { id: hit[0].personId, name: hit[0].personName || hit[0].personId };
       // The months where the doubling actually bites, and by how much.
       const months = {};
-      hit.forEach(r => monthsBetween(r.start, r.end || r.start).forEach(m => {
+      hit.forEach(r => monthsBetween(r.start, r.end || ymAdd(r.start, 11)).forEach(m => {
         months[m] = (months[m] || 0) + (parseFloat(r.pct) || 0);
       }));
       const worst = Object.entries(months).sort((a, b) => b[1] - a[1])[0] || ['', 0];
@@ -1158,7 +1182,7 @@
     // of cells, and a trail nobody can read is a trail nobody reads.
     logStaff('staff-actuals', { mode, months: (report.months || []).join(', '), written, skipped });
     // Clockify carries the job title — fill roster titles that are still blank.
-    Object.entries(report.titles || {}).forEach(([pid, t]) => { if (db.people[pid] && !db.people[pid].title) db.people[pid].title = t; });
+    Object.entries(report.titles || {}).forEach(([pid, t]) => { if (db.people[pid] && !db.people[pid].title) { db.people[pid].title = t; db.people[pid].updatedAt = new Date().toISOString(); } });
     writeDb(db);
     return { written, skipped };
   }
@@ -1825,7 +1849,7 @@
       const mapped = maps[nkey(u.name)];
       if (mapped && db.people[mapped]) person = db.people[mapped];
       if (!person) person = Object.values(db.people).find(p => namesMatch(p.name, u.name));
-      if (person && person.title !== t) { person.title = t; set++; }
+      if (person && person.title !== t) { person.title = t; person.updatedAt = new Date().toISOString(); set++; }
     });
     if (set) { writeDb(db); logStaff('staff-titles', { titles: set }); }
     return set;
@@ -2103,6 +2127,9 @@
       db.mappings.renames[nkey(from)] = to;
       // keep any fee link pointing at the old name
       if (db.mappings.fee && db.mappings.fee[nkey(from)]) { db.mappings.fee[nkey(to)] = db.mappings.fee[nkey(from)]; delete db.mappings.fee[nkey(from)]; }
+      // and every Clockify → matrix mapping that pointed at it, or the next
+      // import lands under the old name and splits coverage across two rows
+      Object.keys(db.mappings.projects || {}).forEach(k => { if (db.mappings.projects[k] === from) db.mappings.projects[k] = to; });
     });
     db.meta.canonSyncedAt = new Date().toISOString();
     writeDb(db);
@@ -2238,11 +2265,21 @@
     const keep = {}; Object.values(db.people).forEach(p => { keep[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam, nonBillable: p.nonBillable }; });
     const fresh = defaultDb();
     fresh.actuals = keepActuals; fresh.meta = db.meta || fresh.meta;
+    /* A person's id is a slug of their name, so a sheet that spells a name
+       differently used to mint a second person: the old id's capacity, title
+       and actuals orphaned. Resolve against the roster we already have first
+       (namesMatch handles initials, order and diacritics); slug only for a
+       genuinely new name. Rows with no start month are skipped and counted. */
+    const roster = Object.values(db.people || {});
+    let skipped = 0;
     rows.forEach(r => {
-      const pid = slug(canonicalName(r.person) + (isNewHireName(r.person) ? ' newhire' : ''));
-      if (!fresh.people[pid]) fresh.people[pid] = { id: pid, name: canonicalName(r.person), isNewHire: isNewHireName(r.person), title: '', homeTeam: '', capacityPct: 100, active: true };
+      if (!r.start || !/^\d{4}-\d{2}$/.test(String(r.start))) { skipped++; return; }
+      const known = roster.find(p => namesMatch(p.name, r.person));
+      const shown = flipComma(canonicalName(r.person));
+      const pid = known ? known.id : slug(shown + (isNewHireName(r.person) ? ' newhire' : ''));
+      if (!fresh.people[pid]) fresh.people[pid] = { id: pid, name: known ? known.name : shown, isNewHire: isNewHireName(r.person), title: '', homeTeam: '', capacityPct: 100, active: true };
       if (keep[pid]) Object.assign(fresh.people[pid], keep[pid]);
-      fresh.allocations.push({ id: 'al_' + Math.random().toString(36).slice(2, 9), personId: pid, project: r.proj, client: r.client, status: r.status || 'Active', type: r.type || 'Awarded', start: r.start, end: r.end, pct: +r.pct || 0, note: r.note || '' });
+      fresh.allocations.push({ id: 'al_' + Math.random().toString(36).slice(2, 9), personId: pid, project: r.proj, client: r.client, status: r.status || 'Active', type: r.type || 'Awarded', start: r.start, end: r.end || '', pct: clampPct(r.pct), note: r.note || '' });
     });
     fresh.meta.matrixImportedAt = new Date().toISOString();
     fresh.meta.matrixSource = sourceName || 'upload';
@@ -2250,8 +2287,8 @@
     writeDb(fresh);
     logStaff('staff-import', { source: sourceName || 'upload',
       people: Object.keys(fresh.people).length, allocations: fresh.allocations.length,
-      replacedPeople: before.people, replacedAllocations: before.allocations });
-    return { people: Object.keys(fresh.people).length, allocations: fresh.allocations.length };
+      replacedPeople: before.people, replacedAllocations: before.allocations, skipped: skipped || undefined });
+    return { people: Object.keys(fresh.people).length, allocations: fresh.allocations.length, skipped };
   }
 
   // ---------- export ----------
@@ -2282,6 +2319,6 @@
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers
-    namesMatch, cleanName, isNewHireName,
+    namesMatch, cleanName, isNewHireName, allocEnd, isOpenEnded, clampPct,
   };
 })();

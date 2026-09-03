@@ -1770,6 +1770,61 @@
       return (merged.allocations.length === 1 && !!merged.people.p1) || 'remote was not adopted: ' + JSON.stringify(Object.keys(merged.people));
     });
 
+    /* Step 6 — the engine's edge cases */
+    const cleanStaff = () => { ST.resetAll(); localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] })); };
+
+    test('Staffing · engine', 'an allocation with no end means the same thing everywhere: open', () => {
+      cleanStaff();
+      ST.saveAllocation({ id: 'oe_1', personId: 'stp_open', personName: 'Open Ended', project: 'Forever Job', start: '2026-02', end: '', pct: 50 });
+      if (!ST.allocActiveIn(ST.listAllocations()[0], '2027-06')) return 'allocActiveIn stopped reading it as open';
+      // Insights used to read the same row as ONE month and flag the person as unallocated.
+      ST.commitClockify({ ok: true, months: ['2026-09'], agg: { 'stp_open|Forever Job|2026-09': 40 }, titles: {} }, 'merge');
+      const flagged = ST.loggingWithoutAllocation(['2026-09']).some(x => x.person.id === 'stp_open');
+      return !flagged || 'loggingWithoutAllocation still thinks an open allocation covers only its first month';
+    });
+
+    test('Staffing · engine', 'a null or garbage month labels as a dash, not a crash', () => {
+      try { return (ST.ymLabel(null) === '—' && ST.ymLabel('garbage') === '—' && ST.ymLabel('2026-03') !== '—') || 'labels: ' + [ST.ymLabel(null), ST.ymLabel('garbage'), ST.ymLabel('2026-03')].join(' | '); }
+      catch (e) { return 'threw: ' + e.message; }
+    });
+
+    test('Staffing · engine', 'an allocation without a start month is refused', () => {
+      cleanStaff();
+      try { ST.saveAllocation({ id: 'ns_1', personId: 'stp_x', personName: 'X', project: 'Y', start: '', end: '2026-06', pct: 50 }); return 'saved with no start'; }
+      catch (e) { return /start month/i.test(e.message) || 'wrong error: ' + e.message; }
+    });
+
+    test('Staffing · engine', 'allocation percentage is clamped to 0–100', () => {
+      cleanStaff();
+      const a = ST.saveAllocation({ id: 'pc_1', personId: 'stp_x', personName: 'X', project: 'Y', start: '2026-01', end: '2026-06', pct: '150' });
+      return a.pct === 100 || 'pct stored as ' + JSON.stringify(a.pct);
+    });
+
+    test('Staffing · identity', 'a re-imported sheet keeps a known person\'s id even when spelled differently', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'stp_jane_tester', name: 'Jane Tester', title: 'Senior PM', capacityPct: 80 });
+      ST.importMatrix([{ person: 'Tester, Jane', proj: 'Tower Alpha', client: 'Acme', start: '2026-01', end: '2026-06', pct: 50 }], 'test sheet');
+      const people = ST.listPeople();
+      if (people.length !== 1) return 'a second person was minted: ' + people.map(p => p.id).join(', ');
+      return (people[0].id === 'stp_jane_tester' && people[0].title === 'Senior PM' && people[0].capacityPct === 80) || JSON.stringify(people[0]);
+    });
+
+    test('Staffing · identity', 'renaming a project carries every Clockify mapping with it', () => {
+      cleanStaff();
+      ST.saveAllocation({ id: 'rn_1', personId: 'stp_x', personName: 'X', project: 'Old Name', start: '2026-01', end: '2026-06', pct: 50 });
+      ST.setProjectMapping('Clockify: Old', 'Old Name');
+      ST.commitRenames([{ from: 'Old Name', to: 'New Name' }]);
+      const m = ST.getMappings();
+      const still = Object.values(m.projects || {}).includes('Old Name');
+      return !still || 'mappings.projects still points at the old name';
+    });
+
+    test('Staffing · identity', 'every person edit is stamped, so newest-wins can see it', () => {
+      cleanStaff();
+      const p = ST.savePerson({ id: 'stp_stamp', name: 'Stamp Me', title: '' });
+      return !!p.updatedAt || 'savePerson left updatedAt empty';
+    });
+
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field

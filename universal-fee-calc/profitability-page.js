@@ -224,7 +224,16 @@
     if (!accessOk()) { renderDenied(); return; }
     buildIdentityBar();
     // shared staff.json (actuals + mappings) — pull latest before first render
-    try { const Box = window.UFC_Box; if (Box && Box.enabled && Box.pullStaff) { const remote = await Box.pullStaff(); if (remote) S.hydrateFromRemote(remote); } } catch (e) {}
+    try {
+      const Box = window.UFC_Box;
+      if (Box && Box.enabled && Box.pullStaff) {
+        const remote = await Box.pullStaff(); if (remote) S.hydrateFromRemote(remote);
+        /* This page WRITES too (the fee-link cell), and it had no remote
+           attached — the link lived in this browser only, and this page's own
+           next load replaced it with Box's copy. */
+        if (Box.uploadStaff && S.attachRemote) S.attachRemote((db) => { Box.uploadStaff(db).catch(e => console.warn('staff push failed', e)); });
+      }
+    } catch (e) {}
     setStoreNote();
     state.winStart = S.ymAdd(S.currentYM(), -3);
     const startSel = $('#win-start');
