@@ -143,7 +143,7 @@
     const roster = STORE.impersonationRoster();
     const imp = STORE.getImpersonation();
     const opts = [`<option value="__me__">Me — Salim (admin · all projects)</option>`]
-      .concat(roster.map(r => `<option value="${esc(r.username)}">${esc(r.name)} · ${r.role}</option>`))
+      .concat(roster.map(r => `<option value="${esc(r.username)}">${esc(r.name)}${r.role === 'admin' ? ' · admin' : ''}</option>`))
       .concat([`<option value="__custom__">Custom email…</option>`]);
     sel.innerHTML = opts.join('');
     sel.value = imp ? esc(imp) : '__me__';

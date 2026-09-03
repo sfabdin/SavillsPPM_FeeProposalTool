@@ -1856,6 +1856,17 @@
       const junk = S.saveProject(base({ project: { name: 'Junk rated', client: 'Acme', status: 'draft', rating: 'whatever' } }));
       return (junk.project.rating === undefined && S.ratingFor(junk) === 5) || ('junk rating became ' + JSON.stringify(junk.project.rating) + ' / ' + S.ratingFor(junk));
     });
+    test('Vocabulary', 'the Viewing-as roster lists each person once, by name, never by email', () => {
+      const r = S.impersonationRoster();
+      const emails = r.filter(x => /@/.test(x.name)).map(x => x.name);
+      if (emails.length) return 'email shown as a name: ' + emails.join(', ');
+      const names = r.map(x => x.name.toLowerCase()); const dup = names.filter((n, i) => names.indexOf(n) !== i);
+      if (dup.length) return 'listed twice: ' + [...new Set(dup)].join(', ');
+      const ap = r.filter(x => x.username === 'acpeters@savills.us' || x.name === 'Andrew Peters');
+      if (ap.length !== 1) return 'Andrew Peters appears ' + ap.length + ' times';
+      if (S.displayNameForLogin('sabdin@savills.us') !== 'Salim Abdin' || S.displayNameForLogin('acpeters@savills.us') !== 'Andrew Peters') return 'displayNameForLogin wrong';
+      return r.filter(x => x.name === 'Salim Abdin').length === 1 || 'two logins for one admin should fold into one row';
+    });
     test('Vocabulary', 'months display as mmm-YY everywhere', () => {
       const U = window.UFC_UI;
       if (U.ymLabel('2026-09') !== 'Sep-26') return 'ymLabel padded: ' + U.ymLabel('2026-09');
