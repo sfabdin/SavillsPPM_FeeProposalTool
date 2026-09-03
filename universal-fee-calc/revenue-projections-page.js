@@ -739,7 +739,7 @@
   });
   /* ---------- open slips banner ---------- */
   const MLBL = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const YMLBL = (ym) => { const [y, m] = String(ym).split('-').map(Number); return MLBL[m - 1] + ' ' + y; };
+  const YMLBL = (ym) => { const [y, m] = String(ym).split('-').map(Number); return MLBL[m - 1] + '-' + String(y).slice(-2); };   // mmm-YY
   const monthsBetween = (a, b) => { const [ay, am] = String(a).split('-').map(Number), [by, bm] = String(b).split('-').map(Number); return (by - ay) * 12 + (bm - am); };
   /* ---------- possible double-counted rows ----------
      From the Aug 13 review: Lazard appeared BOTH as a rolled-up line and as

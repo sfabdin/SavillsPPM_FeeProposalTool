@@ -31,7 +31,7 @@ for (const p of [...new Set(pages)]){const page=await browser.newPage();const er
      timeline:{startMonth:1,startYear:2026,endMonth:12,endYear:2026},phases:[{id:'p1',name:'Delivery',length:12}],groups:[{id:'core',name:'Core'}],
      roles:[{id:'r1',titleId:'pm',tierId:'mid',rateSource:'grid',groupId:'core',fte:{p1:100},fteMonthly:{}}],
      assumptions:{hrsPerMo:173.33,escalation:3,industryAdj:20,discount:5,rateLock:false,feeBasis:'fixed',nteCeiling:0,billingMode:'phase',feeShare:{enabled:false,pct:10,mode:'offtop'},catalogBaseYear:2024},
-     financials:{net:120000,gross:126000,byMonth:Array.from({length:12},(_,i)=>({year:2026,month:i+1,amount:10000,invoice:10000,net:10000})),stale:false,frozenAt:'2026-01-10T00:00:00Z'}});
+     financials:{net:120000,gross:126000,byMonth:Array.from({length:12},(_,i)=>({ym:'2026-'+(i+1),year:2026,month:i+1,amount:10000,invoice:10000,net:10000})),stale:false,frozenAt:'2026-01-10T00:00:00Z'}});
    const db={schemaVersion:2,projects:{},activity:[]};
    [rec('sm_a','Alpha Tower Relocation','active',1,'2026-08-30T00:00:00Z'),rec('sm_b','Beta Campus Fit-out','won',2,'2026-08-31T00:00:00Z'),rec('sm_c','Gamma HQ Pursuit','submitted',4,'2026-09-01T00:00:00Z'),rec('sm_d','Delta Lab (lost)','lost',7,'2026-07-01T00:00:00Z')].forEach(r=>db.projects[r.id]=r);
    localStorage.setItem('savills-ppm-fee-db:v1',JSON.stringify(db));
