@@ -250,7 +250,12 @@
     });
 
     const cont = $('#groups');
-    if (!order.length) { cont.innerHTML = '<div class="empty">No projects match.</div>'; return; }
+    if (!order.length) {
+      cont.innerHTML = !all.length && window.UFC_UI && window.UFC_UI.emptyState
+        ? window.UFC_UI.emptyState({ title: 'No projects to check yet', body: 'This page lists the projects you can see and the fields still missing on each. It fills in as soon as there is a project in your book.', actions: [{ label: '+ New project', href: 'Universal Fee Calculator.html' }] })
+        : '<div class="empty">No projects match.</div>';
+      return;
+    }
 
     cont.innerHTML = order.map(g => {
       const n = g.rows.length;

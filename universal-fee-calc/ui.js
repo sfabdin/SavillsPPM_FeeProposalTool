@@ -13,6 +13,8 @@
    window.UFC_UI.fmtMoney(n)       — '$1,234' · negatives '-$1,234' · null '—'
    window.UFC_UI.fmtMoneyFull(n)   — '$1,234.56'
    window.UFC_UI.debounce(fn, ms)
+   window.UFC_UI.emptyState({ title, body, actions: [{ label, href }] })
+                                   — HTML for a page that has nothing to show yet
    window.UFC_UI.toast(message, kind)
    window.UFC_UI.debounce(fn, ms)   — trailing-edge debounce for search
                                       boxes that rebuild a whole tab
@@ -110,5 +112,25 @@
     return (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  window.UFC_UI = { toast, debounce, esc, MONTHS, monthLabel, ymLabel, fmtMoney, fmtMoneyFull };
+  /* An empty page should say why it is empty and what to do next, in the
+     same voice everywhere — not a blank table or a row of zeros. */
+  let emptyCss = false;
+  function emptyState(o) {
+    if (!emptyCss) {
+      emptyCss = true;
+      const st = document.createElement('style');
+      st.textContent = `
+      .ufc-empty { border: 1px dashed rgba(37,39,58,.28); background: #fff; padding: 28px 24px; margin: 8px 0 18px; text-align: center; }
+      .ufc-empty h3 { margin: 0 0 6px; font-size: 15px; color: ${NAVY}; }
+      .ufc-empty p { margin: 0 auto 12px; max-width: 560px; font-size: 13px; line-height: 1.5; color: #5a6070; }
+      .ufc-empty a { display: inline-block; margin: 0 6px; padding: 8px 14px; background: ${NAVY}; color: #fff; text-decoration: none; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+      .ufc-empty a.ghost { background: #fff; color: ${NAVY}; border: 1px solid ${NAVY}; }`;
+      document.head.appendChild(st);
+    }
+    const acts = (o.actions || []).map((a, i) => '<a href="' + esc(a.href) + '"' + (i ? ' class="ghost"' : '') + '>' + esc(a.label) + '</a>').join('');
+    return '<div class="ufc-empty" role="status"><h3>' + esc(o.title || 'Nothing here yet') + '</h3>' +
+      (o.body ? '<p>' + esc(o.body) + '</p>' : '') + acts + '</div>';
+  }
+
+  window.UFC_UI = { toast, debounce, esc, MONTHS, monthLabel, ymLabel, fmtMoney, fmtMoneyFull, emptyState };
 })();

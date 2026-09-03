@@ -106,6 +106,10 @@
   /** Trim a number for display: up to 6 decimals, no trailing zeros. Keeps the
       stored value exact while showing a readable string (e.g. 12.345678). */
   const trimNum = (n) => { if (n == null || isNaN(n)) return ''; return parseFloat(Number(n).toFixed(6)).toString(); };
+  /* The discount input shows two decimals. State keeps the exact figure a
+     reconcile-to-target produced (so net ties to the penny); the display only
+     feeds back if the user types over it. */
+  const trimPct = (n) => { if (n == null || isNaN(n)) return ''; return parseFloat(Number(n).toFixed(2)).toString(); };
   const fmtMoneySmall = (n) => (!n || Math.abs(n) < 0.5) ? '—' : '$' + Math.abs(Math.round(n)).toLocaleString();
   const monthLabel = (y, m) => window.UFC_UI.monthLabel(y, m);   // 'Sep-26' — the one month format
   const monthLabelLong = (y, m) => `${MONTH_FULL[m-1]} ${y}`;
@@ -1230,7 +1234,7 @@
     // the exact value in state is what drives the math.
     state.assumptions.discount = d * 100;
     const discInput = $('#a-disc');
-    if (discInput) discInput.value = trimNum(state.assumptions.discount);
+    if (discInput) discInput.value = trimPct(state.assumptions.discount);
 
     renderAll();
 
@@ -1860,7 +1864,7 @@
     $('#a-hrs').value = a.hrsPerMo;
     $('#a-esc').value = a.escalation;
     $('#a-ind').value = a.industryAdj;
-    $('#a-disc').value = trimNum(a.discount);
+    $('#a-disc').value = trimPct(a.discount);
     $('#a-lock').checked = a.rateLock;
     $('#a-catbase').textContent = a.catalogBaseYear;
     // Fee basis (Fixed / NTE)

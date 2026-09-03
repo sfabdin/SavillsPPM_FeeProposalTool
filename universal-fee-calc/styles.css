@@ -180,6 +180,7 @@ html, body {
   text-transform: uppercase;
   color: var(--sav-steel);
 }
+.field label .req { color: var(--sav-red); margin-left: 2px; font-size: 12px; letter-spacing: 0; }
 .field input, .field select {
   font-family: var(--font-display);
   font-weight: 600;

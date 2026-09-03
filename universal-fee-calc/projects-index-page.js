@@ -295,11 +295,66 @@
   }
 
   /* ---------- Render ---------- */
+  /* ---- What changed on your projects, last 7 days ----
+     The audit trail, scoped the same way the table is: only projects you can
+     see, only the last week, grouped by project with the latest action first.
+     A leader opens the index and knows what moved without opening the Change
+     Log — which is one click away for the detail. */
+  const RC_DAYS = 7;
+  const RC_LABEL = { create: 'Created', edit: 'Edited', status: 'Status changed', book: 'Booked', delete: 'Deleted', restore: 'Restored',
+    'co-create': 'Change order', 'co-approve': 'CO approved', 'reconcile-commit': 'Reconciled', 'plan-adjust': 'Plan adjusted',
+    'schedule-shift': 'Schedule shifted', slip: 'Slipped', 'slip-remove': 'Slip removed', 'ledger-post': 'Actuals posted',
+    'ledger-allocate': 'Allocated', 'ledger-map': 'Mapped', 'ledger-match': 'Mapped', 'project-from-ledger': 'Created from ledger' };
+  const rcKind = (a) => /^(book|co-approve)$/.test(a) ? 'book' : /^(delete|purge)$/.test(a) ? 'delete' : '';
+  const rcLabel = (a) => RC_LABEL[a] || (/^staff-/.test(a) ? 'Staffing changed' : /^ledger-/.test(a) ? 'Ledger updated' : (a || 'Changed'));
+  function renderRecentChanges(visible) {
+    const host = $('#recent-changes');
+    if (!host || !STORE.listActivity) return;
+    const ids = new Set(visible.map(p => p.id));
+    const since = Date.now() - RC_DAYS * 86400000;
+    const byProj = new Map();
+    let total = 0;
+    for (const e of STORE.listActivity(null)) {
+      if (!e || !e.ts || Date.parse(e.ts) < since) continue;
+      if (!e.projectId || !ids.has(e.projectId)) continue;
+      total++;
+      const g = byProj.get(e.projectId) || { n: 0, latest: e };
+      g.n++; if (!g.latest || (e.ts > g.latest.ts)) g.latest = e;
+      byProj.set(e.projectId, g);
+    }
+    if (!total) { host.hidden = true; host.innerHTML = ''; return; }
+    const rows = [...byProj.entries()].sort((a, b) => (b[1].latest.ts || '').localeCompare(a[1].latest.ts || '')).slice(0, 8);
+    const li = rows.map(([pid, g]) => {
+      const p = visible.find(x => x.id === pid) || {};
+      const name = (p.project && p.project.name) || (g.latest.meta && g.latest.meta.name) || '(project removed)';
+      const who = g.latest.actorName || g.latest.actor || '';
+      const a = g.latest.action;
+      return '<li><span class="rc-what ' + rcKind(a) + '">' + esc(rcLabel(a)) + '</span>' +
+        '<a class="rc-proj" href="Universal Fee Calculator.html?id=' + encodeURIComponent(pid) + '">' + esc(name) + '</a>' +
+        '<span class="rc-who">' + esc(who) + ' · ' + esc(fmtRelative(g.latest.ts)) + (g.n > 1 ? ' · ' + g.n + ' changes' : '') + '</span></li>';
+    }).join('');
+    host.innerHTML = '<div class="rc-head"><h2>Changed on your projects · last ' + RC_DAYS + ' days</h2>' +
+      '<span class="rc-sum">' + total + ' change' + (total === 1 ? '' : 's') + ' across ' + byProj.size + ' project' + (byProj.size === 1 ? '' : 's') +
+      (byProj.size > rows.length ? ' · showing the ' + rows.length + ' most recent' : '') + ' — <a href="Change Log.html">open the Change Log</a></span></div><ul>' + li + '</ul>';
+    host.hidden = false;
+  }
+  /* The boot pull brings the current month's trail; in the first week of a
+     month the window reaches into the previous one, so ask for it too. */
+  function ensureRecentMonths() {
+    const Box = window.UFC_Box;
+    if (!Box || !Box.enabled || !Box.pullActivityMonths || !STORE.activityMonths) return;
+    const d = new Date(); if (d.getUTCDate() > RC_DAYS) return;
+    const prev = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+    if (STORE.activityMonths().includes(prev)) return;
+    Box.pullActivityMonths([prev]).then(() => render()).catch(() => {});
+  }
+
   function render() {
     const everything = STORE.listProjects();
     buildIdentityBar(everything);
     // Apply the access wall FIRST — members never see other teams' projects.
     const all = STORE.visibleProjects(everything);
+    try { renderRecentChanges(all); } catch (e) { console.warn('recent changes', e); }
     populateFilters(all);
     renderKpis(all);
     renderClientRollup(all);
@@ -710,6 +765,7 @@
     // One-time lead-id normalization for legacy/imported records (NOT per render).
     if (STORE.migrateLeadIds) { try { STORE.migrateLeadIds(); } catch (e) {} }
     render();
+    try { ensureRecentMonths(); } catch (e) {}
   }
   if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
 })();

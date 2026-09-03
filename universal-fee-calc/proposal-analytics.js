@@ -244,7 +244,18 @@
       <table class="an"><thead><tr><th class="l">Proposal</th><th class="l">Status</th><th>Fee</th><th>Disc.</th><th>Health</th></tr></thead><tbody>${list}</tbody></table>`;
   }
 
-  function renderAll() { prep(); renderKpis(); renderWinSize(); renderLossReasons(); renderDiscount(); renderHealth(); populateClients(); renderClientProfile(); }
+  function renderAll() {
+    prep();
+    const host = document.getElementById('kpis');
+    if (host && window.UFC_UI && window.UFC_UI.emptyState) {
+      const prior = host.previousElementSibling;
+      if (prior && prior.classList.contains('ufc-empty')) prior.remove();
+      if (!ROWS.length) host.insertAdjacentHTML('beforebegin', window.UFC_UI.emptyState({
+        title: 'No proposals to analyse yet',
+        body: 'This page reads the proposals you can see. Win rates and discount patterns appear once there are decided (won or lost) records in your book.',
+        actions: [{ label: '+ New project', href: 'Universal Fee Calculator.html' }, { label: 'Projects Index', href: 'Projects Index.html' }] }));
+    }
+    renderKpis(); renderWinSize(); renderLossReasons(); renderDiscount(); renderHealth(); populateClients(); renderClientProfile(); }
 
   function ready() {
     const me = STORE.getCurrentUser();

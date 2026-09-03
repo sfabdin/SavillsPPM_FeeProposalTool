@@ -96,6 +96,9 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
     <div class="cr-body" id="cr-body"></div>
   </details>
 
+  <!-- ===== What changed on your projects ===== -->
+  <section class="recent-changes" id="recent-changes" hidden aria-live="polite"></section>
+
   <!-- ===== Identity / access bar ===== -->
   <div class="identity-bar" id="identity-bar">
     <div class="id-who">
@@ -142,6 +145,7 @@ Weighted forecast = each project's fee × its rating confidence, so a client's n
   </div>
 </div>
 
+<script>window.UFC_NEEDS = ['activity'];</script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <!-- Lazy Excel loader. ExcelJS itself is ~950KB and is fetched only when

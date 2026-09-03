@@ -389,3 +389,17 @@
 @media (max-width: 900px) {
   .system-nav { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---- What changed on your projects, last 7 days ---- */
+.recent-changes { background: #fff; border: 1px solid rgba(37,39,58,.12); border-left: 4px solid var(--sav-yellow); padding: 12px 16px 10px; margin: 0 0 18px; }
+.recent-changes .rc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.recent-changes h2 { margin: 0; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--sav-steel); font-weight: 800; }
+.recent-changes .rc-sum { font-size: 12.5px; color: #4a4f5e; }
+.recent-changes .rc-sum a { color: var(--sav-teal); font-weight: 700; }
+.recent-changes ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 18px; }
+.recent-changes li { font-size: 12.5px; line-height: 1.45; display: flex; gap: 8px; align-items: baseline; }
+.recent-changes li .rc-what { font-weight: 700; color: var(--sav-navy); white-space: nowrap; }
+.recent-changes li .rc-what.book { color: #1f8a4c; } .recent-changes li .rc-what.delete { color: var(--sav-red); }
+.recent-changes li .rc-proj { color: var(--sav-navy); text-decoration: none; font-weight: 600; }
+.recent-changes li .rc-proj:hover { color: var(--sav-teal); }
+.recent-changes li .rc-who { color: #79828c; }
