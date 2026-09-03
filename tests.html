@@ -680,10 +680,13 @@
     return true;
   });
 
-  test('Validation', 'non-numeric hours, an out-of-range rating and an unknown status are refused', () => {
+  test('Validation', 'an unrecognisable rating is dropped, never a reason to refuse the save', () => {
+    const r = S.saveProject(base({ project: { name: 'X', client: 'C', status: 'draft', rating: 9 } }));
+    return (r.project.rating === undefined && S.ratingFor(r) === 5) || ('rating became ' + JSON.stringify(r.project.rating));
+  });
+  test('Validation', 'non-numeric hours and an unknown status are refused', () => {
     const bad = [
       base({ assumptions: { hrsPerMo: 'abc' } }),
-      base({ project: { name: 'X', client: 'C', status: 'draft', rating: 9 } }),
       base({ project: { name: 'X', client: 'C', status: 'maybe' } }),
     ];
     for (const r of bad) {
@@ -1843,6 +1846,15 @@
     });
 
     /* ---- One vocabulary: the shared helpers every page aliases ---- */
+    test('Vocabulary', 'a rating saved as its label still saves, and reads as that rating', () => {
+      if (S.resolveRating('50–74%') !== 4 || S.resolveRating('50-74%') !== 4 || S.resolveRating('Booked') !== 1 || S.resolveRating('<25%') !== 6) return 'label did not resolve: ' + [S.resolveRating('50–74%'), S.resolveRating('Booked'), S.resolveRating('<25%')].join(',');
+      if (S.resolveRating('4') !== 4 || S.resolveRating(7) !== 7 || S.resolveRating('nonsense') !== null) return 'number/text handling wrong';
+      const r = base({ project: { name: 'Label rated', client: 'Acme', status: 'draft', rating: '50–74%' } });
+      const saved = S.saveProject(r);
+      if (saved.project.rating !== 4) return 'saved rating is ' + JSON.stringify(saved.project.rating);
+      const junk = S.saveProject(base({ project: { name: 'Junk rated', client: 'Acme', status: 'draft', rating: 'whatever' } }));
+      return (junk.project.rating === undefined && S.ratingFor(junk) === 5) || ('junk rating became ' + JSON.stringify(junk.project.rating) + ' / ' + S.ratingFor(junk));
+    });
     test('Vocabulary', 'months display as mmm-YY everywhere', () => {
       const U = window.UFC_UI;
       if (U.ymLabel('2026-09') !== 'Sep-26') return 'ymLabel padded: ' + U.ymLabel('2026-09');
