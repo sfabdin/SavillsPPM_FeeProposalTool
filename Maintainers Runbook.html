@@ -544,7 +544,7 @@
   </ol>
   <div class="box">
     <span class="tag">What the browser caches (vercel.json)</span>
-    Pages and JSON are always revalidated (<code>max-age=0</code>), so a deploy shows up on the next navigation. Scripts and stylesheets are cached for <strong>10 minutes</strong> (<code>max-age=600</code>) &mdash; long enough that moving between pages costs nothing, short enough that a page and its scripts can never disagree for more than ten minutes after a deploy. Fonts, icons and logos are cached for a week; <code>/vendor/</code> for a day. There are no <code>?v=</code> stamps to bump: don't add any.
+    Pages, scripts, stylesheets and JSON are always revalidated (<code>max-age=0, must-revalidate</code>): the browser asks once per file and gets a 304 when nothing changed, so a deploy shows up on the next navigation and a page can never run against a stale script. (A ten-minute script cache was tried and produced exactly that skew &mdash; an old calculator against a new store &mdash; so it was removed.) Fonts, icons and logos are cached for a week; <code>/vendor/</code> for a day. There are no <code>?v=</code> stamps to bump: don't add any.
   </div>
   <div class="box">
     <span class="tag">Script order on a page</span>
