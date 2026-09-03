@@ -77,6 +77,7 @@
   function complianceCell(c) {
     if (c === 'leave') return { fill: C_LEAVE, value: 'leave', font: { argb: 'FF6B3FA0' }, note: 'On leave of absence — no hours expected' };
     if (!c) return { fill: C_NA, value: null, font: { argb: STEEL }, note: 'Not allocated / not here yet' };
+    if (c.early) return { fill: C_NA, value: c.h ? round1(c.h) + ' h' : 'not yet due', font: { argb: STEEL }, note: 'Current month inside its one-week grace — nothing expected yet' + (c.h ? `; ${round1(c.h)} h logged so far` : '') };
     const p = Math.round(c.pct * 100);
     const fill = p >= 100 ? C_OVER : p >= 80 ? C_OK : p > 0 ? C_LOW : C_ZERO;
     return {
@@ -671,7 +672,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
   const ws = wb.addWorksheet('Clockify Reporting', { views: [{ state: 'frozen', ySplit: 1, xSplit: 1 }] });
   headerRow(ws, [
     { h: 'Person', w: 26 },
-    ...ms.map(m => ({ h: S.ymLabel(m) + (m === comp.nowYm ? ' (pro-rata)' : ''), w: 11, align: 'right' })),
+    ...ms.map(m => ({ h: S.ymLabel(m) + (m === comp.nowYm ? (comp.expect && comp.expect.early ? ' (not yet due)' : ' (to date)') : ''), w: 11, align: 'right' })),
     { h: 'Behind (hrs)', w: 12, align: 'right' },
     { h: 'Months on target', w: 15, align: 'right' },
     { h: 'Logged (hrs)', w: 12, align: 'right' },
@@ -733,7 +734,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
     r++;
   });
   r++;
-  ws.getCell(`A${r}`).value = `The bar is ${S.monthHours()} h/month × each person's capacity %, so part-timers are measured against their own number. Months before someone's first logged hour, and months on leave, are not expected of them. Current month is pro-rata.`;
+  ws.getCell(`A${r}`).value = `The bar is ${S.monthHours()} h/month × each person's capacity %, so part-timers are measured against their own number. Months before someone's first logged hour, and months on leave, are not expected of them. The current month counts by working days elapsed less a one-week grace, and is not judged until that grace is used up; the previous month is always fully due.`;
   ws.getCell(`A${r}`).font = { name: 'Calibri', italic: true, size: 9, color: { argb: STEEL } };
   r += 2;
   if (comp.untracked.length) {
@@ -761,7 +762,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
       const emp = S.personEmploymentType(row.person);
       ms.forEach(ym => {
         const c = row.byMonth[ym];
-        const state = c === 'leave' ? 'On leave' : !c ? 'Not expected' : (c.pct >= 1 ? 'At/over bar' : c.pct >= 0.8 ? 'On target' : c.pct > 0 ? 'Behind' : 'Nothing logged');
+        const state = c === 'leave' ? 'On leave' : !c ? 'Not expected' : c.early ? 'Not yet due' : (c.pct >= 1 ? 'At/over bar' : c.pct >= 0.8 ? 'On target' : c.pct > 0 ? 'Behind' : 'Nothing logged');
         d.getCell(`A${dr}`).value = row.person.name;
         d.getCell(`B${dr}`).value = row.person.title || '';
         d.getCell(`C${dr}`).value = emp === 'internal' ? 'Internal' : emp === 'part' ? 'Part time' : 'Full time';

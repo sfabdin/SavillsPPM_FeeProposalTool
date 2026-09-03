@@ -1301,12 +1301,29 @@
           come back in `untracked`, not as a 0% row
       opts.clockifyUsers (optional) sharpens the untracked reason text.
       Returns { months, rows, untracked, prorata, nowYm }. */
+  /* How much of the CURRENT month can fairly be expected so far.
+     People log in arrears — end of day, end of week — so the month is judged
+     by working days elapsed (Mon–Fri, before today) minus a grace of one
+     working week. Until that grace is used up the month is "not yet due":
+     nothing is expected, nothing is counted as missing. The previous month
+     is always fully due: by the 1st it is over, and the grace has passed. */
+  const COMPLIANCE_GRACE_WORKING_DAYS = 5;
+  function workingDaysIn(y, m) { let n = 0; const d = new Date(Date.UTC(y, m - 1, 1)); while (d.getUTCMonth() === m - 1) { const w = d.getUTCDay(); if (w !== 0 && w !== 6) n++; d.setUTCDate(d.getUTCDate() + 1); } return n; }
+  function workingDaysElapsed(now) { let n = 0; const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)); while (d.getUTCDate() < now.getUTCDate() && d.getUTCMonth() === now.getUTCMonth()) { const w = d.getUTCDay(); if (w !== 0 && w !== 6) n++; d.setUTCDate(d.getUTCDate() + 1); } return n; }
+  function currentMonthExpectation(now) {
+    now = now || new Date();
+    const total = workingDaysIn(now.getUTCFullYear(), now.getUTCMonth() + 1);
+    const elapsed = workingDaysElapsed(now);
+    const due = Math.max(0, elapsed - COMPLIANCE_GRACE_WORKING_DAYS);
+    return { frac: total ? Math.min(1, due / total) : 0, elapsed, total, grace: COMPLIANCE_GRACE_WORKING_DAYS, early: due <= 0 };
+  }
   function complianceRows(monthsList, opts) {
     opts = opts || {};
-    const nowYm = currentYM();
+    const now = opts.now ? new Date(opts.now) : new Date();
+    const nowYm = ymOf(now);
     const ms = (monthsList || []).filter(m => m <= nowYm);
-    const now = new Date();
-    const prorata = Math.min(1, now.getUTCDate() / 30);
+    const expect = currentMonthExpectation(now);
+    const prorata = expect.frac;
     const db = readDb();
     const perPM = {};
     Object.entries(db.actuals).forEach(([k, h]) => { const [pid, , ym] = k.split('|'); (perPM[pid] = perPM[pid] || {})[ym] = (perPM[pid][ym] || 0) + h; });
@@ -1346,6 +1363,12 @@
         const active = personAllocationsIn(person.id, ym).length > 0;
         const h = logged[ym] || 0;
         if (!active && !h) { byMonth[ym] = null; return; }
+        if (ym === nowYm && expect.early) {
+          // Too early in the month to expect anything: show what has been
+          // logged, expect nothing, count nothing as missing.
+          byMonth[ym] = { h, capM: 0, pct: h > 0 ? 1 : 0, early: true };
+          return;
+        }
         const capM = cap * (ym === nowYm ? prorata : 1);
         const pct = capM ? h / capM : 0;
         byMonth[ym] = { h, capM, pct };
@@ -1353,7 +1376,7 @@
         if (pct >= 0.8) okMonths++;
       });
       if (!expectedMonths) { if (leaveMonths) untracked.push({ person, reason: 'on leave for this whole window' }); return; }
-      const lastMs = ms.filter(m => byMonth[m] && byMonth[m] !== 'leave').slice(-1)[0];
+      const lastMs = ms.filter(m => byMonth[m] && byMonth[m] !== 'leave' && !byMonth[m].early).slice(-1)[0];
       const lastPct = lastMs ? byMonth[lastMs].pct : 0;
       rows.push({
         person, byMonth, expectedMonths, okMonths, totLogged, totCap,
@@ -1363,7 +1386,7 @@
       });
     });
     rows.sort((a, b) => b.behindHrs - a.behindHrs || a.lastPct - b.lastPct);
-    return { months: ms, rows, untracked, prorata, nowYm };
+    return { months: ms, rows, untracked, prorata, nowYm, expect };
   }
 
   /** Contract role titles with no allocated person whose title plausibly
@@ -2298,7 +2321,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows, currentMonthExpectation, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
