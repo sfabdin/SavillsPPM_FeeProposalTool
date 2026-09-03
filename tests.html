@@ -59,6 +59,7 @@
 <!-- Pulled in for its workbook parser only; it renders nothing without the
      reconciliation page's markup. -->
 <script src="universal-fee-calc/revenue-reconcile.js"></script>
+<script src="exec-reporting/core.js"></script>
 <script>
 (function () {
   'use strict';
@@ -713,6 +714,32 @@
     if (!changed) return 'nothing to normalise — the fixture lead did not resolve (' + JSON.stringify(S.getProject(p.id).project) + ')';
     return pushes === 0 || 'a read-side normalisation pushed to Box ' + pushes + ' time(s)';
   });
+
+  /* ============ EXECUTIVE REPORTING reads the store's model ============ */
+  (function () {
+    const CORE = window.EXEC_CORE;
+    if (!CORE) { test('Exec · model', 'core loads', () => 'EXEC_CORE not present'); return; }
+    const conf = () => CORE.configure({ ratings: S.RATINGS, statusDefaultRating: S.STATUS_DEFAULT_RATING, leaders: S.REVENUE_LEADERS, industries: S.INDUSTRIES, fmtMoney: S.fmtMoney });
+
+    test('Exec · model', 'rating weights are the store\'s, not a second table', () => {
+      conf();
+      for (const r of S.RATINGS) if (CORE.weightFor(r.n) !== r.weight) return 'rating ' + r.n + ': exec ' + CORE.weightFor(r.n) + ' vs store ' + r.weight;
+      return true;
+    });
+    test('Exec · model', 'a closed project is booked, not dropped from every tier', () => {
+      conf();
+      return CORE.ratingFromStatus('closed') === S.STATUS_DEFAULT_RATING.closed || 'closed → ' + CORE.ratingFromStatus('closed');
+    });
+    test('Exec · model', 'money prints the way the store prints it', () => {
+      conf();
+      return CORE.fmtMoney(-1250000) === S.fmtMoney(-1250000) || CORE.fmtMoney(-1250000) + ' vs ' + S.fmtMoney(-1250000);
+    });
+    test('Exec · model', 'a leader added through the vocabulary resolves in Exec too', () => {
+      conf();
+      const known = S.REVENUE_LEADERS[0];
+      return CORE.leaderDisplay(known.aliases[0]) === known.displayName || 'alias ' + known.aliases[0] + ' → ' + CORE.leaderDisplay(known.aliases[0]);
+    });
+  })();
 
   /* ============ REVENUE LEDGER (year of actuals, cell by cell) ============
      cell recognised = billed + feeShare + (accrual − last known accrual)

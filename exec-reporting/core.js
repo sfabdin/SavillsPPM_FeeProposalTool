@@ -21,41 +21,75 @@
 (function (root) {
   'use strict';
 
-  /* ---------------- ratings (§8, KY's canonical ruling) ---------------- */
-  const RATING_WEIGHTS = { 1: 1.0, 2: 0.9, 3: 0.75, 4: 0.5, 5: 0, 6: 0, 7: 0 };
-  const RATING_LABELS = {
-    1: 'Booked', 2: '90% (accrued)', 3: 'Likely ~75%', 4: 'Likely ~50%',
-    5: '<50%', 6: '<25%', 7: 'Dead',
+  /* ---------------- the model: injected, never a second copy ----------------
+     This module used to carry its own rating weights, status→rating map,
+     leader directory, industry taxonomy and money format — and every one of
+     them had drifted from the store's. A leader saw one weighted pipeline on
+     Revenue Projections and a different one here. The store (what is in
+     projects.json) is the truth; the app injects it through configure()
+     before anything is mapped, and the Node harness injects the same shape.
+     The defaults below are copied from the store so an unconfigured run
+     still agrees with it — but they are a fallback, not a source. */
+  const MODEL = {
+    ratings: [
+      { n: 1, label: 'Booked',        short: 'Booked',   weight: 1.00, booked: true },
+      { n: 2, label: '90% and up',    short: '90%+',     weight: 0.95 },
+      { n: 3, label: '75–89%',        short: '75–89%',   weight: 0.82 },
+      { n: 4, label: '50–74%',        short: '50–74%',   weight: 0.62 },
+      { n: 5, label: '25–49%',        short: '25–49%',   weight: 0.37 },
+      { n: 6, label: 'Less than 25%', short: '<25%',     weight: 0.15 },
+      { n: 7, label: 'Dead Pursuit',  short: 'Dead',     weight: 0.00, dead: true },
+    ],
+    statusDefaultRating: { active: 1, won: 2, closed: 1, negotiation: 4, submitted: 4, draft: 5, hold: 6, lost: 7 },
+    /* Which ratings count toward "projected" (the budget tier). Ratings 5–6
+       carry weight in the store but are long shots, not the projection. */
+    budgetRatings: [1, 2, 3, 4],
+    leaders: null,          // filled by configure(); DEFAULT_LEADERS below until then
+    industries: null,
+    fmtMoney: null,
   };
-  const BUDGET_RATINGS = [1, 2, 3, 4];
+  const RATING_WEIGHTS = {};
+  const RATING_LABELS = {};
+  let BUDGET_RATINGS = MODEL.budgetRatings.slice();
+  function applyRatings() {
+    Object.keys(RATING_WEIGHTS).forEach((k) => { delete RATING_WEIGHTS[k]; });
+    Object.keys(RATING_LABELS).forEach((k) => { delete RATING_LABELS[k]; });
+    MODEL.ratings.forEach((r) => { RATING_WEIGHTS[r.n] = r.weight; RATING_LABELS[r.n] = r.label; });
+    BUDGET_RATINGS = MODEL.budgetRatings.slice();
+  }
+  applyRatings();
   const isBudgetRating = (r) => r != null && BUDGET_RATINGS.indexOf(r) !== -1;
   const weightFor = (r) => (r == null ? 0 : (RATING_WEIGHTS[r] || 0));
   function ratingFromStatus(status) {
-    switch (status) {
-      case 'active': return 1;
-      case 'won': return 2;
-      case 'negotiation':
-      case 'submitted': return 4;
-      case 'draft': return 5;
-      case 'hold': return 6;
-      case 'lost': return 7;
-      default: return null;
-    }
+    const r = MODEL.statusDefaultRating[status];
+    return r == null ? null : r;
+  }
+  /** Inject the store's model. Any field may be omitted. */
+  function configure(model) {
+    const m = model || {};
+    if (Array.isArray(m.ratings) && m.ratings.length) MODEL.ratings = m.ratings.map((r) => ({ n: r.n, label: r.label, short: r.short, weight: r.weight, booked: !!r.booked, dead: !!r.dead }));
+    if (m.statusDefaultRating) MODEL.statusDefaultRating = Object.assign({}, m.statusDefaultRating);
+    if (Array.isArray(m.budgetRatings)) MODEL.budgetRatings = m.budgetRatings.slice();
+    if (Array.isArray(m.leaders)) MODEL.leaders = m.leaders.map((l) => ({ id: l.id, displayName: l.displayName, username: l.username, aliases: (l.aliases || []).slice() }));
+    if (Array.isArray(m.industries)) MODEL.industries = m.industries.slice();
+    if (typeof m.fmtMoney === 'function') MODEL.fmtMoney = m.fmtMoney;
+    applyRatings();
+    return CORE;
   }
 
-  /* ---------------- money (§10: the ONE formatter) ---------------- */
-  function fmtMoney(x) {
+  /* ---------------- money: the store's formatter when it is there ---------------- */
+  function fmtMoneyDefault(x) {
+    // Same conventions as the store: negatives in parentheses.
     const v = x == null ? 0 : x;
     const a = Math.abs(v);
-    const s = v < 0 ? '-' : '';
-    if (a >= 1e6) return s + '$' + (a / 1e6).toFixed(2) + 'M';
-    if (a >= 1e3) return s + '$' + Math.round(a / 1e3) + 'K';
-    return s + '$' + Math.round(a);
+    const body = a >= 1e6 ? '$' + (a / 1e6).toFixed(2) + 'M' : a >= 1e3 ? '$' + Math.round(a / 1e3) + 'K' : '$' + Math.round(a);
+    return v < 0 ? '(' + body + ')' : body;
   }
+  function fmtMoney(x) { return MODEL.fmtMoney ? MODEL.fmtMoney(x) : fmtMoneyDefault(x); }
   function fmtMoneyFull(x) {
     const v = x == null ? 0 : x;
-    const s = v < 0 ? '-' : '';
-    return s + '$' + Math.abs(Math.round(v)).toLocaleString('en-US');
+    const body = '$' + Math.abs(Math.round(v)).toLocaleString('en-US');
+    return v < 0 ? '(' + body + ')' : body;
   }
   function fmtPct(fraction, decimals) {
     const d = decimals == null ? 1 : decimals;
@@ -74,8 +108,8 @@
     return { delta, direction, arrow: direction === 'up' ? '↑' : '↓', tone: favourable ? 'good' : 'bad' };
   }
 
-  /* ---------------- revenue leaders (verbatim directory) ---------------- */
-  const REVENUE_LEADERS = [
+  /* ---------------- revenue leaders: the store's directory once configured ---------------- */
+  const DEFAULT_LEADERS = [
     { id: 'acpeters',   displayName: 'Andrew Peters',    username: 'acpeters@savills.us',    aliases: ['Andrew Peters', 'A. Peters', 'Peters', 'AP'] },
     { id: 'bjosselson', displayName: 'Benay Josselson',  username: 'bjosselson@savills.us',  aliases: ['Benay Josselson', 'B. Josselson', 'Josselson', 'BLJ'] },
     { id: 'bking',      displayName: 'Brianna King',     username: 'bshepparding@savills.us', aliases: ['Brianna King', 'B. King', 'King', 'Brianna Sheppard King', 'BSK'] },
@@ -91,11 +125,12 @@
     { id: 'tmwilliams', displayName: 'Tonya Williams',   username: 'tmwilliams@savills.us',  aliases: ['Tonya Williams', 'T. Williams', 'Williams', 'TW'] },
     { id: 'zsargent',   displayName: 'Zac Sargent',      username: 'zsargent@savills.us',    aliases: ['Zac Sargent', 'Z. Sargent', 'Sargent', 'Zachary Sargent', 'ZS'] },
   ];
+  const leadersList = () => MODEL.leaders || DEFAULT_LEADERS;
   function resolveLeader(value) {
     if (!value) return null;
     const v = String(value).trim();
     const vk = v.toLowerCase();
-    for (const l of REVENUE_LEADERS) {
+    for (const l of leadersList()) {
       if (l.id === v || l.username.toLowerCase() === vk || l.displayName.toLowerCase() === vk) return l;
       for (const a of l.aliases) if (a.toLowerCase() === vk) return l;
     }
@@ -332,9 +367,13 @@
         fee_share_pct: a.feeShare ? (a.feeShare.pct != null ? a.feeShare.pct : null) : null,
       });
 
-      // Monthly revenue: importedByMonth is canonical; broker folds in.
-      // Duplicate keys naming the same month aggregate by summing.
-      const byMonth = source.importedByMonth || {};
+      /* Monthly revenue. The engine's answer (rec.resolvedByMonth — the same
+         billingSeries Revenue Projections draws, attached by the app before
+         mapping) when it is there; the imported sheet grain otherwise. Reading
+         ONLY the imported grain meant a project priced in the calculator
+         contributed nothing here while Projections showed its full fee — two
+         pipelines on two pages. Duplicate keys naming one month sum. */
+      const byMonth = rec.resolvedByMonth || source.importedByMonth || {};
       const brokerByMonth = source.brokerByMonth || {};
       const agg = new Map();
       const addKey = (k, amount, broker) => {
@@ -1015,7 +1054,13 @@
       name: p.name,
       client: p.raw_client ? canonicalNameFor(p.raw_client) : UNNAMED_CLIENT,
     }]));
-    for (const v of projById.values()) v.sector = sectorOf(v.client);
+    /* The record's own industry (the store's vocabulary) when it has one; the
+       client-name keyword guess is only for untagged records, so the sector
+       donut stops showing a second taxonomy beside the real one. */
+    for (const [pid, v] of projById) {
+      const src = mapped.projects.find((p) => p.source_id === pid);
+      v.sector = (src && src.industry) || sectorOf(v.client);
+    }
 
     const byClient = new Map();
     const byClientMonth = new Map();
@@ -1829,9 +1874,10 @@
 
   /* ---------------- public surface ---------------- */
   const CORE = {
-    RATING_WEIGHTS, RATING_LABELS, BUDGET_RATINGS, isBudgetRating, weightFor, ratingFromStatus,
+    configure, MODEL,
+    RATING_WEIGHTS, RATING_LABELS, get BUDGET_RATINGS() { return BUDGET_RATINGS; }, isBudgetRating, weightFor, ratingFromStatus,
     fmtMoney, fmtMoneyFull, fmtPct, variance,
-    REVENUE_LEADERS, resolveLeader, leaderDisplay,
+    get REVENUE_LEADERS() { return leadersList(); }, resolveLeader, leaderDisplay,
     SERVICE_LINES, canonicalServiceLine, inferServiceLine, resolveServiceLine,
     isMaterialChange, splitYearMonth, nullIfBlank,
     KNOWN_SCHEMA_VERSION, mapProjects, mapStudio,

@@ -145,9 +145,54 @@
   }
 
   /* ---------------- data assembly (read-only) ---------------- */
+  /* The store is the truth for ratings, statuses, leaders, industries and
+     money format. Injected before every assemble so a vocabulary change (a
+     leader added in the Bulk Editor) is seen without a deploy. */
+  function configureCore() {
+    const S = window.UFC_Store;
+    if (!S || !CORE.configure) return;
+    CORE.configure({
+      ratings: S.RATINGS,
+      statusDefaultRating: S.STATUS_DEFAULT_RATING,
+      leaders: S.REVENUE_LEADERS,
+      industries: S.INDUSTRIES,
+      fmtMoney: S.fmtMoney,
+    });
+  }
+  /* A badge that says LIVE only when there is something live behind it. The
+     old badges were literals, so an empty projects file still said LIVE. */
+  function liveFlag() {
+    const m = DATA && DATA.mapped;
+    return (m && m.counts && m.counts.projects > 0) ? liveFlag() : { kind: 'demo', text: 'NO DATA' };
+  }
   function assemble() {
+    configureCore();
     const S = window.UFC_Store;
     DATA.projectsRaw = JSON.parse(S.exportDb());          // the projects.json shape, from the store's own serialiser
+    /* Revenue is the ENGINE's answer, the same series Revenue Projections
+       draws: billingSeries on each parent plus its approved change orders.
+       The mapper reads it from rec.resolvedByMonth ahead of the imported
+       grain, so a project priced in the calculator counts here too. Change
+       orders carry no series of their own — their money is on the parent. */
+    (function attachResolvedRevenue() {
+      const cat = window.RATES_CATALOG;
+      if (!S.billingSeries || !cat) return;
+      Object.values(DATA.projectsRaw.projects || {}).forEach((rec) => {
+        if (!rec || rec._deleted) return;
+        if (S.isChangeOrder && S.isChangeOrder(rec)) { rec.resolvedByMonth = {}; return; }
+        const by = {};
+        try {
+          (S.billingSeries(rec, cat) || []).forEach((r) => { by[r.year + '-' + r.month] = (by[r.year + '-' + r.month] || 0) + (r.net || 0); });
+          (S.approvedChangeOrders ? S.approvedChangeOrders(rec.id) : []).forEach((co) => {
+            (S.changeOrderDelta(co).byMonth || []).forEach((x) => {
+              const [y, mth] = String(x.ym).split('-').map(Number);
+              const k = y + '-' + mth; by[k] = (by[k] || 0) + (x.net || 0);
+            });
+          });
+          rec.resolvedByMonth = by;
+        } catch (e) { /* leave the record on the imported grain */ }
+      });
+    })();
     /* The audit trail no longer rides inside projects.json — it has its own
        month-sharded store — so the array this used to read is always empty
        now. Staleness, deal ageing and movement history all come from it. */
@@ -354,7 +399,7 @@
     const scopeNote = 'Comparing ' + esc(a.asOf) + ' (' + a.projects + ' projects) with ' + esc(b.asOf) +
       ' (' + b.projects + ' projects)' + (RD.year ? ', ' + RD.year + ' only' : ', all months') + '.';
 
-    return panel('Revenue Diff · what the book said then and now', { kind: 'live', text: 'LIVE' }, esc(scopeNote), cap,
+    return panel('Revenue Diff · what the book said then and now', liveFlag(), esc(scopeNote), cap,
       picker + headline + ratingTable +
       '<h4 style="margin:18px 0 6px;font-size:13px">What moved it</h4>' + moverTable) + controls;
   }
@@ -476,7 +521,7 @@
       '<tr><td>Projected (1-4), face value</td><td class="num">' + fm(d.projected) + '</td><td class="num">' + arrowCell(d.overUnder) + '</td></tr>' +
       '<tr><td>Risk-weighted (1-4)</td><td class="num">' + fm(d.weighted) + '</td><td class="num">' + arrowCell(d.weighted - d.budget) + '</td></tr>' +
       '</tbody></table>';
-    const bridgePanel = panel('Pipeline trending to the frozen annual budget', { kind: 'live', text: 'LIVE' },
+    const bridgePanel = panel('Pipeline trending to the frozen annual budget', liveFlag(),
       esc(d.bridgeMsg),
       'What it is: how the pipeline builds from Booked up to the current Projected total (' + fm(d.projected) + '), shown next to the risk-weighted total (' + fm(d.weighted) + ', the sum of likelihood × $) and the frozen annual budget bar, with the gap to budget as its own coloured block. Why we show it: at face value the pipeline trends ' + (d.overUnder >= 0 ? 'slightly over' : 'under') + ' budget (' + (d.overUnder >= 0 ? '+' : '') + fm(d.overUnder) + '), but on a risk-weighted basis it is about ' + fm(Math.abs(d.weighted - d.budget)) + ' ' + (d.weighted - d.budget >= 0 ? 'over' : 'under') + ', which is the more realistic figure, so we show both. The gap reads both ways (over or under).',
       bridgeChart(d.booked, r2, r34, d.projected, d.weighted, d.budget) + coverage + varTable);
@@ -501,7 +546,7 @@
         '<div class="hatch" style="width:' + fullPct + '%;background:' + barBg + '"></div>' + solid +
         '</div></td></tr>';
     }).join('');
-    const mixPanel = panel('Likelihood rating mix 1-7', { kind: 'live', text: 'LIVE' }, esc(d.mixMsg),
+    const mixPanel = panel('Likelihood rating mix 1-7', liveFlag(), esc(d.mixMsg),
       'What it is: how many projects and how much revenue sit at each confidence rating (1 = booked … 7 = dead), with a flag for which ratings feed the budget. Why we show it: it shows the quality of the pipeline - a lot of revenue sitting in low ratings means more risk. Solid = risk-weighted (counted) · hatched = full ' + d.year + ' value, not yet firm · grey hatched = R5-7, excluded from budget.',
       '<table class="vtable"><thead><tr><th>Rating</th><th>Meaning</th><th class="num">Projects</th><th class="num">Revenue</th><th class="num">Risk-weighted</th><th>Feeds budget?</th><th style="width:34%">Full value vs weighted</th></tr></thead><tbody>' + mixRows +
       '<tr class="total"><td colspan="2">All ratings</td><td class="num">' + d.tiers.reduce((a, x) => a + x.projects, 0) + '</td><td class="num">' + fm(d.total) + '</td><td class="num">' + fm(d.weighted) + '</td><td colspan="2"></td></tr>' +
@@ -525,7 +570,7 @@
         '<div class="num" style="font-size:12.5px;font-weight:700;text-align:right">' + fm(row.total) + '</div></div>';
     }).join('');
     const leaderLegend = '<div class="cap">Top 5 leaders coloured per tier, rest grouped as Other. Hover any segment for the leader and value.</div>';
-    const leaderPanel = panel('Revenue by rating, split by leader', { kind: 'live', text: 'LIVE' }, '',
+    const leaderPanel = panel('Revenue by rating, split by leader', liveFlag(), '',
       'What it is: inside each likelihood tier, which revenue leaders own the revenue (top 5 coloured, the rest grouped as Other). Why we show it: it shows who is carrying firm revenue versus speculative revenue.',
       '<div class="gridrows">' + leaderBars + '</div>' + leaderLegend);
 
@@ -542,7 +587,7 @@
           : arrowCell(vsBudget)) + '</td></tr>';
     };
     const tc = p.topClients;
-    const topPanel = panel('Top 10 clients by projected revenue', { kind: 'live', text: 'LIVE' }, esc(p.topMsg),
+    const topPanel = panel('Top 10 clients by projected revenue', liveFlag(), esc(p.topMsg),
       'What it is: the top 10 clients ranked by projected revenue (ratings 1-4, the money that counts toward budget), split across the likelihood tiers, totalled, and compared to each client\'s annual budget line. Long-shot revenue (ratings 5-7) sits in its own grey column - visible, but kept out of every number we count. Why we show it: to see who is ahead of or behind plan - and clients that were not in the October budget count as new revenue on top of it.',
       '<table class="vtable"><thead><tr><th>Client</th><th class="num">Booked (R1)</th><th class="num">90% (R2)</th><th class="num">Likely (R3-4)</th><th class="num">Projected (1-4)</th><th class="num" style="color:var(--mut)">Long shots (R5-7)</th><th class="num">Oct budget</th><th class="num">vs budget</th></tr></thead><tbody>' +
       tc.rows.map(clientRow).join('') + clientRow(tc.other) +
@@ -550,7 +595,7 @@
       '</tbody></table>');
 
     // Monthly tracking (toggle: cumulative | run-rate)
-    const monthlyPanel = panel('Booked and projected, tracking to budget by month', { kind: 'live', text: 'LIVE' }, esc(p.monthly.msg),
+    const monthlyPanel = panel('Booked and projected, tracking to budget by month', liveFlag(), esc(p.monthly.msg),
       'What it is: two ways to watch the year unfold against budget. Cumulative to budget shows booked and projected revenue climbing toward the annual budget line. Monthly run-rate shows each month by rating against a flat budget line (' + fm(p.monthly.flat) + '/mo) plus a revised target (red): the flat budget lifted by the cumulative over/under to date, so a bar reaching the red line means we are fully caught up. Each bar prints its total and a star shows the month\'s over/under vs budget. Why we show it: to answer "how far behind or ahead are we cumulatively, and what would it take to catch up fully?"',
       '<div class="tabbar" style="border-bottom:1px solid var(--hairline);margin:6px 0"><button id="mv-cum" class="on">Cumulative to budget</button><button id="mv-run">Monthly run-rate</button></div>' +
       '<div id="mv-host">' + cumulativeChart(p.monthly, d.budget, p.monthly.todayMonth) + '</div>' +
@@ -558,7 +603,7 @@
 
     // Vintages
     const vintagePanel = p.vintages.length
-      ? panel('Full year projection by revenue projection month', { kind: 'live', text: 'LIVE' }, '',
+      ? panel('Full year projection by revenue projection month', liveFlag(), '',
         'What it is: the full-year revenue figure as it stood at each frozen snapshot, split R1-R4, so you can watch revenue solidify up the chain as deals convert.',
         vintageChart(p.vintages, d.budget))
       : panel('Full year projection by revenue projection month', { kind: 'demo', text: 'AWAITING HISTORY' }, '',
@@ -578,7 +623,7 @@
       '<td class="num">' + fm(r.value) + '</td>' +
       '<td class="num">' + (r.days === null ? '<span style="color:var(--mut)">awaiting history</span>'
         : '<span class="' + (r.days >= 90 ? 'tone-bad' : r.days >= 30 ? 'tone-amber' : 'tone-good') + '">' + r.days + '</span>') + '</td></tr>').join('');
-    const stalePanel = panel('Pipeline staleness - how long since a deal last moved', { kind: 'live', text: 'LIVE' }, esc(p.stale.msg),
+    const stalePanel = panel('Pipeline staleness - how long since a deal last moved', liveFlag(), esc(p.stale.msg),
       'What it is: for each not-yet-booked deal (R2-R4), the time since its rating or value last changed - graded 0-30 on track, 30-90 ageing, 90+ stale. Why we show it: deals only convert if they are actively worked, so a long stretch with no movement is a warning that a deal may be stalling. Booked (R1) is set aside (it is won, not pipeline). Showing the 15 stalest; the change history began accruing ' + esc(p.stale.started) + '.',
       bandStrip +
       '<table class="vtable"><thead><tr><th>Project (stalest first)</th><th>Client</th><th class="num">Rating</th><th class="num">' + d.year + ' value</th><th class="num">Days since last move</th></tr></thead><tbody>' + staleRows + '</tbody></table>');
@@ -764,7 +809,7 @@
         '<div class="num" style="font-size:12px;font-weight:700;text-align:right">' + fm(b.revenue) + '</div>' +
         '<div style="font-size:11px;text-align:right">' + aging + '</div></div>';
     }).join('');
-    const scorecard = panel('Consolidated leader scorecard', { kind: 'live', text: 'LIVE' }, esc(d.scorecardMsg),
+    const scorecard = panel('Consolidated leader scorecard', liveFlag(), esc(d.scorecardMsg),
       'What it is: each revenue leader\'s ' + d.year + ' book - solid green is booked (R1), hatched is the full all-ratings book, with their open-pipeline ageing state on the right. Hover a row for the leader\'s top clients. Why we show it: it shows who is carrying firm revenue versus speculative revenue, and whose open deals are going quiet.',
       '<div class="gridrows">' + bookRows + '</div>');
 
@@ -774,7 +819,7 @@
       '</tbody></table>';
     const covLine = (c, what) => 'This reads the real ' + what + ' recorded against each project. It is filled on ' +
       c.filled + ' of ' + c.total + ' projects (' + Math.round(c.pct * 100) + '%); the rest are shown as not yet tagged, rather than being put in a category we have guessed at. The split gets more complete as the field is filled in.';
-    const covFlag = (c) => (c.pct >= 0.8 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: Math.round(c.pct * 100) + '% TAGGED' });
+    const covFlag = (c) => (c.pct >= 0.8 ? liveFlag() : { kind: 'demo', text: Math.round(c.pct * 100) + '% TAGGED' });
     const industryPanel = panel('Revenue by industry', covFlag(d.industryCoverage), '',
       covLine(d.industryCoverage, 'industry'),
       groupTable(d.byIndustry, 'Industry'));
@@ -789,11 +834,11 @@
         '<div style="font-size:11px;font-weight:700">' + esc(b.name) + '</div>' +
         '<div style="font-size:12px" class="' + (filled ? '' : 'tone-neutral') + '">' + (filled ? fm(b.total) : 'awaited') + '</div></div>';
     }).join('');
-    const rfPanel = panel('Budget and reforecast timeline', { kind: 'live', text: 'LIVE' }, '',
+    const rfPanel = panel('Budget and reforecast timeline', liveFlag(), '',
       'What it is: the frozen annual budget and the reforecast milestones as they are submitted through the year. Open circles are milestones not yet submitted. Why we show it: the projection is always measured against one named baseline, fixed for the year.',
       '<div style="display:flex;align-items:flex-start;gap:8px;padding:12px 4px;border-top:2px solid var(--hairline)">' + rf + '</div>');
 
-    const agingPanel = panel('Deal ageing by leader', { kind: 'live', text: 'LIVE' }, esc(d.agingMsg),
+    const agingPanel = panel('Deal ageing by leader', liveFlag(), esc(d.agingMsg),
       'What it is: each leader\'s open R2-R4 deals graded by time since the last material move (rating, roster, phases, timing, fee terms). Why we show it: deals with no recent movement are shown under the person responsible for them, so they don\'t get missed.',
       '<table class="vtable"><thead><tr><th>Leader</th><th class="num">0-30 on track</th><th class="num">30-90 ageing</th><th class="num">90+ stale</th><th class="num">Value ageing 30+</th></tr></thead><tbody>' +
       d.books.filter((b) => b.aging.green + b.aging.amber + b.aging.red > 0).map((b) =>
@@ -983,7 +1028,7 @@
       '<div style="position:relative;height:14px;border:1px solid var(--hairline)"><div style="position:absolute;inset:0;width:' + ((r.revenue / maxP) * 100) + '%;background:var(--teal)"></div></div>' +
       '<div class="num" style="font-size:12px;font-weight:700;text-align:right">' + fm(r.revenue) + '</div>' +
       '<div class="num" style="font-size:11px;color:var(--mut);text-align:right" title="cumulative share of revenue">' + Math.round(r.cumShare * 100) + '% cum</div></div>').join('');
-    const paretoPanel = panel('Client concentration - top 10', { kind: 'live', text: 'LIVE' }, esc(d.paretoMsg),
+    const paretoPanel = panel('Client concentration - top 10', liveFlag(), esc(d.paretoMsg),
       'What it is: the ten largest clients by ' + d.year + ' revenue (all ratings), each with its running cumulative share of the book. Why we show it: concentration is the standing leadership question, and the cumulative column shows how much of the year rests on a handful of clients.',
       '<div class="gridrows">' + paretoRows + '</div>');
 
@@ -1050,7 +1095,7 @@
       rows.map((r) => '<tr><td>' + esc(r.name) + '</td><td class="num">' + fm(r.prev) + '</td><td class="num">' + fm(r.cur) + '</td>' +
         '<td class="num ' + (r.delta >= 0 ? 'tone-good' : 'tone-bad') + '">' + (r.delta >= 0 ? '+' : '-') + fm(Math.abs(r.delta)) + '</td></tr>').join('') +
       '</tbody></table></div>';
-    const moversPanel = panel('Month-on-month movers - ' + esc(d.movers.month) + ' vs ' + esc(d.movers.prevMonth), { kind: 'live', text: 'LIVE' }, '',
+    const moversPanel = panel('Month-on-month movers - ' + esc(d.movers.month) + ' vs ' + esc(d.movers.prevMonth), liveFlag(), '',
       'What it is: the clients whose month went up or down the most between the two latest reporting months. Why we show it: the month-on-month story names who moved, not just that the total moved.',
       '<div class="two">' + moverTable(d.movers.gainers, 'Largest gains') + moverTable(d.movers.drops, 'Largest drops') + '</div>');
 
@@ -1104,13 +1149,13 @@
       mixSvg += '<text x="' + (bx + bw / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="#5f6a78">' + MON[m2.month - 1] + '</text>';
     });
     mixSvg += '</svg>';
-    const mixPanel = panel('Where the time goes, month by month', { kind: 'live', text: 'LIVE' }, esc(d.msg),
+    const mixPanel = panel('Where the time goes, month by month', liveFlag(), esc(d.msg),
       'What it is: every logged hour split three ways - billable project work (green), Macro / business development (amber), time off (grey). Why we show it: the split reproduces the fee system\'s own chart, so the two tools cannot quietly disagree. Legend: green billable · amber internal/BD · grey time off.',
       mixSvg);
 
     // capacity
     const c = d.capacity;
-    const capPanel = panel('Can we deliver what we are forecasting?', { kind: 'live', text: 'LIVE' }, esc(d.capacityMsg),
+    const capPanel = panel('Can we deliver what we are forecasting?', liveFlag(), esc(d.capacityMsg),
       'What it is: the booked and accrued revenue (R1-R2) still to deliver this year, turned into implied hours at our realised revenue-per-hour, against the uncommitted billable capacity of the current team. Why we show it: this shows whether we have enough people available to deliver the forecast.',
       '<table class="vtable"><tbody>' +
       '<tr><td>Pipeline still to deliver (R1-R2, ' + c.monthLabels.join('/') + ')</td><td class="num">' + fm(c.pipelineRevenue) + '</td></tr>' +
@@ -1126,7 +1171,7 @@
       '<tr><td>' + esc(r.label) + '</td><td>' + (r.feedsBudget ? 'Yes' : 'No') + '</td>' +
       '<td class="num">' + r.projects + '</td><td class="num">' + Math.round(r.hours).toLocaleString() + 'h</td>' +
       '<td class="num">' + fm(r.cost) + '</td><td class="num">' + fm(r.revenue) + '</td></tr>').join('');
-    const ratingPanel = panel('Effort against likelihood', { kind: 'live', text: 'LIVE' }, esc(d.ratingMsg),
+    const ratingPanel = panel('Effort against likelihood', liveFlag(), esc(d.ratingMsg),
       'What it is: mapped delivery hours grouped by the project\'s likelihood rating. Why we show it: time spent on low-likelihood or unrated work is cost with no committed revenue behind it. Neither app shows this on its own.',
       '<table class="vtable"><thead><tr><th>Rating</th><th>Feeds budget?</th><th class="num">Projects</th><th class="num">Hours</th><th class="num">Delivery cost</th><th class="num">' + d.window.label.slice(-4) + ' revenue</th></tr></thead><tbody>' + ratingRows + '</tbody></table>');
 
@@ -1137,7 +1182,7 @@
       '<td class="num">' + Math.round(m2.hours).toLocaleString() + 'h</td><td class="num">' + m2.people + '</td>' +
       '<td class="num">' + fm(m2.cost) + '</td><td class="num">' + fm(m2.revenue) + '</td>' +
       '<td class="num ' + (m2.margin >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(m2.margin) + (m2.marginPct == null ? '' : ' (' + Math.round(m2.marginPct) + '%)') + '</td></tr>').join('');
-    const marginPanel = panel('True margin by project - revenue less delivery cost', { kind: 'live', text: 'LIVE' }, esc(d.marginMsg),
+    const marginPanel = panel('True margin by project - revenue less delivery cost', liveFlag(), esc(d.marginMsg),
       'What it is: for every project with mapped hours, its ' + d.window.label.slice(-4) + ' revenue against the cost of the time actually logged on it (cost = the rate grid\'s floor where the person\'s title maps, a flat rate where it does not - the coverage panel says how much of the cost is grid-backed). Showing the 15 heaviest by hours.',
       '<table class="vtable"><thead><tr><th>Project</th><th>Client</th><th class="num">Rating</th><th class="num">Hours</th><th class="num">People</th><th class="num">Delivery cost</th><th class="num">Revenue</th><th class="num">Margin</th></tr></thead><tbody>' + marginRows + '</tbody></table>');
 
@@ -1148,7 +1193,7 @@
       '<td class="num ' + (r.profit >= 0 ? '' : 'tone-bad') + '">' + fm(r.profit) + '</td>' +
       '<td class="num">' + Math.round(r.profitShare * 100) + '%</td>' +
       '<td class="num">' + (r.marginPct == null ? '-' : Math.round(r.marginPct) + '%') + '</td></tr>').join('');
-    const cliPanel = panel('Client economics - revenue share vs profit share', { kind: 'live', text: 'LIVE' }, esc(d.clientMsg),
+    const cliPanel = panel('Client economics - revenue share vs profit share', liveFlag(), esc(d.clientMsg),
       'What it is: each client\'s share of attributable revenue next to its share of profit after delivery cost. Why we show it: the biggest client is not automatically the most valuable one.',
       '<table class="vtable"><thead><tr><th>Client</th><th class="num">Revenue</th><th class="num">Rev share</th><th class="num">Profit</th><th class="num">Profit share</th><th class="num">Margin</th></tr></thead><tbody>' + cliRows + '</tbody></table>');
 
@@ -1158,13 +1203,13 @@
       '<td>' + esc(p.title || '-') + '</td><td class="num">' + Math.round(p.hours).toLocaleString() + 'h</td>' +
       '<td class="num">' + Math.round(p.billableShare * 100) + '%</td>' +
       '<td class="num">' + fm(p.costPerHour) + (p.fromGrid ? '' : ' <span style="color:var(--mut)">(proxy)</span>') + '</td></tr>').join('');
-    const pplPanel = panel('Effort by person', { kind: 'live', text: 'LIVE' }, '',
+    const pplPanel = panel('Effort by person', liveFlag(), '',
       'What it is: the heaviest-logging people over the reported window, their billable share, and the cost rate applied to their hours (grid floor where the title maps, a flat rate elsewhere). Bulk-logged months are marked and left at their full value.',
       '<table class="vtable"><thead><tr><th>Person</th><th>Title</th><th class="num">Hours</th><th class="num">Billable</th><th class="num">Cost rate</th></tr></thead><tbody>' + pplRows + '</tbody></table>');
 
     // coverage + reconciliation
     const cov = d.coverage;
-    const covPanel = panel('Coverage and reconciliation', { kind: 'live', text: 'LIVE' }, '',
+    const covPanel = panel('Coverage and reconciliation', liveFlag(), '',
       'These figures depend on how well the underlying data matches, so we show how many hours can be matched to a fee record, how much of the cost uses actual grade rates, and whether the totals match the source.',
       '<div class="note">' +
       Math.round(d.reconciliation.totalHours).toLocaleString() + 'h across ' + d.reconciliation.people + ' people and ' + d.reconciliation.clockifyProjects + ' Clockify projects, ' + esc(d.reconciliation.monthsCovered) + (d.reconciliation.importedAt ? ' · pulled into the fee system ' + esc(fmtDay(d.reconciliation.importedAt)) : '') + '.<br>' +
@@ -1315,7 +1360,7 @@
       (scatteredN ? scatteredN + ' have no location recorded yet and are scattered so they stay visible; those pins represent real projects, but not their actual locations. ' : '') +
       'The map gets more accurate as the location field is filled in.</div>';
     return banner +
-      panel('Projects by city', pctReal >= 80 ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: pctReal + '% REAL PLACEMENT' }, '',
+      panel('Projects by city', pctReal >= 80 ? liveFlag() : { kind: 'demo', text: pctReal + '% REAL PLACEMENT' }, '',
         'What it is: every project with ' + DATA.overview.year + ' revenue placed on a city cluster, sized by revenue, filterable by rating class, leader and region. Hover a cluster for its largest projects and how many are really placed.',
         filters + mapSvg + cityTable);
   }
@@ -1347,7 +1392,7 @@
     const half = Math.ceil(entries.length / 2);
     const col = (list) => '<div>' + list.map((g) =>
       '<div style="padding:9px 0;border-bottom:1px solid var(--hairline)"><div style="font-weight:700;font-size:13px;color:var(--teal-ink)">' + esc(g.term) + '</div><div style="font-size:12.5px;color:var(--mut);line-height:1.5">' + esc(g.def) + '</div></div>').join('') + '</div>';
-    return panel('Canonical definitions', { kind: 'live', text: 'LIVE' }, '',
+    return panel('Canonical definitions', liveFlag(), '',
       'Every term means the same thing on every panel, tooltip and export.',
       '<div class="two" style="gap:26px">' + col(entries.slice(0, half)) + col(entries.slice(half)) + '</div>');
   }
@@ -1377,7 +1422,7 @@
       '</tbody></table>'
       : '<div class="note">No recorded changes for this project yet - the upstream change log starts when a project is first edited.</div>';
     const del = b.delivery
-      ? panel('Delivery effort', { kind: 'live', text: 'LIVE' }, '',
+      ? panel('Delivery effort', liveFlag(), '',
         'Who worked it, at what cost, against its revenue. Cost = grid floor where the title maps, a flat rate elsewhere.',
         '<div class="note">' + Math.round(b.delivery.hours).toLocaleString() + 'h logged · cost ' + fm(b.delivery.cost) + ' · revenue ' + fm(b.delivery.revenue) + ' · margin <b class="' + (b.delivery.margin >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(b.delivery.margin) + '</b></div>' +
         '<table class="vtable"><thead><tr><th>Person</th><th>Title</th><th class="num">Hours</th><th class="num">Cost</th></tr></thead><tbody>' +
@@ -1389,7 +1434,7 @@
         '', '<div style="margin:4px 0 10px">' + chips + '</div>' +
         '<div class="note"><b>' + esc(b.client) + '</b> · leader ' + esc(b.leader) + (p.updated_at ? ' · last saved ' + esc(String(p.updated_at).slice(0, 10)) : '') + '</div>' +
         yearBlocks) +
-      panel('Movement history', { kind: 'live', text: 'LIVE' }, '',
+      panel('Movement history', liveFlag(), '',
         'Every recorded change, newest first. Material moves (rating, roster, phases, timing, fee terms) reset the staleness clock; incidental edits are shown but marked.',
         hist) + del;
     const back = $('#exec-back');
