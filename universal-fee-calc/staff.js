@@ -26,7 +26,7 @@
 
   /* Working hours in a month at 100% capacity — per SA: assume 172 h/mo for
      Clockify comparisons. User-tunable on the page. */
-  const DEFAULT_MONTH_HOURS = 172;
+  const DEFAULT_MONTH_HOURS = 172;   // = UFC_Store.CAPACITY_HOURS_PER_MONTH; kept as a local so staff.js parses without a store handle
 
   const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -66,10 +66,10 @@
   function ymOf(d) { return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
   /* A null or malformed month labels as a dash instead of throwing — one bad
      row used to take the whole Allocations tab down through its label. */
-  function ymLabel(ym) {
+  function ymLabel(ym) {   // 'Sep-26' — the shared month format (see ui.js); kept on the staffing API for its callers
     const p = /^(\d{4})-(\d{1,2})$/.exec(String(ym || ''));
     if (!p || +p[2] < 1 || +p[2] > 12) return '—';
-    return MON[+p[2] - 1] + " '" + p[1].slice(2);
+    return MON[+p[2] - 1] + '-' + p[1].slice(2);
   }
   /* AN ALLOCATION WITH NO END IS OPEN — active from its start onward. Three
      functions used to disagree: one read a missing end as forever, two read
@@ -802,23 +802,10 @@
       names into significant words (drops filler + punctuation + SF-id-ish
       tokens), scores overlap. "JPMC — 270 Park Relocation" ↔ "270P" style
       abbreviations get partial-prefix credit. */
-  const STOP_WORDS = new Set(['the', 'of', 'and', 'a', 'an', 'for', 'to', 'at', 'in', 'on', 'llc', 'inc', 'corp', 'project', 'phase']);
-  function nameTokens(s) {
-    return String(s || '').toLowerCase().replace(/&/g, ' and ').split(/[^a-z0-9]+/)
-      .filter(t => t && t.length > 1 && !STOP_WORDS.has(t) && !/^opp\d/.test(t));
-  }
-  function tokenScore(a, b) {
-    const ta = nameTokens(a), tb = nameTokens(b);
-    if (!ta.length || !tb.length) return 0;
-    const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
-    let hit = 0;
-    small.forEach(t => {
-      if (big.includes(t)) { hit += 1; return; }
-      // prefix credit: "270p" ~ "270", "reloc" ~ "relocation"
-      if (big.some(bt => (bt.length >= 3 && t.startsWith(bt)) || (t.length >= 3 && bt.startsWith(t)))) hit += 0.75;
-    });
-    return hit / small.length;          // 1 = every significant word of the shorter name found
-  }
+  // The one matcher lives in the store (UFC_Store.tokenScore) so staffing,
+  // revenue import and reconciliation all score names the same way.
+  const nameTokens = (s) => window.UFC_Store.nameTokens(s);
+  const tokenScore = (a, b) => window.UFC_Store.tokenScore(a, b);
 
   function matchFeeProject(name, client) {
     const k = projKey(name); if (!k) return null;
@@ -1000,7 +987,7 @@
     links.forEach(link => {
       const p = feeRecords().find(x => x.id === link.id);
       if (!p || !p.roles || !p.roles.length || !p.timeline) return;
-      const hrs = (p.assumptions && p.assumptions.hrsPerMo) || 173.33;
+      const hrs = (p.assumptions && p.assumptions.hrsPerMo) || S2.PRICING_HOURS_PER_MONTH;
       const byPhase = S2.computeMonthsByPhase(p);
       const phaseOf = {};
       (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
@@ -1729,7 +1716,7 @@
     feeRecords().forEach(p => {
       if (p.roles && p.roles.length) return;                 // never touch an existing roster
       const st = (p.project && p.project.status) || '';
-      if (st === 'lost' || st === 'closed') return;
+      if (((window.UFC_Store && window.UFC_Store.ENDED_STATUSES) || new Set(['lost', 'closed'])).has(st)) return;
       if (!p.timeline) return;
       const matrixNames = revLinks[p.id] || [];
       if (!matrixNames.length) return;

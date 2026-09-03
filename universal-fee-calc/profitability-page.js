@@ -25,7 +25,7 @@
 
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = window.UFC_UI.esc;
   const fmtD = (n) => (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
   const fmtK = (n) => { if (!n) return ''; const k = n / 1000; return Math.abs(k) >= 1000 ? '$' + (k / 1000).toFixed(1) + 'M' : '$' + (Math.abs(k) >= 100 ? Math.round(k) : k.toFixed(1)) + 'K'; };
   let toastT = null;

@@ -49,7 +49,7 @@
     tokenExchangeUrl: '/api/box-token',   // your Vercel serverless function (holds the secret)
     dataFileId: '2265137344562',          // projects.json in Box
     ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
-    studioFileId: '2302220793247',        // studio.json in Box (Revenue Studio baselines + scenarios)
+    studioFileId: '2302220793247',        // studio.json in Box (retired Revenue Studio baselines + scenarios; still synced)
     actualsFileId: '',                    // clockify-actuals.csv in Box — hours by user×project×month. '' = not configured (page falls back to manual drop / API proxy)
     staffFileId: '2364190093321',         // staff.json in Box — the LIVING staffing matrix (allocations + notes + actuals + mappings), shared by all admins
     revenueFileId: '',                    // revenue.json in Box — Revenue Reconciliation's actuals ledger. '' = SELF-CONFIGURING: found by name in the shared folder, created on first run.
@@ -785,7 +785,7 @@
     try { const j = await res.json(); if (j.entries && j.entries[0]) _staffEtag = j.entries[0].etag; } catch (e) {}
   }
 
-  // ---- Revenue Studio file (studio.json) — SEPARATE from projects.json ----
+  // ---- studio.json (retired Revenue Studio) — SEPARATE from projects.json ----
   let _studioEtag = null;
   async function pullStudio() {
     const id = BOX_CONFIG.studioFileId;

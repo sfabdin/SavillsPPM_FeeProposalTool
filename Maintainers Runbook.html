@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PPM Fee &amp; Revenue System · Maintainer's Runbook</title>
 <link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
 <style>
@@ -548,6 +549,11 @@
     <span class="tag">Script order on a page</span>
     Every page loads, in this order: <code>vendor-lazy.js</code> (only if it exports) &rarr; <code>rates-catalog.js</code> &rarr; <code>store.js</code> &rarr; <code>box-adapter.js</code> &rarr; <code>boot.js</code> &rarr; <code>ui.js</code> &rarr; <code>sync-status.js</code> &rarr; <code>staff.js</code> (only if it reads staffing) &rarr; the page's own controller &rarr; <code>guide.js</code> &rarr; <code>nav.js</code>. Before <code>boot.js</code>, set <code>window.UFC_NEEDS</code> to the extra Box stores the page reads (<code>'staff'</code>, <code>'studio'</code>, <code>'revenue'</code>, <code>'activity'</code>); projects and rates always load.
     Page-specific CSS lives in <code>universal-fee-calc/&lt;page&gt;.css</code>, not in a <code>&lt;style&gt;</code> block, so it can be cached.
+  </div>
+  <div class="box">
+    <span class="tag">One vocabulary</span>
+    Shared helpers live in <code>ui.js</code> (<code>UFC_UI.esc</code>, <code>MONTHS</code>, <code>ymLabel</code> / <code>monthLabel</code>, <code>fmtMoney</code>, <code>debounce</code>, <code>toast</code>) — a page controller aliases them, it never carries its own copy. Months display as <strong>mmm-YY</strong> (<code>Sep-26</code>) everywhere. Named once in the store and used by name: <code>BOOKED_STATUSES</code> / <code>CO_ELIGIBLE_STATUSES</code> / <code>ENDED_STATUSES</code>, <code>PRICING_HOURS_PER_MONTH</code> (173.33, what a fee is priced on) and <code>CAPACITY_HOURS_PER_MONTH</code> (172, what a person can log), <code>defaultAssumptions()</code> for the record shape, and <code>tokenScore()</code> — the one name matcher behind staffing, revenue import and reconciliation.
+    Storage keys keep their existing shapes: the projects book keys months as <code>YYYY-M</code> (<code>monthlyOverrides</code>, <code>fteMonthly</code>), the staffing book as <code>YYYY-MM</code>. Only the display format was unified.
   </div>
   <div class="box key">
     <span class="tag">Box app setup (one-time)</span>

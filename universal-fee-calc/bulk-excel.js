@@ -677,8 +677,7 @@
       if (eYm) { timeline.endYear = eYm.year; timeline.endMonth = eYm.month; }
 
       const assumptions = Object.assign(
-        isNew ? { hrsPerMo: 173.33, escalation: 3, industryAdj: 20, discount: 0, rateLock: false,
-                  billingMode: 'phase', catalogBaseYear: (window.RATES_CATALOG && window.RATES_CATALOG.baseYear) || 2024 } : {},
+        isNew ? window.UFC_Store.defaultAssumptions({ escalation: 3, industryAdj: 20 }) : {},
         (prev && prev.assumptions) || {});
       if (S(row.hrsPerMo) !== '') assumptions.hrsPerMo = N(row.hrsPerMo);
       if (S(row.escalation) !== '') assumptions.escalation = N(row.escalation);

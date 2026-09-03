@@ -76,7 +76,7 @@
     }, 150);
     return (e) => run(e.target.value);
   }
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = window.UFC_UI.esc;
   const fmtH = (n) => n ? (Math.round(n * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
   const fmtPct = (n) => n ? Math.round(n) + '%' : '';
 

@@ -25,7 +25,7 @@
   'use strict';
 
   const $ = (sel, el) => (el || document).querySelector(sel);
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const esc = window.UFC_UI.esc;
 
   /* The REAL rates-catalog.js is loaded by the page, so the confidential
      grid hydrates into the app's own catalog exactly as it does elsewhere.
@@ -1144,7 +1144,7 @@
       [['billable', 'var(--r1)', 'Billable'], ['internal', '#8a6a09', 'Macro / BD'], ['timeOff', '#9ca3af', 'Time off']].forEach(([k, colour, lbl]) => {
         const v = m2[k];
         if (v <= 0) return;
-        mixSvg += '<rect x="' + bx + '" y="' + y(base + v) + '" width="' + bw + '" height="' + Math.max(y(base) - y(base + v), 0.5) + '" fill="' + colour + '"><title>' + MON[m2.month - 1] + ' ' + m2.year + ' ' + lbl + ': ' + Math.round(v).toLocaleString() + 'h</title></rect>';
+        mixSvg += '<rect x="' + bx + '" y="' + y(base + v) + '" width="' + bw + '" height="' + Math.max(y(base) - y(base + v), 0.5) + '" fill="' + colour + '"><title>' + MON[m2.month - 1] + '-' + String(m2.year).slice(-2) + ' ' + lbl + ': ' + Math.round(v).toLocaleString() + 'h</title></rect>';
         base += v;
       });
       const tot = m2.billable + m2.internal + m2.timeOff;
@@ -1411,7 +1411,7 @@
     const yearBlocks = b.byYear.map((yb) => {
       const maxM = Math.max.apply(null, yb.months.concat([1]));
       const bars = yb.months.map((v, i) =>
-        '<div title="' + MON[i] + ' ' + yb.year + ': ' + fm(v) + '" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end"><div style="height:' + Math.max((v / maxM) * 70, v > 0 ? 2 : 0) + 'px;background:var(--teal)"></div><div style="font-size:8.5px;text-align:center;color:var(--mut)">' + MON[i] + '</div></div>').join('');
+        '<div title="' + MON[i] + '-' + String(yb.year).slice(-2) + ': ' + fm(v) + '" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end"><div style="height:' + Math.max((v / maxM) * 70, v > 0 ? 2 : 0) + 'px;background:var(--teal)"></div><div style="font-size:8.5px;text-align:center;color:var(--mut)">' + MON[i] + '</div></div>').join('');
       return '<div style="margin:8px 0"><b style="font-size:12px">' + yb.year + ' · ' + fm(yb.total) + '</b><div style="display:flex;gap:3px;height:88px;align-items:flex-end;border-bottom:1px solid var(--hairline);padding-bottom:2px">' + bars + '</div></div>';
     }).join('');
     const hist = b.history.length

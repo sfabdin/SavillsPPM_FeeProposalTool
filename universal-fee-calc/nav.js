@@ -256,7 +256,7 @@
           : `🔧 <b>The tool is down for maintenance</b>${m.note ? ' — ' + esc(m.note) : ''}. You can read, report and export as normal; saving is paused${m.by ? ' by ' + esc(m.by) : ''}.`;
       } catch (e) {}
     }
-    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+    const esc = window.UFC_UI.esc;
     if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(paintMaintenance); else paintMaintenance();
     document.addEventListener('visibilitychange', () => { if (!document.hidden) paintMaintenance(); });
     document.addEventListener('ufc:remote-updated', paintMaintenance);

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Savills PPM · Fee &amp; Revenue System — Regression Tests</title>
 <link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
 <style>
@@ -53,6 +54,7 @@
   localStorage.removeItem = (k) => { if (isApp(k)) delete mem[k]; else real.del(k); };
 })();
 </script>
+<script src="universal-fee-calc/ui.js"></script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/staff.js"></script>
@@ -1823,6 +1825,40 @@
       cleanStaff();
       const p = ST.savePerson({ id: 'stp_stamp', name: 'Stamp Me', title: '' });
       return !!p.updatedAt || 'savePerson left updatedAt empty';
+    });
+
+    /* ---- One vocabulary: the shared helpers every page aliases ---- */
+    test('Vocabulary', 'months display as mmm-YY everywhere', () => {
+      const U = window.UFC_UI;
+      if (U.ymLabel('2026-09') !== 'Sep-26') return 'ymLabel padded: ' + U.ymLabel('2026-09');
+      if (U.ymLabel('2026-9') !== 'Sep-26') return 'ymLabel unpadded: ' + U.ymLabel('2026-9');
+      if (U.monthLabel(2031, 1) !== 'Jan-31') return 'monthLabel: ' + U.monthLabel(2031, 1);
+      if (U.ymLabel(null) !== '—' || U.ymLabel('2026-13') !== '—') return 'bad input should label as a dash';
+      if (ST.ymLabel('2026-09') !== 'Sep-26') return 'staffing ymLabel drifted: ' + ST.ymLabel('2026-09');
+      return true;
+    });
+    test('Vocabulary', 'esc is attribute-safe (quotes and apostrophes too)', () => {
+      const out = window.UFC_UI.esc(`<a href="x" title='y'>&</a>`);
+      return out === '&lt;a href=&quot;x&quot; title=&#39;y&#39;&gt;&amp;&lt;/a&gt;' || out;
+    });
+    test('Vocabulary', 'money formats one way', () => {
+      const U = window.UFC_UI;
+      return (U.fmtMoney(1234.6) === '$1,235' && U.fmtMoney(-50) === '-$50' && U.fmtMoney(null) === '—' && U.fmtMoneyFull(1234.5) === '$1,234.50') || [U.fmtMoney(1234.6), U.fmtMoney(-50), U.fmtMoney(null), U.fmtMoneyFull(1234.5)].join(' | ');
+    });
+    test('Vocabulary', 'status sets and hours constants are named once', () => {
+      if (!S.BOOKED_STATUSES.has('won') || S.BOOKED_STATUSES.has('lost')) return 'BOOKED_STATUSES wrong';
+      if (!S.CO_ELIGIBLE_STATUSES.has('active') || S.CO_ELIGIBLE_STATUSES.has('closed')) return 'CO_ELIGIBLE_STATUSES wrong';
+      if (!S.ENDED_STATUSES.has('closed') || S.ENDED_STATUSES.has('active')) return 'ENDED_STATUSES wrong';
+      if (S.PRICING_HOURS_PER_MONTH !== 173.33 || S.CAPACITY_HOURS_PER_MONTH !== 172) return 'hours constants drifted';
+      const a = S.defaultAssumptions({ escalation: 3 });
+      return (a.hrsPerMo === 173.33 && a.escalation === 3 && a.industryAdj === 0 && a.feeBasis === 'fixed' && a.feeShare && a.feeShare.enabled === false) || JSON.stringify(a);
+    });
+    test('Vocabulary', 'one name matcher: filler words drop, prefixes earn partial credit', () => {
+      if (S.tokenScore('JPMC — 270 Park Relocation', 'JPMC 270 Park Reloc Phase 2') < 0.9) return 'prefix credit missing: ' + S.tokenScore('JPMC — 270 Park Relocation', 'JPMC 270 Park Reloc Phase 2');
+      if (S.nameTokens('The Project of Acme LLC, Ltd').join(' ') !== 'acme') return 'stop words: ' + S.nameTokens('The Project of Acme LLC, Ltd').join(' ');
+      if (S.tokenScore('', 'x') !== 0) return 'empty should score 0';
+      if (S.nameTokens('OPP12345 Tower').includes('opp12345')) return 'opportunity ids should drop';
+      return true;
     });
 
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {

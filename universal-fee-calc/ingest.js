@@ -16,9 +16,9 @@
   const $  = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const uid = () => 'r' + Math.random().toString(36).slice(2, 9);
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const esc = window.UFC_UI.esc;
   const money = (n) => (n == null || isNaN(n)) ? '—' : '$' + Math.round(n).toLocaleString();
-  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const MONTHS = window.UFC_UI.MONTHS;
   const MONTHS_FULL = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 
   /* ---------- State ---------- */
@@ -545,7 +545,7 @@
       phases,
       groups,
       roles,
-      assumptions: { hrsPerMo: 173.33, escalation: 3.0, industryAdj: 20, discount: 0, rateLock: false, billingMode: p.billingMode || 'phase', catalogBaseYear: CATALOG.baseYear },
+      assumptions: STORE.defaultAssumptions({ escalation: 3.0, industryAdj: 20, billingMode: p.billingMode || 'phase', catalogBaseYear: CATALOG.baseYear }),
       source: { type: 'ingest', name: p.sourceName || 'pasted', extractedTotalFee: p.totalFee, oneTimeDiscount: p.oneTimeDiscount ?? null, ingestedAt: new Date().toISOString() },
     };
     const saved = STORE.saveProject(record);

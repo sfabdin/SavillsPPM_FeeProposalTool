@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Savills PPM · Data Repair</title>
 <link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
 <link rel="stylesheet" href="design-system/colors_and_type.css">
@@ -60,7 +61,12 @@
 
     <div class="card">
       <h2>3 · Assign Convene / Sentry ownership</h2>
-      <div class="sub" style="margin-bottom:12px">One-time: set <strong>Eric Merkelson</strong> as the revenue lead on every Convene / Sentry Holdings project, with <strong>Fred Buscaglia</strong> as the client relationship owner. Eric submits this book; Fred keeps visibility and approval. Nothing else on these records changes.</div>
+      <div class="sub" style="margin-bottom:12px">Sets the revenue lead and the client relationship owner on every project whose client or name matches the pattern. Only the two ownership fields move; nothing else on these records changes.</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:11px">Match client / name (regex)<input id="cv-pattern" value="convene|sentry" style="width:220px"></label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:11px">Revenue lead<select id="cv-lead"></select></label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:11px">Client relationship owner<select id="cv-owner"></select></label>
+      </div>
       <div class="scroll"><table id="cv-preview"></table></div>
       <button class="btn go" id="cv-run" disabled>Assign ownership on <span id="cv-n">0</span> projects</button>
       <div id="cv-msg"></div>
@@ -72,6 +78,7 @@
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/ui.js"></script>
 <script src="universal-fee-calc/sync-status.js"></script>
 <script src="universal-fee-calc/staff.js"></script>
 <script src="universal-fee-calc/nav.js"></script>
@@ -312,13 +319,24 @@
     }
   }
 
-  /* ---------- 3 · Convene / Sentry ownership ----------
-     Eric Merkelson submits the Convene book; Fred Buscaglia stays the
-     relationship owner. Only the two ownership fields move. */
-  const CONVENE_RX = /convene|sentry/i;
-  const LEAD_ID = 'emerkelson', OWNER_ID = 'fbuscaglia';
+  /* ---------- 3 · Ownership repair ----------
+     Pattern and people come from the controls above (defaults: Convene /
+     Sentry → Eric Merkelson leads, Fred Buscaglia owns the relationship). */
+  const CV_DEFAULT_LEAD = 'emerkelson', CV_DEFAULT_OWNER = 'fbuscaglia';
+  function cvPattern() { try { return new RegExp($('#cv-pattern').value || '(?!)', 'i'); } catch (e) { return /(?!)/; } }
+  function cvFillPeople() {
+    const STORE = window.UFC_Store;
+    const leaders = (STORE.REVENUE_LEADERS || []).slice();
+    const opts = leaders.map(l => `<option value="${l.id || l}">${(l.name || l)}</option>`).join('');
+    [['#cv-lead', CV_DEFAULT_LEAD], ['#cv-owner', CV_DEFAULT_OWNER]].forEach(([sel, def]) => {
+      const el = $(sel); if (!el || el.options.length) return;
+      el.innerHTML = opts; if ([...el.options].some(o => o.value === def)) el.value = def;
+    });
+  }
   function convenePlan() {
     const STORE = window.UFC_Store;
+    cvFillPeople();
+    const LEAD_ID = $('#cv-lead').value, OWNER_ID = $('#cv-owner').value, CONVENE_RX = cvPattern();
     const lead = STORE.leaderById(LEAD_ID), owner = STORE.leaderById(OWNER_ID);
     if (!lead || !owner) return { rows: [], lead, owner };
     const rows = (STORE.listProjects() || []).filter(p => {
@@ -340,7 +358,7 @@
     $('#cv-n').textContent = todo.length;
     $('#cv-run').disabled = todo.length === 0;
     if (!lead || !owner) {
-      $('#cv-preview').innerHTML = '<tr><td>Revenue-leader directory is missing Eric Merkelson or Fred Buscaglia — deploy the latest store.js first.</td></tr>';
+      $('#cv-preview').innerHTML = '<tr><td>Pick a revenue lead and a client relationship owner above.</td></tr>';
       $('#cv-run').disabled = true; return;
     }
     $('#cv-preview').innerHTML = '<tr><th>Client</th><th>Project</th><th>Lead now</th><th>Owner now</th><th>Change</th></tr>' +
@@ -368,7 +386,7 @@
     try { if (Box && Box.pushNow) await Box.pushNow(); } catch (e) { /* the debounced push still lands */ }
     $('#cv-msg').innerHTML = `<div style="margin-top:10px">Assigned ownership on <b>${done}</b> project${done === 1 ? '' : 's'}.` +
       (failed.length ? ` <span style="color:#B3413B">${failed.length} failed: ${esc(failed.join(' · '))}</span>` : '') +
-      ` Eric now sees this book as his own; Fred keeps it as relationship owner.</div>`;
+      ` ${lead.displayName || lead.name} now sees this book as their own; ${owner.displayName || owner.name} keeps it as relationship owner.</div>`;
     renderConvene();
   }
 
@@ -382,6 +400,7 @@
     refreshFromBox().then(() => { renderPlan(); renderConvene(); });
     $('#run').onclick = runRepair;
     $('#cv-run').onclick = runConvene;
+    ['#cv-pattern', '#cv-lead', '#cv-owner'].forEach(sel => { const el = $(sel); if (el) el.onchange = renderConvene; });
   });
 })();
 </script>

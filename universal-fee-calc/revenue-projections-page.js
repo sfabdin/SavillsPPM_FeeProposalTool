@@ -8,7 +8,7 @@
 (function () {
   const STORE = window.UFC_Store;
   const CATALOG = window.RATES_CATALOG;
-  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const MONTHS = window.UFC_UI.MONTHS, ymLabel = window.UFC_UI.ymLabel, monthLabel = window.UFC_UI.monthLabel;
   const $ = (s) => document.querySelector(s);
 
   const fmtFull = (n) => (n < 0 ? '-' : '') + '$' + Math.round(Math.abs(n)).toLocaleString();
@@ -369,7 +369,7 @@
     }).join('');
   }
 
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+  const esc = window.UFC_UI.esc;
 
   /* ---------- Excel export — mirrors the matrix exactly as viewed ---------- */
   async function exportProjections() {
@@ -591,13 +591,12 @@
   }
 
   /* ---------- Flash report: snapshots + Excel export ---------- */
-  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   function initFlash() {
     const now = new Date();
     const ysel = $('#flash-year'), msel = $('#flash-month');
     const yNow = now.getFullYear();
     for (let y = yNow - 2; y <= yNow + 4; y++) ysel.insertAdjacentHTML('beforeend', `<option value="${y}">${y}</option>`);
-    MONTH_NAMES.forEach((m, i) => msel.insertAdjacentHTML('beforeend', `<option value="${i+1}">${m}</option>`));
+    MONTHS.forEach((m, i) => msel.insertAdjacentHTML('beforeend', `<option value="${i+1}">${m}</option>`));
     // default to the prior month (flash is usually "for work performed last month")
     const prev = new Date(yNow, now.getMonth() - 1, 1);
     ysel.value = prev.getFullYear(); msel.value = prev.getMonth() + 1;
@@ -644,7 +643,7 @@
       };
     });
     renderFlashSnaps();
-    alert(`Captured "${label}" snapshot for ${MONTH_NAMES[month-1]} ${year}.`);
+    alert(`Captured "${label}" snapshot for ${monthLabel(year, month)}.`);
   }
   async function exportFlash() {
     await window.UFC_Vendor.excel();
@@ -660,11 +659,11 @@
     labels.forEach(l => { if (snaps[l]) Object.keys(snaps[l].rows).forEach(id => ids.add(id)); });
 
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet(`${MONTH_NAMES[month-1]} ${year} Flash`);
+    const ws = wb.addWorksheet(`${monthLabel(year, month)} Flash`);
     const NAVY = 'FF25273A', YEL = 'FFFFDF00', RED = 'FFCE181E', GRN = 'FF1F8A5B';
     // Title
     ws.mergeCells('A1:H1');
-    ws.getCell('A1').value = `Savills PPM — Monthly Flash · ${MONTH_NAMES[month-1]} ${year} (Work Performed)`;
+    ws.getCell('A1').value = `Savills PPM — Monthly Flash · ${monthLabel(year, month)} (Work Performed)`;
     ws.getCell('A1').font = { bold: true, size: 14, color: { argb: NAVY } };
     ws.getCell('A2').value = `Exported ${new Date().toLocaleString()}`;
     ws.getCell('A2').font = { italic: true, size: 10, color: { argb: 'FF79828C' } };
@@ -801,7 +800,7 @@
       + dupes.map(d => `<tr>
           <td><a href="Universal Fee Calculator.html?id=${encodeURIComponent(d.row.p.id)}">${esc((d.row.pj || {}).name || 'Untitled')}</a></td>
           <td>${esc(d.row.client || '')}</td>
-          <td>${d.months.length} of ${Object.keys(d.row.map).length}<span class="dup-mo"> · ${esc(d.months.slice(0, 3).map(mk => { const [y, m] = mk.split('-'); return MONTHS[+m - 1] + ' ' + String(y).slice(2); }).join(', '))}${d.months.length > 3 ? '…' : ''}</span></td>
+          <td>${d.months.length} of ${Object.keys(d.row.map).length}<span class="dup-mo"> · ${esc(d.months.slice(0, 3).map(ymLabel).join(', '))}${d.months.length > 3 ? '…' : ''}</span></td>
           <td style="text-align:right">${fmtFull(d.amount)}</td>
         </tr>`).join('')
       + `</tbody></table><div class="dup-foot">Nothing has been changed or hidden — a client really can have one project the size of the rest combined. If it is a duplicate, delete the roll-up and keep the parts.</div>`;

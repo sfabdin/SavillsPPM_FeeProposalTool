@@ -9,7 +9,7 @@
 
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const esc = window.UFC_UI.esc;
   const money = (n) => (n == null || isNaN(n)) ? '—' : '$' + Math.round(n).toLocaleString();
   const rate = (n) => (n == null || isNaN(n) || n === 0) ? '—' : '$' + Math.round(n);
 

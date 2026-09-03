@@ -818,7 +818,7 @@
           else if (row.rating === 3) v.r3 += yearSum;
           else v.r4 += yearSum;
         }
-        return { label: MON[s.month - 1] + ' ' + s.year, asOf: s.as_of, r1: v.r1, r2: v.r2, r3: v.r3, r4: v.r4, total: v.r1 + v.r2 + v.r3 + v.r4 };
+        return { label: MON[s.month - 1] + '-' + String(s.year).slice(-2), asOf: s.as_of, r1: v.r1, r2: v.r2, r3: v.r3, r4: v.r4, total: v.r1 + v.r2 + v.r3 + v.r4 };
       });
 
     // ---- Staleness (bible §6): time since the last MATERIAL move -------

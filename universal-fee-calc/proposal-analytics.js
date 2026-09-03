@@ -16,7 +16,7 @@
   const STORE = window.UFC_Store;
   const CATALOG = window.RATES_CATALOG;
   const $ = (s, r = document) => (r || document).querySelector(s);
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = window.UFC_UI.esc;
   const fmt = (n) => (n < 0 ? '-' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
   const fmtK = (n) => { const a = Math.abs(n); if (a >= 1e6) return (n < 0 ? '-' : '') + '$' + (a / 1e6).toFixed(2) + 'M'; if (a >= 1e3) return (n < 0 ? '-' : '') + '$' + Math.round(a / 1e3) + 'K'; return fmt(n); };
   const pct = (n) => (n == null ? '—' : (Math.round(n * 10) / 10).toFixed(1) + '%');
@@ -47,7 +47,7 @@
     const start = Date.parse(p.project?.firstProposalDate || p.createdAt || '');
     const status = p.project?.status;
     let end;
-    if (status === 'won' || status === 'active' || status === 'closed') end = Date.parse(p.project?.signedContractDate || p.updatedAt || '');
+    if (STORE.BOOKED_STATUSES.has(status)) end = Date.parse(p.project?.signedContractDate || p.updatedAt || '');
     else if (status === 'lost') end = Date.parse(p.updatedAt || '');
     else end = Date.now();
     if (!isFinite(start) || !isFinite(end) || end < start) return null;
@@ -82,14 +82,14 @@
   /* ---------- Funnel KPIs ---------- */
   function renderKpis() {
     const n = ROWS.length;
-    const won = ROWS.filter(r => ['won', 'active', 'closed'].includes(r.status));
+    const won = ROWS.filter(r => STORE.BOOKED_STATUSES.has(r.status));
     const lost = ROWS.filter(r => r.status === 'lost');
     const decided = won.length + lost.length;
     const hit = decided ? won.length / decided * 100 : null;
     const avgFee = n ? ROWS.reduce((a, r) => a + r.fee, 0) / n : 0;
     const discRows = ROWS.filter(r => r.discount > 0);
     const avgDisc = discRows.length ? discRows.reduce((a, r) => a + r.discount, 0) / discRows.length : 0;
-    const durRows = ROWS.filter(r => r.duration != null && ['won', 'lost', 'active', 'closed'].includes(r.status));
+    const durRows = ROWS.filter(r => r.duration != null && (STORE.BOOKED_STATUSES.has(r.status) || r.status === 'lost'));
     const avgDur = durRows.length ? Math.round(durRows.reduce((a, r) => a + r.duration, 0) / durRows.length) : null;
     const avgRev = n ? ROWS.reduce((a, r) => a + r.revisions, 0) / n : 0;
 
@@ -108,7 +108,7 @@
   function renderWinSize() {
     const bands = SIZE_BANDS.map(b => b.key);
     const rows = bands.map(band => {
-      const inBand = ROWS.filter(r => r.size === band && ['won', 'active', 'closed', 'lost'].includes(r.status));
+      const inBand = ROWS.filter(r => r.size === band && (STORE.BOOKED_STATUSES.has(r.status) || r.status === 'lost'));
       const won = inBand.filter(r => r.status !== 'lost').length;
       const lost = inBand.filter(r => r.status === 'lost').length;
       const dec = won + lost;
@@ -176,7 +176,7 @@
   /* ---------- Proposal health ---------- */
   // "Live" = not yet decided dead/closed; the proposals worth triaging.
   function liveForHealth() {
-    return ROWS.filter(r => !['lost', 'closed'].includes(r.status));
+    return ROWS.filter(r => !STORE.ENDED_STATUSES.has(r.status));
   }
   function renderHealth() {
     const live = liveForHealth().map(r => ({ r, h: STORE.proposalHealth(r.p, r.fee) }));
@@ -215,7 +215,7 @@
     const client = sel.value;
     if (!client) { host.innerHTML = '<div class="empty">No clients in scope.</div>'; return; }
     const rows = ROWS.filter(r => r.client === client);
-    const won = rows.filter(r => ['won', 'active', 'closed'].includes(r.status));
+    const won = rows.filter(r => STORE.BOOKED_STATUSES.has(r.status));
     const lost = rows.filter(r => r.status === 'lost');
     const dec = won.length + lost.length;
     const hit = dec ? Math.round(won.length / dec * 100) + '%' : '—';

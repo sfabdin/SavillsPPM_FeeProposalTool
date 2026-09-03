@@ -28,7 +28,7 @@
       phases: [{ id: 'p1', name: 'Delivery', length: 1 }],
       groups: [{ id: 'core', name: 'Core team' }],
       roles: [],
-      assumptions: { hrsPerMo: 173.33, escalation: 0, industryAdj: 0, discount: 0, rateLock: false, nteCeiling: 0, billingMode: 'phase', feeShare: { enabled: false, pct: 10, mode: 'offtop' }, catalogBaseYear: 2024, feeBasis: 'fixed' },
+      assumptions: window.UFC_Store.defaultAssumptions({ catalogBaseYear: 2024 }),
       passthrough: { enabled: lines.length > 0, lines: lines },
       source: { origin: 'smallworks', batch: 'JPMC Small Works', importedAt: '2026-07-17' }
     };

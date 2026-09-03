@@ -25,7 +25,7 @@
   /* ---------- Helpers ---------- */
   function $(s, r = document) { return r.querySelector(s); }
   function $$(s, r = document) { return [...r.querySelectorAll(s)]; }
-  function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  const esc = window.UFC_UI.esc;
   function fmtMoney(n) {
     if (!n || Math.abs(n) < 0.5) return '$0';
     const a = Math.abs(n);

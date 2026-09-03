@@ -23,7 +23,7 @@
   }
 
   /* ---------- Constants ---------- */
-  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const MONTH_NAMES = window.UFC_UI.MONTHS;
   const MONTH_FULL  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
   /* ---------- Initial state ---------- */
@@ -70,7 +70,7 @@
     ],
     roles: [],   // { id, titleId, tierId, resource, groupId, fte: {phaseId: pct} }
     assumptions: {
-      hrsPerMo: 173.33,
+      hrsPerMo: STORE.PRICING_HOURS_PER_MONTH,
       escalation: 3.0,
       industryAdj: 20,   // rate-wide “industry standard” trim off the high PPM rack rates
       discount: 0,       // client / fixed-fee discount, applied at total level
@@ -107,7 +107,7 @@
       stored value exact while showing a readable string (e.g. 12.345678). */
   const trimNum = (n) => { if (n == null || isNaN(n)) return ''; return parseFloat(Number(n).toFixed(6)).toString(); };
   const fmtMoneySmall = (n) => (!n || Math.abs(n) < 0.5) ? '—' : '$' + Math.abs(Math.round(n)).toLocaleString();
-  const monthLabel = (y, m, opts={}) => `${MONTH_NAMES[m-1]} ’${String(y).slice(-2)}`;
+  const monthLabel = (y, m) => window.UFC_UI.monthLabel(y, m);   // 'Sep-26' — the one month format
   const monthLabelLong = (y, m) => `${MONTH_FULL[m-1]} ${y}`;
 
   function getMonths() {
@@ -1973,7 +1973,7 @@
     if (!banner || !STORE.createChangeOrder) return;
     const titleEl = $('#co-title'), detailEl = $('#co-detail'), actionsEl = $('#co-actions'), markEl = $('#co-mark');
     const isCO = !!(state.changeOrder && state.changeOrder.parentId);
-    const booked = ['won', 'active', 'closed'].includes(state.project.status);
+    const booked = STORE.BOOKED_STATUSES.has(state.project.status);
 
     if (isCO) {
       // Viewing a change order.
@@ -2062,7 +2062,7 @@
   function updateIntakeButton() {
     const btn = $('#intake-btn');
     if (!btn || !window.UFC_Intake) return;
-    const eligible = ['won', 'active'].includes(state.project.status);
+    const eligible = STORE.CO_ELIGIBLE_STATUSES.has(state.project.status);
     btn.style.display = eligible ? '' : 'none';
     if (!eligible) return;
     const sig = window.UFC_Intake.intakeSignature(state, netTotal());
@@ -2075,7 +2075,7 @@
   function updateIntakeCallout() {
     const callout = $('#intake-callout');
     const sfRow = $('#sf-id-row');
-    const eligible = ['won', 'active'].includes(state.project.status);
+    const eligible = STORE.CO_ELIGIBLE_STATUSES.has(state.project.status);
     if (sfRow) sfRow.hidden = !eligible;
     if (!callout) return;
     callout.hidden = !eligible;
@@ -2135,7 +2135,7 @@
     const sh = $('#status-hint');
     if (sh) {
       const aged = monthsSinceLastBilling() >= 2;   // last billing > ~60 days ago
-      const liveish = ['active', 'won'].includes(state.project.status);
+      const liveish = STORE.CO_ELIGIBLE_STATUSES.has(state.project.status);
       if (aged && liveish) {
         sh.innerHTML = `Last billing was &gt;60 days ago — consider <strong>Closed out</strong>.`;
         sh.classList.add('warn');
@@ -2291,13 +2291,13 @@
      are untouched. Calculator page only. */
   let matrixUnit = 'percent';
   try { const u = localStorage.getItem('ufc_matrix_unit'); if (u === 'hours' || u === 'percent') matrixUnit = u; } catch (e) {}
-  const hrsPerMo = () => state.assumptions.hrsPerMo || 173.33;
+  const hrsPerMo = () => state.assumptions.hrsPerMo || STORE.PRICING_HOURS_PER_MONTH;
   /** % → displayed cell value (rounded to 0.1) in the current unit. */
   const pctToUnit = (pct) => matrixUnit === 'hours' ? Math.round((pct / 100) * hrsPerMo() * 10) / 10 : pct;
   /** entered cell value (current unit) → stored % (rounded to 0.1). */
   const unitToPct = (val) => {
     if (matrixUnit !== 'hours') return val;
-    const h = hrsPerMo() || 173.33;
+    const h = hrsPerMo() || STORE.PRICING_HOURS_PER_MONTH;
     return Math.round((val / h) * 100 * 10) / 10;
   };
   const unitSuffix = () => matrixUnit === 'hours' ? 'h' : '%';

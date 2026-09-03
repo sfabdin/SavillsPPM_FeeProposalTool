@@ -45,7 +45,7 @@
     }, 0), 0);
   }
   function roleFee(role, p) {
-    const hrs = p.assumptions.hrsPerMo || 173.33;
+    const hrs = p.assumptions.hrsPerMo || STORE.PRICING_HOURS_PER_MONTH;
     const months = STORE.computeMonthsByPhase(p);
     let fee = 0;
     (p.phases || []).forEach(ph => {

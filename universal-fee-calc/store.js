@@ -5,11 +5,34 @@
 (function () {
   'use strict';
   const KEY = 'savills-ppm-fee-db:v1';
-  const STUDIO_KEY = 'savills-ppm-studio-db:v1';   // Revenue Studio — SEPARATE store/file
+  const STUDIO_KEY = 'savills-ppm-studio-db:v1';   // studio.json (retired Revenue Studio baselines) — SEPARATE store/file
   const REVENUE_KEY = 'savills-ppm-revenue-db:v1'; // Revenue Reconciliation — SEPARATE store/file (revenue.json in Box)
   const SCHEMA = 2;
 
   const STATUSES = ['draft','submitted','negotiation','won','lost','active','closed','hold'];
+  /* Status sets, named once. BOOKED = the fee is contracted and counts as
+     revenue; CO_ELIGIBLE = a change order can be raised against it;
+     ENDED = no further work or billing is expected. */
+  const BOOKED_STATUSES = new Set(['won', 'active', 'closed']);
+  const CO_ELIGIBLE_STATUSES = new Set(['won', 'active']);
+  const ENDED_STATUSES = new Set(['lost', 'closed']);
+  /* Hours in a month. PRICING is what a fee is priced on (a 2,080-hour year
+     ÷ 12); CAPACITY is what a person can log (staff.js), per SA. They differ
+     on purpose — do not "fix" one to match the other. */
+  const PRICING_HOURS_PER_MONTH = 173.33;
+  const CAPACITY_HOURS_PER_MONTH = 172;
+  /* The assumptions block every record carries, with the values a blank
+     record starts from. Importers and the calculator pass their own
+     overrides (e.g. a seeded 3% escalation) on top of this shape. */
+  function defaultAssumptions(over) {
+    const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    return Object.assign({
+      hrsPerMo: PRICING_HOURS_PER_MONTH, escalation: 0, industryAdj: 0, discount: 0, rateLock: false,
+      feeBasis: 'fixed', nteCeiling: 0, billingMode: 'phase',
+      feeShare: { enabled: false, pct: 10, mode: 'offtop' },
+      catalogBaseYear: (catalog && catalog.baseYear) || new Date().getFullYear(),
+    }, over || {});
+  }
   const STATUS_LABELS = {
     draft: 'Draft',
     submitted: 'Submitted',
@@ -762,7 +785,7 @@
     safeSet(KEY, JSON.stringify(db), 'the project book');
   }
 
-  /* ===== Revenue Studio store — SEPARATE file (studio.json in Box) =====
+  /* ===== studio.json store (retired Revenue Studio) — SEPARATE file in Box =====
      Baselines (frozen targets: Budget, RF1, RF2…) and named scenarios (what-if
      overlays). Kept apart from projects.json so manipulations never touch real
      project data and sync as their own file. */
@@ -1726,9 +1749,7 @@
       phases: [{ id: 'p1', name: 'Delivery', length: last - first + 1 }],
       groups: [{ id: 'core', name: 'Core' }],
       roles: [],
-      assumptions: { hrsPerMo: 173.33, discount: 0, rateLock: false, escalation: 0, industryAdj: 0,
-                     catalogBaseYear: +year, feeShare: { enabled: false, pct: 0, mode: 'offtop' },
-                     feeBasis: 'fixed', nteCeiling: 0 },
+      assumptions: defaultAssumptions({ catalogBaseYear: +year, feeShare: { enabled: false, pct: 0, mode: 'offtop' } }),
       monthlyOverrides: overrides,
       source: { fromReconciliation: true, ledgerKey: key, ledgerYear: String(year), note: row.note || '' },
     };
@@ -2764,7 +2785,7 @@
   function projectGrossFee(p) {
     // Replicates calc engine without depending on app.js
     if (!p || !p.roles || !p.phases) return 0;
-    const hrs = p.assumptions?.hrsPerMo || 173.33;
+    const hrs = p.assumptions?.hrsPerMo || PRICING_HOURS_PER_MONTH;
     const esc = (p.assumptions?.escalation || 0) / 100;
     const baseYear = p.assumptions?.catalogBaseYear || 2025;
     const startYear = p.timeline?.startYear || baseYear;
@@ -2819,7 +2840,7 @@
   /** Snapshot of total fee + net fee + fte-months for a project, using a rates resolver. */
   function projectFinancials(p, getTierRate) {
     if (!p || !p.roles || !p.phases) return { gross: 0, lockCredit: 0, discount: 0, net: 0, fteMonths: 0 };
-    const hrs = p.assumptions?.hrsPerMo || 173.33;
+    const hrs = p.assumptions?.hrsPerMo || PRICING_HOURS_PER_MONTH;
     const esc = (p.assumptions?.escalation || 0) / 100;
     const baseYear = p.assumptions?.catalogBaseYear || 2025;
     const startYear = p.timeline?.startYear || baseYear;
@@ -2875,7 +2896,6 @@
      than overwriting the frozen number.
      ============================================================ */
   const ENGINE_VERSION = '2026.06';
-  const BOOKED_STATUSES = new Set(['won', 'active', 'closed']);
 
   /** Stable signature of every fee-affecting input. Any change flips a booked
       snapshot to `stale`. */
@@ -2903,7 +2923,7 @@
       can't be priced. */
   function computeFinancials(p, catalog) {
     if (!p || !p.roles || !p.phases || !catalog) return null;
-    const hrs = p.assumptions?.hrsPerMo || 173.33;
+    const hrs = p.assumptions?.hrsPerMo || PRICING_HOURS_PER_MONTH;
     const esc = (p.assumptions?.escalation || 0) / 100;
     const baseYear = p.assumptions?.catalogBaseYear || catalog.baseYear || 2024;
     const startYear = p.timeline?.startYear || baseYear;
@@ -3401,7 +3421,7 @@
       allowedGroups = new Set((p.groups || []).filter(g => serviceLinesOfGroup(g).includes(slFilter)).map(g => g.id));
     }
     const roles = slFilter ? (p.roles || []).filter(r => allowedGroups.has(r.groupId)) : (p.roles || []);
-    const hrs = p.assumptions?.hrsPerMo || 173.33;
+    const hrs = p.assumptions?.hrsPerMo || PRICING_HOURS_PER_MONTH;
     const esc = (p.assumptions?.escalation || 0) / 100;
     const startYear = p.timeline?.startYear || (p.assumptions?.catalogBaseYear || 2024);
     const lockOn = !!p.assumptions?.rateLock;
@@ -3474,7 +3494,7 @@
     if (p.source && p.source.importedByMonth && !(p.roles || []).length)
       return { status: 'no-grid', reason: 'Imported $ with no staffing — not grid-priced.' };
     const frozen = {}; fin.byMonth.forEach(x => { frozen[x.ym] = x.net; });
-    const hrs = p.assumptions?.hrsPerMo || 173.33;
+    const hrs = p.assumptions?.hrsPerMo || PRICING_HOURS_PER_MONTH;
     const esc = (p.assumptions?.escalation || 0) / 100;
     const startYear = p.timeline?.startYear || (p.assumptions?.catalogBaseYear || 2024);
     const lockOn = !!p.assumptions?.rateLock;
@@ -4397,6 +4417,30 @@
 
   /** Normalize a name for tolerant matching ("Kathy Spiegel" ~ "Spiegel"). */
   function nameKey(s) { return String(s || '').trim().toLowerCase(); }
+  /* ---- The one name matcher ----
+     Every place that matches a project name written by one system against a
+     name written by another (staffing matrix ↔ fee records, revenue ledger ↔
+     fee records, imported workbook ↔ existing records) scores the same way:
+     split into significant words, drop filler, count overlap with partial
+     credit for prefixes ("reloc" ~ "relocation", "270p" ~ "270"). 1 = every
+     significant word of the shorter name is found. */
+  const NAME_STOP_WORDS = new Set(['the', 'of', 'and', 'a', 'an', 'for', 'to', 'at', 'in', 'on',
+                                   'llc', 'inc', 'corp', 'ltd', 'lp', 'project', 'phase']);
+  function nameTokens(str) {
+    return String(str || '').toLowerCase().replace(/&/g, ' and ').split(/[^a-z0-9]+/)
+      .filter(t => t && t.length > 1 && !NAME_STOP_WORDS.has(t) && !/^opp\d/.test(t));
+  }
+  function tokenScore(a, b) {
+    const ta = nameTokens(a), tb = nameTokens(b);
+    if (!ta.length || !tb.length) return 0;
+    const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+    let hit = 0;
+    small.forEach(t => {
+      if (big.includes(t)) { hit += 1; return; }
+      if (big.some(bt => (bt.length >= 3 && t.startsWith(bt)) || (t.length >= 3 && bt.startsWith(t)))) hit += 0.75;
+    });
+    return hit / small.length;
+  }
   function namesMatch(a, b) {
     const x = nameKey(a), y = nameKey(b);
     if (!x || !y) return false;
@@ -4462,63 +4506,64 @@
 
   window.UFC_Store = {
     fmtMoney,
-    SCHEMA, STATUSES, STATUS_LABELS, ASSUMPTION_LIBRARY, projectTypeSubs, addVocab, readVocab,
+    SCHEMA, STATUSES, STATUS_LABELS, BOOKED_STATUSES, CO_ELIGIBLE_STATUSES, ENDED_STATUSES,
+    PRICING_HOURS_PER_MONTH, CAPACITY_HOURS_PER_MONTH, defaultAssumptions,
+    NAME_STOP_WORDS, nameTokens, tokenScore,
+    ASSUMPTION_LIBRARY, projectTypeSubs, addVocab,
     validateRecord, VERSIONS_KEEP, SNAPSHOTS_KEEP,
     ACTIVITY_CAP, logSystem,
     // Activity trail — its own month-sharded store, never inside projects.json
-    readActivityDb, writeActivityDb, defaultActivityDb, attachActivityRemote,
+    attachActivityRemote,
     activityShardKey, activityMonths, getActivityShard, mergeActivityShard, hydrateActivityShard,
     ingestActivityEntries, migrateActivityOutOfProjects, drainLegacyActivity, activityCoverage,
     dirtyActivityShards, markActivityShardClean,
     accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING, isPlaceholder,
-    SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
+    SERVICE_LINES, serviceLineOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
     allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity, describeChanges,
     // Revenue Diff — book snapshots and their own store
     snapshotBook, captureBookSnapshot, diffBookSnapshots,
     listBookSnapshots, getBookSnapshot, putBookSnapshot, deleteBookSnapshot,
-    readHistory, writeHistory, hydrateHistoryFromRemote, attachHistoryRemote, mergeHistory,
+    readHistory, hydrateHistoryFromRemote, attachHistoryRemote, mergeHistory,
     saveVersion, listVersions, versionDiff, restoreVersionRecord, rosterDiff,
     reconcileToGrid, commitReconcile,
     proposalHealth,
     exportDb, importDb, downloadJson,
-    FLASH_LABELS, captureSnapshot, getSnapshots, deleteSnapshot, periodKey,
+    FLASH_LABELS, captureSnapshot, getSnapshots, 
     DISPOSITIONS, DISPOSITION_LABEL, LEDGER_FIRST_YEAR,
     ledgerYears, getLedgerYear, closedThrough, postLedgerYear, deleteLedgerYear,
     setCellStatus, setRowMatch, setCellAmount, spreadAccrual,
     createProjectFromLedgerRow, ledgerCoverage,
     cellRecognised, cellHasValue, billedOf, accruedOf, feeShareOf, accrualCheck,
-    accrualPromised, accrualSettling, billingComposition, monthBillingComposition, accrualsAwaitingInvoiceMonth,
-    explainCell, setCellNote, cellNote, accrueAsEarned,
+    billingComposition, monthBillingComposition, accrualsAwaitingInvoiceMonth,
+    explainCell, setCellNote, cellNote, 
     hasAllocations, allocOf, allocatedAccruedIn, allocatedInvoicedIn, allocatedRealizedIn, allocatedOutstandingAt,
     setEarnedAllocation, allocationAudit, autoAllocate, ledgerAllocationGaps,
-    ALLOC_LANES, ALLOC_LANE_LABEL, normAlloc, rowAllocations, ledgerLaneIn, laneIn,
-    ymStr, ymParse, ymMonth, ymYear, ymIndex, ymShift,
-    financeRealized, realizationCheck, invalidateRevenueCache,
+    normAlloc, ledgerLaneIn, laneIn,
+    ymStr, ymParse, ymIndex, 
+    realizationCheck, invalidateRevenueCache,
     // Project mapping — the ledger line to fee-tool project book
-    projectMatchIndex, mappingCandidates, mappingBook, mappingFor, mappingIgnored,
+    projectMatchIndex, mappingCandidates, mappingFor, mappingIgnored,
     setMapping, clearMapping, ignoreLedgerRow, unignoreLedgerRow,
-    applyMappingBook, seedMappingFromLedger, autoMapLedger, mappingReport, unclaimedProjects,
-    MAP_AUTO_MIN, MAP_AUTO_GAP,
+    seedMappingFromLedger, autoMapLedger, mappingReport, 
     yearTotals, openCells,
-    projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
-    computeFinancials, financialsInputsHash, restampFinancials,
-    isChangeOrder, childChangeOrders, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
-    importedBrokerSeries, reconcileImport,
-    projectSlips, openSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
+    projectFinancials, getTierRateFromCatalog, monthlySeries,
+    computeFinancials, restampFinancials,
+    isChangeOrder, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
+    reconcileImport,
+    projectSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries,
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, setCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
-    setRealIdentity, getRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, roleFor, impersonationRoster,
-    getMaintenance, setMaintenance, assertWritable,
+    getCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
+    setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster,
+    getMaintenance, setMaintenance, 
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,
     attachRevenueRemote, hydrateRevenueFromRemote, readRevenue, defaultRevenue,
-    listBaselines, getBaseline, saveBaseline, deleteBaseline, baselineFromBudget, baselineGridForSlice,
-    listScenarios, getScenario, saveScenario, deleteScenario,
+    
   };
   /* Vocabulary reads stay dynamic without touching a single call site. */
   Object.defineProperties(window.UFC_Store, {
