@@ -277,7 +277,7 @@
       if (MIGRATIONS[v]) { try { MIGRATIONS[v](db); } catch (e) { console.warn('migration ' + v + ' failed', e); } }
     }
     db.schemaVersion = SCHEMA;
-    localStorage.setItem(KEY, JSON.stringify(db));   // local-only normalize; next real save pushes
+    safeSet(KEY, JSON.stringify(db), 'the project book');   // local-only normalize; next real save pushes
     return SCHEMA - from;
   }
 
@@ -347,6 +347,29 @@
     const err = new Error('The tool is down for maintenance' + (m.note ? ' — ' + m.note : '') + '. Your change was not saved; try again once it reopens.');
     err.code = 'MAINTENANCE';
     throw err;
+  }
+
+  /* One local write for every store in this file. localStorage throws when
+     the browser's quota is spent; a write that is not wrapped turns a full
+     browser into "Could not load from Box" on the next boot with no clue why.
+     Everything that used to call setItem bare goes through here, gets the same
+     loud sync-bar message writeDb already had, and never throws. */
+  function safeSet(key, value, what) {
+    try { localStorage.setItem(key, value); return true; }
+    catch (e) {
+      console.error('Local cache write failed for ' + (what || key) + ' (storage full?)', e);
+      try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error',
+        message: 'Browser storage is full — ' + (what || 'data') + ' could not be cached locally. Clear old site data or contact the maintainer.', at: Date.now() } })); } catch (e2) {}
+      return false;
+    }
+  }
+  /** Persist locally WITHOUT the remote push: for read-side normalisations
+      that must not turn a read-only page into a writer. The next real save
+      carries the change to Box. */
+  function writeDbLocal(db) {
+    db.schemaVersion = SCHEMA;
+    const raw = JSON.stringify(db);
+    if (safeSet(KEY, raw, 'the project book')) { _dbCache = db; _dbRaw = raw; }
   }
 
   function writeDb(db) {
@@ -736,7 +759,7 @@
   function hydrateFromRemote(db) {
     if (!db || !db.projects) return;
     db.schemaVersion = SCHEMA;
-    localStorage.setItem(KEY, JSON.stringify(db));
+    safeSet(KEY, JSON.stringify(db), 'the project book');
   }
 
   /* ===== Revenue Studio store — SEPARATE file (studio.json in Box) =====
@@ -758,7 +781,7 @@
   }
   function writeStudio(s) {
     s.schemaVersion = SCHEMA;
-    localStorage.setItem(STUDIO_KEY, JSON.stringify(s));
+    safeSet(STUDIO_KEY, JSON.stringify(s), 'the studio store');
     if (typeof _studioPush === 'function') { try { _studioPush(s); } catch (e) { console.warn('studio push failed', e); } }
   }
   function hydrateStudioFromRemote(s) {
@@ -766,7 +789,7 @@
     if (!s.baselines) s.baselines = {};
     if (!s.scenarios) s.scenarios = {};
     s.schemaVersion = SCHEMA;
-    localStorage.setItem(STUDIO_KEY, JSON.stringify(s));
+    safeSet(STUDIO_KEY, JSON.stringify(s), 'the studio store');
   }
 
   const MONTHS12 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -857,13 +880,21 @@
       const l = resolveLeader(pj.leadId || pj.lead);
       if (l && pj.leadId !== l.id) { pj.leadId = l.id; pj.lead = l.displayName; changed++; }
     });
-    if (changed) writeDb(db);
+    /* Local only. This runs from Projects Index and Data Entry Status on every
+       load; pushing from there made two read-only pages into writers that
+       bypassed the maintenance flag and the concurrency guard. */
+    if (changed) writeDbLocal(db);
     return changed;
   }
 
+  /** A COPY of the record. readDb() caches the parsed book, so handing out
+      the live object meant a page that mutated it and saved was also mutating
+      the copy the store compares against — and any writeDb before that save
+      (a version, a purge, the maintenance flag) pushed the half-edited record
+      to Box. One JSON round-trip per call closes the whole class. */
   function getProject(id) {
     const p = readDb().projects[id];
-    return (p && !p._deleted) ? p : null;
+    return (p && !p._deleted) ? JSON.parse(JSON.stringify(p)) : null;
   }
 
   /** The stored record as it is ON DISK, parsed fresh and shared with nobody.
@@ -888,9 +919,68 @@
     } catch (e) { return null; }
   }
 
+  /* ===== Validation =====
+     saveProject accepted anything, so an importer could write a month 13, an
+     end before the start, a stringified Excel Date, "abc" for hours, or a
+     rating the forecast reads as zero — and the calculator then could not
+     open the record. Every writer comes through here. Numeric strings are
+     coerced in place (Excel round-trips produce them); anything else that is
+     present and wrong is refused with a coded error the caller can show. */
+  const YEAR_MIN = 1990, YEAR_MAX = 2200;
+  function validateRecord(record) {
+    const problems = [];
+    const pj = record.project || {};
+    if (!String(pj.name || '').trim()) problems.push('A project needs a name.');
+    if (pj.status != null && pj.status !== '' && !STATUSES.includes(pj.status)) problems.push('Status "' + pj.status + '" is not one of ' + STATUSES.join(', ') + '.');
+    if (pj.rating != null && pj.rating !== '') {
+      const r = Number(pj.rating);
+      if (Number.isInteger(r) && r >= 1 && r <= 7) pj.rating = r;
+      else problems.push('Rating "' + pj.rating + '" must be 1–7.');
+    }
+    const tl = record.timeline;
+    if (tl) {
+      const num = (k) => { const v = Number(tl[k]); if (Number.isInteger(v)) tl[k] = v; return v; };
+      const sm = num('startMonth'), em = num('endMonth'), sy = num('startYear'), ey = num('endYear');
+      if (!(sm >= 1 && sm <= 12)) problems.push('Start month ' + tl.startMonth + ' is not 1–12.');
+      if (!(em >= 1 && em <= 12)) problems.push('End month ' + tl.endMonth + ' is not 1–12.');
+      if (!(sy >= YEAR_MIN && sy <= YEAR_MAX)) problems.push('Start year ' + tl.startYear + ' is not a year.');
+      if (!(ey >= YEAR_MIN && ey <= YEAR_MAX)) problems.push('End year ' + tl.endYear + ' is not a year.');
+      if (sm >= 1 && em >= 1 && sy >= YEAR_MIN && ey >= YEAR_MIN && (ey * 12 + em) < (sy * 12 + sm)) problems.push('The project ends before it starts.');
+    }
+    const a = record.assumptions;
+    if (a) {
+      const ranges = { hrsPerMo: [1, 400], discount: [0, 100], escalation: [-50, 100], industryAdj: [-100, 100], nteCeiling: [0, 1e10], catalogBaseYear: [YEAR_MIN, YEAR_MAX] };
+      Object.keys(ranges).forEach(k => {
+        if (a[k] == null || a[k] === '') return;
+        const v = Number(a[k]);
+        if (!isFinite(v)) { problems.push(k + ' "' + a[k] + '" is not a number.'); return; }
+        a[k] = v;
+        if (v < ranges[k][0] || v > ranges[k][1]) problems.push(k + ' ' + v + ' is outside ' + ranges[k][0] + '–' + ranges[k][1] + '.');
+      });
+      if (a.feeShare && a.feeShare.pct != null && a.feeShare.pct !== '') {
+        const v = Number(a.feeShare.pct);
+        if (!isFinite(v) || v < 0 || v > 100) problems.push('Fee share % "' + a.feeShare.pct + '" must be 0–100.'); else a.feeShare.pct = v;
+      }
+    }
+    if (record.phases != null && !Array.isArray(record.phases)) problems.push('Phases must be a list.');
+    (record.phases || []).forEach((ph, i) => {
+      if (!ph) return;
+      const v = Number(ph.length);
+      if (!Number.isInteger(v) || v < 0) problems.push('Phase ' + (ph.name || i + 1) + ' has a length of "' + ph.length + '".'); else ph.length = v;
+    });
+    if (record.roles != null && !Array.isArray(record.roles)) problems.push('Roles must be a list.');
+    if (problems.length) {
+      const err = new Error('This project cannot be saved as it is: ' + problems.join(' '));
+      err.code = 'INVALID_RECORD'; err.problems = problems;
+      throw err;
+    }
+    return record;
+  }
+
   function saveProject(record, opts) {
     opts = opts || {};
     assertWritable(opts);
+    validateRecord(record);
     const db = readDb();
     const prev = storedRecord(record.id);
     const isNew = !record.id || !prev;
@@ -1055,6 +1145,7 @@
     }));
   }
 
+  const VERSIONS_KEEP = 25;
   function buildVersion(record, opts) {
     opts = opts || {};
     const catalog = (typeof window !== 'undefined') && window.RATES_CATALOG;
@@ -1088,6 +1179,11 @@
     r.versions = r.versions || [];
     const v = buildVersion(r, opts);
     r.versions.push(v);
+    /* Bounded. Each version carries the full inputs and roster, versions ride
+       inside projects.json, and projects.json is pulled on every page load —
+       so an unbounded list here is weight on every page in the app. Keep the
+       newest; the ones that matter are recent. */
+    if (r.versions.length > VERSIONS_KEEP) r.versions = r.versions.slice(-VERSIONS_KEEP);
     r.updatedAt = new Date().toISOString();
     writeDb(db);
     return v;
@@ -1439,7 +1535,7 @@
     r.schemaVersion = SCHEMA;
     r.updatedAt = new Date().toISOString();
     _revRev++;
-    localStorage.setItem(REVENUE_KEY, JSON.stringify(r));
+    safeSet(REVENUE_KEY, JSON.stringify(r), 'the revenue ledger');
     if (typeof _revenuePush === 'function') { try { _revenuePush(r); } catch (e) { console.warn('revenue push failed', e); } }
   }
   function hydrateRevenueFromRemote(r) {
@@ -1448,7 +1544,7 @@
     r.ledger = r.ledger || {};
     scrubSummaryRows(r);       // a remote copy may still carry the sheet's total line
     _revRev++;
-    localStorage.setItem(REVENUE_KEY, JSON.stringify(r));
+    safeSet(REVENUE_KEY, JSON.stringify(r), 'the revenue ledger');
   }
   /** One-time lift: early builds kept the ledger inside projects.json. Move it
       into revenue.json and strip it out, so projects.json goes back to holding
@@ -1460,7 +1556,7 @@
       if (db && db.ledger && Object.keys(db.ledger).length) {
         out.ledger = db.ledger;
         _revRev++;
-        localStorage.setItem(REVENUE_KEY, JSON.stringify(out));
+        safeSet(REVENUE_KEY, JSON.stringify(out), 'the revenue ledger');
         delete db.ledger;
         writeDb(db);                                  // pushes the slimmed projects.json
         logActivity('ledger-migrate', null, { years: Object.keys(out.ledger) });
@@ -3451,8 +3547,9 @@
     if (r2.assumptions) r2.assumptions.catalogSource = newCat.source || 'new grid';
     const fin = computeFinancials(r2, newCat);   // honors rateReconcile → billing holds
     if (fin) { fin.inputsHash = financialsInputsHash(r2); fin.stale = false; fin.basis = r2.financials?.basis || 'booked'; r2.financials = fin; }
-    r2.updatedAt = new Date().toISOString();
-    const db2 = readDb(); db2.projects[id] = r2; writeDb(db2);
+    // Through saveProject, so it honours maintenance mode, stamps who saved,
+    // validates, and records the field-level diff like every other write.
+    saveProject(r2, { force: true });
     logActivity('reconcile-commit', id, {
       name: (r2.project && r2.project.name) || '', client: (r2.project && r2.project.client) || '',
     });
@@ -3847,11 +3944,16 @@
   function getBookSnapshot(id) { return (readHistory().snapshots || {})[id] || null; }
   /** Store one. `id` is the as-of date (YYYY-MM-DD) plus, for a milestone,
       its label — so a backfill re-run overwrites rather than duplicates. */
+  const SNAPSHOTS_KEEP = 120;
   function putBookSnapshot(snap) {
     if (!snap || !snap.id) throw new Error('a snapshot needs an id');
     const db = readHistory();
     db.snapshots = db.snapshots || {};
     db.snapshots[snap.id] = snap;
+    // Bounded: the newest by takenAt. A book snapshot is the whole forecast;
+    // ten years of monthly ones is plenty and keeps history.json finite.
+    const ids = Object.keys(db.snapshots).sort((a, b) => String(db.snapshots[b].takenAt || '').localeCompare(String(db.snapshots[a].takenAt || '')));
+    ids.slice(SNAPSHOTS_KEEP).forEach(k => { delete db.snapshots[k]; });
     writeHistory(db);
     return snap;
   }
@@ -4346,6 +4448,7 @@
   window.UFC_Store = {
     fmtMoney,
     SCHEMA, STATUSES, STATUS_LABELS, ASSUMPTION_LIBRARY, projectTypeSubs, addVocab, readVocab,
+    validateRecord, VERSIONS_KEEP, SNAPSHOTS_KEEP,
     ACTIVITY_CAP, logSystem,
     // Activity trail — its own month-sharded store, never inside projects.json
     readActivityDb, writeActivityDb, defaultActivityDb, attachActivityRemote,

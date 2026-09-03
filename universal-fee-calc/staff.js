@@ -145,6 +145,16 @@
      is wired by the page after boot; hydrate never re-triggers a push. */
   let _push = null;
   function attachRemote(fn) { _push = typeof fn === 'function' ? fn : null; }
+  /* Same reason as store.js: a bare setItem on a full browser throws inside
+     boot. Loud, and never fatal. */
+  function safeSet(value) {
+    try { localStorage.setItem(KEY, value); return true; }
+    catch (e) {
+      console.error('Local cache write failed for the staffing matrix (storage full?)', e);
+      try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error', message: 'Browser storage is full — the staffing matrix could not be cached locally.', at: Date.now() } })); } catch (e2) {}
+      return false;
+    }
+  }
   function hydrateFromRemote(db) {
     if (!db || !db.people || !db.allocations) return false;
     if (!db.actuals) db.actuals = {};
@@ -152,7 +162,7 @@
     if (!db.deleted) db.deleted = {};
     if (!db.meta) db.meta = { monthHours: DEFAULT_MONTH_HOURS };
     db.schemaVersion = SCHEMA;
-    localStorage.setItem(KEY, JSON.stringify(db));
+    safeSet(JSON.stringify(db));
     _dbCache = db;
     _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
     return true;
@@ -162,7 +172,7 @@
     db.meta = db.meta || {};
     db.meta.updatedAt = new Date().toISOString();
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser && window.UFC_Store.getCurrentUser(); if (u && u.username) db.meta.updatedBy = u.username; } catch (e) {}
-    localStorage.setItem(KEY, JSON.stringify(db));
+    safeSet(JSON.stringify(db));
     _dbCache = db;
     if (_push) { try { _push(db); } catch (e) { console.warn('staff push failed', e); } }
   }
@@ -537,7 +547,7 @@
   function mergeFromRemote(remote) {
     const local = readDb();
     const merged = isPristineSeed(local) ? remote : mergeStaffDb(remote, local);
-    localStorage.setItem(KEY, JSON.stringify(merged));
+    safeSet(JSON.stringify(merged));
     _dbCache = merged;
     _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
     return merged;

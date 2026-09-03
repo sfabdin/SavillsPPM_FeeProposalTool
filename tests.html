@@ -642,6 +642,78 @@
     return near(mar, 20000) || 'March shows ' + round(mar) + ', expected 20000';
   });
 
+  /* ============ STEP 4 — one store, one truth ============ */
+
+  test('Validation', 'a project with no name is refused with a coded error', () => {
+    try { S.saveProject(base({ project: { name: '', client: 'C', status: 'draft' } })); return 'saved a nameless project'; }
+    catch (e) { return e.code === 'INVALID_RECORD' || 'wrong error: ' + e.message; }
+  });
+
+  test('Validation', 'month 13 and an end before the start are refused', () => {
+    const bad = [
+      base({ timeline: { startMonth: 13, startYear: 2026, endMonth: 3, endYear: 2026 } }),
+      base({ timeline: { startMonth: 6, startYear: 2026, endMonth: 3, endYear: 2026 } }),
+      base({ timeline: { startMonth: 1, startYear: 20, endMonth: 3, endYear: 2026 } }),
+    ];
+    for (const r of bad) {
+      try { S.saveProject(r); return 'accepted ' + JSON.stringify(r.timeline); }
+      catch (e) { if (e.code !== 'INVALID_RECORD') return 'wrong error: ' + e.message; }
+    }
+    return true;
+  });
+
+  test('Validation', 'non-numeric hours, an out-of-range rating and an unknown status are refused', () => {
+    const bad = [
+      base({ assumptions: { hrsPerMo: 'abc' } }),
+      base({ project: { name: 'X', client: 'C', status: 'draft', rating: 9 } }),
+      base({ project: { name: 'X', client: 'C', status: 'maybe' } }),
+    ];
+    for (const r of bad) {
+      try { S.saveProject(r); return 'accepted ' + JSON.stringify(r.project) + ' ' + JSON.stringify(r.assumptions); }
+      catch (e) { if (e.code !== 'INVALID_RECORD') return 'wrong error: ' + e.message; }
+    }
+    return true;
+  });
+
+  test('Validation', 'numeric strings from an Excel round-trip are coerced, not refused', () => {
+    // A bulk import produces "2", "173.33", "3" — the same values, as text.
+    const r = S.saveProject(base({ project: { name: 'X', client: 'C', status: 'submitted', rating: '2' },
+      assumptions: { hrsPerMo: '173.33', discount: '10', escalation: '3' } }));
+    const saved = S.getProject(r.id);
+    if (saved.project.rating !== 2) return 'rating stayed ' + JSON.stringify(saved.project.rating);
+    if (saved.assumptions.hrsPerMo !== 173.33) return 'hours stayed ' + JSON.stringify(saved.assumptions.hrsPerMo);
+    return saved.assumptions.discount === 10 || 'discount stayed ' + JSON.stringify(saved.assumptions.discount);
+  });
+
+  test('Store · copies', 'getProject hands out a copy, so mutating it does not touch the book', () => {
+    const p = S.saveProject(base());
+    const live = S.getProject(p.id);
+    live.project.client = 'MUTATED';
+    live.roles.push({ id: 'ghost' });
+    const again = S.getProject(p.id);
+    if (again.project.client === 'MUTATED') return 'the store returned its live cache object';
+    return !again.roles.some(r => r.id === 'ghost') || 'a pushed role leaked into the book';
+  });
+
+  test('Store · bounded', 'versions are capped at VERSIONS_KEEP, keeping the newest', () => {
+    const p = S.saveProject(base());
+    for (let i = 0; i < S.VERSIONS_KEEP + 5; i++) S.saveVersion(p.id, { label: 'v' + i });
+    const vs = S.getProject(p.id).versions;
+    if (vs.length !== S.VERSIONS_KEEP) return 'kept ' + vs.length;
+    return vs[vs.length - 1].label === 'v' + (S.VERSIONS_KEEP + 4) || 'the newest version was dropped';
+  });
+
+  test('Store · read pages', 'migrateLeadIds normalises locally and never pushes', () => {
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    const p = S.saveProject(base({ project: { name: 'X', client: 'C', status: 'draft', lead: 'Andrew Peters', leadId: '' } }));
+    let pushes = 0;
+    S.attachRemote(() => { pushes++; });
+    const changed = S.migrateLeadIds();
+    S.attachRemote(null);
+    if (!changed) return 'nothing to normalise — the fixture lead did not resolve (' + JSON.stringify(S.getProject(p.id).project) + ')';
+    return pushes === 0 || 'a read-side normalisation pushed to Box ' + pushes + ' time(s)';
+  });
+
   /* ============ REVENUE LEDGER (year of actuals, cell by cell) ============
      cell recognised = billed + feeShare + (accrual − last known accrual)
      The accrual column is a BALANCE and a close tab states only ONE — its own

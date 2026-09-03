@@ -3123,7 +3123,12 @@
 
     // Header actions
     $('#reset-btn').addEventListener('click', () => {
-      if (!confirm('Reset all fields to a blank project? (Existing saved record will be cleared.)')) return;
+      if (!confirm('Start a blank project? The project you have open stays saved as it is.')) return;
+      /* A pending autosave fired on the empty state and created an orphan
+         record; and nothing here ever deleted the old one, whatever the old
+         confirm text said. */
+      clearTimeout(autosaveTimer); autosaveTimer = null;
+      dirty = false; conflicted = false; baseUpdatedAt = null;
       state = DEFAULT_STATE();
       setProjectIdInUrl(null);
       renderAll();
@@ -3133,11 +3138,16 @@
       saveToStore({ explicit: true });
     });
     // Safety net: flush a pending autosave if the tab closes within the debounce window.
-    window.addEventListener('beforeunload', () => {
-      if (dirty) {
-        const worthSaving = state.id || (state.project && state.project.name && state.project.name.trim()) || (state.roles && state.roles.length);
-        if (worthSaving) { clearTimeout(autosaveTimer); try { saveToStore({ silent: true }); } catch (e) {} }
-      }
+    window.addEventListener('beforeunload', (e) => {
+      if (!dirty) return;
+      const worthSaving = state.id || (state.project && state.project.name && state.project.name.trim()) || (state.roles && state.roles.length);
+      if (!worthSaving) return;
+      const keep = () => { e.preventDefault(); e.returnValue = ''; };   // the browser's "leave page?" prompt
+      // In conflict nothing autosaves, so leaving now discards everything typed since.
+      if (conflicted) { keep(); return; }
+      clearTimeout(autosaveTimer);
+      try { saveToStore({ silent: true }); }
+      catch (err) { keep(); }        // maintenance, a stale write, a validation refusal — don't lose it silently
     });
     $('#print-btn').addEventListener('click', () => {
       window.print();
@@ -3271,6 +3281,10 @@
         setSavedLabel('Project not found');
       }
     }
+    /* A new project's catalogBaseYear was read before rates.json arrived, so
+       it anchored at the shipped default whatever the catalog said. */
+    if (!state.id && CATALOG && CATALOG.baseYear) state.assumptions.catalogBaseYear = CATALOG.baseYear;
+    const cb = $('#a-catbase'); if (cb && CATALOG && CATALOG.baseYear) cb.textContent = String(CATALOG.baseYear);
     renderAll();
     refreshVersionCount();
     };
@@ -3324,6 +3338,7 @@
       }
     } catch (e) {
       if (e && e.code === 'STALE_WRITE') { showConflictBanner(e.remote); return; }
+      if (e && e.code === 'INVALID_RECORD') { setSavedLabel('Not saved — fix the fields'); UFC_UI.toast(e.message); return; }
       console.error('Save failed', e);
       UFC_UI.toast('Save failed: ' + e.message);
     }
