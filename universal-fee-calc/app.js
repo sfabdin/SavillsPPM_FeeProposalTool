@@ -3108,10 +3108,14 @@
     });
 
     // Assumptions
-    $('#a-hrs').addEventListener('input',  e => { state.assumptions.hrsPerMo = parseFloat(e.target.value) || 0; renderSummary(); renderMatrix(); renderMonthly(); markDirty(); });
-    $('#a-esc').addEventListener('input',  e => { state.assumptions.escalation = parseFloat(e.target.value) || 0; renderSummary(); renderMatrix(); renderMonthly(); renderSelectedRoles(); renderFloorCheck(); markDirty(); });
-    $('#a-ind').addEventListener('input',  e => { state.assumptions.industryAdj = parseFloat(e.target.value) || 0; renderCatalog(); renderSelectedRoles(); renderSummary(); renderMatrix(); renderMonthly(); renderFloorCheck(); markDirty(); });
-    $('#a-disc').addEventListener('input', e => { state.assumptions.discount = parseFloat(e.target.value) || 0; renderSummary(); renderMatrix(); renderMonthly(); renderSelectedRoles(); renderFloorCheck(); markDirty(); });
+    /* The value lands in state on every keystroke; the matrix/monthly rebuild
+       (the expensive part) waits until typing pauses. */
+    const debounceUI = (window.UFC_UI && window.UFC_UI.debounce) || ((fn) => fn);
+    const assumptionsChanged = debounceUI(() => { renderCatalog(); renderSelectedRoles(); renderSummary(); renderMatrix(); renderMonthly(); renderFloorCheck(); markDirty(); }, 150);
+    $('#a-hrs').addEventListener('input',  e => { state.assumptions.hrsPerMo = parseFloat(e.target.value) || 0; assumptionsChanged(); });
+    $('#a-esc').addEventListener('input',  e => { state.assumptions.escalation = parseFloat(e.target.value) || 0; assumptionsChanged(); });
+    $('#a-ind').addEventListener('input',  e => { state.assumptions.industryAdj = parseFloat(e.target.value) || 0; assumptionsChanged(); });
+    $('#a-disc').addEventListener('input', e => { state.assumptions.discount = parseFloat(e.target.value) || 0; assumptionsChanged(); });
     $('#a-lock').addEventListener('change', e => { state.assumptions.rateLock = e.target.checked; renderSummary(); renderMatrix(); renderMonthly(); renderSelectedRoles(); renderFloorCheck(); markDirty(); });
     const fbSel = $('#a-feebasis');
     if (fbSel) fbSel.addEventListener('change', e => {

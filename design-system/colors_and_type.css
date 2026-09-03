@@ -5,83 +5,57 @@
    ============================================================================ */
 
 /* ----- Fonts ---------------------------------------------------------------
-   PRIMARY: Gotham (Hoefler & Co) — licensed, not bundled. Drop your
-   .woff2 files into fonts/gotham/ and uncomment the @font-face blocks.
-   FALLBACK: Montserrat (Google Fonts) — closest geometric-sans match.
+   PRIMARY: Gotham (Hoefler & Co) — licensed, self-hosted as WOFF2 below.
+   FALLBACK: Montserrat if locally installed, then Tahoma / Arial.
    LETTERHEAD-ONLY: Cambria — already system-installed on most platforms.
    --------------------------------------------------------------------------- */
 
-/* ---------- Gotham (licensed; .otf files supplied by client) -------------- */
-/* If this stylesheet is loaded from a nested folder (e.g. ui_kits/x/...), the
-   relative path resolves up from the stylesheet's own location, not the HTML
-   document — so every page in this project references fonts via ../../fonts/
-   from the kit, ../fonts/ from preview/slides/, and fonts/ from the root.
+/* ---------- Gotham (licensed; supplied by client as .otf) ----------------
+   Served as WOFF2 — the seven faces the app actually uses (400/500/700/900,
+   italics for 400/700/900). The .otf originals stay in the repo as the
+   source for regeneration (scripts/build-fonts.py) but are not deployed.
+   Weights 600 and 800 in page styles resolve to the nearest face (700 / 900)
+   by the browser's normal matching rules — no synthetic bolding is involved.
    Keep the URL relative to THIS file: fonts/gotham/...                       */
-
 @font-face {
   font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-XLight.otf") format("opentype");
-  font-weight: 200; font-style: normal; font-display: swap;
-}
-@font-face {
-  font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-XLightItalic.otf") format("opentype");
-  font-weight: 200; font-style: italic; font-display: swap;
-}
-@font-face {
-  font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-Light.otf") format("opentype");
-  font-weight: 300; font-style: normal; font-display: swap;
-}
-@font-face {
-  font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-Book.otf") format("opentype");
+  src: url("fonts/gotham/Gotham-Book.woff2") format("woff2");
   font-weight: 400; font-style: normal; font-display: swap;
 }
 @font-face {
   font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-BookItalic.otf") format("opentype");
+  src: url("fonts/gotham/Gotham-BookItalic.woff2") format("woff2");
   font-weight: 400; font-style: italic; font-display: swap;
 }
 @font-face {
   font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-Medium.otf") format("opentype");
+  src: url("fonts/gotham/Gotham-Medium.woff2") format("woff2");
   font-weight: 500; font-style: normal; font-display: swap;
 }
 @font-face {
   font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-Bold.otf") format("opentype");
+  src: url("fonts/gotham/Gotham-Bold.woff2") format("woff2");
   font-weight: 700; font-style: normal; font-display: swap;
 }
 @font-face {
   font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-BoldItalic.otf") format("opentype");
+  src: url("fonts/gotham/Gotham-BoldItalic.woff2") format("woff2");
   font-weight: 700; font-style: italic; font-display: swap;
 }
 @font-face {
   font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-Black.otf") format("opentype");
+  src: url("fonts/gotham/Gotham-Black.woff2") format("woff2");
   font-weight: 900; font-style: normal; font-display: swap;
 }
 @font-face {
   font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-BlackItalic.otf") format("opentype");
+  src: url("fonts/gotham/Gotham-BlackItalic.woff2") format("woff2");
   font-weight: 900; font-style: italic; font-display: swap;
 }
-@font-face {
-  font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-Ultra.otf") format("opentype");
-  font-weight: 950; font-style: normal; font-display: swap;
-}
-@font-face {
-  font-family: "Gotham";
-  src: url("fonts/gotham/Gotham-UltraItalic.otf") format("opentype");
-  font-weight: 950; font-style: italic; font-display: swap;
-}
 
-/* Montserrat fallback retained so any environment that fails to load Gotham
-   still gets a geometric sans rather than Arial. */
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&display=swap');
+/* No web-font import here: Gotham is self-hosted, so the page never waits on
+   a third-party stylesheet. Montserrat stays in the stacks below only as a
+   local fallback if it happens to be installed. */
 
 :root {
   /* ===== Raw color palette ============================================== */

@@ -540,6 +540,15 @@
     <li>Vercel builds and deploys automatically (static — no build step, seconds).</li>
     <li>Hard-refresh the live site to confirm.</li>
   </ol>
+  <div class="box">
+    <span class="tag">What the browser caches (vercel.json)</span>
+    Pages and JSON are always revalidated (<code>max-age=0</code>), so a deploy shows up on the next navigation. Scripts and stylesheets are cached for <strong>10 minutes</strong> (<code>max-age=600</code>) &mdash; long enough that moving between pages costs nothing, short enough that a page and its scripts can never disagree for more than ten minutes after a deploy. Fonts, icons and logos are cached for a week; <code>/vendor/</code> for a day. There are no <code>?v=</code> stamps to bump: don't add any.
+  </div>
+  <div class="box">
+    <span class="tag">Script order on a page</span>
+    Every page loads, in this order: <code>vendor-lazy.js</code> (only if it exports) &rarr; <code>rates-catalog.js</code> &rarr; <code>store.js</code> &rarr; <code>box-adapter.js</code> &rarr; <code>boot.js</code> &rarr; <code>ui.js</code> &rarr; <code>sync-status.js</code> &rarr; <code>staff.js</code> (only if it reads staffing) &rarr; the page's own controller &rarr; <code>guide.js</code> &rarr; <code>nav.js</code>. Before <code>boot.js</code>, set <code>window.UFC_NEEDS</code> to the extra Box stores the page reads (<code>'staff'</code>, <code>'studio'</code>, <code>'revenue'</code>, <code>'activity'</code>); projects and rates always load.
+    Page-specific CSS lives in <code>universal-fee-calc/&lt;page&gt;.css</code>, not in a <code>&lt;style&gt;</code> block, so it can be cached.
+  </div>
   <div class="box key">
     <span class="tag">Box app setup (one-time)</span>
     Box Developer Console &rarr; your app: Auth method = <strong>User Authentication (OAuth 2.0)</strong>; enable <strong>Authorization Code Grant with PKCE</strong>; Redirect URI = <code>https://&lt;your-vercel-domain&gt;/oauth-callback.html</code>; scope = Read/write all files. Each deploy origin (preview + prod) needs its own registered redirect URI.

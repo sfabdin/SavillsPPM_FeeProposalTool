@@ -134,7 +134,12 @@
       + '<datalist id="pf-fee-dl">' + feeList.map(p => '<option value="' + esc(p.label) + '"></option>').join('') + '</datalist>';
     $('#p-profit').innerHTML = html;
 
-    $('#pf-search').oninput = (e) => { state.search = e.target.value; render(); const el = $('#pf-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $('#pf-search').oninput = (() => {
+      // The whole table is rebuilt as one innerHTML string, so wait for typing to pause.
+      const debounce = (window.UFC_UI && window.UFC_UI.debounce) || ((fn) => fn);
+      const run = debounce((v) => { state.search = v; render(); const el = $('#pf-search'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }, 150);
+      return (e) => run(e.target.value);
+    })();
     $('#pf-client').onchange = (e) => { state.client = e.target.value; render(); };
     $('#pf-scope').onchange = (e) => { state.scope = e.target.value; render(); };
     const feeByLabel = {}; feeList.forEach(p => feeByLabel[p.label.toLowerCase()] = p.id);

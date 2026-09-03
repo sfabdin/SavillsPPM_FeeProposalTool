@@ -39,6 +39,7 @@
     // Change orders fold into their parent's revised curve — exclude as rows.
     const parents = STORE.listProjects().filter(p => !STORE.isChangeOrder(p));
     const projects = STORE.visibleProjects(parents);
+    const coIndex = STORE.approvedChangeOrdersIndex ? STORE.approvedChangeOrdersIndex() : null;
     ALL = projects.map(p => {
       const map = {}, brokerMap = {}, passMap = {};
       let total = 0;
@@ -63,7 +64,7 @@
         }
       });
       // Add each approved change order's incremental curve on top of the baseline.
-      const cos = STORE.approvedChangeOrders ? STORE.approvedChangeOrders(p.id) : [];
+      const cos = coIndex ? (coIndex[p.id] || []) : (STORE.approvedChangeOrders ? STORE.approvedChangeOrders(p.id) : []);
       cos.forEach(co => {
         STORE.changeOrderDelta(co).byMonth.forEach(x => {
           const [y, m] = x.ym.split('-').map(Number);

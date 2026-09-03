@@ -3154,7 +3154,22 @@
   }
   function approvedChangeOrders(parentId) {
     return childChangeOrders(parentId).filter(co =>
-      BOOKED_STATUSES.has(co.project && co.project.status) && co.financials && !co.financials.stale);
+      isApprovedChangeOrder(co));
+  }
+  function isApprovedChangeOrder(co) {
+    return BOOKED_STATUSES.has(co.project && co.project.status) && !!co.financials && !co.financials.stale;
+  }
+  /** parentId → approved change orders, built in one pass. Pages that walk
+      every project use this instead of approvedChangeOrders(id) per row,
+      which re-scanned the whole book for each parent. */
+  function approvedChangeOrdersIndex() {
+    const idx = {};
+    listProjects().forEach(p => {
+      if (!isChangeOrder(p) || !isApprovedChangeOrder(p)) return;
+      (idx[p.changeOrder.parentId] = idx[p.changeOrder.parentId] || []).push(p);
+    });
+    Object.keys(idx).forEach(k => idx[k].sort((a, b) => (a.changeOrder.coNumber || 0) - (b.changeOrder.coNumber || 0)));
+    return idx;
   }
 
   /** Expand every role's phase FTE into explicit per-month values, so a CO is
@@ -4489,7 +4504,7 @@
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, resolveRoleRate, monthlySeries,
     computeFinancials, financialsInputsHash, restampFinancials,
-    isChangeOrder, childChangeOrders, approvedChangeOrders, createChangeOrder,
+    isChangeOrder, childChangeOrders, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
     importedBrokerSeries, reconcileImport,
     projectSlips, openSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries,

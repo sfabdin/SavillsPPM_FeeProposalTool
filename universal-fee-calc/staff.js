@@ -1259,6 +1259,7 @@
     const parents = (S2.listProjects() || []).filter(p => !(S2.isChangeOrder && S2.isChangeOrder(p)));
     const projects = S2.visibleProjects ? S2.visibleProjects(parents) : parents;
     const rows = [];
+    const coIndex = S2.approvedChangeOrdersIndex ? S2.approvedChangeOrdersIndex() : null;
     projects.forEach(p => {
       const rating = S2.ratingFor ? S2.ratingFor(p) : 5;
       const revByMonth = {}; let revTotal = 0;
@@ -1268,7 +1269,7 @@
         // being read raw here too, so a slipped or adjusted month showed its
         // old figure against the moved effort.
         (S2.billingSeries(p, cat) || []).forEach(m => add(m.ym, m.invoice));
-        (S2.approvedChangeOrders ? S2.approvedChangeOrders(p.id) : []).forEach(co => {
+        (coIndex ? (coIndex[p.id] || []) : (S2.approvedChangeOrders ? S2.approvedChangeOrders(p.id) : [])).forEach(co => {
           try { S2.changeOrderDelta(co).byMonth.forEach(x => add(x.ym, x.net)); } catch (e) {}
         });
       } catch (e) {}

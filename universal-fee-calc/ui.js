@@ -2,6 +2,8 @@
    SAVILLS PPM · SHARED UI — toasts instead of alert()
    ------------------------------------------------------------
    window.UFC_UI.toast(message, kind)
+   window.UFC_UI.debounce(fn, ms)   — trailing-edge debounce for search
+                                      boxes that rebuild a whole tab
      kind: 'err' (default — most former alerts are blockers),
            'ok'   (green-teal accent, shorter life),
            'info' (neutral)
@@ -60,5 +62,17 @@
     return el;
   }
 
-  window.UFC_UI = { toast };
+  /** Trailing-edge debounce: the wrapped function runs once, `ms` after the
+      last call. Used where a keystroke would otherwise rebuild a whole tab's
+      innerHTML — the rebuild waits until typing pauses. */
+  function debounce(fn, ms) {
+    let t = null;
+    return function () {
+      const args = arguments, self = this;
+      clearTimeout(t);
+      t = setTimeout(() => { t = null; fn.apply(self, args); }, ms == null ? 150 : ms);
+    };
+  }
+
+  window.UFC_UI = { toast, debounce };
 })();

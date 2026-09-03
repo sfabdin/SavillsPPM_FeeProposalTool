@@ -281,9 +281,9 @@
      answer comes from measurement rather than assumption.
 
      Read it three ways:
-       · console table, automatically, once boot finishes
-       · window.UFC_Perf.report()  — same table, on demand
-       · add ?perf=1 to the URL    — on-screen overlay, no devtools
+       · window.UFC_Perf.report()  — console table, on demand
+       · add ?perf=1 to the URL    — console table + on-screen overlay
+       · localStorage ufc_perf=1   — console table on every boot
      Costs nothing when nobody is looking: it is a few timestamps
      and a running byte count.
      ============================================================ */
@@ -313,6 +313,11 @@
       phase(l) { phases.push({ label: l, at: Math.round(now()) }); },
       finish() {
         bootMs = Math.round(now());
+        /* Quiet by default: the console table prints only when someone asks
+           (?perf=1 or localStorage ufc_perf=1). Production consoles stay clean. */
+        let wanted = false;
+        try { wanted = /[?&]perf=1/.test(location.search) || localStorage.getItem('ufc_perf') === '1'; } catch (e) {}
+        if (!wanted) return;
         try { this.report(); } catch (e) {}
         try { if (/[?&]perf=1/.test(location.search)) this.overlay(); } catch (e) {}
       },
@@ -719,11 +724,17 @@
   async function pullStaff() {
     const id = await resolveStaffFileId();
     if (!id) return null;
-    const meta = await boxFetch('/files/' + id + '?fields=etag');
-    if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; }
     const res = await boxFetch('/files/' + id + '/content');
     if (res.status === 404) { _staffId = null; try { localStorage.removeItem('ufc_staff_file_id'); } catch (e) {} return null; }  // stale cached id — re-resolve next load
     if (!res.ok) throw new Error('staff pull failed: ' + res.status);
+    /* One round trip, not two: the content response carries the file's ETag
+       (the same value the metadata call returned). Fall back to the metadata
+       call only if the header is missing, so the If-Match on the next upload
+       is never sent blind. */
+    let tag = null;
+    try { tag = res.headers.get('etag'); } catch (e) {}
+    if (tag) _staffEtag = tag.replace(/^W\//, '').replace(/"/g, '');
+    else { const meta = await boxFetch('/files/' + id + '?fields=etag'); if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; } }
     const txt = await res.text();
     if (!txt || !txt.trim()) return null;                        // empty placeholder file
     try { return JSON.parse(txt); } catch (e) { return null; }   // not yet valid JSON → seed from local

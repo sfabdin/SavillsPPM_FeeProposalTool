@@ -177,13 +177,14 @@
     (function attachResolvedRevenue() {
       const cat = window.RATES_CATALOG;
       if (!S.billingSeries || !cat) return;
+      const coIndex = S.approvedChangeOrdersIndex ? S.approvedChangeOrdersIndex() : null;
       Object.values(DATA.projectsRaw.projects || {}).forEach((rec) => {
         if (!rec || rec._deleted) return;
         if (S.isChangeOrder && S.isChangeOrder(rec)) { rec.resolvedByMonth = {}; return; }
         const by = {};
         try {
           (S.billingSeries(rec, cat) || []).forEach((r) => { by[r.year + '-' + r.month] = (by[r.year + '-' + r.month] || 0) + (r.net || 0); });
-          (S.approvedChangeOrders ? S.approvedChangeOrders(rec.id) : []).forEach((co) => {
+          (coIndex ? (coIndex[rec.id] || []) : (S.approvedChangeOrders ? S.approvedChangeOrders(rec.id) : [])).forEach((co) => {
             (S.changeOrderDelta(co).byMonth || []).forEach((x) => {
               const [y, mth] = String(x.ym).split('-').map(Number);
               const k = y + '-' + mth; by[k] = (by[k] || 0) + (x.net || 0);
@@ -639,7 +640,9 @@
   function bridgeChart(booked, r2, r34, projected, weighted, budget) {
     const W = 940, H = 210, L = 10, R = 10, T = 26, B = 34;
     const plotW = W - L - R, plotH = H - T - B;
-    const maxV = Math.max(projected, budget, weighted) * 1.08;
+    // A floor of 1 keeps the scale finite when there is nothing to draw yet
+    // (every bar sits on the baseline instead of rendering NaN coordinates).
+    const maxV = Math.max(projected, budget, weighted, 1) * 1.08;
     const y = (v) => T + plotH - (v / maxV) * plotH;
     const cols = 6, cw = plotW / cols, bw = cw * 0.62;
     const cx = (i) => L + i * cw + (cw - bw) / 2;
@@ -674,7 +677,7 @@
     const plotW = W - L - R, plotH = H - T - B;
     let cum = 0;
     const cums = rows.map((r) => (cum += r.total));
-    const maxV = Math.max(budget, cums[11] || 0) * 1.06;
+    const maxV = Math.max(budget, cums[11] || 0, 1) * 1.06;   // floor of 1: finite scale with no data
     const x = (m) => L + ((m - 0.5) / 12) * plotW;
     const y = (v) => T + plotH - (v / maxV) * plotH;
     let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Cumulative to budget">';
@@ -705,7 +708,7 @@
     const rows = monthly.rows;
     const W = 940, H = 250, L = 58, R = 16, T = 20, B = 30;
     const plotW = W - L - R, plotH = H - T - B;
-    const maxV = Math.max.apply(null, rows.map((r) => Math.max(r.total, r.revised, r.flat))) * 1.15;
+    const maxV = Math.max.apply(null, rows.map((r) => Math.max(r.total, r.revised, r.flat)).concat([1])) * 1.15;
     const y = (v) => T + plotH - (Math.max(v, 0) / maxV) * plotH;
     const bw = (plotW / 12) * 0.56;
     const x = (m) => L + ((m - 0.5) / 12) * (plotW) - bw / 2;
@@ -759,7 +762,7 @@
   function vintageChart(vintages, budget) {
     const W = 940, H = 230, L = 58, R = 16, T = 16, B = 30;
     const plotW = W - L - R, plotH = H - T - B;
-    const maxV = Math.max.apply(null, vintages.map((v) => v.total).concat([budget])) * 1.08;
+    const maxV = Math.max.apply(null, vintages.map((v) => v.total).concat([budget, 1])) * 1.08;
     const y = (v) => T + plotH - (v / maxV) * plotH;
     const n = vintages.length;
     const cw = plotW / Math.max(n, 1), bw = Math.min(cw * 0.5, 70);
