@@ -886,5 +886,6 @@
     return { created, updated, removed, vocab, failed };
   }
 
-  window.UFC_BulkExcel = { exportWorkbook, parseWorkbook, buildPlan, apply, PROJECT_COLS, ROLE_COLS };
+  // buildWorkbook is exposed for the round-trip test (export → parse → plan must be a no-op).
+  window.UFC_BulkExcel = { exportWorkbook, buildWorkbook, parseWorkbook, buildPlan, apply, PROJECT_COLS, ROLE_COLS };
 })();

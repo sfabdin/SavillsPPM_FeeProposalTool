@@ -8,7 +8,7 @@ on:
 jobs:
   regression:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,5 +18,13 @@ jobs:
         run: |
           npm install --no-save playwright
           npx playwright install --with-deps chromium
-      - name: Run regression suite (tests.html)
+      - name: HTML hygiene (every page parses cleanly)
+        run: node scripts/check-html.mjs
+      - name: Regression suite (tests.html)
         run: node scripts/run-tests.mjs
+      - name: Executive Reporting model invariants
+        run: node exec-reporting/verify-core.mjs
+      - name: Client workbook wiring (formulas tie out)
+        run: node scripts/check-export.mjs
+      - name: Page smoke (every page loads without errors)
+        run: node scripts/smoke.mjs

@@ -538,6 +538,7 @@
   <ol>
     <li>Edit the file(s) in the repo.</li>
     <li>Commit &amp; push to the main branch.</li>
+    <li>CI runs on every push (<code>.github/workflows/tests.yml</code>): HTML hygiene on every page, the regression suite (<code>tests.html</code> — engine, data layer, staffing, exec model, round trips, a Box fake for the 412 merge path), the Executive Reporting invariants, the client-workbook wiring check, and a Chromium smoke of every page. All five must be green before a merge. Locally: <code>node scripts/check-html.mjs &amp;&amp; node scripts/run-tests.mjs &amp;&amp; node exec-reporting/verify-core.mjs &amp;&amp; node scripts/check-export.mjs &amp;&amp; node scripts/smoke.mjs</code>.</li>
     <li>Vercel builds and deploys automatically (static — no build step, seconds).</li>
     <li>Hard-refresh the live site to confirm.</li>
   </ol>

@@ -33,7 +33,7 @@
   <div class="sub">Asserts the invariants the reporting engines depend on. Run this before every deploy — a red row means the math or data layer broke. Uses an in-memory storage shim, so it never touches your real Box-synced data.</div>
   <div id="summary"></div>
   <div id="out"></div>
-  <div class="foot">Engine: <code>store.js · computeFinancials / monthlySeries / projectFinancials</code> + data-layer (<code>tombstones · migrations · activity</code>). No Box, no network — pure in-memory.</div>
+  <div class="foot">Engine: <code>store.js · computeFinancials / monthlySeries / projectFinancials</code> + data-layer (<code>tombstones · migrations · activity</code>) + staffing, exec model, round trips (JSON, Bulk Excel) and a Box fake for the 412 merge path. No real Box, no network — pure in-memory.</div>
 </div>
 
 <!-- In-memory storage shim: route the app's localStorage keys to memory so tests
@@ -58,6 +58,9 @@
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/staff.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/vendor-lazy.js"></script>
+<script src="universal-fee-calc/bulk-excel.js"></script>
 <!-- Pulled in for its workbook parser only; it renders nothing without the
      reconciliation page's markup. -->
 <script src="universal-fee-calc/revenue-reconcile.js"></script>
@@ -83,6 +86,18 @@
     try { const r = fn(); ok = r === true || r === undefined; if (typeof r === 'string') { ok = false; detail = r; } }
     catch (e) { ok = false; detail = e.message; }
     results.push({ group, name, ok, detail });
+  }
+  /* Async tests (round trips through ExcelJS, the Box fake) run after the
+     synchronous ones, one at a time, and the page reports once all are in. */
+  const asyncTests = [];
+  function testAsync(group, name, fn) { asyncTests.push({ group, name, fn }); }
+  async function runAsync() {
+    for (const t of asyncTests) {
+      let ok = false, detail = '';
+      try { const r = await t.fn(); ok = r === true || r === undefined; if (typeof r === 'string') { ok = false; detail = r; } }
+      catch (e) { ok = false; detail = e.message; }
+      results.push({ group: t.group, name: t.name, ok, detail });
+    }
   }
   const near = (a, b, eps) => Math.abs(a - b) <= (eps == null ? EPS : eps);
   function eq(a, b, label, eps) {
@@ -2136,7 +2151,97 @@
     });
   })();
 
+  /* ============ ROUND TRIPS + THE BOX FAKE ============ */
+  (function () {
+    const B = window.UFC_BulkExcel, Box = window.UFC_Box;
+    const stamp = (n) => '2026-0' + n + '-01T00:00:00Z';
+    const rec = (id, name, upd, over) => Object.assign({
+      id, createdAt: stamp(1), updatedAt: upd || stamp(1),
+      project: { name, client: 'Acme', status: 'draft', rating: 4, lead: 'Andrew Peters' },
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 6, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }],
+      groups: [{ id: 'core', name: 'Core' }],
+      roles: [{ id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'core', fte: { p1: 100 }, fteMonthly: {} }],
+      assumptions: S.defaultAssumptions({ discount: 5 }),
+    }, over || {});
+    const freshBook = (projects) => {
+      const db = { schemaVersion: 2, projects: {}, activity: [] };
+      projects.forEach(p => { db.projects[p.id] = p; });
+      localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify(db));
+      return db;
+    };
+
+    test('Round trip', 'JSON export → import (replace) reproduces the book exactly', () => {
+      freshBook([rec('rt_a', 'Alpha'), rec('rt_b', 'Beta', stamp(3))]);
+      const before = S.listProjects().map(p => JSON.stringify(p)).sort().join('|');
+      const json = S.exportDb();
+      freshBook([]);
+      if (S.listProjects().length) return 'book did not clear';
+      S.importDb(json, 'replace');
+      const after = S.listProjects().map(p => JSON.stringify(p)).sort().join('|');
+      return (S.listProjects().length === 2 && before === after) || 'import changed the records';
+    });
+
+    testAsync('Round trip', 'Bulk Excel export → parse → plan is a no-op (nothing to change, nothing missing)', async () => {
+      freshBook([rec('rt_x', 'Xray Tower'), rec('rt_y', 'Yankee Fit-out', stamp(2))]);
+      const { wb } = await B.buildWorkbook();
+      const buf = await wb.xlsx.writeBuffer();
+      const parsed = await B.parseWorkbook({ name: 'roundtrip.xlsx', arrayBuffer: async () => buf });
+      const plan = B.buildPlan(parsed);
+      if (plan.errors.length) return 'errors: ' + plan.errors.slice(0, 3).join(' · ');
+      if (plan.changes.length) return 'phantom changes: ' + plan.changes.slice(0, 3).map(c => JSON.stringify(c).slice(0, 160)).join(' · ');
+      if (plan.creates.length || plan.removes.length) return 'creates ' + plan.creates.length + ' / removes ' + plan.removes.length;
+      return plan.untouched.length === 2 || ('untouched ' + plan.untouched.length);
+    });
+
+    /* The Box fake: an upload that meets a 412 must pull, merge newest-wins per
+       record, and retry with the etag it just pulled — never overwrite. */
+    testAsync('Box sync', 'a 412 on upload pulls, merges newest-wins, and retries with the fresh etag', async () => {
+      if (!Box || !Box.syncNow) return 'box adapter not loaded';
+      const realFetch = window.fetch;
+      const calls = [];
+      const remote = { schemaVersion: 2, projects: {
+        bx_a: rec('bx_a', 'Alpha (stale in Box)', stamp(1)),
+        bx_b: rec('bx_b', 'Beta (only in Box)', stamp(2)),
+      }, activity: [] };
+      window.fetch = async (url, opts) => {
+        opts = opts || {};
+        const u = String(url);
+        calls.push({ url: u, opts });
+        if (/upload\.box\.com/.test(u) && opts.method === 'POST') {
+          const nth = calls.filter(c => c.url === u).length;
+          if (nth === 1) return new Response('', { status: 412 });
+          return new Response(JSON.stringify({ entries: [{ etag: '2' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        if (/api\.box\.com\/2\.0\/files\/\d+\/content/.test(u)) {
+          return new Response(JSON.stringify(remote), { status: 200, headers: { etag: '"1"', 'content-type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+      };
+      try {
+        Box.config.testMode = true; Box.setTestToken('test-token');
+        freshBook([rec('bx_a', 'Alpha (edited here, newer)', stamp(3))]);
+        await Box.syncNow();
+        const posts = calls.filter(c => /upload\.box\.com/.test(c.url) && c.opts.method === 'POST');
+        if (posts.length !== 2) return 'expected 2 uploads (412 then retry), saw ' + posts.length;
+        const ifMatch = (posts[1].opts.headers || {})['If-Match'];
+        if (ifMatch !== '1') return 'retry did not carry the pulled etag (If-Match=' + ifMatch + ')';
+        const sent = JSON.parse(await posts[1].opts.body.get('file').text());
+        const names = Object.values(sent.projects).map(p => p.project.name).sort();
+        if (names.join('|') !== 'Alpha (edited here, newer)|Beta (only in Box)') return 'merged upload was ' + names.join(' | ');
+        const local = S.listProjects().map(p => p.project.name).sort().join('|');
+        if (local !== 'Alpha (edited here, newer)|Beta (only in Box)') return 'local book after merge: ' + local;
+        if (Box.syncState.state !== 'synced') return 'sync state ' + Box.syncState.state + ' · ' + Box.syncState.message;
+        return true;
+      } finally {
+        window.fetch = realFetch; Box.config.testMode = false;
+        try { sessionStorage.removeItem('ufc_box_devtoken'); } catch (e) {}
+      }
+    });
+  })();
+
   /* ---- render ---- */
+  function finish() {
   const pass = results.filter(r => r.ok).length;
   const fail = results.length - pass;
   document.getElementById('summary').innerHTML =
@@ -2155,6 +2260,8 @@
   });
   document.getElementById('out').innerHTML = html;
   window.__testResults = { pass, fail, total: results.length, results };
+  }
+  runAsync().then(finish, (e) => { results.push({ group: 'Harness', name: 'async tests ran', ok: false, detail: e.message }); finish(); });
 })();
 </script>
 </body>
