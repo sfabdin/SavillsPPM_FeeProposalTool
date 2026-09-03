@@ -120,7 +120,7 @@
     const label = document.querySelector('.identity-bar .id-label');
     const cur = STORE.getCurrentUser();
 
-    // Only the SUPERUSER (Salim) gets the impersonation switcher. Everyone else
+    // Only a SUPERUSER gets the impersonation switcher. Everyone else
     // sees a static, read-only identity — no way to assume another person's view.
     if (!STORE.canImpersonate()) {
       if (sel) sel.style.display = 'none';
@@ -142,7 +142,9 @@
     if (sel) sel.style.display = '';
     const roster = STORE.impersonationRoster();
     const imp = STORE.getImpersonation();
-    const opts = [`<option value="__me__">Me — Salim (admin · all projects)</option>`]
+    const me = (STORE.getRealIdentity && STORE.getRealIdentity()) || {};
+    const meName = (STORE.displayNameForLogin && STORE.displayNameForLogin(me.username)) || me.name || '';
+    const opts = [`<option value="__me__">Me — ${esc(meName || 'admin')} (admin · all projects)</option>`]
       .concat(roster.map(r => `<option value="${esc(r.username)}">${esc(r.name)}${r.role === 'admin' ? ' · admin' : ''}</option>`))
       .concat([`<option value="__custom__">Custom email…</option>`]);
     sel.innerHTML = opts.join('');

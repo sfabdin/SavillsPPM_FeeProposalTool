@@ -4206,7 +4206,7 @@
      ============================================================ */
   const SESSION_KEY = 'ufc_session_v1';
   const REAL_KEY = 'ufc_real_identity_v1';     // the TRUE Box SSO identity this session
-  const IMP_KEY  = 'ufc_impersonate_v1';       // (Salim-only) identity being previewed
+  const IMP_KEY  = 'ufc_impersonate_v1';       // (superuser-only) identity being previewed
 
   /* ============================================================
      ADMIN ALLOWLIST  (fail-CLOSED)
@@ -4217,8 +4217,7 @@
      Match is on the Box SSO login (email), case-insensitive.
      Edit this list to grant/revoke all-access.                  */
   const ADMINS = new Set([
-    'sabdin@savills.us',      // Salim — owner (current login)
-    'salim@savills.us',      // Salim — owner (legacy login, kept for transition)
+    'sabdin@savills.us',      // Sarah Abdin — owner
     'kyerou@savills.us',      // Kyri Yerou — developer (on the Savills system now)
     'esobel@savills.us',     // Emily Sobel
     'jsantoro@savills.us',   // Jeff Santoro
@@ -4254,7 +4253,6 @@
      other people's restricted views. Everyone else never sees the control. */
   const SUPERUSERS = new Set([
     'sabdin@savills.us',
-    'salim@savills.us',
     'kyerou@savills.us',
   ]);
 
@@ -4400,7 +4398,7 @@
   }
 
   function getCurrentUser() {
-    // Salim-only impersonation wins (for testing restricted views).
+    // Superuser impersonation wins (for testing restricted views).
     const imp = getImpersonation();
     if (imp) return { ...identityFor(imp), impersonating: true };
     const real = getRealIdentity();
@@ -4423,7 +4421,7 @@
   /* People the SUPERUSER can impersonate: every leader + every admin (deduped). */
   /* Display names for logins that are not in the leader directory. */
   const LOGIN_NAMES = {
-    'sabdin@savills.us': 'Salim Abdin', 'salim@savills.us': 'Salim Abdin', 'kyerou@savills.us': 'Kyri Yerou',
+    'sabdin@savills.us': 'Sarah Abdin', 'kyerou@savills.us': 'Kyri Yerou',
     'esobel@savills.us': 'Emily Sobel', 'jsantoro@savills.us': 'Jeff Santoro', 'mglatt@savills.us': 'Michael Glatt',
     'mhadim@savills.us': 'Maria Hadim', 'eglatt@savills.us': 'Emily Glatt', 'cglatt@savills.us': 'Cara Glatt',
     'bjosselson@savills.us': 'Benay Josselson',
@@ -4608,7 +4606,7 @@
     approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
-    setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin,
+    setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, 
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
