@@ -95,12 +95,21 @@
     // Coerce: the Bulk Editor used to store the rating as a string, and a
     // string never matches the strict compare in ratingMeta — the project
     // read as Dead Pursuit. Records already written that way heal here.
-    const raw = p && p.project && p.project.rating;
-    const r = (raw == null || raw === '') ? NaN : Number(raw);
-    if (Number.isInteger(r) && r >= 1 && r <= 7) return r;
+    const r = resolveRating(p && p.project && p.project.rating);
+    if (r) return r;
     return STATUS_DEFAULT_RATING[(p && p.project && p.project.status) || 'draft'] || 5;
   }
   function ratingMeta(n) { return RATINGS.find(r => r.n === n) || RATINGS[RATINGS.length - 1]; }
+  /** 1–7 from a number, numeric text, or a rating label/short label; null if none match. */
+  function resolveRating(raw) {
+    if (raw == null || raw === '') return null;
+    const n = Number(raw);
+    if (Number.isInteger(n) && n >= 1 && n <= 7) return n;
+    const key = String(raw).trim().toLowerCase().replace(/[-–—]/g, '–');
+    const hit = RATINGS.find(r => r.label.toLowerCase() === key || r.short.toLowerCase() === key
+      || key === 'r' + r.n || key === 'rating ' + r.n);
+    return hit ? hit.n : null;
+  }
 
   /* ------------------------------------------------------------
      PLACEHOLDER — "this revenue is a guess, not a contract"
@@ -956,9 +965,13 @@
     if (!String(pj.name || '').trim()) problems.push('A project needs a name.');
     if (pj.status != null && pj.status !== '' && !STATUSES.includes(pj.status)) problems.push('Status "' + pj.status + '" is not one of ' + STATUSES.join(', ') + '.');
     if (pj.rating != null && pj.rating !== '') {
-      const r = Number(pj.rating);
-      if (Number.isInteger(r) && r >= 1 && r <= 7) pj.rating = r;
-      else problems.push('Rating "' + pj.rating + '" must be 1–7.');
+      /* A rating may arrive as its number, its number as text ("4"), or the
+         label the dropdown shows ("50–74%", "Booked"). All three are the same
+         rating; resolve rather than refuse. Anything unrecognisable is dropped
+         so the status default applies (ratingFor) — a save is never blocked
+         over a rating. */
+      const r = resolveRating(pj.rating);
+      if (r) pj.rating = r; else delete pj.rating;
     }
     const tl = record.timeline;
     if (tl) {
@@ -4518,7 +4531,7 @@
     ingestActivityEntries, migrateActivityOutOfProjects, drainLegacyActivity, activityCoverage,
     dirtyActivityShards, markActivityShardClean,
     accessGrantList, parseAccessEmails,
-    RATINGS, ratingFor, ratingMeta, STATUS_DEFAULT_RATING, isPlaceholder,
+    RATINGS, ratingFor, ratingMeta, resolveRating, STATUS_DEFAULT_RATING, isPlaceholder,
     SERVICE_LINES, serviceLineOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
     allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity, describeChanges,
