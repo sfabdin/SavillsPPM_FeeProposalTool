@@ -1864,8 +1864,9 @@
       if (dup.length) return 'listed twice: ' + [...new Set(dup)].join(', ');
       const ap = r.filter(x => x.username === 'acpeters@savills.us' || x.name === 'Andrew Peters');
       if (ap.length !== 1) return 'Andrew Peters appears ' + ap.length + ' times';
-      if (S.displayNameForLogin('sabdin@savills.us') !== 'Salim Abdin' || S.displayNameForLogin('acpeters@savills.us') !== 'Andrew Peters') return 'displayNameForLogin wrong';
-      return r.filter(x => x.name === 'Salim Abdin').length === 1 || 'two logins for one admin should fold into one row';
+      if (S.displayNameForLogin('sabdin@savills.us') !== 'Sarah Abdin' || S.displayNameForLogin('acpeters@savills.us') !== 'Andrew Peters') return 'displayNameForLogin wrong';
+      if (r.some(x => x.username === 'salim@savills.us')) return 'the retired login is still listed';
+      return r.filter(x => x.name === 'Sarah Abdin').length === 1 || 'Sarah Abdin should be listed exactly once';
     });
     test('Vocabulary', 'months display as mmm-YY everywhere', () => {
       const U = window.UFC_UI;
