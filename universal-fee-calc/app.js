@@ -3089,16 +3089,21 @@
 
     // Timeline
     const tlChange = () => {
+      const sy = parseInt($('#tl-start-year').value), ey = parseInt($('#tl-end-year').value);
+      // A year that isn't a year yet is not a timeline change.
+      if (!(sy >= 1900 && sy <= 2200 && ey >= 1900 && ey <= 2200)) return;
       state.timeline.startMonth = parseInt($('#tl-start-month').value);
-      state.timeline.startYear  = parseInt($('#tl-start-year').value);
+      state.timeline.startYear  = sy;
       state.timeline.endMonth   = parseInt($('#tl-end-month').value);
-      state.timeline.endYear    = parseInt($('#tl-end-year').value);
+      state.timeline.endYear    = ey;
       renderAll();
       markDirty();
     };
+    /* On change only. Firing on each keystroke re-ran rebalancePhases against
+       whatever a half-typed year implied ("2" → a 200-month span), rewrote
+       every phase length to fit it, and autosaved the result. */
     ['#tl-start-month','#tl-start-year','#tl-end-month','#tl-end-year'].forEach(s => {
       $(s).addEventListener('change', tlChange);
-      $(s).addEventListener('input', tlChange);
     });
 
     // Assumptions
@@ -3210,12 +3215,15 @@
 
   /* ----- Excel export ----- */
   async function exportExcel() {
-    if (typeof ExcelJS === 'undefined') { UFC_UI.toast('Excel library failed to load.'); return; }
     const btn = $('#xlsx-btn');
     const orig = btn.textContent;
     btn.textContent = 'Building…';
     btn.disabled = true;
     try {
+      // ExcelJS is loaded on demand. Ask for it here, then check — the old
+      // order checked first and so refused every click.
+      if (window.UFC_Vendor && window.UFC_Vendor.excel) await window.UFC_Vendor.excel();
+      if (typeof ExcelJS === 'undefined') throw new Error('the Excel library did not load — check your connection and try again');
       await window.UFC_buildAndDownloadExcel();
     } catch (e) {
       console.error(e);
@@ -3454,6 +3462,10 @@
     const label = prompt('Name this version (e.g. "Client counteroffer", "v2 after Kathy review"):', '');
     if (label === null) return;   // cancelled
     STORE.saveVersion(state.id, { label: label || '' });
+    // saveVersion stamps the record; without this the next autosave sees a
+    // newer updatedAt than it started from and reports the user to themself.
+    const fresh = STORE.getProject(state.id);
+    if (fresh) baseUpdatedAt = fresh.updatedAt || baseUpdatedAt;
     refreshVersionCount();
     renderVersionList();
   }

@@ -498,7 +498,18 @@
 
     // Meta: whichever side was written last.
     const rMeta = remote.meta || {}, lMeta = local.meta || {};
-    out.meta = ((lMeta.updatedAt || '') >= (rMeta.updatedAt || '')) ? Object.assign({}, rMeta, lMeta) : Object.assign({}, lMeta, rMeta);
+    const localNewer = (lMeta.updatedAt || '') >= (rMeta.updatedAt || '');
+    out.meta = localNewer ? Object.assign({}, rMeta, lMeta) : Object.assign({}, lMeta, rMeta);
+    // Lateness: its own stamp, because it arrives on its own schedule.
+    out.lateness = (((lMeta.latenessAt || '') >= (rMeta.latenessAt || '')) ? local.lateness : remote.lateness)
+                   || local.lateness || remote.lateness || [];
+    /* Anything this function does not know about yet travels with whichever
+       copy was written last instead of being dropped. `lateness` was lost on
+       every refresh for exactly this reason; the next field must not be. */
+    const newest = localNewer ? local : remote, other = localNewer ? remote : local;
+    Object.keys(Object.assign({}, other, newest)).forEach(k => {
+      if (!(k in out)) out[k] = newest[k] !== undefined ? newest[k] : other[k];
+    });
     out.schemaVersion = SCHEMA;
     return out;
   }

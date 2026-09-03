@@ -710,6 +710,9 @@
      ============================================================ */
   document.addEventListener('DOMContentLoaded', () => {
     const startStudio = () => {
+    // The admin gate can replace the page body before we get here; a member
+    // then has no studio to wire, and must not get an error for it.
+    if (!$('#example-btn')) return;
     $('#example-btn').addEventListener('click', loadExample);
     $('#parse-btn').addEventListener('click', () => {
       const rows = parseTable($('#src').value);

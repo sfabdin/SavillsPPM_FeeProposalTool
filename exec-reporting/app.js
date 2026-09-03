@@ -99,6 +99,15 @@
     root.innerHTML = gateBox('Loading', 'Pulling the latest data from Box…', '');
     try {
       if (window.ufcReady && window.ufcReady.then) await window.ufcReady;
+      /* Boot pulled the current month of the audit trail. Ageing and
+         staleness read back a year, one small file per month. Quiet on
+         failure: the panels then say "awaiting history", which is true. */
+      const Box = window.UFC_Box;
+      if (Box && Box.enabled && Box.pullActivityMonths) {
+        const months = []; const now = new Date();
+        for (let k = 11; k >= 1; k--) months.push(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - k, 1)).toISOString().slice(0, 7));
+        try { await Box.pullActivityMonths(months); } catch (e) { /* see above */ }
+      }
     } catch (e) {
       if (rootOrNull()) rootOrNull().innerHTML = gateBox('Could not load', 'The app could not start. Reload to retry.', esc(e && e.message));
       return;
@@ -139,6 +148,10 @@
   function assemble() {
     const S = window.UFC_Store;
     DATA.projectsRaw = JSON.parse(S.exportDb());          // the projects.json shape, from the store's own serialiser
+    /* The audit trail no longer rides inside projects.json — it has its own
+       month-sharded store — so the array this used to read is always empty
+       now. Staleness, deal ageing and movement history all come from it. */
+    DATA.projectsRaw.activity = S.listActivity ? S.listActivity(null) : [];
     DATA.studioRaw = S.readStudio();
     const pulled = new Date();
     computeAll('Live from Box · pulled ' + pulled.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET');

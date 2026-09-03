@@ -69,8 +69,12 @@
     hold: 6, lost: 7,
   };
   function ratingFor(p) {
-    const r = p && p.project && p.project.rating;
-    if (r != null && r >= 1 && r <= 7) return r;
+    // Coerce: the Bulk Editor used to store the rating as a string, and a
+    // string never matches the strict compare in ratingMeta — the project
+    // read as Dead Pursuit. Records already written that way heal here.
+    const raw = p && p.project && p.project.rating;
+    const r = (raw == null || raw === '') ? NaN : Number(raw);
+    if (Number.isInteger(r) && r >= 1 && r <= 7) return r;
     return STATUS_DEFAULT_RATING[(p && p.project && p.project.status) || 'draft'] || 5;
   }
   function ratingMeta(n) { return RATINGS.find(r => r.n === n) || RATINGS[RATINGS.length - 1]; }
@@ -3275,7 +3279,10 @@
     // project is explicitly reconciled. Not sliced by service line.
     const imp = p.source && p.source.importedByMonth;
     if (imp && !slFilter && !(p.source && p.source.reconciled)) {
-      return months.map(m => ({ year: m.year, month: m.month, amount: +imp[m.year + '-' + m.month] || 0 }));
+      /* Locked against staffing, not against people. An override is someone
+         saying "this month is X"; a slip is Finance saying it moved. Both
+         used to be painted on the grid and then silently not applied. */
+      return applyOverrides(months.map(m => ({ year: m.year, month: m.month, amount: +imp[m.year + '-' + m.month] || 0 })), p, slFilter, opts && opts.raw);
     }
     // Which group ids are in the requested service line (if filtering)
     let allowedGroups = null;

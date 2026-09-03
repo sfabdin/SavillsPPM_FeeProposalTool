@@ -593,6 +593,55 @@
     return fields.includes('Team') || 'removing a role did not register as a Team change';
   });
 
+  /* ============ STEP 1 — defects that were live in production ============
+     Each of these failed against the tree before the fix. They are kept so
+     the same regression cannot land twice. */
+
+  test('Regression · rating', 'a rating stored as a string still reads as its number', () => {
+    // The Bulk Editor wrote "2"; the strict compare in ratingMeta then missed
+    // and the project read as Dead Pursuit — weight zero, gone from the forecast.
+    const p = base({ project: { name: 'X', client: 'C', status: 'submitted', rating: '2' } });
+    if (S.ratingFor(p) !== 2) return 'ratingFor gave ' + JSON.stringify(S.ratingFor(p));
+    const meta = S.ratingMeta(S.ratingFor(p));
+    return (meta && meta.n === 2 && meta.weight > 0.9) || 'ratingMeta resolved to ' + JSON.stringify(meta);
+  });
+
+  test('Regression · rating', 'garbage in the rating field falls back to the status default, not Dead', () => {
+    const p = base({ project: { name: 'X', client: 'C', status: 'submitted', rating: 'abc' } });
+    const n = S.ratingFor(p);
+    return (n >= 1 && n <= 6) || 'fell to ' + n;
+  });
+
+  test('Regression · projections', 'an override on an imported, unreconciled project is applied', () => {
+    // The imported branch returned before applyOverrides ran, so the grid
+    // painted the override red and the figure never moved.
+    const p = base({
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 3, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'D', length: 3 }],
+      source: { importedByMonth: { '2026-1': 10000, '2026-2': 10000, '2026-3': 10000 } },
+      monthlyOverrides: { '2026-2': 25000 },
+    });
+    const ser = S.monthlySeries(p, C);
+    const feb = (ser.find(x => x.month === 2) || {}).amount;
+    if (!near(feb, 25000)) return 'February read ' + round(feb) + ', override ignored';
+    const jan = (ser.find(x => x.month === 1) || {}).amount;
+    return near(jan, 10000) || 'January should still be the imported figure';
+  });
+
+  test('Regression · projections', 'a slip on an imported project moves the money', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    const p = S.saveProject(base({
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 3, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'D', length: 3 }],
+      source: { importedByMonth: { '2026-1': 10000, '2026-2': 10000, '2026-3': 10000 } },
+    }));
+    S.recordSlip(p.id, { fromYm: '2026-01', toYm: '2026-03', amount: 10000, note: 't' });
+    const ser = S.monthlySeries(S.getProject(p.id), C);
+    const jan = (ser.find(x => x.month === 1) || {}).amount, mar = (ser.find(x => x.month === 3) || {}).amount;
+    if (!near(jan, 0)) return 'January still shows ' + round(jan) + ' after slipping out';
+    return near(mar, 20000) || 'March shows ' + round(mar) + ', expected 20000';
+  });
+
   /* ============ REVENUE LEDGER (year of actuals, cell by cell) ============
      cell recognised = billed + feeShare + (accrual − last known accrual)
      The accrual column is a BALANCE and a close tab states only ONE — its own
@@ -1608,6 +1657,19 @@
       const e = trail('staff-map')[0];
       if (!e) return 'not recorded';
       return (e.meta.kind === 'project' && e.meta.to === 'Tower Alpha') || JSON.stringify(e.meta);
+    });
+
+    test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
+      // mergeStaffDb built its result from defaultDb() and copied only the keys
+      // it knew; lateness was wiped on every refresh, and the next new field
+      // would have been too.
+      const now = new Date().toISOString();
+      const mk = (extra) => Object.assign({ people: {}, allocations: [], actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { updatedAt: now, monthHours: 172 } }, extra);
+      const remote = mk({ lateness: [{ user: 'a', days: 3 }], meta: { updatedAt: now, latenessAt: '2026-09-01T00:00:00.000Z', monthHours: 172 }, futureField: { keep: 'me' } });
+      const local = mk({ lateness: [], meta: { updatedAt: now, monthHours: 172 } });
+      const out = ST.mergeStaffDb(remote, local);
+      if (!out.lateness || out.lateness.length !== 1) return 'lateness dropped: ' + JSON.stringify(out.lateness);
+      return (out.futureField && out.futureField.keep === 'me') || 'an unknown top-level key was dropped';
     });
 
     test('Staffing', 'capacity honors the part-time percentage', () => {

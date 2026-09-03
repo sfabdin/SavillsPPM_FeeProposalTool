@@ -81,6 +81,18 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let plan = null;
 
+  /* The plan is computed against Box's copy, not whatever this browser last
+     cached — a repair from a cold page used to scan (and then overwrite the
+     shared file with) a copy that could be weeks old. */
+  async function refreshFromBox() {
+    const S = window.UFC_Staff, Box = window.UFC_Box;
+    if (!Box || !Box.enabled || !Box.pullStaff) return false;
+    try {
+      const remote = await Box.pullStaff();
+      if (remote && remote.allocations && S.mergeFromRemote) { S.mergeFromRemote(remote); return true; }
+    } catch (e) { console.warn('staff.json pull failed — planning against the local copy', e); }
+    return false;
+  }
   function computePlan() {
     const S = window.UFC_Staff, STORE = window.UFC_Store;
     const db = S.readDb();
@@ -365,8 +377,8 @@
     const STORE = window.UFC_Store;
     if (!(STORE && STORE.isAdmin && STORE.isAdmin())) { $('#gate').style.display = 'block'; return; }
     $('#app').style.display = 'block';
-    renderPlan();
-    renderConvene();
+    // Plan against Box's copy, then draw. See refreshFromBox.
+    refreshFromBox().then(() => { renderPlan(); renderConvene(); });
     $('#run').onclick = runRepair;
     $('#cv-run').onclick = runConvene;
   });

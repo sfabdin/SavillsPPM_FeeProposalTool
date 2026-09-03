@@ -728,6 +728,15 @@
   async function uploadStaff(db, depth) {
     const id = await resolveStaffFileId();
     if (!id) return;
+    /* No etag means this page has never seen Box's copy of staff.json, and a
+       PUT without If-Match replaces whatever is there — every teammate edit
+       since this browser last synced. Look first; merge if there is anything
+       to merge. Data Repair reached this path from a cold page. */
+    if (!_staffEtag) {
+      const remote = await pullStaff();          // sets _staffEtag when the file exists
+      const Staff = window.UFC_Staff;
+      if (remote && remote.allocations && Staff && Staff.mergeFromRemote) db = Staff.mergeFromRemote(remote);
+    }
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const form = new FormData();
     form.append('attributes', JSON.stringify({ name: 'staff.json' }));
