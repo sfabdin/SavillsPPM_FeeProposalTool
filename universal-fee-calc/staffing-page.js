@@ -15,20 +15,13 @@
   const S = window.UFC_Staff;
   const STORE = window.UFC_Store;
 
-  /* Auth header for our own /api/* endpoints — they validate the Box session. */
+  /* Auth header for our own /api/* endpoints — they validate the Box session.
+     The adapter is the only thing that reads the token; a fallback that
+     scanned localStorage for anything token-shaped used to live here. */
   async function apiHeaders() {
     try {
       const tok = window.UFC_Box && window.UFC_Box.getAccessToken ? await window.UFC_Box.getAccessToken() : null;
       if (tok) return { Authorization: 'Bearer ' + tok };
-    } catch (e) {}
-    // Fallback: read the token bundle directly (old cached box-adapter without getAccessToken)
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (!/box.*tok|tok.*box/i.test(k)) continue;
-        const t = JSON.parse(localStorage.getItem(k));
-        if (t && t.access_token && (!t.exp || t.exp > Date.now())) return { Authorization: 'Bearer ' + t.access_token };
-      }
     } catch (e) {}
     return {};
   }

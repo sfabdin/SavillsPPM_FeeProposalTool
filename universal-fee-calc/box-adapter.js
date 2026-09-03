@@ -101,6 +101,7 @@
   // it expires (~60 min), using the long-lived (~60 day) refresh token.
   const TOK_KEY = 'ufc_box_token_v1';
   const PKCE_KEY = 'ufc_box_pkce_v1';
+  const STATE_KEY = 'ufc_box_state_v1';   // the login's anti-CSRF nonce, checked on the way back
   const TEST_TOK_KEY = 'ufc_box_devtoken';
 
   function readTok() { try { return JSON.parse(localStorage.getItem(TOK_KEY)); } catch (e) { return null; } }
@@ -215,7 +216,13 @@
     url.searchParams.set('redirect_uri', BOX_CONFIG.redirectUri);
     url.searchParams.set('code_challenge', challenge);
     url.searchParams.set('code_challenge_method', 'S256');
-    url.searchParams.set('state', randomStr(12));
+    /* `state` was generated here and never looked at again, so the callback
+       would exchange any code it was handed — a login-CSRF that can bind this
+       browser to someone else's Box account. Kept in sessionStorage (this tab,
+       this login) and compared on return; PKCE covers code injection, not this. */
+    const state = randomStr(24);
+    sessionStorage.setItem(STATE_KEY, state);
+    url.searchParams.set('state', state);
     window.location.assign(url.toString());
   }
   async function logout() {
@@ -240,8 +247,14 @@
      token exchange still needs to happen somewhere that can POST the
      verifier. Box's token endpoint accepts PKCE without a secret for
      public clients. */
-  async function exchangeCode(code) {
+  async function exchangeCode(code, state) {
+    const expected = sessionStorage.getItem(STATE_KEY);
+    sessionStorage.removeItem(STATE_KEY);                     // one login, one use
+    if (!expected || !state || state !== expected) {
+      throw new Error('Sign-in did not start from this tab. Open the app and sign in again.');
+    }
     const verifier = sessionStorage.getItem(PKCE_KEY);
+    if (!verifier) throw new Error('Sign-in did not start from this tab. Open the app and sign in again.');
     // Your Box app has a Client Secret, so the exchange runs server-side
     // (a Vercel serverless function holds the secret). The browser POSTs the
     // code + PKCE verifier to that endpoint, which returns the token.

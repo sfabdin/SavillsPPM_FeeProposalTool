@@ -118,8 +118,7 @@
 
   /* ---------- parse "3. Detailed Revenues" ---------- */
   async function parseWorkbook(file) {
-    await window.UFC_Vendor.xlsx();
-    const XLSX = await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm');
+    const XLSX = await window.UFC_Vendor.xlsx();       // the vendored copy — not a second one from a CDN
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
     const sheetName = wb.SheetNames.find(n => /3[.\s]*detailed\s*revenues/i.test(n)) || wb.SheetNames.find(n => /detailed\s*revenues/i.test(n));
     if (!sheetName) throw new Error(`No "3. Detailed Revenues" tab found. Sheets in this file: ${wb.SheetNames.join(', ')}`);

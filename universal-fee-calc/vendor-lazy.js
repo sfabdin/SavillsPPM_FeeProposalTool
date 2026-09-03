@@ -20,6 +20,7 @@
 
      await UFC_Vendor.excel();     const wb = new ExcelJS.Workbook();
      await UFC_Vendor.xlsx();      const wb = XLSX.read(buf, …);
+     const pdfjs = await UFC_Vendor.pdf();   // an ES module, returned rather than a global
    ============================================================ */
 (function () {
   'use strict';
@@ -55,6 +56,19 @@
     excel: () => load('excel', 'vendor/exceljs.min.js', 'ExcelJS'),
     /** SheetJS — reading .xlsx (the importers). */
     xlsx: () => load('xlsx', 'vendor/xlsx.full.min.js', 'XLSX'),
+    /** pdf.js — reading PDFs (the Ingestion Studio). Vendored: it used to
+        come from a CDN at runtime, which broke the "nothing third-party at
+        runtime" rule this file exists for and would be blocked by the CSP. */
+    pdf: () => {
+      if (!cache.pdf) {
+        const base = new URL('vendor/', document.baseURI).href;
+        cache.pdf = import(base + 'pdf.min.mjs').then(m => {
+          m.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.mjs';
+          return m;
+        }).catch(e => { delete cache.pdf; throw e; });
+      }
+      return cache.pdf;
+    },
     /** True once loaded, for code that wants to avoid an await. */
     ready: (which) => !!(which === 'xlsx' ? window.XLSX : window.ExcelJS),
   };

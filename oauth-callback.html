@@ -26,13 +26,14 @@
   (async function () {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
+    const state = params.get('state');
     const err = params.get('error');
     const t = document.getElementById('t'), s = document.getElementById('s');
     if (err) { t.textContent = 'Sign-in failed'; t.className = 'err'; s.textContent = err; return; }
     if (!code) { t.textContent = 'No authorization code'; t.className = 'err'; s.textContent = 'Open the app and try signing in again.'; return; }
     try {
       if (!window.UFC_Box || !window.UFC_Box.exchangeCode) throw new Error('Box adapter not enabled — set BOX_CONFIG.enabled = true.');
-      await window.UFC_Box.exchangeCode(code);
+      await window.UFC_Box.exchangeCode(code, state);   // the adapter refuses a state it did not issue
       // Return to the app (Projects Index). Where the user started can be
       // stashed in state before login if you want to bounce them back exactly.
       window.location.replace('Projects Index.html');

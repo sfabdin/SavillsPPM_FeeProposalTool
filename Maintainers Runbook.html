@@ -287,8 +287,8 @@
   </ul>
   <p>To grant or revoke access, edit <code>ADMINS</code> / <code>TOOL_ADMINS</code> near the identity block in <code>store.js</code>. Per-user extra visibility (e.g. every project carrying a "Change Management" group) lives in <code>GROUP_ACCESS</code>. Super-users (<code>SUPERUSERS</code>) get a hidden "Viewing as" switch to preview anyone's restricted view — no one else can.</p>
   <div class="box warn">
-    <span class="tag">Honest limit</span>
-    The per-person wall is enforced in the browser, and the Box <em>folder</em> permission is the real boundary: anyone with folder access can read <code>projects.json</code> directly. Fine for a trusted leadership group. Restricting a person who should see <em>some but not all</em> projects requires server-side filtering — listed in future work, not yet built.
+    <span class="tag">The security model, stated plainly</span>
+    <strong>Box folder membership is the boundary.</strong> Everything above is <em>scoping</em>, enforced in the browser from an email list compiled into public JavaScript. Anyone who is a collaborator on the shared Box folder can read every file in it directly, and can make themselves "admin" from the browser console. That is acceptable for a trusted team on one Box folder and it is not fixable without a server in front of the data — so it is written down here rather than pretended otherwise. What <em>is</em> enforced server-side: the two serverless functions (<code>/api/clockify</code>, <code>/api/extract</code>) accept only a Box token that belongs to a Savills login <em>and</em> can see the shared folder, and <code>/api/extract</code> is rate-limited per person. Sign-in uses PKCE and a checked <code>state</code> nonce; the token bundle (including the refresh token) is kept in <code>localStorage</code> by decision, with a Content-Security-Policy on every response as the main defence against script injection. Nothing third-party is loaded at runtime; the Excel and PDF libraries are vendored under <code>/vendor</code>.
   </div>
 
   <h2><span class="n">7</span> The Excel exports</h2>
