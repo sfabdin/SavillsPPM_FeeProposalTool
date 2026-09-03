@@ -115,6 +115,7 @@
     populateFilters();
   }
 
+  let _yearDefaulted = false;
   function uniqSorted(arr) { return [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
 
   function populateFilters() {
@@ -134,6 +135,13 @@
     const ysel = $('#f-year'); const yc = ysel.value;
     ysel.innerHTML = `<option value="">All years</option>` + years.map(y => `<option value="${y}">${y}</option>`).join('');
     if (years.includes(yc)) ysel.value = yc;
+    /* First load opens on the current year only; "All years" and any other
+       year are one click away and stick for the rest of the visit. */
+    if (!_yearDefaulted) {
+      _yearDefaulted = true;
+      const cur = String(new Date().getFullYear());
+      if (!yc && years.includes(cur)) ysel.value = cur;
+    }
     const qsel = $('#f-quarter');
     if (!qsel.options.length) qsel.innerHTML = `<option value="">All quarters</option>` + Object.keys(QUARTERS).map(q => `<option value="${q}">${q}</option>`).join('');
     const msel = $('#f-month');
