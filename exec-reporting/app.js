@@ -163,7 +163,7 @@
      old badges were literals, so an empty projects file still said LIVE. */
   function liveFlag() {
     const m = DATA && DATA.mapped;
-    return (m && m.counts && m.counts.projects > 0) ? liveFlag() : { kind: 'demo', text: 'NO DATA' };
+    return (m && m.counts && m.counts.projects > 0) ? { kind: 'live', text: 'LIVE' } : { kind: 'demo', text: 'NO DATA' };
   }
   function assemble() {
     configureCore();
