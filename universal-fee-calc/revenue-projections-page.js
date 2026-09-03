@@ -227,7 +227,7 @@
 
     // ---- Header: Rating · Client · Project (sticky), months, Total — every one sortable ----
     let html = '<thead>';
-    html += '<tr class="years">' + sortTh('rating', 'R', 'corner c-rating', ' rowspan="2"')
+    html += '<tr class="years">' + sortTh('rating', 'Rating', 'corner c-rating', ' rowspan="2"')
       + sortTh('client', 'Client', 'corner c-client', ' rowspan="2"')
       + sortTh('project', 'Project · ' + rows.length, 'corner c-project', ' rowspan="2"');
     years.forEach((yr, i) => { html += `<th colspan="${yr.span}">${yr.y}</th>`; });
