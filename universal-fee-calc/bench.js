@@ -9,14 +9,15 @@
 
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const esc = window.UFC_UI.esc;
   const money = (n) => (n == null || isNaN(n)) ? '—' : '$' + Math.round(n).toLocaleString();
   const rate = (n) => (n == null || isNaN(n) || n === 0) ? '—' : '$' + Math.round(n);
 
   let PROJECTS = [], FACTS = [], PROJFACTS = [];
 
   function load() {
-    PROJECTS = STORE.listProjects();
+    // Same rule as every other leader page: you benchmark against what you can see.
+    PROJECTS = STORE.visibleProjects ? STORE.visibleProjects(STORE.listProjects()) : STORE.listProjects();
     PROJFACTS = BENCH.projectFacts(PROJECTS);
     FACTS = BENCH.roleFacts(PROJECTS);
   }
@@ -225,6 +226,13 @@
   function boot() {
     if (BENCH.removeSamples) BENCH.removeSamples();   // purge any previously-seeded sample projects
     load();
+    if (!PROJECTS.length && window.UFC_UI && window.UFC_UI.emptyState) {
+      const kp = document.querySelector('.kpis');
+      if (kp) kp.insertAdjacentHTML('afterend', window.UFC_UI.emptyState({
+        title: 'Nothing to benchmark yet',
+        body: 'Benchmarks are built from the projects you can see. Create a project, or ask an admin for access to a leader\'s book, and this page fills in on its own.',
+        actions: [{ label: '+ New project', href: 'Universal Fee Calculator.html' }, { label: 'Projects Index', href: 'Projects Index.html' }] }));
+    }
     renderKpis();
     fillFilterOptions();
     renderComp();

@@ -28,7 +28,7 @@
     return `${String(m).padStart(2, '0')}/${last}/${y}`;
   }
   function money(n) { return (n == null || isNaN(n)) ? '' : '$' + Math.round(n).toLocaleString(); }
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+  const esc = window.UFC_UI.esc;
 
   function intakeSignature(state, netFee) {
     const t = state.timeline || {};

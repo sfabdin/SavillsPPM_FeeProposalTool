@@ -69,18 +69,14 @@ RULES:
 - Money: strip $ and commas → plain numbers. Dates: "MON YYYY". Use null when truly unknown. Capture EVERY person.`;
 }
 
+import { requireCollaborator } from './_auth.js';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') { res.status(405).json({ error: 'method not allowed' }); return; }
   // AUTH: this endpoint spends Anthropic API credit and reads confidential
-  // proposals — require a valid Savills Box session.
-  const m = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
-  if (!m) { res.status(401).json({ error: 'sign in required — reload the app and sign in with Box' }); return; }
-  try {
-    const r = await fetch('https://api.box.com/2.0/users/me?fields=login', { headers: { Authorization: 'Bearer ' + m[1] } });
-    if (!r.ok) { res.status(401).json({ error: 'session expired — reload and sign in again' }); return; }
-    const me = await r.json();
-    if (!/@savills\.(us|com)$/.test(String(me.login || '').toLowerCase())) { res.status(403).json({ error: 'not authorized' }); return; }
-  } catch (e) { res.status(401).json({ error: 'auth check failed' }); return; }
+  // proposals. See api/_auth.js: Box session + Savills login + folder
+  // collaborator, and at most ten extractions a minute per person.
+  if (!(await requireCollaborator(req, res, { limit: 10 }))) return;
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) { res.status(500).json({ error: 'ANTHROPIC_API_KEY not set on the server' }); return; }
 

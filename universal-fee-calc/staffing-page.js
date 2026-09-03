@@ -15,20 +15,13 @@
   const S = window.UFC_Staff;
   const STORE = window.UFC_Store;
 
-  /* Auth header for our own /api/* endpoints — they validate the Box session. */
+  /* Auth header for our own /api/* endpoints — they validate the Box session.
+     The adapter is the only thing that reads the token; a fallback that
+     scanned localStorage for anything token-shaped used to live here. */
   async function apiHeaders() {
     try {
       const tok = window.UFC_Box && window.UFC_Box.getAccessToken ? await window.UFC_Box.getAccessToken() : null;
       if (tok) return { Authorization: 'Bearer ' + tok };
-    } catch (e) {}
-    // Fallback: read the token bundle directly (old cached box-adapter without getAccessToken)
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (!/box.*tok|tok.*box/i.test(k)) continue;
-        const t = JSON.parse(localStorage.getItem(k));
-        if (t && t.access_token && (!t.exp || t.exp > Date.now())) return { Authorization: 'Bearer ' + t.access_token };
-      }
     } catch (e) {}
     return {};
   }
@@ -70,7 +63,20 @@
 
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  /* Search boxes live inside the tab they filter, and the tab is rebuilt as
+     one innerHTML string — so a keystroke used to throw away the input mid-word
+     and re-focus it. Now the rebuild waits until typing pauses, and the caret
+     is put back where it was. */
+  const debounce = (window.UFC_UI && window.UFC_UI.debounce) || ((fn) => fn);
+  function searchBox(sel, apply) {
+    const run = debounce((v) => {
+      apply(v);
+      const el = $(sel); if (!el) return;
+      el.focus(); el.setSelectionRange(el.value.length, el.value.length);
+    }, 150);
+    return (e) => run(e.target.value);
+  }
+  const esc = window.UFC_UI.esc;
   const fmtH = (n) => n ? (Math.round(n * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
   const fmtPct = (n) => n ? Math.round(n) + '%' : '';
 
@@ -492,7 +498,7 @@
     const la = $('#leave-add');
     if (la) la.onclick = () => openAllocModal(null, { title: 'Log a leave of absence', project: 'Leaves of Absence', client: 'Internal', pct: 100, note: 'Leave of absence' });
 
-    $('#al-search').oninput = (e) => { state.allocSearch = e.target.value; renderAllocations(); const el = $('#al-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $('#al-search').oninput = searchBox('#al-search', v => { state.allocSearch = v; renderAllocations(); });
     $('#al-status').onchange = (e) => { state.allocStatus = e.target.value; renderAllocations(); };
     $('#al-project').onchange = (e) => { state.allocProject = e.target.value; renderAllocations(); };
     $('#al-add').onclick = () => openAllocModal(null);
@@ -564,7 +570,7 @@
       <span style="margin-left:auto">Click a project for its staffing, click an allocation row to edit it.</span>
     </div>`;
     $('#p-projects').innerHTML = kpis + toolbar + table + legend;
-    $('#pj-search').oninput = (e) => { state.projSearch = e.target.value; renderProjects(); const el = $('#pj-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $('#pj-search').oninput = searchBox('#pj-search', v => { state.projSearch = v; renderProjects(); });
     const pjc = $('#pj-client'); if (pjc) pjc.onchange = (e) => { state.projClient = e.target.value; renderProjects(); };
     $('#pj-expand-toggle').onclick = () => {
       if (allProjExpanded) state.expandedProjects.clear();
@@ -674,7 +680,7 @@
       <span style="margin-left:auto">Click a name for their allocations, click an allocation row to edit it.</span>
     </div>`;
     $('#p-people').innerHTML = kpis + toolbar + table + legend;
-    $('#ppl-search').oninput = (e) => { state.pplSearch = e.target.value; renderPeople(); const el = $('#ppl-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $('#ppl-search').oninput = searchBox('#ppl-search', v => { state.pplSearch = v; renderPeople(); });
     $('#ppl-expand-toggle').onclick = () => {
       if (allExpanded) state.expandedRoster.clear();
       else rows.forEach(r => state.expandedRoster.add(r.person.id));
@@ -1301,7 +1307,7 @@
       ${pplSection}
       ${titleSection}`;
     wireSeed();
-    $('#map-search').oninput = (e) => { state.mapSearch = e.target.value; renderMapping(); const el = $('#map-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $('#map-search').oninput = searchBox('#map-search', v => { state.mapSearch = v; renderMapping(); });
     $('#map-problems').onchange = (e) => { state.mapOnlyProblems = e.target.checked; renderMapping(); };
     $('#map-refresh').onclick = () => { state.clockifyNames = null; state.clockifyNamesError = null; renderMapping(); };
     $$('#p-mapping [data-map-fee]').forEach(inp => inp.onchange = () => {
@@ -1680,7 +1686,7 @@
     if (cvS) cvS.onclick = () => { state.compView = 'summary'; renderCompliance(); };
     if (cvG) cvG.onclick = () => { state.compView = 'grid'; renderCompliance(); };
     const cs = $('#comp-search');
-    if (cs) cs.oninput = () => { state.compSearch = cs.value; renderCompliance(); const el = $('#comp-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    if (cs) cs.oninput = searchBox('#comp-search', v => { state.compSearch = v; renderCompliance(); });
     $$('#p-compliance [data-csort]').forEach(th => th.onclick = () => {
       const k = th.dataset.csort;
       const cur = state.compSort || { key: 'behind', dir: -1 };

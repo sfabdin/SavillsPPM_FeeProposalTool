@@ -1,0 +1,2347 @@
+{
+ "schemaVersion": 2,
+ "projects": {
+  "fx_active": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.414Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_active",
+   "project": {
+    "name": "Booked Tower",
+    "client": "JPMorgan Chase",
+    "status": "active",
+    "rating": 1,
+    "lead": "Andrew Peters",
+    "industry": "Financial Services",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.414Z",
+    "engineVersion": "2026.06",
+    "basis": "booked",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_closed": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.414Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_closed",
+   "project": {
+    "name": "Closed HQ",
+    "client": "JPMorgan Chase",
+    "status": "closed",
+    "rating": null,
+    "lead": "Andrew Peters",
+    "industry": "Financial Services",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.414Z",
+    "engineVersion": "2026.06",
+    "basis": "booked",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_won": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.414Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_won",
+   "project": {
+    "name": "Won Lab",
+    "client": "Pfizer",
+    "status": "won",
+    "rating": null,
+    "lead": "Benay Josselson",
+    "industry": "Life Sciences",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.415Z",
+    "engineVersion": "2026.06",
+    "basis": "booked",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "versions": [
+    {
+     "id": "v_mrg526dz",
+     "n": 1,
+     "label": "Awarded",
+     "note": "",
+     "auto": true,
+     "savedAt": "2026-09-03T03:03:07.415Z",
+     "savedBy": {
+      "username": "sabdin@savills.us",
+      "name": "Fixture Admin"
+     },
+     "status": "won",
+     "rating": null,
+     "gross": 192000,
+     "net": 192000,
+     "roster": {
+      "r1": {
+       "titleId": "pm",
+       "tierId": "mid",
+       "rateSource": "grid",
+       "resource": "",
+       "projectRole": "",
+       "fteMonths": 6
+      }
+     },
+     "inputs": {
+      "project": {
+       "name": "Won Lab",
+       "client": "Pfizer",
+       "status": "won",
+       "rating": null,
+       "lead": "Benay Josselson",
+       "industry": "Life Sciences",
+       "projectType": "Capital Projects & Construction"
+      },
+      "timeline": {
+       "startMonth": 1,
+       "startYear": 2026,
+       "endMonth": 6,
+       "endYear": 2026
+      },
+      "roles": [
+       {
+        "id": "r1",
+        "titleId": "pm",
+        "tierId": "mid",
+        "rateSource": "grid",
+        "groupId": "core",
+        "fte": {
+         "p1": 100
+        },
+        "fteMonthly": {}
+       }
+      ],
+      "phases": [
+       {
+        "id": "p1",
+        "name": "Delivery",
+        "length": 6
+       }
+      ],
+      "groups": [
+       {
+        "id": "core",
+        "name": "Core"
+       }
+      ],
+      "assumptions": {
+       "hrsPerMo": 160,
+       "discount": 0,
+       "rateLock": false,
+       "escalation": 0,
+       "industryAdj": 0,
+       "catalogBaseYear": 2024,
+       "feeShare": {
+        "enabled": false,
+        "pct": 0,
+        "mode": "offtop"
+       },
+       "feeBasis": "fixed",
+       "nteCeiling": 0
+      },
+      "passthrough": null
+     }
+    }
+   ],
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_neg": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.417Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_neg",
+   "project": {
+    "name": "Negotiating Campus",
+    "client": "Google",
+    "status": "negotiation",
+    "rating": 2,
+    "lead": "Emily Sobel",
+    "industry": "TAMI",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.417Z",
+    "engineVersion": "2026.06",
+    "basis": "live",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_sub": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.415Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_sub",
+   "project": {
+    "name": "Submitted Fitout",
+    "client": "Nike",
+    "status": "submitted",
+    "rating": 4,
+    "lead": "Emily Sobel",
+    "industry": "Retail",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.415Z",
+    "engineVersion": "2026.06",
+    "basis": "live",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "versions": [
+    {
+     "id": "v_3olll1ue",
+     "n": 1,
+     "label": "Submitted",
+     "note": "",
+     "auto": true,
+     "savedAt": "2026-09-03T03:03:07.415Z",
+     "savedBy": {
+      "username": "sabdin@savills.us",
+      "name": "Fixture Admin"
+     },
+     "status": "submitted",
+     "rating": 4,
+     "gross": 192000,
+     "net": 192000,
+     "roster": {
+      "r1": {
+       "titleId": "pm",
+       "tierId": "mid",
+       "rateSource": "grid",
+       "resource": "",
+       "projectRole": "",
+       "fteMonths": 6
+      }
+     },
+     "inputs": {
+      "project": {
+       "name": "Submitted Fitout",
+       "client": "Nike",
+       "status": "submitted",
+       "rating": 4,
+       "lead": "Emily Sobel",
+       "industry": "Retail",
+       "projectType": "Capital Projects & Construction"
+      },
+      "timeline": {
+       "startMonth": 1,
+       "startYear": 2026,
+       "endMonth": 6,
+       "endYear": 2026
+      },
+      "roles": [
+       {
+        "id": "r1",
+        "titleId": "pm",
+        "tierId": "mid",
+        "rateSource": "grid",
+        "groupId": "core",
+        "fte": {
+         "p1": 100
+        },
+        "fteMonthly": {}
+       }
+      ],
+      "phases": [
+       {
+        "id": "p1",
+        "name": "Delivery",
+        "length": 6
+       }
+      ],
+      "groups": [
+       {
+        "id": "core",
+        "name": "Core"
+       }
+      ],
+      "assumptions": {
+       "hrsPerMo": 160,
+       "discount": 0,
+       "rateLock": false,
+       "escalation": 0,
+       "industryAdj": 0,
+       "catalogBaseYear": 2024,
+       "feeShare": {
+        "enabled": false,
+        "pct": 0,
+        "mode": "offtop"
+       },
+       "feeBasis": "fixed",
+       "nteCeiling": 0
+      },
+      "passthrough": null
+     }
+    }
+   ],
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_draft": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.415Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_draft",
+   "project": {
+    "name": "Draft Study",
+    "client": "Bloomberg",
+    "status": "draft",
+    "rating": null,
+    "lead": "Jeff Santoro",
+    "industry": "TAMI",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.415Z",
+    "engineVersion": "2026.06",
+    "basis": "live",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_long": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.415Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_long",
+   "project": {
+    "name": "Long Shot Relocation",
+    "client": "Equinix",
+    "status": "submitted",
+    "rating": 6,
+    "lead": "Jeff Santoro",
+    "industry": "Data Center",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.416Z",
+    "engineVersion": "2026.06",
+    "basis": "live",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "versions": [
+    {
+     "id": "v_1biokflo",
+     "n": 1,
+     "label": "Submitted",
+     "note": "",
+     "auto": true,
+     "savedAt": "2026-09-03T03:03:07.416Z",
+     "savedBy": {
+      "username": "sabdin@savills.us",
+      "name": "Fixture Admin"
+     },
+     "status": "submitted",
+     "rating": 6,
+     "gross": 192000,
+     "net": 192000,
+     "roster": {
+      "r1": {
+       "titleId": "pm",
+       "tierId": "mid",
+       "rateSource": "grid",
+       "resource": "",
+       "projectRole": "",
+       "fteMonths": 6
+      }
+     },
+     "inputs": {
+      "project": {
+       "name": "Long Shot Relocation",
+       "client": "Equinix",
+       "status": "submitted",
+       "rating": 6,
+       "lead": "Jeff Santoro",
+       "industry": "Data Center",
+       "projectType": "Capital Projects & Construction"
+      },
+      "timeline": {
+       "startMonth": 1,
+       "startYear": 2026,
+       "endMonth": 6,
+       "endYear": 2026
+      },
+      "roles": [
+       {
+        "id": "r1",
+        "titleId": "pm",
+        "tierId": "mid",
+        "rateSource": "grid",
+        "groupId": "core",
+        "fte": {
+         "p1": 100
+        },
+        "fteMonthly": {}
+       }
+      ],
+      "phases": [
+       {
+        "id": "p1",
+        "name": "Delivery",
+        "length": 6
+       }
+      ],
+      "groups": [
+       {
+        "id": "core",
+        "name": "Core"
+       }
+      ],
+      "assumptions": {
+       "hrsPerMo": 160,
+       "discount": 0,
+       "rateLock": false,
+       "escalation": 0,
+       "industryAdj": 0,
+       "catalogBaseYear": 2024,
+       "feeShare": {
+        "enabled": false,
+        "pct": 0,
+        "mode": "offtop"
+       },
+       "feeBasis": "fixed",
+       "nteCeiling": 0
+      },
+      "passthrough": null
+     }
+    }
+   ],
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_lost": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.416Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_lost",
+   "project": {
+    "name": "Lost Bid",
+    "client": "Nike",
+    "status": "lost",
+    "rating": null,
+    "lead": "Andrew Peters",
+    "industry": "Retail",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.416Z",
+    "engineVersion": "2026.06",
+    "basis": "live",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "versions": [
+    {
+     "id": "v_3cfgcd73",
+     "n": 1,
+     "label": "Lost",
+     "note": "",
+     "auto": true,
+     "savedAt": "2026-09-03T03:03:07.416Z",
+     "savedBy": {
+      "username": "sabdin@savills.us",
+      "name": "Fixture Admin"
+     },
+     "status": "lost",
+     "rating": null,
+     "gross": 192000,
+     "net": 192000,
+     "roster": {
+      "r1": {
+       "titleId": "pm",
+       "tierId": "mid",
+       "rateSource": "grid",
+       "resource": "",
+       "projectRole": "",
+       "fteMonths": 6
+      }
+     },
+     "inputs": {
+      "project": {
+       "name": "Lost Bid",
+       "client": "Nike",
+       "status": "lost",
+       "rating": null,
+       "lead": "Andrew Peters",
+       "industry": "Retail",
+       "projectType": "Capital Projects & Construction"
+      },
+      "timeline": {
+       "startMonth": 1,
+       "startYear": 2026,
+       "endMonth": 6,
+       "endYear": 2026
+      },
+      "roles": [
+       {
+        "id": "r1",
+        "titleId": "pm",
+        "tierId": "mid",
+        "rateSource": "grid",
+        "groupId": "core",
+        "fte": {
+         "p1": 100
+        },
+        "fteMonthly": {}
+       }
+      ],
+      "phases": [
+       {
+        "id": "p1",
+        "name": "Delivery",
+        "length": 6
+       }
+      ],
+      "groups": [
+       {
+        "id": "core",
+        "name": "Core"
+       }
+      ],
+      "assumptions": {
+       "hrsPerMo": 160,
+       "discount": 0,
+       "rateLock": false,
+       "escalation": 0,
+       "industryAdj": 0,
+       "catalogBaseYear": 2024,
+       "feeShare": {
+        "enabled": false,
+        "pct": 0,
+        "mode": "offtop"
+       },
+       "feeBasis": "fixed",
+       "nteCeiling": 0
+      },
+      "passthrough": null
+     }
+    }
+   ],
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_hold": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.416Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_hold",
+   "project": {
+    "name": "On Hold Program",
+    "client": "Latham & Watkins",
+    "status": "hold",
+    "rating": null,
+    "lead": "Benay Josselson",
+    "industry": "Law",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.416Z",
+    "engineVersion": "2026.06",
+    "basis": "live",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_untagged": {
+   "createdAt": "2026-01-01T00:00:00Z",
+   "updatedAt": "2026-09-03T03:03:07.416Z",
+   "timeline": {
+    "startMonth": 1,
+    "startYear": 2026,
+    "endMonth": 6,
+    "endYear": 2026
+   },
+   "phases": [
+    {
+     "id": "p1",
+     "name": "Delivery",
+     "length": 6
+    }
+   ],
+   "groups": [
+    {
+     "id": "core",
+     "name": "Core"
+    }
+   ],
+   "roles": [
+    {
+     "id": "r1",
+     "titleId": "pm",
+     "tierId": "mid",
+     "rateSource": "grid",
+     "groupId": "core",
+     "fte": {
+      "p1": 100
+     },
+     "fteMonthly": {}
+    }
+   ],
+   "assumptions": {
+    "hrsPerMo": 160,
+    "discount": 0,
+    "rateLock": false,
+    "escalation": 0,
+    "industryAdj": 0,
+    "catalogBaseYear": 2024,
+    "feeShare": {
+     "enabled": false,
+     "pct": 0,
+     "mode": "offtop"
+    },
+    "feeBasis": "fixed",
+    "nteCeiling": 0
+   },
+   "id": "fx_untagged",
+   "project": {
+    "name": "Untagged Job",
+    "client": "Acme Holdings LLC",
+    "status": "submitted",
+    "rating": 2,
+    "lead": "Zac Sargent",
+    "industry": "",
+    "projectType": "Capital Projects & Construction"
+   },
+   "lastSavedBy": {
+    "username": "sabdin@savills.us",
+    "name": "Fixture Admin"
+   },
+   "financials": {
+    "computedAt": "2026-09-03T03:03:07.417Z",
+    "engineVersion": "2026.06",
+    "basis": "live",
+    "feeBasis": "fixed",
+    "nteCeiling": 0,
+    "overCeiling": false,
+    "gross": 192000,
+    "rateLockCredit": 0,
+    "discount": 0,
+    "net": 192000,
+    "feeSharePct": 0,
+    "feeShareMode": "offtop",
+    "feeShare": 0,
+    "clientBill": 192000,
+    "revenue": 192000,
+    "passThroughCost": 0,
+    "passThroughMarkup": 0,
+    "passThroughClient": 0,
+    "feeClientBill": 192000,
+    "feeRevenue": 192000,
+    "fteMonths": 6,
+    "byGroup": [
+     {
+      "group": "core",
+      "net": 192000
+     }
+    ],
+    "byMonth": [
+     {
+      "ym": "2026-01",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-02",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-03",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-04",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-05",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     },
+     {
+      "ym": "2026-06",
+      "net": 32000,
+      "broker": 0,
+      "feeInvoice": 32000,
+      "passCost": 0,
+      "passMarkup": 0,
+      "passClient": 0,
+      "invoice": 32000,
+      "revenue": 32000
+     }
+    ],
+    "inputsHash": "ec677896",
+    "stale": false
+   },
+   "versions": [
+    {
+     "id": "v_vpu39twd",
+     "n": 1,
+     "label": "Submitted",
+     "note": "",
+     "auto": true,
+     "savedAt": "2026-09-03T03:03:07.417Z",
+     "savedBy": {
+      "username": "sabdin@savills.us",
+      "name": "Fixture Admin"
+     },
+     "status": "submitted",
+     "rating": 2,
+     "gross": 192000,
+     "net": 192000,
+     "roster": {
+      "r1": {
+       "titleId": "pm",
+       "tierId": "mid",
+       "rateSource": "grid",
+       "resource": "",
+       "projectRole": "",
+       "fteMonths": 6
+      }
+     },
+     "inputs": {
+      "project": {
+       "name": "Untagged Job",
+       "client": "Acme Holdings LLC",
+       "status": "submitted",
+       "rating": 2,
+       "lead": "Zac Sargent",
+       "industry": "",
+       "projectType": "Capital Projects & Construction"
+      },
+      "timeline": {
+       "startMonth": 1,
+       "startYear": 2026,
+       "endMonth": 6,
+       "endYear": 2026
+      },
+      "roles": [
+       {
+        "id": "r1",
+        "titleId": "pm",
+        "tierId": "mid",
+        "rateSource": "grid",
+        "groupId": "core",
+        "fte": {
+         "p1": 100
+        },
+        "fteMonthly": {}
+       }
+      ],
+      "phases": [
+       {
+        "id": "p1",
+        "name": "Delivery",
+        "length": 6
+       }
+      ],
+      "groups": [
+       {
+        "id": "core",
+        "name": "Core"
+       }
+      ],
+      "assumptions": {
+       "hrsPerMo": 160,
+       "discount": 0,
+       "rateLock": false,
+       "escalation": 0,
+       "industryAdj": 0,
+       "catalogBaseYear": 2024,
+       "feeShare": {
+        "enabled": false,
+        "pct": 0,
+        "mode": "offtop"
+       },
+       "feeBasis": "fixed",
+       "nteCeiling": 0
+      },
+      "passthrough": null
+     }
+    }
+   ],
+   "resolvedByMonth": {
+    "2026-1": 32000,
+    "2026-2": 32000,
+    "2026-3": 32000,
+    "2026-4": 32000,
+    "2026-5": 32000,
+    "2026-6": 32000
+   }
+  },
+  "fx_gone": {
+   "id": "fx_gone",
+   "_deleted": true,
+   "deletedAt": "2026-09-03T03:03:07.417Z",
+   "updatedAt": "2026-09-03T03:03:07.417Z",
+   "deletedBy": "sabdin@savills.us",
+   "project": {
+    "name": "Deleted Job",
+    "client": "Acme Holdings LLC"
+   }
+  }
+ },
+ "activity": [
+  {
+   "id": "act_mtkxwza2gndavo",
+   "ts": "2026-09-03T03:03:07.418Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "edit",
+   "projectId": "fx_neg",
+   "meta": {
+    "name": "Negotiating Campus",
+    "client": "Google",
+    "status": "negotiation",
+    "changes": [
+     {
+      "field": "Rating",
+      "from": "3",
+      "to": "2"
+     }
+    ]
+   }
+  },
+  {
+   "id": "act_mtkxwza1rwcyu9",
+   "ts": "2026-09-03T03:03:07.417Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_untagged",
+   "meta": {
+    "name": "Untagged Job",
+    "client": "Acme Holdings LLC",
+    "status": "submitted"
+   }
+  },
+  {
+   "id": "act_mtkxwza19vm8w5",
+   "ts": "2026-09-03T03:03:07.417Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_gone",
+   "meta": {
+    "name": "Deleted Job",
+    "client": "Acme Holdings LLC",
+    "status": "draft"
+   }
+  },
+  {
+   "id": "act_mtkxwza1vx4tec",
+   "ts": "2026-09-03T03:03:07.417Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "delete",
+   "projectId": "fx_gone",
+   "meta": {
+    "name": "Deleted Job"
+   }
+  },
+  {
+   "id": "act_mtkxwza0l1iqnh",
+   "ts": "2026-09-03T03:03:07.416Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_long",
+   "meta": {
+    "name": "Long Shot Relocation",
+    "client": "Equinix",
+    "status": "submitted"
+   }
+  },
+  {
+   "id": "act_mtkxwza0fboile",
+   "ts": "2026-09-03T03:03:07.416Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_lost",
+   "meta": {
+    "name": "Lost Bid",
+    "client": "Nike",
+    "status": "lost"
+   }
+  },
+  {
+   "id": "act_mtkxwza0l3dbku",
+   "ts": "2026-09-03T03:03:07.416Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_hold",
+   "meta": {
+    "name": "On Hold Program",
+    "client": "Latham & Watkins",
+    "status": "hold"
+   }
+  },
+  {
+   "id": "act_mtkxwz9z5dcbvu",
+   "ts": "2026-09-03T03:03:07.415Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_won",
+   "meta": {
+    "name": "Won Lab",
+    "client": "Pfizer",
+    "status": "won"
+   }
+  },
+  {
+   "id": "act_mtkxwz9zxsf5gq",
+   "ts": "2026-09-03T03:03:07.415Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_neg",
+   "meta": {
+    "name": "Negotiating Campus",
+    "client": "Google",
+    "status": "negotiation"
+   }
+  },
+  {
+   "id": "act_mtkxwz9zsov6ss",
+   "ts": "2026-09-03T03:03:07.415Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_sub",
+   "meta": {
+    "name": "Submitted Fitout",
+    "client": "Nike",
+    "status": "submitted"
+   }
+  },
+  {
+   "id": "act_mtkxwz9zarlkvw",
+   "ts": "2026-09-03T03:03:07.415Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_draft",
+   "meta": {
+    "name": "Draft Study",
+    "client": "Bloomberg",
+    "status": "draft"
+   }
+  },
+  {
+   "id": "act_mtkxwz9yp7vn9q",
+   "ts": "2026-09-03T03:03:07.414Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_active",
+   "meta": {
+    "name": "Booked Tower",
+    "client": "JPMorgan Chase",
+    "status": "active"
+   }
+  },
+  {
+   "id": "act_mtkxwz9y6gqqrz",
+   "ts": "2026-09-03T03:03:07.414Z",
+   "actor": "sabdin@savills.us",
+   "actorName": "Fixture Admin",
+   "action": "create",
+   "projectId": "fx_closed",
+   "meta": {
+    "name": "Closed HQ",
+    "client": "JPMorgan Chase",
+    "status": "closed"
+   }
+  }
+ ]
+}

@@ -16,9 +16,9 @@
   const $  = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const uid = () => 'r' + Math.random().toString(36).slice(2, 9);
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const esc = window.UFC_UI.esc;
   const money = (n) => (n == null || isNaN(n)) ? '—' : '$' + Math.round(n).toLocaleString();
-  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const MONTHS = window.UFC_UI.MONTHS;
   const MONTHS_FULL = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 
   /* ---------- State ---------- */
@@ -545,7 +545,7 @@
       phases,
       groups,
       roles,
-      assumptions: { hrsPerMo: 173.33, escalation: 3.0, industryAdj: 20, discount: 0, rateLock: false, billingMode: p.billingMode || 'phase', catalogBaseYear: CATALOG.baseYear },
+      assumptions: STORE.defaultAssumptions({ escalation: 3.0, industryAdj: 20, billingMode: p.billingMode || 'phase', catalogBaseYear: CATALOG.baseYear }),
       source: { type: 'ingest', name: p.sourceName || 'pasted', extractedTotalFee: p.totalFee, oneTimeDiscount: p.oneTimeDiscount ?? null, ingestedAt: new Date().toISOString() },
     };
     const saved = STORE.saveProject(record);
@@ -574,8 +574,7 @@
       full   = every sheet dumped with markers, so Claude can correlate rates that
                live on separate scenario/fee sheets. */
   async function xlsxToText(file) {
-    await window.UFC_Vendor.xlsx();
-    const XLSX = await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm');
+    const XLSX = await window.UFC_Vendor.xlsx();       // the vendored copy — not a second one from a CDN
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
     const sheetRows = sn => XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, blankrows: false, defval: '' });
     const toText = rows => rows
@@ -595,19 +594,31 @@
 
   /** Extract text from a PDF (proposals are prose → feed to Claude). */
   async function pdfToText(file) {
-    const mod = await import('https://cdn.jsdelivr.net/npm/pdf-parse@2.4.5/dist/pdf-parse/web/pdf-parse.es.js');
-    const PDFParse = mod.PDFParse;
-    PDFParse.setWorker('https://cdn.jsdelivr.net/npm/pdf-parse@2.4.5/dist/pdf-parse/web/pdf.worker.min.mjs');
-    const parser = new PDFParse({ data: new Uint8Array(await file.arrayBuffer()) });
-    const res = await parser.getText();
-    return res.text || '';
+    // pdf.js directly; pdf-parse was a CDN-loaded wrapper around the same thing.
+    const pdfjs = await window.UFC_Vendor.pdf();
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const pages = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const tc = await page.getTextContent();
+      // Rebuild lines: pdf.js gives positioned runs; a new line is a jump in y.
+      let lastY = null, line = [], lines = [];
+      tc.items.forEach(it => {
+        const y = it.transform ? Math.round(it.transform[5]) : null;
+        if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) { lines.push(line.join(' ')); line = []; }
+        if (it.str) line.push(it.str);
+        lastY = y;
+      });
+      if (line.length) lines.push(line.join(' '));
+      pages.push(lines.join('\n'));
+    }
+    return pages.join('\n\n');
   }
 
   /** Render PDF pages to PNG data-URLs for Claude vision (handles designed/
       tabular proposals that text extraction mangles). Capped for payload size. */
   async function pdfToImages(file, maxPages = 15) {
-    const pdfjs = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs');
-    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
+    const pdfjs = await window.UFC_Vendor.pdf();
     const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
     const n = Math.min(doc.numPages, maxPages);
     const out = [];
@@ -710,6 +721,9 @@
      ============================================================ */
   document.addEventListener('DOMContentLoaded', () => {
     const startStudio = () => {
+    // The admin gate can replace the page body before we get here; a member
+    // then has no studio to wire, and must not get an error for it.
+    if (!$('#example-btn')) return;
     $('#example-btn').addEventListener('click', loadExample);
     $('#parse-btn').addEventListener('click', () => {
       const rows = parseTable($('#src').value);

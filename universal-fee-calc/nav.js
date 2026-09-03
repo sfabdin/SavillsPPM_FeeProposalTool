@@ -32,11 +32,11 @@
       desc: 'Finance-owned monthly close: import the actuals, reconcile billed vs accrued vs forecast per project, disposition every variance, and export the monthly flash.' },
     { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Operations', admin: true,
       desc: 'Revenue with Clockify burn (hours × cost rate) laid against it — margin per project, per month.' },
-    { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Operations', admin: true,
-      desc: 'Completeness tracker — projects by revenue leader, with the fields still missing.' },
+    { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Projects',
+      desc: 'Completeness tracker — your projects by revenue leader, with the fields still missing.' },
+    { href: 'Change Log.html',               label: 'Change Log',          group: 'Projects',
+      desc: 'Who changed what, and when, on the projects you can see — every create, edit, status change and deletion.' },
     // ── Data Admin — keeping the data right (admin) ──
-    { href: 'Change Log.html',               label: 'Change Log',          group: 'Data Admin', admin: true,
-      desc: 'Who changed what, and when — every create, edit, status change, and deletion across the system.' },
     { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Data Admin', admin: true,
       desc: 'One door for ingestion: paste or upload a single proposal document, or switch to bulk mode to import the projections workbook full-book-vs-full-book with a diff of every row before anything lands.' },
     { href: 'Bulk Editor.html',              label: 'Bulk Editor (Excel)', group: 'Data Admin', admin: true,
@@ -256,7 +256,7 @@
           : `🔧 <b>The tool is down for maintenance</b>${m.note ? ' — ' + esc(m.note) : ''}. You can read, report and export as normal; saving is paused${m.by ? ' by ' + esc(m.by) : ''}.`;
       } catch (e) {}
     }
-    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+    const esc = window.UFC_UI.esc;
     if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(paintMaintenance); else paintMaintenance();
     document.addEventListener('visibilitychange', () => { if (!document.hidden) paintMaintenance(); });
     document.addEventListener('ufc:remote-updated', paintMaintenance);

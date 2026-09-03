@@ -11,7 +11,7 @@
   'use strict';
   const STORE = window.UFC_Store, RC = window.RATES_CATALOG;
   const $ = (s) => document.querySelector(s);
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = window.UFC_UI.esc;
   const money = (n) => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString();
   const pct = (d) => (d == null ? '—' : (d * 100).toFixed(2) + '%');
 

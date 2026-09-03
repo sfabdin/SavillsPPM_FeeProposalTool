@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PPM Fee &amp; Revenue System · Maintainer's Runbook</title>
 <link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
 <style>
@@ -287,8 +288,8 @@
   </ul>
   <p>To grant or revoke access, edit <code>ADMINS</code> / <code>TOOL_ADMINS</code> near the identity block in <code>store.js</code>. Per-user extra visibility (e.g. every project carrying a "Change Management" group) lives in <code>GROUP_ACCESS</code>. Super-users (<code>SUPERUSERS</code>) get a hidden "Viewing as" switch to preview anyone's restricted view — no one else can.</p>
   <div class="box warn">
-    <span class="tag">Honest limit</span>
-    The per-person wall is enforced in the browser, and the Box <em>folder</em> permission is the real boundary: anyone with folder access can read <code>projects.json</code> directly. Fine for a trusted leadership group. Restricting a person who should see <em>some but not all</em> projects requires server-side filtering — listed in future work, not yet built.
+    <span class="tag">The security model, stated plainly</span>
+    <strong>Box folder membership is the boundary.</strong> Everything above is <em>scoping</em>, enforced in the browser from an email list compiled into public JavaScript. Anyone who is a collaborator on the shared Box folder can read every file in it directly, and can make themselves "admin" from the browser console. That is acceptable for a trusted team on one Box folder and it is not fixable without a server in front of the data — so it is written down here rather than pretended otherwise. What <em>is</em> enforced server-side: the two serverless functions (<code>/api/clockify</code>, <code>/api/extract</code>) accept only a Box token that belongs to a Savills login <em>and</em> can see the shared folder, and <code>/api/extract</code> is rate-limited per person. Sign-in uses PKCE and a checked <code>state</code> nonce; the token bundle (including the refresh token) is kept in <code>localStorage</code> by decision, with a Content-Security-Policy on every response as the main defence against script injection. Nothing third-party is loaded at runtime; the Excel and PDF libraries are vendored under <code>/vendor</code>.
   </div>
 
   <h2><span class="n">7</span> The Excel exports</h2>
@@ -537,9 +538,24 @@
   <ol>
     <li>Edit the file(s) in the repo.</li>
     <li>Commit &amp; push to the main branch.</li>
+    <li>CI runs on every push (<code>.github/workflows/tests.yml</code>): HTML hygiene on every page, the regression suite (<code>tests.html</code> — engine, data layer, staffing, exec model, round trips, a Box fake for the 412 merge path), the Executive Reporting invariants, the client-workbook wiring check, and a Chromium smoke of every page. All five must be green before a merge. Locally: <code>node scripts/check-html.mjs &amp;&amp; node scripts/run-tests.mjs &amp;&amp; node exec-reporting/verify-core.mjs &amp;&amp; node scripts/check-export.mjs &amp;&amp; node scripts/smoke.mjs</code>.</li>
     <li>Vercel builds and deploys automatically (static — no build step, seconds).</li>
     <li>Hard-refresh the live site to confirm.</li>
   </ol>
+  <div class="box">
+    <span class="tag">What the browser caches (vercel.json)</span>
+    Pages and JSON are always revalidated (<code>max-age=0</code>), so a deploy shows up on the next navigation. Scripts and stylesheets are cached for <strong>10 minutes</strong> (<code>max-age=600</code>) &mdash; long enough that moving between pages costs nothing, short enough that a page and its scripts can never disagree for more than ten minutes after a deploy. Fonts, icons and logos are cached for a week; <code>/vendor/</code> for a day. There are no <code>?v=</code> stamps to bump: don't add any.
+  </div>
+  <div class="box">
+    <span class="tag">Script order on a page</span>
+    Every page loads, in this order: <code>vendor-lazy.js</code> (only if it exports) &rarr; <code>rates-catalog.js</code> &rarr; <code>store.js</code> &rarr; <code>box-adapter.js</code> &rarr; <code>boot.js</code> &rarr; <code>ui.js</code> &rarr; <code>sync-status.js</code> &rarr; <code>staff.js</code> (only if it reads staffing) &rarr; the page's own controller &rarr; <code>guide.js</code> &rarr; <code>nav.js</code>. Before <code>boot.js</code>, set <code>window.UFC_NEEDS</code> to the extra Box stores the page reads (<code>'staff'</code>, <code>'studio'</code>, <code>'revenue'</code>, <code>'activity'</code>); projects and rates always load.
+    Page-specific CSS lives in <code>universal-fee-calc/&lt;page&gt;.css</code>, not in a <code>&lt;style&gt;</code> block, so it can be cached.
+  </div>
+  <div class="box">
+    <span class="tag">One vocabulary</span>
+    Shared helpers live in <code>ui.js</code> (<code>UFC_UI.esc</code>, <code>MONTHS</code>, <code>ymLabel</code> / <code>monthLabel</code>, <code>fmtMoney</code>, <code>debounce</code>, <code>toast</code>) — a page controller aliases them, it never carries its own copy. Months display as <strong>mmm-YY</strong> (<code>Sep-26</code>) everywhere. Named once in the store and used by name: <code>BOOKED_STATUSES</code> / <code>CO_ELIGIBLE_STATUSES</code> / <code>ENDED_STATUSES</code>, <code>PRICING_HOURS_PER_MONTH</code> (173.33, what a fee is priced on) and <code>CAPACITY_HOURS_PER_MONTH</code> (172, what a person can log), <code>defaultAssumptions()</code> for the record shape, and <code>tokenScore()</code> — the one name matcher behind staffing, revenue import and reconciliation.
+    Storage keys keep their existing shapes: the projects book keys months as <code>YYYY-M</code> (<code>monthlyOverrides</code>, <code>fteMonthly</code>), the staffing book as <code>YYYY-MM</code>. Only the display format was unified.
+  </div>
   <div class="box key">
     <span class="tag">Box app setup (one-time)</span>
     Box Developer Console &rarr; your app: Auth method = <strong>User Authentication (OAuth 2.0)</strong>; enable <strong>Authorization Code Grant with PKCE</strong>; Redirect URI = <code>https://&lt;your-vercel-domain&gt;/oauth-callback.html</code>; scope = Read/write all files. Each deploy origin (preview + prod) needs its own registered redirect URI.

@@ -23,7 +23,7 @@
   }
 
   /* ---------- Constants ---------- */
-  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const MONTH_NAMES = window.UFC_UI.MONTHS;
   const MONTH_FULL  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
   /* ---------- Initial state ---------- */
@@ -70,7 +70,7 @@
     ],
     roles: [],   // { id, titleId, tierId, resource, groupId, fte: {phaseId: pct} }
     assumptions: {
-      hrsPerMo: 173.33,
+      hrsPerMo: STORE.PRICING_HOURS_PER_MONTH,
       escalation: 3.0,
       industryAdj: 20,   // rate-wide “industry standard” trim off the high PPM rack rates
       discount: 0,       // client / fixed-fee discount, applied at total level
@@ -106,8 +106,12 @@
   /** Trim a number for display: up to 6 decimals, no trailing zeros. Keeps the
       stored value exact while showing a readable string (e.g. 12.345678). */
   const trimNum = (n) => { if (n == null || isNaN(n)) return ''; return parseFloat(Number(n).toFixed(6)).toString(); };
+  /* The discount input shows two decimals. State keeps the exact figure a
+     reconcile-to-target produced (so net ties to the penny); the display only
+     feeds back if the user types over it. */
+  const trimPct = (n) => { if (n == null || isNaN(n)) return ''; return parseFloat(Number(n).toFixed(2)).toString(); };
   const fmtMoneySmall = (n) => (!n || Math.abs(n) < 0.5) ? '—' : '$' + Math.abs(Math.round(n)).toLocaleString();
-  const monthLabel = (y, m, opts={}) => `${MONTH_NAMES[m-1]} ’${String(y).slice(-2)}`;
+  const monthLabel = (y, m) => window.UFC_UI.monthLabel(y, m);   // 'Sep-26' — the one month format
   const monthLabelLong = (y, m) => `${MONTH_FULL[m-1]} ${y}`;
 
   function getMonths() {
@@ -1230,7 +1234,7 @@
     // the exact value in state is what drives the math.
     state.assumptions.discount = d * 100;
     const discInput = $('#a-disc');
-    if (discInput) discInput.value = trimNum(state.assumptions.discount);
+    if (discInput) discInput.value = trimPct(state.assumptions.discount);
 
     renderAll();
 
@@ -1860,7 +1864,7 @@
     $('#a-hrs').value = a.hrsPerMo;
     $('#a-esc').value = a.escalation;
     $('#a-ind').value = a.industryAdj;
-    $('#a-disc').value = trimNum(a.discount);
+    $('#a-disc').value = trimPct(a.discount);
     $('#a-lock').checked = a.rateLock;
     $('#a-catbase').textContent = a.catalogBaseYear;
     // Fee basis (Fixed / NTE)
@@ -1973,7 +1977,7 @@
     if (!banner || !STORE.createChangeOrder) return;
     const titleEl = $('#co-title'), detailEl = $('#co-detail'), actionsEl = $('#co-actions'), markEl = $('#co-mark');
     const isCO = !!(state.changeOrder && state.changeOrder.parentId);
-    const booked = ['won', 'active', 'closed'].includes(state.project.status);
+    const booked = STORE.BOOKED_STATUSES.has(state.project.status);
 
     if (isCO) {
       // Viewing a change order.
@@ -2062,7 +2066,7 @@
   function updateIntakeButton() {
     const btn = $('#intake-btn');
     if (!btn || !window.UFC_Intake) return;
-    const eligible = ['won', 'active'].includes(state.project.status);
+    const eligible = STORE.CO_ELIGIBLE_STATUSES.has(state.project.status);
     btn.style.display = eligible ? '' : 'none';
     if (!eligible) return;
     const sig = window.UFC_Intake.intakeSignature(state, netTotal());
@@ -2075,7 +2079,7 @@
   function updateIntakeCallout() {
     const callout = $('#intake-callout');
     const sfRow = $('#sf-id-row');
-    const eligible = ['won', 'active'].includes(state.project.status);
+    const eligible = STORE.CO_ELIGIBLE_STATUSES.has(state.project.status);
     if (sfRow) sfRow.hidden = !eligible;
     if (!callout) return;
     callout.hidden = !eligible;
@@ -2135,7 +2139,7 @@
     const sh = $('#status-hint');
     if (sh) {
       const aged = monthsSinceLastBilling() >= 2;   // last billing > ~60 days ago
-      const liveish = ['active', 'won'].includes(state.project.status);
+      const liveish = STORE.CO_ELIGIBLE_STATUSES.has(state.project.status);
       if (aged && liveish) {
         sh.innerHTML = `Last billing was &gt;60 days ago — consider <strong>Closed out</strong>.`;
         sh.classList.add('warn');
@@ -2238,7 +2242,8 @@
     if (imp && net === 0) {
       $('#sum-total').innerHTML = `${fmtMoney(impTotal)}<span class="unit" style="display:block;font-size:11px;color:var(--sav-teal);">imported · build staffing to reconcile</span>`;
     } else {
-      $('#sum-total').textContent = fmtMoney(net);
+      // "What the client pays": with an on-top fee share that is the bill, not the net.
+      $('#sum-total').textContent = fmtMoney(clientBillTotal());
     }
     $('#sum-discount-pct').textContent = `${state.assumptions.discount}% client discount — applied at total.`;
     $('#sum-lock-detail').textContent = state.assumptions.rateLock
@@ -2290,13 +2295,13 @@
      are untouched. Calculator page only. */
   let matrixUnit = 'percent';
   try { const u = localStorage.getItem('ufc_matrix_unit'); if (u === 'hours' || u === 'percent') matrixUnit = u; } catch (e) {}
-  const hrsPerMo = () => state.assumptions.hrsPerMo || 173.33;
+  const hrsPerMo = () => state.assumptions.hrsPerMo || STORE.PRICING_HOURS_PER_MONTH;
   /** % → displayed cell value (rounded to 0.1) in the current unit. */
   const pctToUnit = (pct) => matrixUnit === 'hours' ? Math.round((pct / 100) * hrsPerMo() * 10) / 10 : pct;
   /** entered cell value (current unit) → stored % (rounded to 0.1). */
   const unitToPct = (val) => {
     if (matrixUnit !== 'hours') return val;
-    const h = hrsPerMo() || 173.33;
+    const h = hrsPerMo() || STORE.PRICING_HOURS_PER_MONTH;
     return Math.round((val / h) * 100 * 10) / 10;
   };
   const unitSuffix = () => matrixUnit === 'hours' ? 'h' : '%';
@@ -3089,23 +3094,32 @@
 
     // Timeline
     const tlChange = () => {
+      const sy = parseInt($('#tl-start-year').value), ey = parseInt($('#tl-end-year').value);
+      // A year that isn't a year yet is not a timeline change.
+      if (!(sy >= 1900 && sy <= 2200 && ey >= 1900 && ey <= 2200)) return;
       state.timeline.startMonth = parseInt($('#tl-start-month').value);
-      state.timeline.startYear  = parseInt($('#tl-start-year').value);
+      state.timeline.startYear  = sy;
       state.timeline.endMonth   = parseInt($('#tl-end-month').value);
-      state.timeline.endYear    = parseInt($('#tl-end-year').value);
+      state.timeline.endYear    = ey;
       renderAll();
       markDirty();
     };
+    /* On change only. Firing on each keystroke re-ran rebalancePhases against
+       whatever a half-typed year implied ("2" → a 200-month span), rewrote
+       every phase length to fit it, and autosaved the result. */
     ['#tl-start-month','#tl-start-year','#tl-end-month','#tl-end-year'].forEach(s => {
       $(s).addEventListener('change', tlChange);
-      $(s).addEventListener('input', tlChange);
     });
 
     // Assumptions
-    $('#a-hrs').addEventListener('input',  e => { state.assumptions.hrsPerMo = parseFloat(e.target.value) || 0; renderSummary(); renderMatrix(); renderMonthly(); markDirty(); });
-    $('#a-esc').addEventListener('input',  e => { state.assumptions.escalation = parseFloat(e.target.value) || 0; renderSummary(); renderMatrix(); renderMonthly(); renderSelectedRoles(); renderFloorCheck(); markDirty(); });
-    $('#a-ind').addEventListener('input',  e => { state.assumptions.industryAdj = parseFloat(e.target.value) || 0; renderCatalog(); renderSelectedRoles(); renderSummary(); renderMatrix(); renderMonthly(); renderFloorCheck(); markDirty(); });
-    $('#a-disc').addEventListener('input', e => { state.assumptions.discount = parseFloat(e.target.value) || 0; renderSummary(); renderMatrix(); renderMonthly(); renderSelectedRoles(); renderFloorCheck(); markDirty(); });
+    /* The value lands in state on every keystroke; the matrix/monthly rebuild
+       (the expensive part) waits until typing pauses. */
+    const debounceUI = (window.UFC_UI && window.UFC_UI.debounce) || ((fn) => fn);
+    const assumptionsChanged = debounceUI(() => { renderCatalog(); renderSelectedRoles(); renderSummary(); renderMatrix(); renderMonthly(); renderFloorCheck(); markDirty(); }, 150);
+    $('#a-hrs').addEventListener('input',  e => { state.assumptions.hrsPerMo = parseFloat(e.target.value) || 0; assumptionsChanged(); });
+    $('#a-esc').addEventListener('input',  e => { state.assumptions.escalation = parseFloat(e.target.value) || 0; assumptionsChanged(); });
+    $('#a-ind').addEventListener('input',  e => { state.assumptions.industryAdj = parseFloat(e.target.value) || 0; assumptionsChanged(); });
+    $('#a-disc').addEventListener('input', e => { state.assumptions.discount = parseFloat(e.target.value) || 0; assumptionsChanged(); });
     $('#a-lock').addEventListener('change', e => { state.assumptions.rateLock = e.target.checked; renderSummary(); renderMatrix(); renderMonthly(); renderSelectedRoles(); renderFloorCheck(); markDirty(); });
     const fbSel = $('#a-feebasis');
     if (fbSel) fbSel.addEventListener('change', e => {
@@ -3118,7 +3132,12 @@
 
     // Header actions
     $('#reset-btn').addEventListener('click', () => {
-      if (!confirm('Reset all fields to a blank project? (Existing saved record will be cleared.)')) return;
+      if (!confirm('Start a blank project? The project you have open stays saved as it is.')) return;
+      /* A pending autosave fired on the empty state and created an orphan
+         record; and nothing here ever deleted the old one, whatever the old
+         confirm text said. */
+      clearTimeout(autosaveTimer); autosaveTimer = null;
+      dirty = false; conflicted = false; baseUpdatedAt = null;
       state = DEFAULT_STATE();
       setProjectIdInUrl(null);
       renderAll();
@@ -3128,11 +3147,16 @@
       saveToStore({ explicit: true });
     });
     // Safety net: flush a pending autosave if the tab closes within the debounce window.
-    window.addEventListener('beforeunload', () => {
-      if (dirty) {
-        const worthSaving = state.id || (state.project && state.project.name && state.project.name.trim()) || (state.roles && state.roles.length);
-        if (worthSaving) { clearTimeout(autosaveTimer); try { saveToStore({ silent: true }); } catch (e) {} }
-      }
+    window.addEventListener('beforeunload', (e) => {
+      if (!dirty) return;
+      const worthSaving = state.id || (state.project && state.project.name && state.project.name.trim()) || (state.roles && state.roles.length);
+      if (!worthSaving) return;
+      const keep = () => { e.preventDefault(); e.returnValue = ''; };   // the browser's "leave page?" prompt
+      // In conflict nothing autosaves, so leaving now discards everything typed since.
+      if (conflicted) { keep(); return; }
+      clearTimeout(autosaveTimer);
+      try { saveToStore({ silent: true }); }
+      catch (err) { keep(); }        // maintenance, a stale write, a validation refusal — don't lose it silently
     });
     $('#print-btn').addEventListener('click', () => {
       window.print();
@@ -3210,12 +3234,15 @@
 
   /* ----- Excel export ----- */
   async function exportExcel() {
-    if (typeof ExcelJS === 'undefined') { UFC_UI.toast('Excel library failed to load.'); return; }
     const btn = $('#xlsx-btn');
     const orig = btn.textContent;
     btn.textContent = 'Building…';
     btn.disabled = true;
     try {
+      // ExcelJS is loaded on demand. Ask for it here, then check — the old
+      // order checked first and so refused every click.
+      if (window.UFC_Vendor && window.UFC_Vendor.excel) await window.UFC_Vendor.excel();
+      if (typeof ExcelJS === 'undefined') throw new Error('the Excel library did not load — check your connection and try again');
       await window.UFC_buildAndDownloadExcel();
     } catch (e) {
       console.error(e);
@@ -3263,6 +3290,10 @@
         setSavedLabel('Project not found');
       }
     }
+    /* A new project's catalogBaseYear was read before rates.json arrived, so
+       it anchored at the shipped default whatever the catalog said. */
+    if (!state.id && CATALOG && CATALOG.baseYear) state.assumptions.catalogBaseYear = CATALOG.baseYear;
+    const cb = $('#a-catbase'); if (cb && CATALOG && CATALOG.baseYear) cb.textContent = String(CATALOG.baseYear);
     renderAll();
     refreshVersionCount();
     };
@@ -3316,6 +3347,7 @@
       }
     } catch (e) {
       if (e && e.code === 'STALE_WRITE') { showConflictBanner(e.remote); return; }
+      if (e && e.code === 'INVALID_RECORD') { setSavedLabel('Not saved — fix the fields'); UFC_UI.toast(e.message); return; }
       console.error('Save failed', e);
       UFC_UI.toast('Save failed: ' + e.message);
     }
@@ -3454,6 +3486,10 @@
     const label = prompt('Name this version (e.g. "Client counteroffer", "v2 after Kathy review"):', '');
     if (label === null) return;   // cancelled
     STORE.saveVersion(state.id, { label: label || '' });
+    // saveVersion stamps the record; without this the next autosave sees a
+    // newer updatedAt than it started from and reports the user to themself.
+    const fresh = STORE.getProject(state.id);
+    if (fresh) baseUpdatedAt = fresh.updatedAt || baseUpdatedAt;
     refreshVersionCount();
     renderVersionList();
   }

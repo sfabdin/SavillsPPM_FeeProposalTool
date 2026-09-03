@@ -2,9 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Savills · Universal Fee Calculator</title>
 <link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
 <link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Book.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Bold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="universal-fee-calc/styles.css">
 </head>
 <body>
@@ -102,12 +105,12 @@
         </div>
         <div class="field-grid cols-5">
           <div class="field">
-            <label for="pm-name">Project name</label>
-            <input type="text" id="pm-name" placeholder="e.g. 383 Madison Migration ’27">
+            <label for="pm-name">Project name <span class="req" title="Required to save">*</span></label>
+            <input type="text" id="pm-name" placeholder="e.g. 383 Madison Migration ’27" aria-required="true">
           </div>
           <div class="field">
-            <label for="pm-client">Client</label>
-            <input type="text" id="pm-client" placeholder="e.g. JPMorgan Chase">
+            <label for="pm-client">Client <span class="req" title="Required to save">*</span></label>
+            <input type="text" id="pm-client" placeholder="e.g. JPMorgan Chase" aria-required="true">
           </div>
           <div class="field">
             <label for="pm-lead">Savills lead (PE)</label>
@@ -409,9 +412,9 @@ Example: a Jan–Feb 2027 slice that would escalate +3% shows the un-escalated f
       <div class="delta" id="sum-discount-pct">0% — applied at total.</div>
     </div>
     <div class="sum-card is-navy">
-      <div class="lbl">Net proposed fee</div>
+      <div class="lbl">Proposed fee</div>
       <div class="val" id="sum-total">$0</div>
-      <div class="delta">Net of all credits — what client pays.</div>
+      <div class="delta">Net of all credits — what the client pays, including any on-top fee share.</div>
     </div>
   </div>
 
@@ -550,12 +553,12 @@ Example: $625k fee, 10% — off invoice → client $625k, Savills keeps $562.5k.
   </div>
 
   <div class="footnote">
-    <strong>How this works.</strong> &nbsp; The rates catalog (<code>universal-fee-calc/rates-catalog.js</code>) is the production <strong>PPM Hourly Rate Grid (2024)</strong> — the single source of truth for titles and rates. Each title family's <strong>Col B rack rate</strong> is the <strong>Mid</strong> billable tier; <strong>High</strong> and <strong>Low</strong> are ±10% off Mid. Rates are anchored at catalog base year <strong>2024</strong> and escalation compounds forward to each project year. Rate Lock holds rates at the project start year; the would-be escalation is credited at the bottom of the schedule. <br><br>
+    <strong>How this works.</strong> &nbsp; The rate grid is pulled from Box after sign-in (<code>rates.json</code>); nothing in the deployed code carries a rate. It is the production <strong>PPM Hourly Rate Grid</strong> — the single source of truth for titles and rates. Each title family's <strong>Col B rack rate</strong> is the <strong>Mid</strong> billable tier; <strong>High</strong> and <strong>Low</strong> are ±10% off Mid. Rates are anchored at catalog base year <strong>2024</strong> and escalation compounds forward to each project year. Rate Lock holds rates at the project start year; the would-be escalation is credited at the bottom of the schedule. <br><br>
     <strong>Cost-rate floor.</strong> &nbsp; <strong>Col E (PowerBI)</strong> — falling back to <strong>Col G (Clockify)</strong> where blank — is the cost rate for each tier. The calculator compares every role's effective billed rate (escalated to start year, net of the client discount) against that floor; any role priced below it is flagged as <em>potentially unprofitable</em> but is <strong>allowed through</strong> — the schedule still exports. These cost rates also drive the later planned-vs-actual margin comparison against Clockify. <br><br>
     <strong>Staff title vs. project role.</strong> &nbsp; Each line carries a <em>staff title</em> (the rate-grid level that sets the rate &amp; floor) and a free-text <em>project role</em>. The grid's page-2 Title→Rate mapping (57 HR titles) is stored as catalog data for normalising arbitrary titles back to a billable level. <br><br>
     <strong>Grid vs. contracted rates.</strong> &nbsp; Each role defaults to <em>Grid</em> (tier rate − industry adjustment, escalated). Flip a role to <em>Contracted</em> to type a pre-negotiated client rate: it <strong>bypasses the industry adjustment</strong>, still escalates year-over-year, and the client discount still applies. The staff title/tier stays attached so the cost-floor advisory continues to work. Ingested proposals land as contracted at their observed rate. <br><br>
     <strong>Reconcile to proposal.</strong> &nbsp; When a record carries a proposal total, the <em>Reconcile to proposal</em> bar back-solves to it by adjusting <strong>only the client discount</strong> — staffing allocations and per-role rates are held to the proposal (they're real). If the target sits above what current rates can bill, it flags the gap to close by raising rates rather than touching allocations. The cost-floor advisory still fires on any role pushed below cost. <br><br>
-    <strong>Export.</strong> &nbsp; Excel export produces three sheets — Setup &amp; Summary, Phase Matrix, Monthly Schedule — with live formulas so procurement can interrogate every number.
+    <strong>Export.</strong> &nbsp; Excel export produces five sheets — Setup &amp; Summary, Phase Matrix, Monthly Detail, Billing Summary, Monthly by Group — with live formulas so procurement can interrogate every number. Rack rates and cost floors are not written to it.
   </div>
 </div>
 

@@ -25,7 +25,7 @@
 
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = window.UFC_UI.esc;
   const fmtD = (n) => (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
   const fmtK = (n) => { if (!n) return ''; const k = n / 1000; return Math.abs(k) >= 1000 ? '$' + (k / 1000).toFixed(1) + 'M' : '$' + (Math.abs(k) >= 100 ? Math.round(k) : k.toFixed(1)) + 'K'; };
   let toastT = null;
@@ -134,7 +134,12 @@
       + '<datalist id="pf-fee-dl">' + feeList.map(p => '<option value="' + esc(p.label) + '"></option>').join('') + '</datalist>';
     $('#p-profit').innerHTML = html;
 
-    $('#pf-search').oninput = (e) => { state.search = e.target.value; render(); const el = $('#pf-search'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+    $('#pf-search').oninput = (() => {
+      // The whole table is rebuilt as one innerHTML string, so wait for typing to pause.
+      const debounce = (window.UFC_UI && window.UFC_UI.debounce) || ((fn) => fn);
+      const run = debounce((v) => { state.search = v; render(); const el = $('#pf-search'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }, 150);
+      return (e) => run(e.target.value);
+    })();
     $('#pf-client').onchange = (e) => { state.client = e.target.value; render(); };
     $('#pf-scope').onchange = (e) => { state.scope = e.target.value; render(); };
     const feeByLabel = {}; feeList.forEach(p => feeByLabel[p.label.toLowerCase()] = p.id);
@@ -224,7 +229,16 @@
     if (!accessOk()) { renderDenied(); return; }
     buildIdentityBar();
     // shared staff.json (actuals + mappings) — pull latest before first render
-    try { const Box = window.UFC_Box; if (Box && Box.enabled && Box.pullStaff) { const remote = await Box.pullStaff(); if (remote) S.hydrateFromRemote(remote); } } catch (e) {}
+    try {
+      const Box = window.UFC_Box;
+      if (Box && Box.enabled && Box.pullStaff) {
+        const remote = await Box.pullStaff(); if (remote) S.hydrateFromRemote(remote);
+        /* This page WRITES too (the fee-link cell), and it had no remote
+           attached — the link lived in this browser only, and this page's own
+           next load replaced it with Box's copy. */
+        if (Box.uploadStaff && S.attachRemote) S.attachRemote((db) => { Box.uploadStaff(db).catch(e => console.warn('staff push failed', e)); });
+      }
+    } catch (e) {}
     setStoreNote();
     state.winStart = S.ymAdd(S.currentYM(), -3);
     const startSel = $('#win-start');

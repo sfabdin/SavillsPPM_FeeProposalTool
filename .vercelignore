@@ -15,3 +15,10 @@ screenshots/
 
 # Repo-only reference docs — not part of the deployed app.
 docs/
+
+# Internal surface — the test harness and its runner are CI's, not the app's.
+tests.html
+scripts/
+
+# Font sources — the app serves the .woff2 builds next to them.
+design-system/fonts/gotham/*.otf

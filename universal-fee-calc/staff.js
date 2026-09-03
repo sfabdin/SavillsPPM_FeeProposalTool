@@ -26,7 +26,7 @@
 
   /* Working hours in a month at 100% capacity — per SA: assume 172 h/mo for
      Clockify comparisons. User-tunable on the page. */
-  const DEFAULT_MONTH_HOURS = 172;
+  const DEFAULT_MONTH_HOURS = 172;   // = UFC_Store.CAPACITY_HOURS_PER_MONTH; kept as a local so staff.js parses without a store handle
 
   const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -47,8 +47,10 @@
       agree on the first initial ("Eno Chen" ≠ "Mandy Chen"), and a bare
       surname token only matches if it's reasonably distinctive (>4 chars),
       so "Chen" alone doesn't glue every Chen together. */
+  /* "Tester, Jane" is "Jane Tester" — sheets and Clockify disagree on order. */
+  const flipComma = (s) => { const m = /^([^,]+),\s*(.+)$/.exec(String(s || '')); return m ? (m[2] + ' ' + m[1]) : s; };
   function namesMatch(a, b) {
-    const x = nkey(canonicalName(a)), y = nkey(canonicalName(b));
+    const x = nkey(flipComma(canonicalName(a))), y = nkey(flipComma(canonicalName(b)));
     if (!x || !y) return false;
     if (x === y) return true;
     const xp = x.split(' '), yp = y.split(' ');
@@ -62,7 +64,22 @@
 
   // ---------- month helpers ----------
   function ymOf(d) { return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
-  function ymLabel(ym) { const [y, m] = ym.split('-').map(Number); return MON[m - 1] + " '" + String(y).slice(2); }
+  /* A null or malformed month labels as a dash instead of throwing — one bad
+     row used to take the whole Allocations tab down through its label. */
+  function ymLabel(ym) {   // 'Sep-26' — the shared month format (see ui.js); kept on the staffing API for its callers
+    const p = /^(\d{4})-(\d{1,2})$/.exec(String(ym || ''));
+    if (!p || +p[2] < 1 || +p[2] > 12) return '—';
+    return MON[+p[2] - 1] + '-' + p[1].slice(2);
+  }
+  /* AN ALLOCATION WITH NO END IS OPEN — active from its start onward. Three
+     functions used to disagree: one read a missing end as forever, two read
+     it as one month, so a person could read loaded in By Person and "logging,
+     not allocated" in Insights at the same time. allocEnd is the one answer;
+     enumerations clamp it to the window they are looking at. */
+  const OPEN_END = '9999-12';
+  const allocEnd = (a) => (a && a.end) || OPEN_END;
+  const isOpenEnded = (a) => !!(a && a.start && !a.end);
+  const clampPct = (v) => Math.max(0, Math.min(100, Number(v) || 0));
   function ymAdd(ym, n) { let [y, m] = ym.split('-').map(Number); m += n; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return y + '-' + String(m).padStart(2, '0'); }
   function ymCmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
   function monthsBetween(a, b) { const out = []; let c = a; let g = 0; while (c <= b && g++ < 240) { out.push(c); c = ymAdd(c, 1); } return out; }
@@ -78,6 +95,11 @@
      hydrateFromRemote in this module, which refresh the cache. */
   let _dbCache = null;
 
+  /* The shipped seed (staff-seed.js) is gone: it was 255 real allocations,
+     ~105 named people and candid notes, served unauthenticated from the
+     public origin because the access wall runs after the file downloads.
+     A browser that has never synced now starts with an empty matrix until
+     the first Box pull or xlsx import — which is the truthful state. */
   function seedFromMatrix(db) {
     const seed = (typeof window !== 'undefined' && window.STAFF_SEED) || [];
     db.people = {}; db.allocations = [];
@@ -140,6 +162,16 @@
      is wired by the page after boot; hydrate never re-triggers a push. */
   let _push = null;
   function attachRemote(fn) { _push = typeof fn === 'function' ? fn : null; }
+  /* Same reason as store.js: a bare setItem on a full browser throws inside
+     boot. Loud, and never fatal. */
+  function safeSet(value) {
+    try { localStorage.setItem(KEY, value); return true; }
+    catch (e) {
+      console.error('Local cache write failed for the staffing matrix (storage full?)', e);
+      try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error', message: 'Browser storage is full — the staffing matrix could not be cached locally.', at: Date.now() } })); } catch (e2) {}
+      return false;
+    }
+  }
   function hydrateFromRemote(db) {
     if (!db || !db.people || !db.allocations) return false;
     if (!db.actuals) db.actuals = {};
@@ -147,7 +179,7 @@
     if (!db.deleted) db.deleted = {};
     if (!db.meta) db.meta = { monthHours: DEFAULT_MONTH_HOURS };
     db.schemaVersion = SCHEMA;
-    localStorage.setItem(KEY, JSON.stringify(db));
+    safeSet(JSON.stringify(db));
     _dbCache = db;
     _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
     return true;
@@ -157,7 +189,7 @@
     db.meta = db.meta || {};
     db.meta.updatedAt = new Date().toISOString();
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser && window.UFC_Store.getCurrentUser(); if (u && u.username) db.meta.updatedBy = u.username; } catch (e) {}
-    localStorage.setItem(KEY, JSON.stringify(db));
+    safeSet(JSON.stringify(db));
     _dbCache = db;
     if (_push) { try { _push(db); } catch (e) { console.warn('staff push failed', e); } }
   }
@@ -233,7 +265,7 @@
     return out;
   }
 
-  /** Wipe + re-seed from the (possibly refreshed) window.STAFF_SEED. Keeps
+  /** Wipe the matrix (there is no shipped seed any more, so this empties it). Keeps
       actuals and roster capacity edits? — no: full matrix reset. Actuals kept. */
   function reseedMatrix() {
     const db = readDb();
@@ -266,6 +298,9 @@
     const prev = person.id ? storedPerson(person.id) : null;
     if (!person.id) person.id = 'p_' + Math.random().toString(36).slice(2, 9);
     db.people[person.id] = Object.assign(db.people[person.id] || {}, person);
+    /* Always stamped. Newest-wins merge compares updatedAt; a person edit
+       without one lost to any remote copy that had one. */
+    db.people[person.id].updatedAt = new Date().toISOString();
     writeDb(db);
     const next = db.people[person.id];
     const changes = diffFields(prev, next, PERSON_FIELDS);
@@ -325,6 +360,9 @@
     if (a.personId && !db.people[a.personId]) {
       db.people[a.personId] = { id: a.personId, name: a.personName || a.personId, isNewHire: false, isPool: /\bpool/i.test(a.personName || ''), title: '', homeTeam: '', capacityPct: 100, active: true };
     }
+    if (!a.start || !/^\d{4}-\d{2}$/.test(String(a.start))) throw new Error('An allocation needs a start month (YYYY-MM).');
+    if (a.end && String(a.end) < String(a.start)) throw new Error('An allocation cannot end before it starts.');
+    a.pct = clampPct(a.pct);
     a.updatedAt = new Date().toISOString();
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u && u.username) a.updatedBy = u.username; } catch (e) {}
     const prev = a.id ? storedAlloc(a.id) : null;
@@ -498,7 +536,18 @@
 
     // Meta: whichever side was written last.
     const rMeta = remote.meta || {}, lMeta = local.meta || {};
-    out.meta = ((lMeta.updatedAt || '') >= (rMeta.updatedAt || '')) ? Object.assign({}, rMeta, lMeta) : Object.assign({}, lMeta, rMeta);
+    const localNewer = (lMeta.updatedAt || '') >= (rMeta.updatedAt || '');
+    out.meta = localNewer ? Object.assign({}, rMeta, lMeta) : Object.assign({}, lMeta, rMeta);
+    // Lateness: its own stamp, because it arrives on its own schedule.
+    out.lateness = (((lMeta.latenessAt || '') >= (rMeta.latenessAt || '')) ? local.lateness : remote.lateness)
+                   || local.lateness || remote.lateness || [];
+    /* Anything this function does not know about yet travels with whichever
+       copy was written last instead of being dropped. `lateness` was lost on
+       every refresh for exactly this reason; the next field must not be. */
+    const newest = localNewer ? local : remote, other = localNewer ? remote : local;
+    Object.keys(Object.assign({}, other, newest)).forEach(k => {
+      if (!(k in out)) out[k] = newest[k] !== undefined ? newest[k] : other[k];
+    });
     out.schemaVersion = SCHEMA;
     return out;
   }
@@ -521,7 +570,7 @@
   function mergeFromRemote(remote) {
     const local = readDb();
     const merged = isPristineSeed(local) ? remote : mergeStaffDb(remote, local);
-    localStorage.setItem(KEY, JSON.stringify(merged));
+    safeSet(JSON.stringify(merged));
     _dbCache = merged;
     _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
     return merged;
@@ -558,7 +607,7 @@
   }
 
   // ---------- ENGINE: bandwidth / utilization ----------
-  function allocActiveIn(a, ym) { return a.start && a.end ? (a.start <= ym && ym <= a.end) : (a.start ? a.start <= ym : false); }
+  function allocActiveIn(a, ym) { return !!(a && a.start && a.start <= ym && ym <= allocEnd(a)); }
 
   /* ---------- logging time with nothing planned against it ----------
      Two different holes, both of which end with real hours nobody is looking
@@ -592,8 +641,9 @@
       const person = db.people[e.pid];
       if (!person) return;
       if (person.nonBillable) return;                         // overhead staff need no allocation
-      const covers = (db.allocations || []).some(a => a.personId === e.pid &&
-        (!inWin.size || monthsBetween(a.start, a.end || a.start).some(m => inWin.has(m))));
+      const winEnd = inWin.size ? [...inWin].sort().pop() : null;
+      const covers = (db.allocations || []).some(a => a.personId === e.pid && a.start &&
+        (!inWin.size || monthsBetween(a.start, a.end || winEnd).some(m => inWin.has(m))));
       if (covers) return;
       out.push({
         person, hours: Math.round(e.hours * 10) / 10,
@@ -625,8 +675,8 @@
       (groups[a.personId + '|' + canon(a.project)] = groups[a.personId + '|' + canon(a.project)] || []).push(a);
     });
     const overlaps = (x, y) => {
-      const xs = x.start || '', xe = x.end || x.start || '';
-      const ys = y.start || '', ye = y.end || y.start || '';
+      const xs = x.start || '', xe = allocEnd(x);
+      const ys = y.start || '', ye = allocEnd(y);
       if (!xs || !ys) return false;
       return xs <= ye && ys <= xe;
     };
@@ -639,7 +689,7 @@
       const person = db.people[hit[0].personId] || { id: hit[0].personId, name: hit[0].personName || hit[0].personId };
       // The months where the doubling actually bites, and by how much.
       const months = {};
-      hit.forEach(r => monthsBetween(r.start, r.end || r.start).forEach(m => {
+      hit.forEach(r => monthsBetween(r.start, r.end || ymAdd(r.start, 11)).forEach(m => {
         months[m] = (months[m] || 0) + (parseFloat(r.pct) || 0);
       }));
       const worst = Object.entries(months).sort((a, b) => b[1] - a[1])[0] || ['', 0];
@@ -752,23 +802,10 @@
       names into significant words (drops filler + punctuation + SF-id-ish
       tokens), scores overlap. "JPMC — 270 Park Relocation" ↔ "270P" style
       abbreviations get partial-prefix credit. */
-  const STOP_WORDS = new Set(['the', 'of', 'and', 'a', 'an', 'for', 'to', 'at', 'in', 'on', 'llc', 'inc', 'corp', 'project', 'phase']);
-  function nameTokens(s) {
-    return String(s || '').toLowerCase().replace(/&/g, ' and ').split(/[^a-z0-9]+/)
-      .filter(t => t && t.length > 1 && !STOP_WORDS.has(t) && !/^opp\d/.test(t));
-  }
-  function tokenScore(a, b) {
-    const ta = nameTokens(a), tb = nameTokens(b);
-    if (!ta.length || !tb.length) return 0;
-    const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
-    let hit = 0;
-    small.forEach(t => {
-      if (big.includes(t)) { hit += 1; return; }
-      // prefix credit: "270p" ~ "270", "reloc" ~ "relocation"
-      if (big.some(bt => (bt.length >= 3 && t.startsWith(bt)) || (t.length >= 3 && bt.startsWith(t)))) hit += 0.75;
-    });
-    return hit / small.length;          // 1 = every significant word of the shorter name found
-  }
+  // The one matcher lives in the store (UFC_Store.tokenScore) so staffing,
+  // revenue import and reconciliation all score names the same way.
+  const nameTokens = (s) => window.UFC_Store.nameTokens(s);
+  const tokenScore = (a, b) => window.UFC_Store.tokenScore(a, b);
 
   function matchFeeProject(name, client) {
     const k = projKey(name); if (!k) return null;
@@ -950,7 +987,7 @@
     links.forEach(link => {
       const p = feeRecords().find(x => x.id === link.id);
       if (!p || !p.roles || !p.roles.length || !p.timeline) return;
-      const hrs = (p.assumptions && p.assumptions.hrsPerMo) || 173.33;
+      const hrs = (p.assumptions && p.assumptions.hrsPerMo) || S2.PRICING_HOURS_PER_MONTH;
       const byPhase = S2.computeMonthsByPhase(p);
       const phaseOf = {};
       (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
@@ -1132,7 +1169,7 @@
     // of cells, and a trail nobody can read is a trail nobody reads.
     logStaff('staff-actuals', { mode, months: (report.months || []).join(', '), written, skipped });
     // Clockify carries the job title — fill roster titles that are still blank.
-    Object.entries(report.titles || {}).forEach(([pid, t]) => { if (db.people[pid] && !db.people[pid].title) db.people[pid].title = t; });
+    Object.entries(report.titles || {}).forEach(([pid, t]) => { if (db.people[pid] && !db.people[pid].title) { db.people[pid].title = t; db.people[pid].updatedAt = new Date().toISOString(); } });
     writeDb(db);
     return { written, skipped };
   }
@@ -1209,6 +1246,7 @@
     const parents = (S2.listProjects() || []).filter(p => !(S2.isChangeOrder && S2.isChangeOrder(p)));
     const projects = S2.visibleProjects ? S2.visibleProjects(parents) : parents;
     const rows = [];
+    const coIndex = S2.approvedChangeOrdersIndex ? S2.approvedChangeOrdersIndex() : null;
     projects.forEach(p => {
       const rating = S2.ratingFor ? S2.ratingFor(p) : 5;
       const revByMonth = {}; let revTotal = 0;
@@ -1218,7 +1256,7 @@
         // being read raw here too, so a slipped or adjusted month showed its
         // old figure against the moved effort.
         (S2.billingSeries(p, cat) || []).forEach(m => add(m.ym, m.invoice));
-        (S2.approvedChangeOrders ? S2.approvedChangeOrders(p.id) : []).forEach(co => {
+        (coIndex ? (coIndex[p.id] || []) : (S2.approvedChangeOrders ? S2.approvedChangeOrders(p.id) : [])).forEach(co => {
           try { S2.changeOrderDelta(co).byMonth.forEach(x => add(x.ym, x.net)); } catch (e) {}
         });
       } catch (e) {}
@@ -1678,7 +1716,7 @@
     feeRecords().forEach(p => {
       if (p.roles && p.roles.length) return;                 // never touch an existing roster
       const st = (p.project && p.project.status) || '';
-      if (st === 'lost' || st === 'closed') return;
+      if (((window.UFC_Store && window.UFC_Store.ENDED_STATUSES) || new Set(['lost', 'closed'])).has(st)) return;
       if (!p.timeline) return;
       const matrixNames = revLinks[p.id] || [];
       if (!matrixNames.length) return;
@@ -1799,7 +1837,7 @@
       const mapped = maps[nkey(u.name)];
       if (mapped && db.people[mapped]) person = db.people[mapped];
       if (!person) person = Object.values(db.people).find(p => namesMatch(p.name, u.name));
-      if (person && person.title !== t) { person.title = t; set++; }
+      if (person && person.title !== t) { person.title = t; person.updatedAt = new Date().toISOString(); set++; }
     });
     if (set) { writeDb(db); logStaff('staff-titles', { titles: set }); }
     return set;
@@ -2077,6 +2115,9 @@
       db.mappings.renames[nkey(from)] = to;
       // keep any fee link pointing at the old name
       if (db.mappings.fee && db.mappings.fee[nkey(from)]) { db.mappings.fee[nkey(to)] = db.mappings.fee[nkey(from)]; delete db.mappings.fee[nkey(from)]; }
+      // and every Clockify → matrix mapping that pointed at it, or the next
+      // import lands under the old name and splits coverage across two rows
+      Object.keys(db.mappings.projects || {}).forEach(k => { if (db.mappings.projects[k] === from) db.mappings.projects[k] = to; });
     });
     db.meta.canonSyncedAt = new Date().toISOString();
     writeDb(db);
@@ -2212,11 +2253,21 @@
     const keep = {}; Object.values(db.people).forEach(p => { keep[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam, nonBillable: p.nonBillable }; });
     const fresh = defaultDb();
     fresh.actuals = keepActuals; fresh.meta = db.meta || fresh.meta;
+    /* A person's id is a slug of their name, so a sheet that spells a name
+       differently used to mint a second person: the old id's capacity, title
+       and actuals orphaned. Resolve against the roster we already have first
+       (namesMatch handles initials, order and diacritics); slug only for a
+       genuinely new name. Rows with no start month are skipped and counted. */
+    const roster = Object.values(db.people || {});
+    let skipped = 0;
     rows.forEach(r => {
-      const pid = slug(canonicalName(r.person) + (isNewHireName(r.person) ? ' newhire' : ''));
-      if (!fresh.people[pid]) fresh.people[pid] = { id: pid, name: canonicalName(r.person), isNewHire: isNewHireName(r.person), title: '', homeTeam: '', capacityPct: 100, active: true };
+      if (!r.start || !/^\d{4}-\d{2}$/.test(String(r.start))) { skipped++; return; }
+      const known = roster.find(p => namesMatch(p.name, r.person));
+      const shown = flipComma(canonicalName(r.person));
+      const pid = known ? known.id : slug(shown + (isNewHireName(r.person) ? ' newhire' : ''));
+      if (!fresh.people[pid]) fresh.people[pid] = { id: pid, name: known ? known.name : shown, isNewHire: isNewHireName(r.person), title: '', homeTeam: '', capacityPct: 100, active: true };
       if (keep[pid]) Object.assign(fresh.people[pid], keep[pid]);
-      fresh.allocations.push({ id: 'al_' + Math.random().toString(36).slice(2, 9), personId: pid, project: r.proj, client: r.client, status: r.status || 'Active', type: r.type || 'Awarded', start: r.start, end: r.end, pct: +r.pct || 0, note: r.note || '' });
+      fresh.allocations.push({ id: 'al_' + Math.random().toString(36).slice(2, 9), personId: pid, project: r.proj, client: r.client, status: r.status || 'Active', type: r.type || 'Awarded', start: r.start, end: r.end || '', pct: clampPct(r.pct), note: r.note || '' });
     });
     fresh.meta.matrixImportedAt = new Date().toISOString();
     fresh.meta.matrixSource = sourceName || 'upload';
@@ -2224,8 +2275,8 @@
     writeDb(fresh);
     logStaff('staff-import', { source: sourceName || 'upload',
       people: Object.keys(fresh.people).length, allocations: fresh.allocations.length,
-      replacedPeople: before.people, replacedAllocations: before.allocations });
-    return { people: Object.keys(fresh.people).length, allocations: fresh.allocations.length };
+      replacedPeople: before.people, replacedAllocations: before.allocations, skipped: skipped || undefined });
+    return { people: Object.keys(fresh.people).length, allocations: fresh.allocations.length, skipped };
   }
 
   // ---------- export ----------
@@ -2256,6 +2307,6 @@
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers
-    namesMatch, cleanName, isNewHireName,
+    namesMatch, cleanName, isNewHireName, allocEnd, isOpenEnded, clampPct,
   };
 })();

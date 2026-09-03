@@ -47,23 +47,12 @@ function normMonth(name) {
 function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 
 /* AUTH: this endpoint returns employee names, hours and project assignments —
-   it must not be publicly callable. The browser sends its Box access token;
-   we validate it against Box and require a Savills login. */
-async function requireSavillsUser(req, res) {
-  const m = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
-  if (!m) { res.status(401).json({ error: 'sign in required', detail: 'Missing session token — reload the app and sign in with Box.' }); return null; }
-  try {
-    const r = await fetch('https://api.box.com/2.0/users/me?fields=login', { headers: { Authorization: 'Bearer ' + m[1] } });
-    if (!r.ok) { res.status(401).json({ error: 'session expired', detail: 'Box rejected the token (' + r.status + ') — reload and sign in again.' }); return null; }
-    const me = await r.json();
-    const login = String(me.login || '').toLowerCase();
-    if (!/@savills\.(us|com)$/.test(login)) { res.status(403).json({ error: 'not authorized', detail: login + ' is not a Savills account.' }); return null; }
-    return login;
-  } catch (e) { res.status(401).json({ error: 'auth check failed', detail: String(e && e.message || e).slice(0, 200) }); return null; }
-}
+   it must not be publicly callable. See api/_auth.js: a valid Box session,
+   a Savills login, AND collaborator access to the team folder. */
+import { requireCollaborator } from './_auth.js';
 
 export default async function handler(req, res) {
-  const login = await requireSavillsUser(req, res);
+  const login = await requireCollaborator(req, res, { limit: 60 });
   if (!login) return;
   const key = process.env.CLOCKIFY_API_KEY;
   const ws = process.env.CLOCKIFY_WORKSPACE_ID;

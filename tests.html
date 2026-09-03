@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Savills PPM · Fee &amp; Revenue System — Regression Tests</title>
 <link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
 <style>
@@ -32,7 +33,7 @@
   <div class="sub">Asserts the invariants the reporting engines depend on. Run this before every deploy — a red row means the math or data layer broke. Uses an in-memory storage shim, so it never touches your real Box-synced data.</div>
   <div id="summary"></div>
   <div id="out"></div>
-  <div class="foot">Engine: <code>store.js · computeFinancials / monthlySeries / projectFinancials</code> + data-layer (<code>tombstones · migrations · activity</code>). No Box, no network — pure in-memory.</div>
+  <div class="foot">Engine: <code>store.js · computeFinancials / monthlySeries / projectFinancials</code> + data-layer (<code>tombstones · migrations · activity</code>) + staffing, exec model, round trips (JSON, Bulk Excel) and a Box fake for the 412 merge path. No real Box, no network — pure in-memory.</div>
 </div>
 
 <!-- In-memory storage shim: route the app's localStorage keys to memory so tests
@@ -53,12 +54,17 @@
   localStorage.removeItem = (k) => { if (isApp(k)) delete mem[k]; else real.del(k); };
 })();
 </script>
+<script src="universal-fee-calc/ui.js"></script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/staff.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/vendor-lazy.js"></script>
+<script src="universal-fee-calc/bulk-excel.js"></script>
 <!-- Pulled in for its workbook parser only; it renders nothing without the
      reconciliation page's markup. -->
 <script src="universal-fee-calc/revenue-reconcile.js"></script>
+<script src="exec-reporting/core.js"></script>
 <script>
 (function () {
   'use strict';
@@ -80,6 +86,18 @@
     try { const r = fn(); ok = r === true || r === undefined; if (typeof r === 'string') { ok = false; detail = r; } }
     catch (e) { ok = false; detail = e.message; }
     results.push({ group, name, ok, detail });
+  }
+  /* Async tests (round trips through ExcelJS, the Box fake) run after the
+     synchronous ones, one at a time, and the page reports once all are in. */
+  const asyncTests = [];
+  function testAsync(group, name, fn) { asyncTests.push({ group, name, fn }); }
+  async function runAsync() {
+    for (const t of asyncTests) {
+      let ok = false, detail = '';
+      try { const r = await t.fn(); ok = r === true || r === undefined; if (typeof r === 'string') { ok = false; detail = r; } }
+      catch (e) { ok = false; detail = e.message; }
+      results.push({ group: t.group, name: t.name, ok, detail });
+    }
   }
   const near = (a, b, eps) => Math.abs(a - b) <= (eps == null ? EPS : eps);
   function eq(a, b, label, eps) {
@@ -592,6 +610,153 @@
     const fields = S.describeChanges(a, b).map(c => c.field);
     return fields.includes('Team') || 'removing a role did not register as a Team change';
   });
+
+  /* ============ STEP 1 — defects that were live in production ============
+     Each of these failed against the tree before the fix. They are kept so
+     the same regression cannot land twice. */
+
+  test('Regression · rating', 'a rating stored as a string still reads as its number', () => {
+    // The Bulk Editor wrote "2"; the strict compare in ratingMeta then missed
+    // and the project read as Dead Pursuit — weight zero, gone from the forecast.
+    const p = base({ project: { name: 'X', client: 'C', status: 'submitted', rating: '2' } });
+    if (S.ratingFor(p) !== 2) return 'ratingFor gave ' + JSON.stringify(S.ratingFor(p));
+    const meta = S.ratingMeta(S.ratingFor(p));
+    return (meta && meta.n === 2 && meta.weight > 0.9) || 'ratingMeta resolved to ' + JSON.stringify(meta);
+  });
+
+  test('Regression · rating', 'garbage in the rating field falls back to the status default, not Dead', () => {
+    const p = base({ project: { name: 'X', client: 'C', status: 'submitted', rating: 'abc' } });
+    const n = S.ratingFor(p);
+    return (n >= 1 && n <= 6) || 'fell to ' + n;
+  });
+
+  test('Regression · projections', 'an override on an imported, unreconciled project is applied', () => {
+    // The imported branch returned before applyOverrides ran, so the grid
+    // painted the override red and the figure never moved.
+    const p = base({
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 3, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'D', length: 3 }],
+      source: { importedByMonth: { '2026-1': 10000, '2026-2': 10000, '2026-3': 10000 } },
+      monthlyOverrides: { '2026-2': 25000 },
+    });
+    const ser = S.monthlySeries(p, C);
+    const feb = (ser.find(x => x.month === 2) || {}).amount;
+    if (!near(feb, 25000)) return 'February read ' + round(feb) + ', override ignored';
+    const jan = (ser.find(x => x.month === 1) || {}).amount;
+    return near(jan, 10000) || 'January should still be the imported figure';
+  });
+
+  test('Regression · projections', 'a slip on an imported project moves the money', () => {
+    freshDb(); if (!asAdmin()) return 'could not assume admin identity';
+    const p = S.saveProject(base({
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 3, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'D', length: 3 }],
+      source: { importedByMonth: { '2026-1': 10000, '2026-2': 10000, '2026-3': 10000 } },
+    }));
+    S.recordSlip(p.id, { fromYm: '2026-01', toYm: '2026-03', amount: 10000, note: 't' });
+    const ser = S.monthlySeries(S.getProject(p.id), C);
+    const jan = (ser.find(x => x.month === 1) || {}).amount, mar = (ser.find(x => x.month === 3) || {}).amount;
+    if (!near(jan, 0)) return 'January still shows ' + round(jan) + ' after slipping out';
+    return near(mar, 20000) || 'March shows ' + round(mar) + ', expected 20000';
+  });
+
+  /* ============ STEP 4 — one store, one truth ============ */
+
+  test('Validation', 'a project with no name is refused with a coded error', () => {
+    try { S.saveProject(base({ project: { name: '', client: 'C', status: 'draft' } })); return 'saved a nameless project'; }
+    catch (e) { return e.code === 'INVALID_RECORD' || 'wrong error: ' + e.message; }
+  });
+
+  test('Validation', 'month 13 and an end before the start are refused', () => {
+    const bad = [
+      base({ timeline: { startMonth: 13, startYear: 2026, endMonth: 3, endYear: 2026 } }),
+      base({ timeline: { startMonth: 6, startYear: 2026, endMonth: 3, endYear: 2026 } }),
+      base({ timeline: { startMonth: 1, startYear: 20, endMonth: 3, endYear: 2026 } }),
+    ];
+    for (const r of bad) {
+      try { S.saveProject(r); return 'accepted ' + JSON.stringify(r.timeline); }
+      catch (e) { if (e.code !== 'INVALID_RECORD') return 'wrong error: ' + e.message; }
+    }
+    return true;
+  });
+
+  test('Validation', 'non-numeric hours, an out-of-range rating and an unknown status are refused', () => {
+    const bad = [
+      base({ assumptions: { hrsPerMo: 'abc' } }),
+      base({ project: { name: 'X', client: 'C', status: 'draft', rating: 9 } }),
+      base({ project: { name: 'X', client: 'C', status: 'maybe' } }),
+    ];
+    for (const r of bad) {
+      try { S.saveProject(r); return 'accepted ' + JSON.stringify(r.project) + ' ' + JSON.stringify(r.assumptions); }
+      catch (e) { if (e.code !== 'INVALID_RECORD') return 'wrong error: ' + e.message; }
+    }
+    return true;
+  });
+
+  test('Validation', 'numeric strings from an Excel round-trip are coerced, not refused', () => {
+    // A bulk import produces "2", "173.33", "3" — the same values, as text.
+    const r = S.saveProject(base({ project: { name: 'X', client: 'C', status: 'submitted', rating: '2' },
+      assumptions: { hrsPerMo: '173.33', discount: '10', escalation: '3' } }));
+    const saved = S.getProject(r.id);
+    if (saved.project.rating !== 2) return 'rating stayed ' + JSON.stringify(saved.project.rating);
+    if (saved.assumptions.hrsPerMo !== 173.33) return 'hours stayed ' + JSON.stringify(saved.assumptions.hrsPerMo);
+    return saved.assumptions.discount === 10 || 'discount stayed ' + JSON.stringify(saved.assumptions.discount);
+  });
+
+  test('Store · copies', 'getProject hands out a copy, so mutating it does not touch the book', () => {
+    const p = S.saveProject(base());
+    const live = S.getProject(p.id);
+    live.project.client = 'MUTATED';
+    live.roles.push({ id: 'ghost' });
+    const again = S.getProject(p.id);
+    if (again.project.client === 'MUTATED') return 'the store returned its live cache object';
+    return !again.roles.some(r => r.id === 'ghost') || 'a pushed role leaked into the book';
+  });
+
+  test('Store · bounded', 'versions are capped at VERSIONS_KEEP, keeping the newest', () => {
+    const p = S.saveProject(base());
+    for (let i = 0; i < S.VERSIONS_KEEP + 5; i++) S.saveVersion(p.id, { label: 'v' + i });
+    const vs = S.getProject(p.id).versions;
+    if (vs.length !== S.VERSIONS_KEEP) return 'kept ' + vs.length;
+    return vs[vs.length - 1].label === 'v' + (S.VERSIONS_KEEP + 4) || 'the newest version was dropped';
+  });
+
+  test('Store · read pages', 'migrateLeadIds normalises locally and never pushes', () => {
+    localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify({ schemaVersion: 2, projects: {}, activity: [] }));
+    const p = S.saveProject(base({ project: { name: 'X', client: 'C', status: 'draft', lead: 'Andrew Peters', leadId: '' } }));
+    let pushes = 0;
+    S.attachRemote(() => { pushes++; });
+    const changed = S.migrateLeadIds();
+    S.attachRemote(null);
+    if (!changed) return 'nothing to normalise — the fixture lead did not resolve (' + JSON.stringify(S.getProject(p.id).project) + ')';
+    return pushes === 0 || 'a read-side normalisation pushed to Box ' + pushes + ' time(s)';
+  });
+
+  /* ============ EXECUTIVE REPORTING reads the store's model ============ */
+  (function () {
+    const CORE = window.EXEC_CORE;
+    if (!CORE) { test('Exec · model', 'core loads', () => 'EXEC_CORE not present'); return; }
+    const conf = () => CORE.configure({ ratings: S.RATINGS, statusDefaultRating: S.STATUS_DEFAULT_RATING, leaders: S.REVENUE_LEADERS, industries: S.INDUSTRIES, fmtMoney: S.fmtMoney });
+
+    test('Exec · model', 'rating weights are the store\'s, not a second table', () => {
+      conf();
+      for (const r of S.RATINGS) if (CORE.weightFor(r.n) !== r.weight) return 'rating ' + r.n + ': exec ' + CORE.weightFor(r.n) + ' vs store ' + r.weight;
+      return true;
+    });
+    test('Exec · model', 'a closed project is booked, not dropped from every tier', () => {
+      conf();
+      return CORE.ratingFromStatus('closed') === S.STATUS_DEFAULT_RATING.closed || 'closed → ' + CORE.ratingFromStatus('closed');
+    });
+    test('Exec · model', 'money prints the way the store prints it', () => {
+      conf();
+      return CORE.fmtMoney(-1250000) === S.fmtMoney(-1250000) || CORE.fmtMoney(-1250000) + ' vs ' + S.fmtMoney(-1250000);
+    });
+    test('Exec · model', 'a leader added through the vocabulary resolves in Exec too', () => {
+      conf();
+      const known = S.REVENUE_LEADERS[0];
+      return CORE.leaderDisplay(known.aliases[0]) === known.displayName || 'alias ' + known.aliases[0] + ' → ' + CORE.leaderDisplay(known.aliases[0]);
+    });
+  })();
 
   /* ============ REVENUE LEDGER (year of actuals, cell by cell) ============
      cell recognised = billed + feeShare + (accrual − last known accrual)
@@ -1610,6 +1775,120 @@
       return (e.meta.kind === 'project' && e.meta.to === 'Tower Alpha') || JSON.stringify(e.meta);
     });
 
+    test('Staffing · merge', 'a browser that has never synced takes Box\'s copy wholesale', () => {
+      // There is no shipped seed any more. An empty local store must not
+      // "merge" its nothing over a real team matrix from Box.
+      const fresh = ST.resetAll();          // what a browser that has never synced holds
+      if (Object.keys(fresh.people).length || fresh.allocations.length) return 'a fresh store is not empty: something is still seeding it';
+      const remote = { people: { p1: { id: 'p1', name: 'Real Person', capacityPct: 100, active: true } },
+        allocations: [{ id: 'al_r1', personId: 'p1', project: 'Real Job', start: '2026-01', end: '2026-06', pct: 50, updatedAt: '2026-08-01T00:00:00.000Z' }],
+        actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { updatedAt: '2026-08-01T00:00:00.000Z', monthHours: 172 } };
+      const merged = ST.mergeFromRemote(remote);
+      return (merged.allocations.length === 1 && !!merged.people.p1) || 'remote was not adopted: ' + JSON.stringify(Object.keys(merged.people));
+    });
+
+    /* Step 6 — the engine's edge cases */
+    const cleanStaff = () => { ST.resetAll(); localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] })); };
+
+    test('Staffing · engine', 'an allocation with no end means the same thing everywhere: open', () => {
+      cleanStaff();
+      ST.saveAllocation({ id: 'oe_1', personId: 'stp_open', personName: 'Open Ended', project: 'Forever Job', start: '2026-02', end: '', pct: 50 });
+      if (!ST.allocActiveIn(ST.listAllocations()[0], '2027-06')) return 'allocActiveIn stopped reading it as open';
+      // Insights used to read the same row as ONE month and flag the person as unallocated.
+      ST.commitClockify({ ok: true, months: ['2026-09'], agg: { 'stp_open|Forever Job|2026-09': 40 }, titles: {} }, 'merge');
+      const flagged = ST.loggingWithoutAllocation(['2026-09']).some(x => x.person.id === 'stp_open');
+      return !flagged || 'loggingWithoutAllocation still thinks an open allocation covers only its first month';
+    });
+
+    test('Staffing · engine', 'a null or garbage month labels as a dash, not a crash', () => {
+      try { return (ST.ymLabel(null) === '—' && ST.ymLabel('garbage') === '—' && ST.ymLabel('2026-03') !== '—') || 'labels: ' + [ST.ymLabel(null), ST.ymLabel('garbage'), ST.ymLabel('2026-03')].join(' | '); }
+      catch (e) { return 'threw: ' + e.message; }
+    });
+
+    test('Staffing · engine', 'an allocation without a start month is refused', () => {
+      cleanStaff();
+      try { ST.saveAllocation({ id: 'ns_1', personId: 'stp_x', personName: 'X', project: 'Y', start: '', end: '2026-06', pct: 50 }); return 'saved with no start'; }
+      catch (e) { return /start month/i.test(e.message) || 'wrong error: ' + e.message; }
+    });
+
+    test('Staffing · engine', 'allocation percentage is clamped to 0–100', () => {
+      cleanStaff();
+      const a = ST.saveAllocation({ id: 'pc_1', personId: 'stp_x', personName: 'X', project: 'Y', start: '2026-01', end: '2026-06', pct: '150' });
+      return a.pct === 100 || 'pct stored as ' + JSON.stringify(a.pct);
+    });
+
+    test('Staffing · identity', 'a re-imported sheet keeps a known person\'s id even when spelled differently', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'stp_jane_tester', name: 'Jane Tester', title: 'Senior PM', capacityPct: 80 });
+      ST.importMatrix([{ person: 'Tester, Jane', proj: 'Tower Alpha', client: 'Acme', start: '2026-01', end: '2026-06', pct: 50 }], 'test sheet');
+      const people = ST.listPeople();
+      if (people.length !== 1) return 'a second person was minted: ' + people.map(p => p.id).join(', ');
+      return (people[0].id === 'stp_jane_tester' && people[0].title === 'Senior PM' && people[0].capacityPct === 80) || JSON.stringify(people[0]);
+    });
+
+    test('Staffing · identity', 'renaming a project carries every Clockify mapping with it', () => {
+      cleanStaff();
+      ST.saveAllocation({ id: 'rn_1', personId: 'stp_x', personName: 'X', project: 'Old Name', start: '2026-01', end: '2026-06', pct: 50 });
+      ST.setProjectMapping('Clockify: Old', 'Old Name');
+      ST.commitRenames([{ from: 'Old Name', to: 'New Name' }]);
+      const m = ST.getMappings();
+      const still = Object.values(m.projects || {}).includes('Old Name');
+      return !still || 'mappings.projects still points at the old name';
+    });
+
+    test('Staffing · identity', 'every person edit is stamped, so newest-wins can see it', () => {
+      cleanStaff();
+      const p = ST.savePerson({ id: 'stp_stamp', name: 'Stamp Me', title: '' });
+      return !!p.updatedAt || 'savePerson left updatedAt empty';
+    });
+
+    /* ---- One vocabulary: the shared helpers every page aliases ---- */
+    test('Vocabulary', 'months display as mmm-YY everywhere', () => {
+      const U = window.UFC_UI;
+      if (U.ymLabel('2026-09') !== 'Sep-26') return 'ymLabel padded: ' + U.ymLabel('2026-09');
+      if (U.ymLabel('2026-9') !== 'Sep-26') return 'ymLabel unpadded: ' + U.ymLabel('2026-9');
+      if (U.monthLabel(2031, 1) !== 'Jan-31') return 'monthLabel: ' + U.monthLabel(2031, 1);
+      if (U.ymLabel(null) !== '—' || U.ymLabel('2026-13') !== '—') return 'bad input should label as a dash';
+      if (ST.ymLabel('2026-09') !== 'Sep-26') return 'staffing ymLabel drifted: ' + ST.ymLabel('2026-09');
+      return true;
+    });
+    test('Vocabulary', 'esc is attribute-safe (quotes and apostrophes too)', () => {
+      const out = window.UFC_UI.esc(`<a href="x" title='y'>&</a>`);
+      return out === '&lt;a href=&quot;x&quot; title=&#39;y&#39;&gt;&amp;&lt;/a&gt;' || out;
+    });
+    test('Vocabulary', 'money formats one way', () => {
+      const U = window.UFC_UI;
+      return (U.fmtMoney(1234.6) === '$1,235' && U.fmtMoney(-50) === '-$50' && U.fmtMoney(null) === '—' && U.fmtMoneyFull(1234.5) === '$1,234.50') || [U.fmtMoney(1234.6), U.fmtMoney(-50), U.fmtMoney(null), U.fmtMoneyFull(1234.5)].join(' | ');
+    });
+    test('Vocabulary', 'status sets and hours constants are named once', () => {
+      if (!S.BOOKED_STATUSES.has('won') || S.BOOKED_STATUSES.has('lost')) return 'BOOKED_STATUSES wrong';
+      if (!S.CO_ELIGIBLE_STATUSES.has('active') || S.CO_ELIGIBLE_STATUSES.has('closed')) return 'CO_ELIGIBLE_STATUSES wrong';
+      if (!S.ENDED_STATUSES.has('closed') || S.ENDED_STATUSES.has('active')) return 'ENDED_STATUSES wrong';
+      if (S.PRICING_HOURS_PER_MONTH !== 173.33 || S.CAPACITY_HOURS_PER_MONTH !== 172) return 'hours constants drifted';
+      const a = S.defaultAssumptions({ escalation: 3 });
+      return (a.hrsPerMo === 173.33 && a.escalation === 3 && a.industryAdj === 0 && a.feeBasis === 'fixed' && a.feeShare && a.feeShare.enabled === false) || JSON.stringify(a);
+    });
+    test('Vocabulary', 'one name matcher: filler words drop, prefixes earn partial credit', () => {
+      if (S.tokenScore('JPMC — 270 Park Relocation', 'JPMC 270 Park Reloc Phase 2') < 0.9) return 'prefix credit missing: ' + S.tokenScore('JPMC — 270 Park Relocation', 'JPMC 270 Park Reloc Phase 2');
+      if (S.nameTokens('The Project of Acme LLC, Ltd').join(' ') !== 'acme') return 'stop words: ' + S.nameTokens('The Project of Acme LLC, Ltd').join(' ');
+      if (S.tokenScore('', 'x') !== 0) return 'empty should score 0';
+      if (S.nameTokens('OPP12345 Tower').includes('opp12345')) return 'opportunity ids should drop';
+      return true;
+    });
+
+    test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
+      // mergeStaffDb built its result from defaultDb() and copied only the keys
+      // it knew; lateness was wiped on every refresh, and the next new field
+      // would have been too.
+      const now = new Date().toISOString();
+      const mk = (extra) => Object.assign({ people: {}, allocations: [], actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { updatedAt: now, monthHours: 172 } }, extra);
+      const remote = mk({ lateness: [{ user: 'a', days: 3 }], meta: { updatedAt: now, latenessAt: '2026-09-01T00:00:00.000Z', monthHours: 172 }, futureField: { keep: 'me' } });
+      const local = mk({ lateness: [], meta: { updatedAt: now, monthHours: 172 } });
+      const out = ST.mergeStaffDb(remote, local);
+      if (!out.lateness || out.lateness.length !== 1) return 'lateness dropped: ' + JSON.stringify(out.lateness);
+      return (out.futureField && out.futureField.keep === 'me') || 'an unknown top-level key was dropped';
+    });
+
     test('Staffing', 'capacity honors the part-time percentage', () => {
       ST.setMonthHours(172);
       const p = ST.savePerson({ id: 'stp_jane', name: 'Jane Tester', title: 'Project Manager', capacityPct: 50, active: true });
@@ -1872,7 +2151,97 @@
     });
   })();
 
+  /* ============ ROUND TRIPS + THE BOX FAKE ============ */
+  (function () {
+    const B = window.UFC_BulkExcel, Box = window.UFC_Box;
+    const stamp = (n) => '2026-0' + n + '-01T00:00:00Z';
+    const rec = (id, name, upd, over) => Object.assign({
+      id, createdAt: stamp(1), updatedAt: upd || stamp(1),
+      project: { name, client: 'Acme', status: 'draft', rating: 4, lead: 'Andrew Peters' },
+      timeline: { startMonth: 1, startYear: 2026, endMonth: 6, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 6 }],
+      groups: [{ id: 'core', name: 'Core' }],
+      roles: [{ id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'core', fte: { p1: 100 }, fteMonthly: {} }],
+      assumptions: S.defaultAssumptions({ discount: 5 }),
+    }, over || {});
+    const freshBook = (projects) => {
+      const db = { schemaVersion: 2, projects: {}, activity: [] };
+      projects.forEach(p => { db.projects[p.id] = p; });
+      localStorage.setItem('savills-ppm-fee-db:v1', JSON.stringify(db));
+      return db;
+    };
+
+    test('Round trip', 'JSON export → import (replace) reproduces the book exactly', () => {
+      freshBook([rec('rt_a', 'Alpha'), rec('rt_b', 'Beta', stamp(3))]);
+      const before = S.listProjects().map(p => JSON.stringify(p)).sort().join('|');
+      const json = S.exportDb();
+      freshBook([]);
+      if (S.listProjects().length) return 'book did not clear';
+      S.importDb(json, 'replace');
+      const after = S.listProjects().map(p => JSON.stringify(p)).sort().join('|');
+      return (S.listProjects().length === 2 && before === after) || 'import changed the records';
+    });
+
+    testAsync('Round trip', 'Bulk Excel export → parse → plan is a no-op (nothing to change, nothing missing)', async () => {
+      freshBook([rec('rt_x', 'Xray Tower'), rec('rt_y', 'Yankee Fit-out', stamp(2))]);
+      const { wb } = await B.buildWorkbook();
+      const buf = await wb.xlsx.writeBuffer();
+      const parsed = await B.parseWorkbook({ name: 'roundtrip.xlsx', arrayBuffer: async () => buf });
+      const plan = B.buildPlan(parsed);
+      if (plan.errors.length) return 'errors: ' + plan.errors.slice(0, 3).join(' · ');
+      if (plan.changes.length) return 'phantom changes: ' + plan.changes.slice(0, 3).map(c => JSON.stringify(c).slice(0, 160)).join(' · ');
+      if (plan.creates.length || plan.removes.length) return 'creates ' + plan.creates.length + ' / removes ' + plan.removes.length;
+      return plan.untouched.length === 2 || ('untouched ' + plan.untouched.length);
+    });
+
+    /* The Box fake: an upload that meets a 412 must pull, merge newest-wins per
+       record, and retry with the etag it just pulled — never overwrite. */
+    testAsync('Box sync', 'a 412 on upload pulls, merges newest-wins, and retries with the fresh etag', async () => {
+      if (!Box || !Box.syncNow) return 'box adapter not loaded';
+      const realFetch = window.fetch;
+      const calls = [];
+      const remote = { schemaVersion: 2, projects: {
+        bx_a: rec('bx_a', 'Alpha (stale in Box)', stamp(1)),
+        bx_b: rec('bx_b', 'Beta (only in Box)', stamp(2)),
+      }, activity: [] };
+      window.fetch = async (url, opts) => {
+        opts = opts || {};
+        const u = String(url);
+        calls.push({ url: u, opts });
+        if (/upload\.box\.com/.test(u) && opts.method === 'POST') {
+          const nth = calls.filter(c => c.url === u).length;
+          if (nth === 1) return new Response('', { status: 412 });
+          return new Response(JSON.stringify({ entries: [{ etag: '2' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        if (/api\.box\.com\/2\.0\/files\/\d+\/content/.test(u)) {
+          return new Response(JSON.stringify(remote), { status: 200, headers: { etag: '"1"', 'content-type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+      };
+      try {
+        Box.config.testMode = true; Box.setTestToken('test-token');
+        freshBook([rec('bx_a', 'Alpha (edited here, newer)', stamp(3))]);
+        await Box.syncNow();
+        const posts = calls.filter(c => /upload\.box\.com/.test(c.url) && c.opts.method === 'POST');
+        if (posts.length !== 2) return 'expected 2 uploads (412 then retry), saw ' + posts.length;
+        const ifMatch = (posts[1].opts.headers || {})['If-Match'];
+        if (ifMatch !== '1') return 'retry did not carry the pulled etag (If-Match=' + ifMatch + ')';
+        const sent = JSON.parse(await posts[1].opts.body.get('file').text());
+        const names = Object.values(sent.projects).map(p => p.project.name).sort();
+        if (names.join('|') !== 'Alpha (edited here, newer)|Beta (only in Box)') return 'merged upload was ' + names.join(' | ');
+        const local = S.listProjects().map(p => p.project.name).sort().join('|');
+        if (local !== 'Alpha (edited here, newer)|Beta (only in Box)') return 'local book after merge: ' + local;
+        if (Box.syncState.state !== 'synced') return 'sync state ' + Box.syncState.state + ' · ' + Box.syncState.message;
+        return true;
+      } finally {
+        window.fetch = realFetch; Box.config.testMode = false;
+        try { sessionStorage.removeItem('ufc_box_devtoken'); } catch (e) {}
+      }
+    });
+  })();
+
   /* ---- render ---- */
+  function finish() {
   const pass = results.filter(r => r.ok).length;
   const fail = results.length - pass;
   document.getElementById('summary').innerHTML =
@@ -1891,6 +2260,8 @@
   });
   document.getElementById('out').innerHTML = html;
   window.__testResults = { pass, fail, total: results.length, results };
+  }
+  runAsync().then(finish, (e) => { results.push({ group: 'Harness', name: 'async tests ran', ok: false, detail: e.message }); finish(); });
 })();
 </script>
 </body>

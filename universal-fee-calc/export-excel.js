@@ -212,8 +212,10 @@ window.UFC_buildAndDownloadExcel = async function () {
     const noteParts = [];
     if (r.projectRole) noteParts.push('Project role: ' + r.projectRole);
     if (isContracted) noteParts.push('Contracted rate · bypasses industry adj');
-    else if (tier && !tier.isNoCharge) noteParts.push(`Rack $${tier.rate} · −${state.assumptions.industryAdj || 0}% adj`);
-    if (tier && !tier.isNoCharge && tier.costFloor) noteParts.push('Cost floor $' + tier.costFloor + '/hr');
+    /* Rack rate and cost floor deliberately NOT written: this workbook goes
+       to the client's procurement team, and the catalog declares both
+       confidential. The industry adjustment is still stated as a percentage. */
+    else if (tier && !tier.isNoCharge && state.assumptions.industryAdj) noteParts.push(`−${state.assumptions.industryAdj}% industry adj`);
     if (title?.note) noteParts.push(title.note);
     s1.getCell(`H${rn}`).value = noteParts.join('  ·  ');
     s1.getCell(`H${rn}`).font = { name: 'Calibri', size: 9, italic: true, color: { argb: STEEL } };
@@ -346,6 +348,17 @@ window.UFC_buildAndDownloadExcel = async function () {
       const unlocked = `(${avgFormulaParts})/${slice.length}`;
       r7.getCell(5 + i).value = { formula: unlocked };
     }
+    /* Row 8: the same factor anchored at the PROJECT start year, for roles on
+       a contracted rate — they bypass the catalog base year, and the role
+       total below used to escalate them from the wrong anchor. */
+    if (slice.length) {
+      const yrs = [...new Set(slice.map(m => m.year))];
+      const cnt = yrs.map(y => slice.filter(m => m.year === y).length);
+      const parts = yrs.map((y, j) => `${cnt[j]}*POWER(1+escalation_pct/100, ${y} - project_start_year)`).join('+');
+      s2.getCell(8, 5 + i).value = { formula: `(${parts})/${slice.length}` };
+    } else s2.getCell(8, 5 + i).value = 1;
+    s2.getCell(8, 5 + i).numFmt = '0.0000';
+    s2.getCell(8, 5 + i).font = { name: 'Calibri', size: 9, italic: true, color: { argb: STEEL } };
     const c = r7.getCell(5 + i);
     c.numFmt = '0.0000';
     c.font = { name: 'Calibri', size: 9, color: { argb: STEEL }, bold: true };
@@ -403,7 +416,9 @@ window.UFC_buildAndDownloadExcel = async function () {
       const fteStartCol = 5, fteEndCol = 5 + nPhases - 1;
       const fteRange = `${colLetter(fteStartCol)}${mrow}:${colLetter(fteEndCol)}${mrow}`;
       const monthsRange = `$${colLetter(fteStartCol)}$6:$${colLetter(fteEndCol)}$6`;
-      const escRange = `$${colLetter(fteStartCol)}$7:$${colLetter(fteEndCol)}$7`;
+      // Contracted roles read the project-start-anchored factors on row 8.
+      const escRow = r.rateSource === 'contracted' ? 8 : 7;
+      const escRange = `$${colLetter(fteStartCol)}$${escRow}:$${colLetter(fteEndCol)}$${escRow}`;
       const totalCell = s2.getCell(`${colLetter(5 + nPhases)}${mrow}`);
       totalCell.value = { formula: `SUMPRODUCT(${fteRange}, ${monthsRange}, ${escRange})/100 * D${mrow} * hrs_per_mo` };
       totalCell.numFmt = '"$"#,##0';
@@ -495,14 +510,16 @@ window.UFC_buildAndDownloadExcel = async function () {
   s2.getCell(`${lastCol}${grossRow}`).alignment = { horizontal: 'right' };
   wb.definedNames.add(`'Phase Matrix'!$${lastCol}$${grossRow}`, 'gross_fee');
 
-  // Lock credit: gross_fee × (1 - 1/escalation_factor_weighted) × rate_lock — approximate via cached values
-  // Simpler: precompute lockCredit and store as a value
-  const lockCreditValue = S.lockCredit();
+  /* Lock credit: ONE live figure. It used to be a number baked in at export
+     time, so changing escalation_pct or discount_pct in the workbook moved
+     everything except this. It is now the total of the per-month credit on
+     'Monthly by Group' (defined name lock_credit, which already carries the
+     rate_lock flag and the discount), referenced here and on every sheet. */
   s2.mergeCells(`A${lockRow}:${colLetter(4 + nPhases)}${lockRow}`);
   s2.getCell(`A${lockRow}`).value = 'Less Rate Lock credit (×rate_lock flag)';
   s2.getCell(`A${lockRow}`).font = { name: 'Calibri', bold: true, color: { argb: RED } };
   s2.getCell(`A${lockRow}`).alignment = { horizontal: 'right' };
-  s2.getCell(`${lastCol}${lockRow}`).value = { formula: `${lockCreditValue.toFixed(2)} * rate_lock` };
+  s2.getCell(`${lastCol}${lockRow}`).value = { formula: `-lock_credit` };
   s2.getCell(`${lastCol}${lockRow}`).numFmt = '"$"#,##0';
   s2.getCell(`${lastCol}${lockRow}`).font = { name: 'Calibri', bold: true, color: { argb: RED } };
   s2.getCell(`${lastCol}${lockRow}`).alignment = { horizontal: 'right' };
@@ -851,7 +868,7 @@ window.UFC_buildAndDownloadExcel = async function () {
   wLabel(wGross, 'Gross fee · sum of all months', NAVY);
   wVal(wGross, `${totCol}${monthTotRow}`, NAVY);
   wLabel(wLock, 'Less Rate Lock credit (×rate_lock)', RED);
-  wVal(wLock, `-${S.lockCredit().toFixed(2)}*rate_lock`, RED);
+  wVal(wLock, `lock_credit`, RED);
   wLabel(wDisc, 'Less client discount', RED);
   wVal(wDisc, `-${totCol}${wGross}*(discount_pct/100)`, RED);
   s3.mergeCells(`A${wNet}:${colLetter(4 + nMonths)}${wNet}`);
@@ -961,7 +978,7 @@ window.UFC_buildAndDownloadExcel = async function () {
   const bs = `'Monthly Detail'!`;
   const netRef = `${bs}${totCol}${wNet}`;          // net total on Sheet 3
   const grossRef = `${bs}${totCol}${wGross}`;       // gross total on Sheet 3
-  const lockConst = S.lockCredit().toFixed(2);
+  const lockConst = S.lockCredit().toFixed(2);   // only to decide whether to SHOW the row
 
   // Title
   s4.mergeCells(`A1:${tot4}1`);
@@ -1112,7 +1129,7 @@ window.UFC_buildAndDownloadExcel = async function () {
   s4.getCell(`A${b4}`).font = { name: 'Calibri', bold: true, color: { argb: STEEL }, size: 9 };
   b4++;
   brLabel(b4, 'Gross fee (all groups)', NAVY); brVal(b4, grossRef, NAVY); b4++;
-  if (parseFloat(lockConst) > 0.5) { brLabel(b4, 'Less Rate-Lock credit', RED); brVal(b4, `-${lockConst}*rate_lock`, RED); b4++; }
+  if (parseFloat(lockConst) > 0.5) { brLabel(b4, 'Less Rate-Lock credit', RED); brVal(b4, `lock_credit`, RED); b4++; }
   brLabel(b4, 'Less client discount', RED); brVal(b4, `-${grossRef}*(discount_pct/100)`, RED); b4++;
   brLabel(b4, 'Net invoiced (ties to row above)', NAVY); brVal(b4, netRef, NAVY); b4++;
 
@@ -1153,7 +1170,6 @@ window.UFC_buildAndDownloadExcel = async function () {
   const tot5 = colLetter(2 + nMonths);
   s5.columns = [{ width: 26 }, ...Array(nMonths).fill({ width: 11 }), { width: 15 }];
   const hasLock = parseFloat(lockConst) > 0.5;
-  const lockRatio = `(${lockConst}/${grossRef})`;          // share of gross removed by rate-lock
 
   s5.mergeCells(`A1:${tot5}1`);
   s5.getCell('A1').value = 'Monthly by Group · pre-discount and discount baked in';
@@ -1235,9 +1251,13 @@ window.UFC_buildAndDownloadExcel = async function () {
   s5.getCell(`${tot5}${aGrossRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL_TINT } };
   s5.getCell(`${tot5}${aGrossRow}`).alignment = { horizontal: 'right' };
   rA++;
-  // Less rate-lock credit (by month, proportional) — only if present
+  /* Less rate-lock credit (by month). ALWAYS written, even when the lock is
+     off: every cell multiplies by rate_lock so it reads zero, and the other
+     sheets reference its total by name — flip rate_lock to 1 in the workbook
+     and the credit appears everywhere at once. Hiding the row when it was
+     zero left lock_credit undefined and the referencing cells at #NAME?. */
   let aLockRow = 0;
-  if (hasLock) {
+  {
     aLockRow = rA;
     s5.getCell(`A${aLockRow}`).value = 'Less Rate-Lock credit';
     s5.getCell(`A${aLockRow}`).font = { name: 'Calibri', color: { argb: RED } };
@@ -1245,12 +1265,15 @@ window.UFC_buildAndDownloadExcel = async function () {
     monthCols.forEach((mc, i) => {
       const col = m5(i);
       const c = s5.getCell(`${col}${aLockRow}`);
-      // Per-month credit = month gross × (1 − (1+esc)^(startYear − monthYear)).
-      // Zero in the start year (locked == unlocked); positive only once escalation bites.
-      c.value = { formula: `-${col}${aGrossRow}*(1-POWER(1+escalation_pct/100, project_start_year-${mc.m.year}))*rate_lock` };
+      // Per-month credit = month gross × (1 − (1+esc)^(startYear − monthYear)) × (1 − discount).
+      // Zero in the start year (locked == unlocked); positive only once escalation
+      // bites. The (1 − discount) term is what the engine applies; without it,
+      // with lock and discount both on, this sheet's net disagreed with Sheet 3.
+      c.value = { formula: `-${col}${aGrossRow}*(1-POWER(1+escalation_pct/100, project_start_year-${mc.m.year}))*(1-discount_pct/100)*rate_lock` };
       c.numFmt = '"$"#,##0'; c.font = { name: 'Calibri', color: { argb: RED } }; c.alignment = { horizontal: 'right' };
     });
     s5.getCell(`${tot5}${aLockRow}`).value = { formula: `SUM(${m5(0)}${aLockRow}:${m5(nMonths - 1)}${aLockRow})` };
+    wb.definedNames.add(`'Monthly by Group'!$${tot5}$${aLockRow}`, 'lock_credit');
     s5.getCell(`${tot5}${aLockRow}`).numFmt = '"$"#,##0'; s5.getCell(`${tot5}${aLockRow}`).font = { name: 'Calibri', bold: true, color: { argb: RED } };
     s5.getCell(`${tot5}${aLockRow}`).alignment = { horizontal: 'right' };
     rA++;

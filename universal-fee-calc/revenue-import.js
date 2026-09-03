@@ -34,24 +34,13 @@
   const STORE = window.UFC_Store;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const esc = window.UFC_UI.esc;
   const money = (n) => (n == null || isNaN(n)) ? '—' : (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString();
   const uid = () => 'proj_' + Math.random().toString(36).slice(2, 11);
 
-  /* ---------- token-based name matching (same approach as staff.js) ---------- */
-  const STOP_WORDS = new Set(['the', 'of', 'and', 'a', 'an', 'for', 'to', 'at', 'in', 'on', 'llc', 'inc', 'corp', 'project', 'phase']);
-  function nameTokens(s) { return String(s || '').toLowerCase().replace(/&/g, ' and ').split(/[^a-z0-9]+/).filter(t => t && t.length > 1 && !STOP_WORDS.has(t)); }
-  function tokenScore(a, b) {
-    const ta = nameTokens(a), tb = nameTokens(b);
-    if (!ta.length || !tb.length) return 0;
-    const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
-    let hit = 0;
-    small.forEach(t => {
-      if (big.includes(t)) { hit += 1; return; }
-      if (big.some(bt => (bt.length >= 3 && t.startsWith(bt)) || (t.length >= 3 && bt.startsWith(t)))) hit += 0.75;
-    });
-    return hit / small.length;
-  }
+  /* ---------- token-based name matching ---------- */
+  const nameTokens = (s) => window.UFC_Store.nameTokens(s);     // the one matcher — see store.js
+  const tokenScore = (a, b) => window.UFC_Store.tokenScore(a, b);
   /** Does anyone's work depend on this project's roster? A project with real
       staffing is a project a revenue leader has spent time on — its numbers
       are never auto-changed by an import. */
@@ -118,8 +107,7 @@
 
   /* ---------- parse "3. Detailed Revenues" ---------- */
   async function parseWorkbook(file) {
-    await window.UFC_Vendor.xlsx();
-    const XLSX = await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm');
+    const XLSX = await window.UFC_Vendor.xlsx();       // the vendored copy — not a second one from a CDN
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
     const sheetName = wb.SheetNames.find(n => /3[.\s]*detailed\s*revenues/i.test(n)) || wb.SheetNames.find(n => /detailed\s*revenues/i.test(n));
     if (!sheetName) throw new Error(`No "3. Detailed Revenues" tab found. Sheets in this file: ${wb.SheetNames.join(', ')}`);
@@ -303,8 +291,8 @@
     const roles = p.roles || [];
     return roles.every(r => r.rateSource === 'contracted' && !(+r.contractedRate || 0)) ? 'zeroSeed' : 'priced';
   }
-  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const ymLbl = (y, m) => MON[m - 1] + ' ’' + String(y).slice(2);
+  const MON = window.UFC_UI.MONTHS;
+  const ymLbl = (y, m) => window.UFC_UI.monthLabel(y, m);
   /** First and last month the sheet actually carries revenue for this group. */
   function sheetSpan(g, years) {
     let first = null, last = null;
@@ -467,11 +455,10 @@
       phases: [{ id: uid(), name: 'Full term', length: totalMonths }],
       groups: [{ id: uid(), name: 'Core team' }],
       roles: [],
-      assumptions: {
-        hrsPerMo: 173.33, escalation: 3.0, industryAdj: 20, discount: 0, rateLock: false, billingMode: 'phase',
-        catalogBaseYear: (window.RATES_CATALOG && window.RATES_CATALOG.baseYear) || 2024,
+      assumptions: window.UFC_Store.defaultAssumptions({
+        escalation: 3.0, industryAdj: 20,
         feeShare: { enabled: hasFeeShare, pct: hasFeeShare ? g.feeSharePct : 0, mode: 'offtop' },
-      },
+      }),
       // a brand-new project has no history to protect — take every month.
       // The figures land as IMPORTED revenue (source.importedByMonth), the
       // same channel the calculator shows as "Imported · locked" — NOT as

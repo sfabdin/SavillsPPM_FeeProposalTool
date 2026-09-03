@@ -39,7 +39,7 @@
   const STORE = window.UFC_Store;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const esc = window.UFC_UI.esc;
   // Finance convention: negatives in parentheses, blanks as an em-dash.
   const money = (n) => (n == null || isNaN(n)) ? '—'
     : n < 0 ? '($' + Math.abs(Math.round(n)).toLocaleString() + ')'
@@ -50,7 +50,7 @@
     const s = a >= 1e6 ? '$' + (a / 1e6).toFixed(2) + 'M' : a >= 1e3 ? '$' + Math.round(a / 1e3) + 'K' : '$' + Math.round(a);
     return (n < 0 ? '−' : '') + s;
   };
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MONTHS = window.UFC_UI.MONTHS, monthLabel = window.UFC_UI.monthLabel;
   const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
   /* A fee share is a signed adjustment, not always a deduction: the book
@@ -232,20 +232,9 @@
     return { rows, warnings, sheet: sheetName, parsed, footFails, closeMonth, year };
   }
 
-  /* ---------- token matcher (same approach as revenue-import.js) ---------- */
-  const STOP = new Set(['the', 'of', 'and', 'a', 'an', 'for', 'to', 'at', 'in', 'on', 'llc', 'inc', 'corp', 'project', 'phase', 'ltd', 'lp']);
-  const nameTokens = (s) => String(s || '').toLowerCase().replace(/&/g, ' and ').split(/[^a-z0-9]+/).filter(t => t && t.length > 1 && !STOP.has(t));
-  function tokenScore(a, b) {
-    const ta = nameTokens(a), tb = nameTokens(b);
-    if (!ta.length || !tb.length) return 0;
-    const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
-    let hit = 0;
-    small.forEach(t => {
-      if (big.includes(t)) { hit += 1; return; }
-      if (big.some(bt => (bt.length >= 3 && t.startsWith(bt)) || (t.length >= 3 && bt.startsWith(t)))) hit += 0.75;
-    });
-    return hit / small.length;
-  }
+  /* ---------- token matcher ---------- */
+  const nameTokens = (s) => STORE.nameTokens(s);     // the one matcher — see store.js
+  const tokenScore = (a, b) => STORE.tokenScore(a, b);
 
   /* ============================================================
      2 · MATCH TO projects.json + SUGGEST A STATUS
@@ -757,7 +746,7 @@
     for (let y = YEAR - 1; y <= YEAR + 1; y++) {
       for (let i = 0; i < 12; i++) {
         const v = STORE.ymStr(y, i + 1);
-        o += `<option value="${v}" ${sel === v ? 'selected' : ''}>${MONTHS[i]}${y === YEAR ? '' : ' ’' + String(y).slice(2)}</option>`;
+        o += `<option value="${v}" ${sel === v ? 'selected' : ''}>${y === YEAR ? MONTHS[i] : monthLabel(y, i + 1)}</option>`;
       }
     }
     return o;
@@ -1176,7 +1165,7 @@
     const pop = document.createElement('div');
     pop.className = 'popover';
     pop.innerHTML = `
-      <div class="pop-head">${esc(row.name || '')} · <b>${MONTHS[m - 1]} ${YEAR}</b></div>
+      <div class="pop-head">${esc(row.name || '')} · <b>${monthLabel(YEAR, m)}</b></div>
       <div class="pop-nums">
         <span>Billed <b>${money(STORE.billedOf(row, m))}</b></span>
         ${STORE.feeShareOf(row, m) ? `<span class="fee">Fee share <b>${money(STORE.feeShareOf(row, m))}</b></span>` : ''}
@@ -1271,7 +1260,7 @@
         STORE.recordAdjustment(row.pid, {
           ledgerKey: key, ym, delta: Math.round((value - bare) * 100) / 100,
           was: bare, now: value,
-          note: `${MONTHS[month - 1]} ${YEAR} plan corrected to match what was billed`,
+          note: `${monthLabel(YEAR, month)} plan corrected to match what was billed`,
         });
       }
       delete _planCache[row.pid + '|' + YEAR];
@@ -1542,7 +1531,7 @@
     const flat = []; rows.forEach(r => { flat.push(r); (r.children || []).forEach(f => flat.push(f)); });
     // Months carry their year, because the ones worth reading cross a year end.
     const ymLabel = (v) => { const p = v ? STORE.ymParse(v) : null;
-      return p ? MONTHS[p.month - 1] + (p.year === +YEAR ? '' : ' ' + p.year) : ''; };
+      return p ? (p.year === +YEAR ? MONTHS[p.month - 1] : monthLabel(p.year, p.month)) : ''; };
     let earnedT = 0, allocT = 0;
     flat.forEach(r => {
       const earned = {}; for (let m = 1; m <= 12; m++) { const v = planFor(r.pid, YEAR, m); if (v) earned[m] = v; }

@@ -49,7 +49,7 @@
     tokenExchangeUrl: '/api/box-token',   // your Vercel serverless function (holds the secret)
     dataFileId: '2265137344562',          // projects.json in Box
     ratesFileId: '2269177726984',         // rates.json in Box (the confidential rate grid)
-    studioFileId: '2302220793247',        // studio.json in Box (Revenue Studio baselines + scenarios)
+    studioFileId: '2302220793247',        // studio.json in Box (retired Revenue Studio baselines + scenarios; still synced)
     actualsFileId: '',                    // clockify-actuals.csv in Box — hours by user×project×month. '' = not configured (page falls back to manual drop / API proxy)
     staffFileId: '2364190093321',         // staff.json in Box — the LIVING staffing matrix (allocations + notes + actuals + mappings), shared by all admins
     revenueFileId: '',                    // revenue.json in Box — Revenue Reconciliation's actuals ledger. '' = SELF-CONFIGURING: found by name in the shared folder, created on first run.
@@ -101,6 +101,7 @@
   // it expires (~60 min), using the long-lived (~60 day) refresh token.
   const TOK_KEY = 'ufc_box_token_v1';
   const PKCE_KEY = 'ufc_box_pkce_v1';
+  const STATE_KEY = 'ufc_box_state_v1';   // the login's anti-CSRF nonce, checked on the way back
   const TEST_TOK_KEY = 'ufc_box_devtoken';
 
   function readTok() { try { return JSON.parse(localStorage.getItem(TOK_KEY)); } catch (e) { return null; } }
@@ -215,7 +216,13 @@
     url.searchParams.set('redirect_uri', BOX_CONFIG.redirectUri);
     url.searchParams.set('code_challenge', challenge);
     url.searchParams.set('code_challenge_method', 'S256');
-    url.searchParams.set('state', randomStr(12));
+    /* `state` was generated here and never looked at again, so the callback
+       would exchange any code it was handed — a login-CSRF that can bind this
+       browser to someone else's Box account. Kept in sessionStorage (this tab,
+       this login) and compared on return; PKCE covers code injection, not this. */
+    const state = randomStr(24);
+    sessionStorage.setItem(STATE_KEY, state);
+    url.searchParams.set('state', state);
     window.location.assign(url.toString());
   }
   async function logout() {
@@ -240,8 +247,14 @@
      token exchange still needs to happen somewhere that can POST the
      verifier. Box's token endpoint accepts PKCE without a secret for
      public clients. */
-  async function exchangeCode(code) {
+  async function exchangeCode(code, state) {
+    const expected = sessionStorage.getItem(STATE_KEY);
+    sessionStorage.removeItem(STATE_KEY);                     // one login, one use
+    if (!expected || !state || state !== expected) {
+      throw new Error('Sign-in did not start from this tab. Open the app and sign in again.');
+    }
     const verifier = sessionStorage.getItem(PKCE_KEY);
+    if (!verifier) throw new Error('Sign-in did not start from this tab. Open the app and sign in again.');
     // Your Box app has a Client Secret, so the exchange runs server-side
     // (a Vercel serverless function holds the secret). The browser POSTs the
     // code + PKCE verifier to that endpoint, which returns the token.
@@ -268,9 +281,9 @@
      answer comes from measurement rather than assumption.
 
      Read it three ways:
-       · console table, automatically, once boot finishes
-       · window.UFC_Perf.report()  — same table, on demand
-       · add ?perf=1 to the URL    — on-screen overlay, no devtools
+       · window.UFC_Perf.report()  — console table, on demand
+       · add ?perf=1 to the URL    — console table + on-screen overlay
+       · localStorage ufc_perf=1   — console table on every boot
      Costs nothing when nobody is looking: it is a few timestamps
      and a running byte count.
      ============================================================ */
@@ -300,6 +313,11 @@
       phase(l) { phases.push({ label: l, at: Math.round(now()) }); },
       finish() {
         bootMs = Math.round(now());
+        /* Quiet by default: the console table prints only when someone asks
+           (?perf=1 or localStorage ufc_perf=1). Production consoles stay clean. */
+        let wanted = false;
+        try { wanted = /[?&]perf=1/.test(location.search) || localStorage.getItem('ufc_perf') === '1'; } catch (e) {}
+        if (!wanted) return;
         try { this.report(); } catch (e) {}
         try { if (/[?&]perf=1/.test(location.search)) this.overlay(); } catch (e) {}
       },
@@ -706,11 +724,17 @@
   async function pullStaff() {
     const id = await resolveStaffFileId();
     if (!id) return null;
-    const meta = await boxFetch('/files/' + id + '?fields=etag');
-    if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; }
     const res = await boxFetch('/files/' + id + '/content');
     if (res.status === 404) { _staffId = null; try { localStorage.removeItem('ufc_staff_file_id'); } catch (e) {} return null; }  // stale cached id — re-resolve next load
     if (!res.ok) throw new Error('staff pull failed: ' + res.status);
+    /* One round trip, not two: the content response carries the file's ETag
+       (the same value the metadata call returned). Fall back to the metadata
+       call only if the header is missing, so the If-Match on the next upload
+       is never sent blind. */
+    let tag = null;
+    try { tag = res.headers.get('etag'); } catch (e) {}
+    if (tag) _staffEtag = tag.replace(/^W\//, '').replace(/"/g, '');
+    else { const meta = await boxFetch('/files/' + id + '?fields=etag'); if (meta.ok) { const m = await meta.json(); _staffEtag = m.etag; } }
     const txt = await res.text();
     if (!txt || !txt.trim()) return null;                        // empty placeholder file
     try { return JSON.parse(txt); } catch (e) { return null; }   // not yet valid JSON → seed from local
@@ -728,6 +752,15 @@
   async function uploadStaff(db, depth) {
     const id = await resolveStaffFileId();
     if (!id) return;
+    /* No etag means this page has never seen Box's copy of staff.json, and a
+       PUT without If-Match replaces whatever is there — every teammate edit
+       since this browser last synced. Look first; merge if there is anything
+       to merge. Data Repair reached this path from a cold page. */
+    if (!_staffEtag) {
+      const remote = await pullStaff();          // sets _staffEtag when the file exists
+      const Staff = window.UFC_Staff;
+      if (remote && remote.allocations && Staff && Staff.mergeFromRemote) db = Staff.mergeFromRemote(remote);
+    }
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const form = new FormData();
     form.append('attributes', JSON.stringify({ name: 'staff.json' }));
@@ -752,7 +785,7 @@
     try { const j = await res.json(); if (j.entries && j.entries[0]) _staffEtag = j.entries[0].etag; } catch (e) {}
   }
 
-  // ---- Revenue Studio file (studio.json) — SEPARATE from projects.json ----
+  // ---- studio.json (retired Revenue Studio) — SEPARATE from projects.json ----
   let _studioEtag = null;
   async function pullStudio() {
     const id = BOX_CONFIG.studioFileId;

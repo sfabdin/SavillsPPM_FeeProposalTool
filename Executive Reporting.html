@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Executive Reporting · Savills PPM</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23238291'/><text y='72' x='50' text-anchor='middle' font-size='58' fill='white' font-family='Arial' font-weight='bold'>E</text></svg>">
-<link rel="stylesheet" href="exec-reporting/styles.css?v=20260813f">
+<link rel="stylesheet" href="exec-reporting/styles.css">
 </head>
 <body class="exec-page exec">
   <!-- ============================================================
@@ -24,12 +24,12 @@
        ============================================================ -->
   <div id="exec-root" class="wrap"><noscript>Executive Reporting needs JavaScript.</noscript></div>
 
-  <script src="universal-fee-calc/rates-catalog.js?v=20260723g"></script>
-  <script src="universal-fee-calc/store.js?v=20260723g"></script>
-  <script src="universal-fee-calc/box-adapter.js?v=20260723g"></script>
+  <script src="universal-fee-calc/rates-catalog.js"></script>
+  <script src="universal-fee-calc/store.js"></script>
+  <script src="universal-fee-calc/box-adapter.js"></script>
   <!-- This page reads the budget baselines out of studio.json. Every other
        page in the app used to pull it too and never look at it. -->
-  <script>window.UFC_NEEDS = ['studio'];</script>
+  <script>window.UFC_NEEDS = ['studio', 'activity'];</script>
   <script>
     /* DEV ONLY. On localhost with ?dev=fixtures the module renders from local
        copies of the four files so the build can be checked without Box. Turning
@@ -43,13 +43,14 @@
       }
     })();
   </script>
-  <script src="universal-fee-calc/boot.js?v=20260723g"></script>
-  <script src="universal-fee-calc/sync-status.js?v=20260723g"></script>
-  <script src="universal-fee-calc/nav.js?v=20260723g"></script>
+  <script src="universal-fee-calc/boot.js"></script>
+  <script src="universal-fee-calc/ui.js"></script>
+  <script src="universal-fee-calc/sync-status.js"></script>
+  <script src="universal-fee-calc/nav.js"></script>
   <!-- The module's own files carry their own version stamp. BUMP THIS on any
        change to core.js, app.js or styles.css, or browsers keep serving the
        old copy after a deploy - the same convention the shared files use. -->
-  <script src="exec-reporting/core.js?v=20260813f"></script>
-  <script src="exec-reporting/app.js?v=20260813f"></script>
+  <script src="exec-reporting/core.js"></script>
+  <script src="exec-reporting/app.js"></script>
 </body>
 </html>

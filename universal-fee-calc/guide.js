@@ -38,11 +38,7 @@
 
   var pop = null;
 
-  function esc(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
+  const esc = window.UFC_UI.esc;
   function fmt(txt) {
     // escape, then interpret **bold**, newlines, and an "Example:" trailer
     var h = esc(txt).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');

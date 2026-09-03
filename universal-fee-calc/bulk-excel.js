@@ -28,6 +28,15 @@
 
   /* ---------- small helpers ---------- */
   const S = (v) => (v == null ? '' : String(v)).trim();
+  /** 1–7 from a number, a numeric string, or a rating label/short — null if none. */
+  function parseRating(v, st) {
+    const t = S(v); if (!t) return null;
+    const n = Number(t);
+    if (Number.isInteger(n) && n >= 1 && n <= 7) return n;
+    const lc = t.toLowerCase();
+    const hit = ((st && st.RATINGS) || []).find(r => r && ((r.label || '').toLowerCase() === lc || (r.short || '').toLowerCase() === lc || String(r.n) === t));
+    return hit ? hit.n : null;
+  }
   const N = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(/[$,\s]/g, '')); return isFinite(n) ? n : 0; };
   /** Strictly numeric, or null. N() coerces junk to 0, which is right for
       "read a number out of a cell" and catastrophically wrong for "are these
@@ -634,7 +643,17 @@
       setIf('name', S(row.name)); setIf('client', S(row.client));
       if (status || !isNew) setIf('status', status || pj.status || 'draft');
       setIf('lossReason', lossReason);
-      setIf('rating', S(row.rating)); setIf('industry', industry); setIf('projectType', ptype);
+      /* Rating must land as the integer 1–7 the store keys on. A cell can hold
+         the number, a numeric string, or the dropdown's label ("90% and up");
+         a string "2" used to be stored as-is and, failing a strict compare,
+         read back as Dead Pursuit — weight zero, project gone from the forecast. */
+      const ratingIn = S(row.rating);
+      if (ratingIn) {
+        const rn = parseRating(ratingIn, st);
+        errIf('rating', rn == null, `Rating "${ratingIn}" is not 1–7 or one of the list labels.`);
+        if (rn != null) setIf('rating', rn);
+      }
+      setIf('industry', industry); setIf('projectType', ptype);
       pj.projectSubtypes = subs;
       if (leader) { pj.leadId = leader.id; pj.lead = leader.displayName; }
       else if (!leadTxt) { pj.leadId = ''; pj.lead = ''; }
@@ -658,8 +677,7 @@
       if (eYm) { timeline.endYear = eYm.year; timeline.endMonth = eYm.month; }
 
       const assumptions = Object.assign(
-        isNew ? { hrsPerMo: 173.33, escalation: 3, industryAdj: 20, discount: 0, rateLock: false,
-                  billingMode: 'phase', catalogBaseYear: (window.RATES_CATALOG && window.RATES_CATALOG.baseYear) || 2024 } : {},
+        isNew ? window.UFC_Store.defaultAssumptions({ escalation: 3, industryAdj: 20 }) : {},
         (prev && prev.assumptions) || {});
       if (S(row.hrsPerMo) !== '') assumptions.hrsPerMo = N(row.hrsPerMo);
       if (S(row.escalation) !== '') assumptions.escalation = N(row.escalation);
@@ -868,5 +886,6 @@
     return { created, updated, removed, vocab, failed };
   }
 
-  window.UFC_BulkExcel = { exportWorkbook, parseWorkbook, buildPlan, apply, PROJECT_COLS, ROLE_COLS };
+  // buildWorkbook is exposed for the round-trip test (export → parse → plan must be a no-op).
+  window.UFC_BulkExcel = { exportWorkbook, buildWorkbook, parseWorkbook, buildPlan, apply, PROJECT_COLS, ROLE_COLS };
 })();
