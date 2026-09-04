@@ -103,7 +103,10 @@
         });
       });
       const pj = p.project || {};
-      const leaders = [pj.lead, pj.clientRelOwner].map(x => (x || '').trim()).filter(Boolean);
+      // Stored values are sometimes an id ("acpeters"), sometimes a name —
+      // resolve through the directory so each person is one filter entry.
+      const leaders = [...new Set([pj.leadId || pj.lead, pj.clientRelOwner]
+        .map(x => (STORE.leaderDisplay ? STORE.leaderDisplay(x) : (x || '')).trim()).filter(Boolean))];
       const serviceLines = STORE.projectServiceLines(p);
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
       const feeSharePct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
