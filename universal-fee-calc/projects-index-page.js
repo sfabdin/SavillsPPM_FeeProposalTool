@@ -109,7 +109,8 @@
         ptypes.map(t => `<option value="${esc(t)}" ${t===curPt?'selected':''}>${esc(t)}</option>`).join('');
     }
 
-    const leads = [...new Set(projects.map(p => p.project?.lead).filter(Boolean))].sort();
+    const leadName = (p) => (STORE.leaderDisplay ? STORE.leaderDisplay(p.project?.leadId || p.project?.lead) : p.project?.lead) || '';
+    const leads = [...new Set(projects.map(leadName).filter(Boolean))].sort();
     leadSel.innerHTML = '<option value="">All leads</option>' +
       leads.map(l => `<option value="${esc(l)}" ${l===curLead?'selected':''}>${esc(l)}</option>`).join('');
   }
@@ -178,7 +179,7 @@
       if (filters.status && pj.status !== filters.status) return false;
       if (filters.industry && pj.industry !== filters.industry) return false;
       if (filters.ptype && pj.projectType !== filters.ptype) return false;
-      if (filters.lead && pj.lead !== filters.lead) return false;
+      if (filters.lead && ((STORE.leaderDisplay ? STORE.leaderDisplay(pj.leadId || pj.lead) : pj.lead) || '') !== filters.lead) return false;
       if (filters.search) {
         const q = filters.search.toLowerCase();
         const hay = [pj.name, pj.client, pj.lead, pj.location, pj.clientContact, pj.clientRelOwner]
