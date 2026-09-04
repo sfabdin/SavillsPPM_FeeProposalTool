@@ -2242,10 +2242,19 @@
     if (imp && net === 0) {
       $('#sum-total').innerHTML = `${fmtMoney(impTotal)}<span class="unit" style="display:block;font-size:11px;color:var(--sav-teal);">imported · build staffing to reconcile</span>`;
     } else {
-      // "What the client pays": with an on-top fee share that is the bill, not the net.
-      $('#sum-total').textContent = fmtMoney(clientBillTotal());
+      /* "What the client pays": the staffed fee net of credits, plus an on-top
+         fee share, PLUS anything billed through Savills as pass-through. A
+         pass-through-only project is a real proposal with a real number. */
+      const pt = ptOn() ? ptClientTotal() : 0;
+      const staffed = clientBillTotal();
+      $('#sum-total').textContent = fmtMoney(staffed + pt);
+      const det = $('#sum-total-detail');
+      if (det) det.textContent = !pt ? 'Net of all credits — what the client pays, including any on-top fee share.'
+        : staffed === 0 ? 'Pass-through only — no staffed fee. The whole proposal is billed through Savills on behalf of vendors.'
+        : `Staffed fee ${fmtMoney(staffed)} + pass-through ${fmtMoney(pt)} — what the client pays.`;
     }
-    $('#sum-discount-pct').textContent = `${state.assumptions.discount}% client discount — applied at total.`;
+    { const card = $('#sum-pt-card'); if (card) { const on = ptOn() && ptClientTotal() > 0; card.hidden = !on; if (on) { $('#sum-pt').textContent = fmtMoney(ptClientTotal()); const d = $('#sum-pt-detail'); if (d) d.textContent = `Vendor cost ${fmtMoney(ptCostTotal())} + Savills fee ${fmtMoney(ptMarkupTotal())}, invoiced by Savills.`; } } }
+    $('#sum-discount-pct').textContent = `${trimPct(state.assumptions.discount)}% client discount — applied at total.`;
     $('#sum-lock-detail').textContent = state.assumptions.rateLock
       ? `Active — start-year rate held through ${state.timeline.endYear}.`
       : 'Off — escalation applied normally.';
@@ -2598,7 +2607,7 @@
   }
 
   /* ----- Monthly schedule ----- */
-  let monthlyMode = 'bottom';   // 'bottom' = discount as credit line · 'spread' = net baked into each month
+  let monthlyMode = 'spread';   // 'spread' = net baked into each month (default) · 'bottom' = discount as a credit line
 
   /** Reflect billingMode on the toggle buttons + hide the discount-view toggle when flatlined. */
   function syncBillingToggle() {
@@ -2849,14 +2858,14 @@
     if (spread) {
       const cap = document.createElement('tr');
       cap.className = 'spread-caption';
-      cap.innerHTML = `<td colspan="${SPAN}">Each month is net of the ${state.assumptions.discount}% client discount${state.assumptions.rateLock ? ' and Rate Lock credit' : ''} — what you actually invoice.</td>`;
+      cap.innerHTML = `<td colspan="${SPAN}">Each month is net of the ${trimPct(state.assumptions.discount)}% client discount${state.assumptions.rateLock ? ' and Rate Lock credit' : ''} — what you actually invoice.</td>`;
       tbody.appendChild(cap);
     }
 
     if (!flat && !spread && bk && onTop) {
       const cap = document.createElement('tr');
       cap.className = 'spread-caption';
-      cap.innerHTML = `<td colspan="${SPAN}">Rows show the gross monthly fee (pre-discount) for the audit trail. The <strong>Invoice amount</strong> column is the client's actual monthly bill — net of the ${state.assumptions.discount}% discount${state.assumptions.rateLock ? ' and Rate Lock credit' : ''}, plus the ${feeSharePct()}% broker markup on top.</td>`;
+      cap.innerHTML = `<td colspan="${SPAN}">Rows show the gross monthly fee (pre-discount) for the audit trail. The <strong>Invoice amount</strong> column is the client's actual monthly bill — net of the ${trimPct(state.assumptions.discount)}% discount${state.assumptions.rateLock ? ' and Rate Lock credit' : ''}, plus the ${feeSharePct()}% broker markup on top.</td>`;
       tbody.appendChild(cap);
     }
 
