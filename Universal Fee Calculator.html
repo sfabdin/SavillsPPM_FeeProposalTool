@@ -412,10 +412,15 @@ Example: a Jan–Feb 2027 slice that would escalate +3% shows the un-escalated f
       <div class="val" id="sum-discount">$0</div>
       <div class="delta" id="sum-discount-pct">0% — applied at total.</div>
     </div>
+    <div class="sum-card" id="sum-pt-card" hidden>
+      <div class="lbl">Pass-through · billed through Savills</div>
+      <div class="val" id="sum-pt">$0</div>
+      <div class="delta" id="sum-pt-detail">Vendor cost plus markup, invoiced by Savills.</div>
+    </div>
     <div class="sum-card is-navy">
       <div class="lbl">Proposed fee</div>
       <div class="val" id="sum-total">$0</div>
-      <div class="delta">Net of all credits — what the client pays, including any on-top fee share.</div>
+      <div class="delta" id="sum-total-detail">Net of all credits — what the client pays, including any on-top fee share.</div>
     </div>
   </div>
 
@@ -517,8 +522,8 @@ Example: matrix computes $612,340 but the proposal says $600,000 → Fit to targ
         <button type="button" class="bm-btn" id="bm-flat" data-bm="flatline">Flatlined monthly</button>
       </div>
       <div class="monthly-toggle" role="group" aria-label="Discount view" id="disc-toggle">
-        <button type="button" class="mt-btn on" id="mt-bottom" data-mode="bottom">Discount at bottom</button>
-        <button type="button" class="mt-btn" id="mt-spread" data-mode="spread">Spread across months</button>
+        <button type="button" class="mt-btn" id="mt-bottom" data-mode="bottom">Discount at bottom</button>
+        <button type="button" class="mt-btn on" id="mt-spread" data-mode="spread">Spread across months</button>
       </div><span class="ppm-info" data-info="How the client discount shows in the monthly schedule — the **total is identical** either way.
 
 **Discount at bottom** — months show the gross fee; the discount is one credit line at the bottom. Best when the client wants to see list price and the concession separately.
