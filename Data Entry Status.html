@@ -57,6 +57,10 @@
   .fchip { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 4px; font-size: 12px; font-weight: 700; }
   .fchip.ok { color: #1f7a44; }
   .fchip.no { color: #C0392B; background: #FBE9EA; }
+  .fchip.na { color: #79828C; background: #EEE8E3; font-size: 9px; letter-spacing: .04em; width: auto; padding: 0 6px; }
+  .fchip.info { color: #79828C; background: #F1F1EF; }
+  .fchip.off { color: #c9cdd3; }
+  th.info-th { color: #b0b5bc !important; font-weight: 600 !important; }
   .miss-n { font-family: var(--font-display); font-weight: 800; font-size: 13px; }
   .miss-n.zero { color: #1f7a44; }
   .miss-n.some { color: #C0392B; }
@@ -148,8 +152,15 @@
       const ph = r.fte && Object.values(r.fte).some(v => v > 0);
       return m || ph;
     });
-    const hasPt = pt.enabled && Array.isArray(pt.lines) && pt.lines.some(l => (parseFloat(l.cost) || 0) > 0);
+    /* Pass-through billing: vendor cost invoiced through Savills, with or
+       without a markup. It is informational here — it never counts as a
+       missing field — but a project whose billing is ALL pass-through has
+       nothing to staff, so Staffing is satisfied by it and the fee it bills. */
+    const ptLines = pt.enabled && Array.isArray(pt.lines) ? pt.lines.filter(l => (parseFloat(l.cost) || 0) > 0) : [];
+    const hasPt = ptLines.length > 0;
+    const ptBilled = ptLines.reduce((a, l) => { const c = parseFloat(l.cost) || 0; return a + c + c * ((parseFloat(l.markupPct) || 0) / 100); }, 0);
     const fee = projectFee(p);
+    const staffingViaPt = !hasAlloc && hasPt;
 
     const fields = {
       Leader:   !!(pj.leadId || pj.lead),
@@ -157,12 +168,12 @@
       Industry: !!pj.industry,
       Type:     !!pj.projectType,
       Rating:   !!(STORE.ratingFor ? STORE.ratingFor(p) : pj.rating),
-      Staffing: hasAlloc || hasPt,
-      'Fee $':  fee > 0,
+      Staffing: hasAlloc || staffingViaPt,
+      'Fee $':  fee > 0 || ptBilled > 0,
       Date:     !!(pj.firstProposalDate || pj.proposalDate)
     };
     const missing = Object.keys(fields).filter(k => !fields[k]);
-    return { fields, missing, fee };
+    return { fields, missing, fee, info: { passthrough: hasPt, staffingViaPt, ptBilled } };
   }
 
   const FIELD_ORDER = ['Leader','Client','Industry','Type','Rating','Staffing','Fee $','Date'];
@@ -272,9 +283,16 @@
 
       const body = g.rows.slice().sort((a, b) => b.a.missing.length - a.a.missing.length).map(r => {
         const pj = r.p.project || {};
+        const info = r.a.info || {};
         const chips = FIELD_ORDER.map(f => {
           const ok = r.a.fields[f];
-          return `<td class="center"><span class="fchip ${ok?'ok':'no'}" title="${esc(f)}: ${ok?'present':'missing'}">${ok?'✓':'✗'}</span></td>`;
+          const cell = (f === 'Staffing' && info.staffingViaPt)
+            ? `<td class="center"><span class="fchip na" title="Staffing: not required — this project bills as pass-through (${esc(fmtMoney(info.ptBilled))} through Savills)">n/a</span></td>`
+            : `<td class="center"><span class="fchip ${ok?'ok':'no'}" title="${esc(f)}: ${ok?'present':'missing'}">${ok?'✓':'✗'}</span></td>`;
+          // Pass-through sits next to Staffing: grey, informational, never counted.
+          return f === 'Staffing'
+            ? cell + `<td class="center"><span class="fchip ${info.passthrough ? 'info' : 'off'}" title="${info.passthrough ? 'Pass-through billing on: ' + esc(fmtMoney(info.ptBilled)) + ' billed through Savills' : 'No pass-through billing'}">${info.passthrough ? '✓' : '·'}</span></td>`
+            : cell;
         }).join('');
         const mc = r.a.missing.length;
         return `<tr>
@@ -303,7 +321,7 @@
           <table class="dt">
             <thead><tr>
               <th>Project</th><th>Client</th><th>Status</th>
-              ${FIELD_ORDER.map(f => `<th class="center">${esc(f)}</th>`).join('')}
+              ${FIELD_ORDER.map(f => `<th class="center">${esc(f)}</th>` + (f === 'Staffing' ? '<th class="center info-th" title="Informational — pass-through billing never counts as missing data">Pass-through</th>' : '')).join('')}
               <th class="center">Missing</th>
             </tr></thead>
             <tbody>${body}</tbody>
