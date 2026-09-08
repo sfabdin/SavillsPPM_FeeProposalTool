@@ -1551,12 +1551,7 @@
        lateness pull has not been run. */
     const lastDayPP = S.lastWorkedDays ? S.lastWorkedDays() : {};
     const fmtDay = (iso) => { const d = new Date(iso + 'T00:00:00Z'); return isNaN(d) ? iso : (d.getUTCMonth() + 1) + '/' + d.getUTCDate(); };   // 8/17 — no year
-    const lastTimeFor = (r) => {
-      const day = lastDayPP[r.person.id];
-      if (day) return 'last time entered ' + fmtDay(day);
-      const withHours = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && r.byMonth[m].h > 0);
-      return withHours.length ? 'last hours in ' + S.ymLabel(withHours[withHours.length - 1]) + ' (re-pull actuals for the exact day)' : 'no hours in this window';
-    };
+    const lastTimeFor = (r) => S.lastTimeEntered(r, ms);
     lateRows.forEach(r => {
       const person = S.listPeople().find(p => S.namesMatch(p.name, r.user));
       const pid = person ? person.id : 'x:' + r.user;
@@ -1631,21 +1626,8 @@
         const h = Math.max(3, Math.round(Math.min(c.pct, 1.25) / 1.25 * 20));
         return `<i${c.pct < 0.8 ? ' class="low"' : ''} style="height:${h}px" title="${esc(S.ymLabel(m))}: ${Math.round(c.pct * 100)}%"></i>`;
       }).join('') + '</span>';
-      const trendWord = (r) => {
-        const exp = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early && !r.byMonth[m].joinMonth);
-        if (!exp.length) return r.leaveMonths ? ['on leave', '#6b3fa0'] : ['—', 'var(--sav-steel)'];
-        const pcts = exp.map(m => r.byMonth[m].pct);
-        const last = pcts[pcts.length - 1];
-        const lastM = S.ymLabel(exp[exp.length - 1]);
-        // The most recent due month decides the word: a strong average never hides an empty last month.
-        if (last === 0) return [lastTimeFor(r), '#8f2418'];
-        if (last < 0.5) return [Math.round(last * 100) + '% in ' + lastM + ' · ' + lastTimeFor(r), '#8f2418'];
-        const avg = pcts.reduce((s, p) => s + p, 0) / pcts.length;
-        if (avg >= 0.95) return ['steady', '#0E7C7B'];
-        if (avg >= 0.8) return ['mostly on target', '#0E7C7B'];
-        if (pcts.length >= 3 && last < pcts[0] - 0.25) return ['slipping', '#8a6d00'];
-        return ['avg ' + Math.round(avg * 100) + '% of bar', '#8a6d00'];
-      };
+      const TONE = { bad: '#8f2418', warn: '#8a6d00', ok: '#0E7C7B', mute: 'var(--sav-steel)', leave: '#6b3fa0' };
+      const trendWord = (r) => { const n = S.complianceNote(r, comp); return [n.text, TONE[n.tone] || TONE.mute]; };
       const rowHtml = (r) => {
         const [word, col] = trendWord(r);
         const lag = lagOf(r.person.id);

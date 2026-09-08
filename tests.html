@@ -1978,15 +1978,24 @@
     test('Staffing · compliance', 'the month someone first logs is a partial month and is not scored', () => {
       cleanStaff();
       ST.savePerson({ id: 'stp_jn', name: 'Ariel Fixture', title: 'BI Analyst', capacityPct: 100 });
+      ST.savePerson({ id: 'stp_old', name: 'Veteran Fixture', title: 'Director', capacityPct: 100 });
       const cap = ST.capacityHours(ST.getPerson('stp_jn'));
-      // joined mid-May: 40 h in May, then full months
-      ST.commitClockify({ ok: true, months: ['2026-05', '2026-06', '2026-07', '2026-08'], agg: { 'stp_jn|Qx Fixture Five|2026-05': 40, 'stp_jn|Qx Fixture Five|2026-06': cap, 'stp_jn|Qx Fixture Five|2026-07': cap, 'stp_jn|Qx Fixture Five|2026-08': cap }, titles: {} }, 'merge');
+      // the data itself starts in January (a veteran has hours there); Ariel joined mid-May: 40 h in May, then full months
+      const agg = { 'stp_jn|Qx Fixture Five|2026-05': 40, 'stp_jn|Qx Fixture Five|2026-06': cap, 'stp_jn|Qx Fixture Five|2026-07': cap, 'stp_jn|Qx Fixture Five|2026-08': cap };
+      ['01', '02', '03', '04', '05', '06', '07', '08'].forEach(m => { agg['stp_old|Qx Fixture Five|2026-' + m] = cap; });
+      ST.commitClockify({ ok: true, months: ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08'], agg, titles: {} }, 'merge');
       const comp = ST.complianceRows(['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'], { now: '2026-09-03T12:00:00Z' });
       const r = comp.rows.find(x => x.person.id === 'stp_jn');
       if (!r) return 'not measured';
       if (!r.byMonth['2026-05'] || !r.byMonth['2026-05'].joinMonth) return 'May should be the join month: ' + JSON.stringify(r.byMonth['2026-05']);
       if (r.byMonth['2026-04'] !== null) return 'April, before joining, should not be expected';
-      return r.behindHrs === 0 || ('a mid-month joiner shows ' + r.behindHrs + ' h behind');
+      if (r.behindHrs !== 0) return 'a mid-month joiner shows ' + r.behindHrs + ' h behind';
+      // the veteran's January is where the DATA starts, not a join month — it is scored like any other
+      const v = comp.rows.find(x => x.person.id === 'stp_old');
+      if (!v || !v.byMonth['2026-01'] || v.byMonth['2026-01'].joinMonth || !(v.byMonth['2026-01'].capM > 0)) return 'January at the data edge was treated as a join month: ' + JSON.stringify(v && v.byMonth['2026-01']);
+      if (v.joinedMid) return 'the veteran should not carry a JOINED tag';
+      const note = ST.complianceNote(v, comp);
+      return note.text === 'steady' || ('veteran note: ' + note.text);
     });
 
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
