@@ -347,6 +347,16 @@
     if (!getPerson(personId)) return null;
     return savePerson({ id: personId, joinedYm: clean });
   }
+  /** A Clockify user who is not on the roster yet (a new hire the JS sheet
+      has not caught up with). One click adds them as a person, pins the
+      mapping so their hours land on the next pull, and trails it. */
+  function addPersonFromClockify(u) {
+    const name = String((u && u.name) || '').trim(); if (!name) return null;
+    const existing = Object.values(readDb().people).find(p => namesMatch(p.name, name));
+    const person = existing || savePerson({ name, title: String((u && u.title) || '').trim(), homeTeam: '', capacityPct: 100, active: true, isNewHire: false });
+    setUserMapping(name, person.id);
+    return person;
+  }
   function setPersonEmployment(personId, opts) {
     opts = opts || {};
     const patch = { id: personId, updatedAt: new Date().toISOString() };
@@ -1192,6 +1202,10 @@
       db.actuals[k] = Math.round((mode === 'merge' ? (db.actuals[k] || 0) : 0) + hrs * 10) / 10;
       written++;
     });
+    /* A "[NEW HIRE]" placeholder that now has hours has started — clear the
+       flag so Mapping and Clockify Reporting stop treating them as a slot. */
+    const started = new Set();
+    Object.entries(report.agg).forEach(([k, hrs]) => { const pid = k.split('|')[0]; if (hrs > 0 && db.people[pid] && db.people[pid].isNewHire) { db.people[pid].isNewHire = false; db.people[pid].updatedAt = new Date().toISOString(); started.add(pid); } });
     db.meta.clockifyImportedAt = new Date().toISOString();
     db.meta.clockifyMonths = [...new Set([...(db.meta.clockifyMonths || []), ...report.months])].sort();
     // One entry for the run, not one per row: a Clockify import lands thousands
@@ -1390,8 +1404,8 @@
 
     const rows = [], untracked = [];
     listPeople().forEach(person => {
-      if (person.isNewHire) return;
       const logged = perPM[person.id] || {};
+      if (person.isNewHire && !Object.keys(logged).length) return;   // a placeholder with no hours yet; one with hours has started
       // A start month set by hand wins; otherwise the first month with hours.
       const joined = person.joinedYm || firstEver[person.id] || null;
       const joinedByHand = !!person.joinedYm;
@@ -2411,7 +2425,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, addPersonFromClockify, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
