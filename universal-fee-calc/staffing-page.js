@@ -1253,11 +1253,13 @@
         : (ckUsers.length ? '<span class="no-link" style="margin:0">no Clockify user matches — their hours are being DROPPED at import</span>' : '<span class="vmini">user list unavailable</span>');
       const empType = S.personEmploymentType(p);
       const capPct = p.capacityPct != null ? p.capacityPct : 100;
-      const leftTag = p.leftYm ? ` <span class="nh-tag" style="background:#eee8e3;color:#79828c" title="Left the firm — nothing is expected after ${esc(S.ymLabel(p.leftYm))}">LEFT ${esc(S.ymLabel(p.leftYm))}</span>` : '';
+      const leftTag = (p.joinedYm ? ` <span class="nh-tag" style="background:#fdf3d7;color:#8a6d00" title="Started ${esc(S.ymLabel(p.joinedYm))} — earlier months are not expected; that month is partial and not scored">JOINED ${esc(S.ymLabel(p.joinedYm))}</span>` : '')
+        + (p.leftYm ? ` <span class="nh-tag" style="background:#eee8e3;color:#79828c" title="Left the firm — nothing is expected after ${esc(S.ymLabel(p.leftYm))}">LEFT ${esc(S.ymLabel(p.leftYm))}</span>` : '');
       const typeTag = leftTag + (empType === 'internal'
         ? ' <span class="nh-tag" style="background:#e7eef0;color:#4a5560" title="Internal / overhead — internal time is expected, excluded from burn flags and availability lists">INTERNAL</span>'
         : (empType === 'part' ? ` <span class="nh-tag" style="background:#e3ecf7;color:#2f5d8f" title="Part time — every hours bar (expected hours, time-entry compliance, burn) measures against ${capPct}% of a full month">PT · ${capPct}%</span>` : ''));
-      const leftCell = `<input type="month" data-left="${esc(p.id)}" value="${esc(p.leftYm || '')}" class="fee-link-sel" style="width:auto" title="Last month with the firm. From the month after, no hours are expected and they drop out of the chase list. Clear it if they are back.">`;
+      const leftCell = `<div style="white-space:nowrap"><span class="vmini">Joined</span> <input type="month" data-joined="${esc(p.id)}" value="${esc(p.joinedYm || '')}" class="fee-link-sel" style="width:auto" title="First month with the firm. Set it when the data cannot tell — e.g. someone who started mid-way through the first month on record. Earlier months are not expected; that month is partial and not scored."></div>
+        <div style="white-space:nowrap;margin-top:4px"><span class="vmini">Left</span> <input type="month" data-left="${esc(p.id)}" value="${esc(p.leftYm || '')}" class="fee-link-sel" style="width:auto" title="Last month with the firm. From the month after, no hours are expected and they drop out of the chase list. Clear it if they are back."></div>`;
       const empCell = `<select data-emp="${esc(p.id)}" class="fee-link-sel" style="width:auto" title="Sets the bar this person is measured against — Full Time = full-month hours · Part Time = the % you set · Internal = overhead, internal time expected">
           <option value="full" ${empType === 'full' ? 'selected' : ''}>Full Time · Billable</option>
           <option value="part" ${empType === 'part' ? 'selected' : ''}>Part Time</option>
@@ -1266,7 +1268,7 @@
       pplRows += `<tr><td class="pname">${esc(p.name)}${typeTag}<div class="vmini">${esc(p.title || '')}</div></td><td>${cell}<br><input list="map-ckuser-dl" data-map-ckuser="${esc(p.id)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${hits.length ? 'type to add another…' : 'type Clockify user…'}"></td><td>${empCell}</td><td>${leftCell}</td></tr>`;
     });
     const pplSection = `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">People — roster ↔ Clockify <span class="note-txt" style="font-weight:400">(${pplProblems} unmatched · unmatched people's hours are skipped at import — map, then re-pull actuals to backfill · set the Employment type so everyone is measured against the right bar: part-timers against their %, internal staff not flagged at all)</span></h3>
-      <table class="dt"><thead><tr><th style="width:28%">Roster person (JS sheet)</th><th>③ Clockify user(s)</th><th style="width:170px">Employment</th><th style="width:150px" title="Leavers: the last month with the firm">Left the firm</th></tr></thead><tbody>${pplRows || '<tr><td colspan="4"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
+      <table class="dt"><thead><tr><th style="width:28%">Roster person (JS sheet)</th><th>③ Clockify user(s)</th><th style="width:170px">Employment</th><th style="width:190px" title="Joiners and leavers: first and last month with the firm">Joined / left</th></tr></thead><tbody>${pplRows || '<tr><td colspan="4"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
       <datalist id="map-ckuser-dl">${ckUsers.map(u => `<option value="${esc(u.name)}"${u.email ? ` label="${esc(u.email)}"` : ''}></option>`).join('')}</datalist>`;
     // ---- job titles ↔ rate grid: every distinct roster title, its resolved
     // rate family + cost rate, and a picker to pin the ones that don't match ----
@@ -1332,6 +1334,14 @@
       S.setUserExclusion(ck, pid, true);                              // and block the fuzzy match
       toast('Removed — ' + ck + ' no longer maps to this person. Re-pull actuals to recompute.');
       renderMapping();
+    });
+    $$('#p-mapping [data-joined]').forEach(inp => inp.onchange = () => {
+      const pid = inp.dataset.joined, ym = inp.value || null;
+      const person = S.getPerson(pid) || {};
+      S.setPersonJoined(pid, ym);
+      toast(ym ? `${person.name || 'Person'} started ${S.ymLabel(ym)} — earlier months are not expected and that month is not scored.`
+               : `${person.name || 'Person'}: start month cleared — the first month with hours is the start again.`, 'ok');
+      renderMapping(); try { renderCompliance(); } catch (e) {}
     });
     $$('#p-mapping [data-left]').forEach(inp => inp.onchange = () => {
       const pid = inp.dataset.left, ym = inp.value || null;

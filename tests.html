@@ -1998,6 +1998,24 @@
       return note.text === 'steady' || ('veteran note: ' + note.text);
     });
 
+    test('Staffing · compliance', 'a start month set by hand makes a mid-January starter\'s January a partial month', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'stp_ch', name: 'Chris Fixture', title: 'PM', capacityPct: 100 });
+      ST.savePerson({ id: 'stp_vt', name: 'Veteran Two', title: 'Director', capacityPct: 100 });
+      const cap = ST.capacityHours(ST.getPerson('stp_ch'));
+      const agg = {}; ['01', '02', '03'].forEach(m => { agg['stp_vt|Qx Fixture Six|2026-' + m] = cap; });
+      agg['stp_ch|Qx Fixture Six|2026-01'] = 30; agg['stp_ch|Qx Fixture Six|2026-02'] = cap; agg['stp_ch|Qx Fixture Six|2026-03'] = cap;
+      ST.commitClockify({ ok: true, months: ['2026-01', '2026-02', '2026-03'], agg, titles: {} }, 'merge');
+      const before = ST.complianceRows(['2026-01', '2026-02', '2026-03'], { now: '2026-04-15T12:00:00Z' }).rows.find(x => x.person.id === 'stp_ch');
+      if (!(before.behindHrs > 100)) return 'without a start month January should count in full: ' + before.behindHrs;
+      ST.setPersonJoined('stp_ch', '2026-01');
+      const after = ST.complianceRows(['2026-01', '2026-02', '2026-03'], { now: '2026-04-15T12:00:00Z' }).rows.find(x => x.person.id === 'stp_ch');
+      if (!after.byMonth['2026-01'].joinMonth) return 'January should be the join month once set by hand';
+      if (after.behindHrs !== 0) return 'still ' + after.behindHrs + ' h behind';
+      ST.setPersonJoined('stp_ch', null);
+      return ST.getPerson('stp_ch').joinedYm === null || 'clearing failed';
+    });
+
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field
