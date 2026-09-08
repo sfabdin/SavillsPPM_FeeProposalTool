@@ -249,7 +249,7 @@
   ];
   const PERSON_FIELDS = [
     ['name', 'Name'], ['title', 'Title'], ['homeTeam', 'Home team'],
-    ['capacityPct', 'Capacity %'], ['nonBillable', 'Non-billable'], ['active', 'Active'], ['leftYm', 'Left'],
+    ['capacityPct', 'Capacity %'], ['nonBillable', 'Non-billable'], ['active', 'Active'], ['leftYm', 'Left'], ['joinedYm', 'Joined'],
   ];
   /** Field-level changes in the shape the Change Log already renders, so a
       staffing edit reads the same way a fee edit does with no extra code. */
@@ -338,6 +338,15 @@
     return savePerson(patch);
   }
   function hasLeftBy(person, ym) { return !!(person && person.leftYm && ym > person.leftYm); }
+  /** JOINERS — the month someone started (YYYY-MM), set on the Mapping tab
+      when the data cannot tell (e.g. they started mid-way through the first
+      month the data covers). Months before it are not expected; the month
+      itself is a partial month, shown but not scored. */
+  function setPersonJoined(personId, ym) {
+    const clean = /^\d{4}-\d{2}$/.test(String(ym || '')) ? String(ym) : null;
+    if (!getPerson(personId)) return null;
+    return savePerson({ id: personId, joinedYm: clean });
+  }
   function setPersonEmployment(personId, opts) {
     opts = opts || {};
     const patch = { id: personId, updatedAt: new Date().toISOString() };
@@ -1383,7 +1392,9 @@
     listPeople().forEach(person => {
       if (person.isNewHire) return;
       const logged = perPM[person.id] || {};
-      const joined = firstEver[person.id] || null;
+      // A start month set by hand wins; otherwise the first month with hours.
+      const joined = person.joinedYm || firstEver[person.id] || null;
+      const joinedByHand = !!person.joinedYm;
       if (!joined) {
         const reason = !ckUsers.length ? 'no hours on record — not started, or not mapped to Clockify'
           : (hasCkMapping(person) ? 'mapped to Clockify, but no hours have arrived yet' : 'no Clockify user mapped');
@@ -1403,7 +1414,7 @@
         /* The month someone FIRST logs is a partial month — they joined some
            day inside it — so it is shown but never scored. No start date to
            keep: the first logged hour is the start. */
-        if (ym === joined && ym !== nowYm && joined > dataStart) { byMonth[ym] = { h: logged[ym] || 0, capM: 0, pct: (logged[ym] || 0) > 0 ? 1 : 0, joinMonth: true }; return; }   // a first month AT the data edge is just where the data starts
+        if (ym === joined && ym !== nowYm && (joinedByHand || joined > dataStart)) { byMonth[ym] = { h: logged[ym] || 0, capM: 0, pct: (logged[ym] || 0) > 0 ? 1 : 0, joinMonth: true }; return; }   // a first month AT the data edge is just where the data starts — unless someone said it is a start
         if (leaveMs && leaveMs.has(ym)) { byMonth[ym] = 'leave'; leaveMonths++; return; }
         /* Once someone has started logging, every month is expected of them
            until they are on leave or marked inactive — whether or not the
@@ -1432,7 +1443,7 @@
         person, byMonth, expectedMonths, okMonths, totLogged, totCap,
         compliance: expectedMonths ? okMonths / expectedMonths : 0,
         lastMs, lastPct, behindHrs: Math.round(shortfall * 10) / 10,
-        joinedMid: joined > ms[0] && joined > dataStart, joined, leaveMonths,
+        joinedMid: joined > ms[0] && (joinedByHand || joined > dataStart), joined, leaveMonths,
       });
     });
     rows.sort((a, b) => b.behindHrs - a.behindHrs || a.lastPct - b.lastPct);
@@ -2400,7 +2411,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
