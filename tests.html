@@ -2016,6 +2016,29 @@
       return ST.getPerson('stp_ch').joinedYm === null || 'clearing failed';
     });
 
+    test('Staffing · identity', 'a Clockify user not on the roster can be added in one step, mapped, and imports next time', () => {
+      cleanStaff();
+      const p = ST.addPersonFromClockify({ name: 'Alex Fixture', title: 'Analyst' });
+      if (!p || p.title !== 'Analyst') return 'not created: ' + JSON.stringify(p);
+      const again = ST.addPersonFromClockify({ name: 'Fixture, Alex' });
+      if (again.id !== p.id) return 'a second add minted a duplicate';
+      const cap = ST.capacityHours(p);
+      const rep = ST.analyzeClockify('User,Project,Client,Duration (decimal),Start Date\nAlex Fixture,Qx Fixture Seven,Acme,' + cap + ',2026-08-01\n');
+      return (rep.ok && rep.unmatchedUsers.length === 0 && Object.keys(rep.agg).some(k => k.startsWith(p.id + '|'))) || ('import did not land on the new person: ' + JSON.stringify(rep.unmatchedUsers));
+    });
+
+    test('Staffing · identity', 'a [NEW HIRE] placeholder that has logged hours has started — it is measured, and the flag clears', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'stp_nh', name: 'Alex Placeholder', title: 'SPM', capacityPct: 100, isNewHire: true });
+      const cap = ST.capacityHours(ST.getPerson('stp_nh'));
+      const before = ST.complianceRows(['2026-07', '2026-08'], { now: '2026-09-03T12:00:00Z' });
+      if (before.rows.some(r => r.person.id === 'stp_nh')) return 'a placeholder with no hours should not be measured';
+      ST.commitClockify({ ok: true, months: ['2026-07', '2026-08'], agg: { 'stp_nh|Qx Fixture Eight|2026-07': cap, 'stp_nh|Qx Fixture Eight|2026-08': cap }, titles: {} }, 'merge');
+      if (ST.getPerson('stp_nh').isNewHire !== false) return 'flag did not clear once hours arrived';
+      const after = ST.complianceRows(['2026-07', '2026-08'], { now: '2026-09-03T12:00:00Z' });
+      return after.rows.some(r => r.person.id === 'stp_nh') || 'still not measured after hours arrived';
+    });
+
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field

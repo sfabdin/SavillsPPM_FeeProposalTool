@@ -956,7 +956,7 @@
   function reportBlock(rep) {
     if (rep.error) return `<div class="import-card" style="border-color:#e0b4ae"><p style="color:#8f2418;margin:0"><strong>Couldn't read that file.</strong> ${esc(rep.error)}</p></div>`;
     const uu = rep.unmatchedUsers, up = rep.unmatchedProjects;
-    const pplSel = (name) => `<select data-map-user="${esc(name)}" style="font-size:11px;max-width:170px"><option value="">map to…</option><option value="__ignore__">Ignore (not delivery)</option>${S.listPeople().map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select>`;
+    const pplSel = (name) => `<select data-map-user="${esc(name)}" style="font-size:11px;max-width:170px"><option value="">map to…</option><option value="__ignore__">Ignore (not delivery)</option><option value="__add__">＋ Add as new person</option>${S.listPeople().map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select>`;
     const projSel = (name) => `<input list="imp-proj-dl" data-map-proj="${esc(name)}" style="font-size:11px;max-width:190px;border:1px dashed rgba(37,39,58,0.3);padding:2px 5px" placeholder="type to map… (or Ignore)">`;
     const umUsers = `<div class="um ${uu.length ? '' : 'empty-ok'}"><h5>${uu.length ? uu.length + ' unmatched people — map once, remembered forever' : 'All people matched ✓'}</h5>${uu.length ? `<ul>${uu.slice(0, 30).map(u => `<li><span style="flex:1;color:var(--sav-navy)">${esc(u.name || '(blank)')}</span><span>${fmtH(u.hours)} h</span>&nbsp;${pplSel(u.name)}</li>`).join('')}</ul>` : '<div class="note-txt">Every Clockify user maps to a roster name.</div>'}</div>`;
     const umProj = `<div class="um ${up.length ? '' : 'empty-ok'}"><h5>${up.length ? up.length + ' unmatched projects — map once, remembered forever' : 'All projects matched ✓'}</h5>${up.length ? `<ul>${up.slice(0, 30).map(u => `<li><span style="flex:1;color:var(--sav-navy)">${esc(u.name || '(blank)')}</span><span>${fmtH(u.hours)} h</span>&nbsp;${projSel(u.name)}</li>`).join('')}</ul>` : '<div class="note-txt">Every Clockify project maps to the matrix.</div>'}</div>`;
@@ -1013,7 +1013,11 @@
     const cc = $('#commit-cancel'); if (cc) cc.onclick = () => { state.clockifyReport = null; state.clockifyRaw = null; renderSources(); };
     // mapping selects — save + instantly re-analyze the same file
     const reanalyze = () => { if (state.clockifyRaw) { state.clockifyReport = S.analyzeClockify(state.clockifyRaw, months()[0]); renderSources(); } };
-    $$('#p-sources [data-map-user]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setUserMapping(sel.dataset.mapUser, sel.value); toast('Mapping saved — re-checked.'); reanalyze(); });
+    $$('#p-sources [data-map-user]').forEach(sel => sel.onchange = () => {
+      if (!sel.value) return;
+      if (sel.value === '__add__') { const p = S.addPersonFromClockify({ name: sel.dataset.mapUser }); toast(p ? `${p.name} added to the roster and mapped.` : 'Could not add.', 'ok'); reanalyze(); return; }
+      S.setUserMapping(sel.dataset.mapUser, sel.value); toast('Mapping saved — re-checked.'); reanalyze();
+    });
     $$('#p-sources [data-map-proj]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;
       const isIgnore = v.toLowerCase() === 'ignore';
@@ -1241,7 +1245,8 @@
     const ckUsers = state.clockifyUsers || [];
     const userMaps = maps.users || {};
     let pplRows = ''; let pplProblems = 0;
-    S.listPeople().filter(p => !p.isNewHire).forEach(p => {
+    const hasHours = (pid) => Object.keys(S.readDb().actuals || {}).some(k => k.startsWith(pid + '|'));
+    S.listPeople().filter(p => !p.isNewHire || hasHours(p.id)).forEach(p => {
       // which clockify users resolve to this person (saved mapping or name match)
       const hits = ckUsers.filter(u => { const m = userMaps[u.name.toLowerCase().replace(/\s+/g, ' ').trim()]; if (m) return m === p.id; return S.namesMatch(p.name, u.name) && !S.userExcluded(u.name, p.id); });
       const isProblem = !hits.length;
@@ -1267,7 +1272,21 @@
         </select>${empType === 'part' ? `<div style="margin-top:4px;white-space:nowrap"><input type="number" data-emp-cap="${esc(p.id)}" value="${capPct}" min="5" max="100" step="5" style="width:54px"> % <span class="vmini">≈ ${Math.round(S.monthHours() * capPct / 100)} h/mo bar</span></div>` : ''}`;
       pplRows += `<tr><td class="pname">${esc(p.name)}${typeTag}<div class="vmini">${esc(p.title || '')}</div></td><td>${cell}<br><input list="map-ckuser-dl" data-map-ckuser="${esc(p.id)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${hits.length ? 'type to add another…' : 'type Clockify user…'}"></td><td>${empCell}</td><td>${leftCell}</td></tr>`;
     });
-    const pplSection = `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">People — roster ↔ Clockify <span class="note-txt" style="font-weight:400">(${pplProblems} unmatched · unmatched people's hours are skipped at import — map, then re-pull actuals to backfill · set the Employment type so everyone is measured against the right bar: part-timers against their %, internal staff not flagged at all)</span></h3>
+    /* Clockify users with no roster person at all — new hires the JS sheet
+       does not know yet. Their hours are dropped at import until they exist. */
+    const nk = (n) => String(n || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const people = S.listPeople();
+    const orphans = ckUsers.filter(u => {
+      if (/^(inactive|deactivated)$/i.test(u.status || '')) return false;
+      const m = userMaps[nk(u.name)];
+      if (m) return false;                                          // mapped to someone, or ignored
+      return !people.some(p => S.namesMatch(p.name, u.name) && !S.userExcluded(u.name, p.id));
+    }).filter(u => !q || u.name.toLowerCase().includes(q));
+    const orphanSection = orphans.length ? `<div class="note-txt" style="margin:14px 0 6px;padding:10px 14px;background:#fdf3d7;border-left:3px solid #e8b563;color:#4a4f5e">
+        <b>${orphans.length} Clockify user${orphans.length === 1 ? ' is' : 's are'} not on the roster</b> — their hours are dropped at import until they are. Add them here (they land on the next pull), or ignore non-delivery staff.
+        <table class="dt" style="margin-top:8px"><tbody>${orphans.map(u => `<tr><td class="pname">${esc(u.name)}<div class="vmini">${esc(u.title || '')}${u.title && u.email ? ' · ' : ''}${esc(u.email || '')}</div></td>
+          <td style="white-space:nowrap"><button class="btn sm" data-add-ck="${esc(u.name)}" data-add-ck-title="${esc(u.title || '')}">＋ Add to roster</button> <button class="btn sm ghost" data-ignore-ck="${esc(u.name)}" title="Not delivery staff — never import their hours">Ignore</button></td></tr>`).join('')}</tbody></table></div>` : '';
+    const pplSection = orphanSection + `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">People — roster ↔ Clockify <span class="note-txt" style="font-weight:400">(${pplProblems} unmatched · unmatched people's hours are skipped at import — map, then re-pull actuals to backfill · set the Employment type so everyone is measured against the right bar: part-timers against their %, internal staff not flagged at all)</span></h3>
       <table class="dt"><thead><tr><th style="width:28%">Roster person (JS sheet)</th><th>③ Clockify user(s)</th><th style="width:170px">Employment</th><th style="width:190px" title="Joiners and leavers: first and last month with the firm">Joined / left</th></tr></thead><tbody>${pplRows || '<tr><td colspan="4"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
       <datalist id="map-ckuser-dl">${ckUsers.map(u => `<option value="${esc(u.name)}"${u.email ? ` label="${esc(u.email)}"` : ''}></option>`).join('')}</datalist>`;
     // ---- job titles ↔ rate grid: every distinct roster title, its resolved
@@ -1335,6 +1354,12 @@
       toast('Removed — ' + ck + ' no longer maps to this person. Re-pull actuals to recompute.');
       renderMapping();
     });
+    $$('#p-mapping [data-add-ck]').forEach(b => b.onclick = () => {
+      const person = S.addPersonFromClockify({ name: b.dataset.addCk, title: b.dataset.addCkTitle });
+      toast(person ? `${person.name} added to the roster and mapped — their hours land on the next actuals pull.` : 'Could not add that user.', 'ok');
+      renderMapping();
+    });
+    $$('#p-mapping [data-ignore-ck]').forEach(b => b.onclick = () => { S.setUserMapping(b.dataset.ignoreCk, '__ignore__'); toast('Ignored — their hours will not be imported.', 'ok'); renderMapping(); });
     $$('#p-mapping [data-joined]').forEach(inp => inp.onchange = () => {
       const pid = inp.dataset.joined, ym = inp.value || null;
       const person = S.getPerson(pid) || {};
