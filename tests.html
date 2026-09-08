@@ -1943,6 +1943,24 @@
       return Math.abs(r.behindHrs - want) < 0.2 || ('behind ' + r.behindHrs + ' expected ' + want.toFixed(1));
     });
 
+    test('Staffing · compliance', 'a leaver is not chased after their last month', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'stp_rh', name: 'Rachel Fixture', title: 'PM', capacityPct: 100 });
+      const cap = ST.capacityHours(ST.getPerson('stp_rh'));
+      ST.commitClockify({ ok: true, months: ['2026-04', '2026-05'], agg: { 'stp_rh|Qx Fixture Three|2026-04': cap, 'stp_rh|Qx Fixture Three|2026-05': cap }, titles: {} }, 'merge');
+      ST.setPersonLeft('stp_rh', '2026-05');
+      const comp = ST.complianceRows(['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'], { now: '2026-09-03T12:00:00Z' });
+      const r = comp.rows.find(x => x.person.id === 'stp_rh');
+      if (!r) return 'still measured while with the firm: ' + JSON.stringify(comp.untracked.map(u => u.reason));
+      if (r.byMonth['2026-06'] !== null || r.byMonth['2026-08'] !== null) return 'months after leaving should not be expected';
+      if (r.behindHrs !== 0) return 'a leaver shows ' + r.behindHrs + ' h behind';
+      const later = ST.complianceRows(['2026-07', '2026-08', '2026-09'], { now: '2026-09-03T12:00:00Z' });
+      const u = later.untracked.find(x => x.person.id === 'stp_rh');
+      if (!u || !/left the firm in May-26/.test(u.reason)) return 'a window entirely after leaving should list them as left: ' + JSON.stringify(u);
+      ST.setPersonLeft('stp_rh', null);
+      return ST.getPerson('stp_rh').leftYm === null && ST.getPerson('stp_rh').active !== false || 'clearing did not reactivate';
+    });
+
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field
