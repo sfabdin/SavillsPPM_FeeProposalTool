@@ -1613,8 +1613,10 @@
         if (!exp.length) return r.leaveMonths ? ['on leave', '#6b3fa0'] : ['—', 'var(--sav-steel)'];
         const pcts = exp.map(m => r.byMonth[m].pct);
         const last = pcts[pcts.length - 1];
-        const avgPrev = pcts.length > 1 ? pcts.slice(0, -1).reduce((s, p) => s + p, 0) / (pcts.length - 1) : last;
-        if (last === 0 && avgPrev >= 0.5) return ['stopped in ' + S.ymLabel(exp[exp.length - 1]), '#8f2418'];
+        const lastM = S.ymLabel(exp[exp.length - 1]);
+        // The most recent due month decides the word: a strong average never hides an empty last month.
+        if (last === 0) return ['stopped in ' + lastM, '#8f2418'];
+        if (last < 0.5) return ['fell to ' + Math.round(last * 100) + '% in ' + lastM, '#8f2418'];
         const avg = pcts.reduce((s, p) => s + p, 0) / pcts.length;
         if (avg >= 0.95) return ['steady', '#0E7C7B'];
         if (avg >= 0.8) return ['mostly on target', '#0E7C7B'];
