@@ -1550,7 +1550,7 @@
        has gone quiet. Falls back to the last month with hours when the
        lateness pull has not been run. */
     const lastDayPP = S.lastWorkedDays ? S.lastWorkedDays() : {};
-    const fmtDay = (iso) => { const d = new Date(iso + 'T00:00:00Z'); return isNaN(d) ? iso : d.getUTCDate() + ' ' + S.ymLabel(iso.slice(0, 7)); };
+    const fmtDay = (iso) => { const d = new Date(iso + 'T00:00:00Z'); return isNaN(d) ? iso : (d.getUTCMonth() + 1) + '/' + d.getUTCDate(); };   // 8/17 — no year
     const lastTimeFor = (r) => {
       const day = lastDayPP[r.person.id];
       if (day) return 'last time entered ' + fmtDay(day);
@@ -1572,14 +1572,14 @@
     const behindRows = rows.filter(r => r.behindHrs > 8);   // engine sorts behind-desc already
     let nowH = 0, nowEff = 0;
     // capM is ALREADY pro-rated for the current month by the engine — don't re-apply.
-    rows.forEach(r => { const c = r.byMonth[nowYm]; if (c && c !== 'leave' && !c.early) { nowH += c.h; nowEff += c.capM; } });
+    rows.forEach(r => { const c = r.byMonth[nowYm]; if (c && c !== 'leave' && !c.early && !c.joinMonth) { nowH += c.h; nowEff += c.capM; } });
     const nowPct = nowEff ? Math.round(nowH / nowEff * 100) : null;
 
     // ---- chase list: the shortest path from this tab to fixed data ----
     const reasonFor = (r) => {
       const lag = lagOf(r.person.id);
       // Months that are actually due — a current month still inside its grace is not one of them.
-      const expMs = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early);
+      const expMs = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early && !r.byMonth[m].joinMonth);
       const lastDue = expMs[expMs.length - 1];
       if (lastDue && r.byMonth[lastDue].h === 0) {
         return (lastDue === nowYm
@@ -1625,13 +1625,14 @@
         const c = r.byMonth[m];
         if (c === 'leave') return '<i class="lv" style="height:20px" title="On leave"></i>';
         if (!c) return '<i class="na" style="height:4px" title="Not here yet / not expected"></i>';
+        if (c.joinMonth) return `<i class="na" style="height:6px" title="${esc(S.ymLabel(m))}: joined this month — partial month, not scored${c.h ? ' · ' + fmtH(c.h) + ' h logged' : ''}"></i>`;
         if (c.early) return `<i class="na" style="height:6px" title="${esc(S.ymLabel(m))}: not yet due${c.h ? ' · ' + fmtH(c.h) + ' h logged so far' : ''}"></i>`;
         if (c.pct === 0) return `<i class="zero" style="height:3px" title="${esc(S.ymLabel(m))}: nothing logged"></i>`;
         const h = Math.max(3, Math.round(Math.min(c.pct, 1.25) / 1.25 * 20));
         return `<i${c.pct < 0.8 ? ' class="low"' : ''} style="height:${h}px" title="${esc(S.ymLabel(m))}: ${Math.round(c.pct * 100)}%"></i>`;
       }).join('') + '</span>';
       const trendWord = (r) => {
-        const exp = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early);
+        const exp = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early && !r.byMonth[m].joinMonth);
         if (!exp.length) return r.leaveMonths ? ['on leave', '#6b3fa0'] : ['—', 'var(--sav-steel)'];
         const pcts = exp.map(m => r.byMonth[m].pct);
         const last = pcts[pcts.length - 1];
@@ -1680,6 +1681,7 @@
       const cellFor = (c) => {
         if (c === 'leave') return '<td title="On leave of absence — no hours expected"><span class="cell" style="background:#efe6f7;color:#6b3fa0">🌴</span></td>';
         if (!c) return '<td><span class="cell u0">·</span></td>';
+        if (c.joinMonth) return `<td title="Joined this month — a partial month, shown but not scored${c.h ? '; ' + fmtH(c.h) + ' h logged' : ''}"><span class="cell u0">${c.h ? fmtH(c.h) + 'h' : 'joined'}</span></td>`;
         if (c.early) return `<td title="Not yet due — the month counts from working day ${expect.grace + 1}${c.h ? '; ' + fmtH(c.h) + ' h logged so far' : ''}"><span class="cell u0">${c.h ? fmtH(c.h) + 'h' : 'soon'}</span></td>`;
         const p = Math.round(c.pct * 100);
         const cls = p >= 100 ? 'u2' : p >= 80 ? 'u1' : p > 0 ? 'u3' : 'u5';

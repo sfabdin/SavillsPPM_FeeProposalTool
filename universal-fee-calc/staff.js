@@ -1399,6 +1399,10 @@
       ms.forEach(ym => {
         if (ym < joined) { byMonth[ym] = null; return; }
         if (hasLeftBy(person, ym)) { byMonth[ym] = null; return; }   // gone — nothing expected after their last month
+        /* The month someone FIRST logs is a partial month — they joined some
+           day inside it — so it is shown but never scored. No start date to
+           keep: the first logged hour is the start. */
+        if (ym === joined && ym !== nowYm) { byMonth[ym] = { h: logged[ym] || 0, capM: 0, pct: (logged[ym] || 0) > 0 ? 1 : 0, joinMonth: true }; return; }
         if (leaveMs && leaveMs.has(ym)) { byMonth[ym] = 'leave'; leaveMonths++; return; }
         /* Once someone has started logging, every month is expected of them
            until they are on leave or marked inactive — whether or not the
