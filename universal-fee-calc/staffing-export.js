@@ -751,6 +751,59 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
     });
   }
 
+  /* Hours by PROJECT — person → project rows, month columns. The actuals are
+     kept per person × project × month, so this is the grain people actually
+     ask about ("what did she log on which job in August?"). Both the full
+     book and the standalone export carry it. */
+  {
+    const bp = wb.addWorksheet('Hours by project', { views: [{ state: 'frozen', ySplit: 1, xSplit: 2 }] });
+    headerRow(bp, [
+      { h: 'Person', w: 26 }, { h: 'Project', w: 34 },
+      ...ms.map(m => ({ h: S.ymLabel(m), w: 10, align: 'right' })),
+      { h: 'Total hrs', w: 11, align: 'right' },
+    ], { xSplit: 2 });
+    const actuals = (S.readDb && S.readDb().actuals) || {};
+    const byPerson = {};   // pid -> project -> ym -> hours
+    Object.entries(actuals).forEach(([k, h]) => {
+      const [pid, proj, ym] = k.split('|');
+      if (!ms.includes(ym) || !h) return;
+      const pp = byPerson[pid] || (byPerson[pid] = {});
+      const pr = pp[proj] || (pp[proj] = {});
+      pr[ym] = (pr[ym] || 0) + h;
+    });
+    // roster order first (the grid's ranking), then anyone else with hours
+    const order = rows.map(r => r.person.id).concat(Object.keys(byPerson).filter(pid => !rows.some(r => r.person.id === pid)));
+    const num = (cell, v) => { cell.value = v ? round1(v) : null; cell.numFmt = '#,##0.0'; cell.alignment = { horizontal: 'right' }; };
+    let r2 = 2;
+    order.forEach(pid => {
+      const projects = byPerson[pid]; if (!projects) return;
+      const person = S.getPerson(pid) || { name: pid };
+      const names = Object.keys(projects).sort((a, b) => {
+        const ta = Object.values(projects[a]).reduce((x, y) => x + y, 0), tb = Object.values(projects[b]).reduce((x, y) => x + y, 0);
+        return tb - ta || a.localeCompare(b);
+      });
+      // person subtotal first (bold), then one row per project
+      const totals = {}; let grand = 0;
+      names.forEach(n => ms.forEach(m => { const v = projects[n][m] || 0; totals[m] = (totals[m] || 0) + v; grand += v; }));
+      bp.getCell(`A${r2}`).value = person.name; bp.getCell(`A${r2}`).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+      bp.getCell(`B${r2}`).value = `all projects · ${names.length}`; bp.getCell(`B${r2}`).font = { name: 'Calibri', italic: true, color: { argb: STEEL } };
+      ms.forEach((m, i) => { const c = bp.getCell(`${colLetter(3 + i)}${r2}`); num(c, totals[m]); c.font = { name: 'Calibri', bold: true }; });
+      { const c = bp.getCell(`${colLetter(3 + ms.length)}${r2}`); num(c, grand); c.font = { name: 'Calibri', bold: true }; }
+      bp.getRow(r2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F2EF' } };
+      r2++;
+      names.forEach(n => {
+        bp.getCell(`A${r2}`).value = person.name; bp.getCell(`A${r2}`).font = { name: 'Calibri', color: { argb: STEEL } };
+        bp.getCell(`B${r2}`).value = n;
+        let t = 0;
+        ms.forEach((m, i) => { const v = projects[n][m] || 0; t += v; num(bp.getCell(`${colLetter(3 + i)}${r2}`), v); });
+        num(bp.getCell(`${colLetter(3 + ms.length)}${r2}`), t);
+        r2++;
+      });
+    });
+    if (r2 === 2) bp.getCell('A2').value = '(no logged hours in this window)';
+    bp.autoFilter = { from: 'A1', to: `${colLetter(3 + ms.length)}1` };
+  }
+
   /* Optional per-person × month detail sheet (standalone export only) */
   if (cfg.includeDetail) {
     const d = wb.addWorksheet('Clockify Reporting detail', { views: [{ state: 'frozen', ySplit: 1 }] });
