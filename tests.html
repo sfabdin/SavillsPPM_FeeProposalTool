@@ -1975,6 +1975,20 @@
       return ST.lastWorkedDays()['stp_ld'] === '2026-08-14' || 'an older pull moved the date backwards';
     });
 
+    test('Staffing · compliance', 'the month someone first logs is a partial month and is not scored', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'stp_jn', name: 'Ariel Fixture', title: 'BI Analyst', capacityPct: 100 });
+      const cap = ST.capacityHours(ST.getPerson('stp_jn'));
+      // joined mid-May: 40 h in May, then full months
+      ST.commitClockify({ ok: true, months: ['2026-05', '2026-06', '2026-07', '2026-08'], agg: { 'stp_jn|Qx Fixture Five|2026-05': 40, 'stp_jn|Qx Fixture Five|2026-06': cap, 'stp_jn|Qx Fixture Five|2026-07': cap, 'stp_jn|Qx Fixture Five|2026-08': cap }, titles: {} }, 'merge');
+      const comp = ST.complianceRows(['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'], { now: '2026-09-03T12:00:00Z' });
+      const r = comp.rows.find(x => x.person.id === 'stp_jn');
+      if (!r) return 'not measured';
+      if (!r.byMonth['2026-05'] || !r.byMonth['2026-05'].joinMonth) return 'May should be the join month: ' + JSON.stringify(r.byMonth['2026-05']);
+      if (r.byMonth['2026-04'] !== null) return 'April, before joining, should not be expected';
+      return r.behindHrs === 0 || ('a mid-month joiner shows ' + r.behindHrs + ' h behind');
+    });
+
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field
