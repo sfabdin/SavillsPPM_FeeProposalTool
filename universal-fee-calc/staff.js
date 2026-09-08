@@ -249,7 +249,7 @@
   ];
   const PERSON_FIELDS = [
     ['name', 'Name'], ['title', 'Title'], ['homeTeam', 'Home team'],
-    ['capacityPct', 'Capacity %'], ['nonBillable', 'Non-billable'], ['active', 'Active'],
+    ['capacityPct', 'Capacity %'], ['nonBillable', 'Non-billable'], ['active', 'Active'], ['leftYm', 'Left'],
   ];
   /** Field-level changes in the shape the Change Log already renders, so a
       staffing edit reads the same way a fee edit does with no extra code. */
@@ -325,6 +325,19 @@
       'internal' → pure overhead (nonBillable): internal time expected,
                    excluded from burn flags and availability lists.
       Derive the current type with personEmploymentType(). */
+  /** LEAVERS — the month someone left the firm (YYYY-MM), set on the
+      Mapping tab. From the month after, nothing is expected of them: no
+      time-entry chase, no "stopped logging". Clearing it makes them active
+      again. */
+  function setPersonLeft(personId, ym) {
+    const clean = /^\d{4}-\d{2}$/.test(String(ym || '')) ? String(ym) : null;
+    const person = getPerson(personId);
+    if (!person) return null;
+    const patch = { id: personId, leftYm: clean };
+    if (clean) patch.active = false; else if (person.active === false) patch.active = true;
+    return savePerson(patch);
+  }
+  function hasLeftBy(person, ym) { return !!(person && person.leftYm && ym > person.leftYm); }
   function setPersonEmployment(personId, opts) {
     opts = opts || {};
     const patch = { id: personId, updatedAt: new Date().toISOString() };
@@ -1356,9 +1369,14 @@
       }
       const cap = capacityHours(person);
       const leaveMs = onLeave[person.id];
+      if (person.leftYm && ms.length && ms.every(ym => hasLeftBy(person, ym))) {
+        untracked.push({ person, reason: 'left the firm in ' + ymLabel(person.leftYm) });
+        return;
+      }
       const byMonth = {}; let expectedMonths = 0, okMonths = 0, totLogged = 0, totCap = 0, leaveMonths = 0, shortfall = 0;
       ms.forEach(ym => {
         if (ym < joined) { byMonth[ym] = null; return; }
+        if (hasLeftBy(person, ym)) { byMonth[ym] = null; return; }   // gone — nothing expected after their last month
         if (leaveMs && leaveMs.has(ym)) { byMonth[ym] = 'leave'; leaveMonths++; return; }
         /* Once someone has started logging, every month is expected of them
            until they are on leave or marked inactive — whether or not the
@@ -2326,7 +2344,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, complianceRows, currentMonthExpectation, COMPLIANCE_GRACE_WORKING_DAYS,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, hasLeftBy, complianceRows, currentMonthExpectation, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
