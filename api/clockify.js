@@ -139,15 +139,18 @@ export default async function handler(req, res) {
           const ym = startIso.slice(0, 7);
           const hrs = (t.timeInterval.duration || 0) / 3600;
           const k2 = (t.userName || '') + '|' + ym;
-          const a = agg[k2] || (agg[k2] = { user: t.userName || '', ym, entries: 0, hours: 0, lagSum: 0, lagMax: 0, within3: 0, within7: 0 });
+          const a = agg[k2] || (agg[k2] = { user: t.userName || '', ym, entries: 0, hours: 0, lagSum: 0, lagMax: 0, within3: 0, within7: 0, lastWorked: '', lastEntered: '' });
           a.entries++; a.hours += hrs; a.lagSum += lagDays; a.lagMax = Math.max(a.lagMax, lagDays);
+          const workDate = startIso.slice(0, 10), enteredDate = new Date(created).toISOString().slice(0, 10);
+          if (workDate > a.lastWorked) a.lastWorked = workDate;            // the latest day they logged time FOR
+          if (enteredDate > a.lastEntered) a.lastEntered = enteredDate;    // the latest day they actually typed an entry
           if (lagDays <= 3) a.within3++; if (lagDays <= 7) a.within7++;
         });
         if (entries.length < 1000) break;
         page++;
       }
-      const csv = 'User,Month,Entries,Hours,AvgLagDays,MaxLagDays,PctWithin3d,PctWithin7d\n'
-        + Object.values(agg).map(a => [a.user, a.ym, a.entries, Math.round(a.hours * 10) / 10, Math.round(a.lagSum / a.entries * 10) / 10, Math.round(a.lagMax), Math.round(a.within3 / a.entries * 100), Math.round(a.within7 / a.entries * 100)].map(csvCell).join(',')).join('\n');
+      const csv = 'User,Month,Entries,Hours,AvgLagDays,MaxLagDays,PctWithin3d,PctWithin7d,LastWorked,LastEntered\n'
+        + Object.values(agg).map(a => [a.user, a.ym, a.entries, Math.round(a.hours * 10) / 10, Math.round(a.lagSum / a.entries * 10) / 10, Math.round(a.lagMax), Math.round(a.within3 / a.entries * 100), Math.round(a.within7 / a.entries * 100), a.lastWorked, a.lastEntered].map(csvCell).join(',')).join('\n');
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.status(200).send(csv);

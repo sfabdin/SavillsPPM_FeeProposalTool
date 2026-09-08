@@ -1545,6 +1545,24 @@
     // ---- lateness join: rows from the API, per person over the window ----
     const lateRows = late.rows.filter(r => ms.includes(r.ym));
     const latePP = {};
+    /* Latest day each person logged time FOR, from every lateness row we
+       hold (not just the window) — the most useful fact about someone who
+       has gone quiet. Falls back to the last month with hours when the
+       lateness pull has not been run. */
+    const lastDayPP = {};
+    late.rows.forEach(r => {
+      if (!r.lastWorked) return;
+      const person = S.listPeople().find(p => S.namesMatch(p.name, r.user));
+      const pid = person ? person.id : 'x:' + r.user;
+      if (!lastDayPP[pid] || r.lastWorked > lastDayPP[pid]) lastDayPP[pid] = r.lastWorked;
+    });
+    const fmtDay = (iso) => { const d = new Date(iso + 'T00:00:00Z'); return isNaN(d) ? iso : d.getUTCDate() + ' ' + S.ymLabel(iso.slice(0, 7)); };
+    const lastTimeFor = (r) => {
+      const day = lastDayPP[r.person.id];
+      if (day) return 'last time entered ' + fmtDay(day);
+      const withHours = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && r.byMonth[m].h > 0);
+      return withHours.length ? 'last hours in ' + S.ymLabel(withHours[withHours.length - 1]) : 'no hours in this window';
+    };
     lateRows.forEach(r => {
       const person = S.listPeople().find(p => S.namesMatch(p.name, r.user));
       const pid = person ? person.id : 'x:' + r.user;
@@ -1570,9 +1588,9 @@
       const expMs = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early);
       const lastDue = expMs[expMs.length - 1];
       if (lastDue && r.byMonth[lastDue].h === 0) {
-        return lastDue === nowYm
+        return (lastDue === nowYm
           ? `Nothing logged yet for ${S.ymLabel(nowYm)} — working day ${expect.elapsed} of ${expect.total}, ${fmtH(r.byMonth[lastDue].capM)} h expected by now.`
-          : `Nothing logged for ${S.ymLabel(lastDue)} — the whole month, ${fmtH(r.byMonth[lastDue].capM)} h, is missing.`;
+          : `Nothing logged for ${S.ymLabel(lastDue)} — the whole month, ${fmtH(r.byMonth[lastDue].capM)} h, is missing.`) + ' ' + lastTimeFor(r).replace(/^./, c => c.toUpperCase()) + '.';
       }
       const zeroMs = expMs.filter(m => r.byMonth[m].h === 0);
       if (zeroMs.length) return `Nothing logged for ${zeroMs.map(m => S.ymLabel(m)).join(', ')} — ${fmtH(zeroMs.reduce((s, m) => s + r.byMonth[m].capM, 0))} h missing outright.`;
@@ -1625,8 +1643,8 @@
         const last = pcts[pcts.length - 1];
         const lastM = S.ymLabel(exp[exp.length - 1]);
         // The most recent due month decides the word: a strong average never hides an empty last month.
-        if (last === 0) return ['stopped in ' + lastM, '#8f2418'];
-        if (last < 0.5) return ['fell to ' + Math.round(last * 100) + '% in ' + lastM, '#8f2418'];
+        if (last === 0) return [lastTimeFor(r), '#8f2418'];
+        if (last < 0.5) return [Math.round(last * 100) + '% in ' + lastM + ' · ' + lastTimeFor(r), '#8f2418'];
         const avg = pcts.reduce((s, p) => s + p, 0) / pcts.length;
         if (avg >= 0.95) return ['steady', '#0E7C7B'];
         if (avg >= 0.8) return ['mostly on target', '#0E7C7B'];
@@ -1756,7 +1774,7 @@
       try {
         const res = await fetch('/api/clockify?lateness=1&start=' + start + '&end=' + end, { headers: await apiHeaders() });
         if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
-        const rows = S.parseCsvRows(await res.text()).map(o => ({ user: o.User, ym: o.Month, entries: +o.Entries || 0, hours: +o.Hours || 0, avgLag: +o.AvgLagDays || 0, maxLag: +o.MaxLagDays || 0, pctWithin3: +o.PctWithin3d || 0, pctWithin7: +o.PctWithin7d || 0 }));
+        const rows = S.parseCsvRows(await res.text()).map(o => ({ user: o.User, ym: o.Month, entries: +o.Entries || 0, hours: +o.Hours || 0, avgLag: +o.AvgLagDays || 0, maxLag: +o.MaxLagDays || 0, pctWithin3: +o.PctWithin3d || 0, pctWithin7: +o.PctWithin7d || 0, lastWorked: o.LastWorked || '', lastEntered: o.LastEntered || '' }));
         S.setLateness(rows);
         renderActive();   // bound from Data Sources and Clockify Reporting alike
         toast('Lateness stats loaded — ' + rows.length + ' person-months.');
