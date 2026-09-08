@@ -1327,8 +1327,8 @@
     const db = readDb();
     const perPM = {};
     Object.entries(db.actuals).forEach(([k, h]) => { const [pid, , ym] = k.split('|'); (perPM[pid] = perPM[pid] || {})[ym] = (perPM[pid][ym] || 0) + h; });
-    const firstEver = {};
-    Object.keys(db.actuals).forEach(k => { const [pid, , ym] = k.split('|'); if (!firstEver[pid] || ym < firstEver[pid]) firstEver[pid] = ym; });
+    const firstEver = {}, lastEver = {};
+    Object.keys(db.actuals).forEach(k => { const [pid, , ym] = k.split('|'); if (!firstEver[pid] || ym < firstEver[pid]) firstEver[pid] = ym; if (!lastEver[pid] || ym > lastEver[pid]) lastEver[pid] = ym; });
     const onLeave = {};
     leaveStatus().forEach(l => {
       const set = onLeave[l.person.id] || (onLeave[l.person.id] = new Set());
@@ -1356,13 +1356,17 @@
       }
       const cap = capacityHours(person);
       const leaveMs = onLeave[person.id];
-      const byMonth = {}; let expectedMonths = 0, okMonths = 0, totLogged = 0, totCap = 0, leaveMonths = 0;
+      const byMonth = {}; let expectedMonths = 0, okMonths = 0, totLogged = 0, totCap = 0, leaveMonths = 0, shortfall = 0;
       ms.forEach(ym => {
         if (ym < joined) { byMonth[ym] = null; return; }
         if (leaveMs && leaveMs.has(ym)) { byMonth[ym] = 'leave'; leaveMonths++; return; }
-        const active = personAllocationsIn(person.id, ym).length > 0;
+        /* Once someone has started logging, every month is expected of them
+           until they are on leave or marked inactive — whether or not the
+           matrix has an allocation for them that month. Gating on
+           allocations let a person with no row for August read as "not
+           expected" in August, which is exactly the month to chase. */
         const h = logged[ym] || 0;
-        if (!active && !h) { byMonth[ym] = null; return; }
+        if (person.active === false && !h && ym > (lastEver[person.id] || '')) { byMonth[ym] = null; return; }
         if (ym === nowYm && expect.early) {
           // Too early in the month to expect anything: show what has been
           // logged, expect nothing, count nothing as missing.
@@ -1373,6 +1377,7 @@
         const pct = capM ? h / capM : 0;
         byMonth[ym] = { h, capM, pct };
         expectedMonths++; totLogged += h; totCap += capM;
+        shortfall += Math.max(0, capM - h);                 // over-logging one month never banks credit for another
         if (pct >= 0.8) okMonths++;
       });
       if (!expectedMonths) { if (leaveMonths) untracked.push({ person, reason: 'on leave for this whole window' }); return; }
@@ -1381,7 +1386,7 @@
       rows.push({
         person, byMonth, expectedMonths, okMonths, totLogged, totCap,
         compliance: expectedMonths ? okMonths / expectedMonths : 0,
-        lastMs, lastPct, behindHrs: Math.max(0, totCap - totLogged),
+        lastMs, lastPct, behindHrs: Math.round(shortfall * 10) / 10,
         joinedMid: joined > ms[0], joined, leaveMonths,
       });
     });

@@ -1927,6 +1927,22 @@
       return comp.expect.early === true;
     });
 
+    test('Staffing · compliance', 'a month with no allocation is still expected once someone has started logging', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'stp_am', name: 'Amelia Fixture', title: 'AD', capacityPct: 100 });
+      ST.saveAllocation({ id: 'al_am', personId: 'stp_am', personName: 'Amelia Fixture', project: 'Qx Fixture Two', start: '2026-01', end: '2026-07', pct: 100 });
+      const cap = ST.capacityHours(ST.getPerson('stp_am'));
+      // over-logged in June, 39% in July, nothing in August (no allocation there either)
+      ST.commitClockify({ ok: true, months: ['2026-06', '2026-07', '2026-08'], agg: { 'stp_am|Qx Fixture Two|2026-06': cap * 1.2, 'stp_am|Qx Fixture Two|2026-07': cap * 0.39 }, titles: {} }, 'merge');
+      const comp = ST.complianceRows(['2026-06', '2026-07', '2026-08', '2026-09'], { now: '2026-09-03T12:00:00Z' });
+      const r = comp.rows.find(x => x.person.id === 'stp_am');
+      if (!r) return 'not measured';
+      const aug = r.byMonth['2026-08'];
+      if (!aug || aug.h !== 0 || !(aug.capM > 0)) return 'August should be expected and empty: ' + JSON.stringify(aug);
+      const want = cap * 0.61 + cap;          // July shortfall + all of August; June's surplus banks nothing
+      return Math.abs(r.behindHrs - want) < 0.2 || ('behind ' + r.behindHrs + ' expected ' + want.toFixed(1));
+    });
+
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field
