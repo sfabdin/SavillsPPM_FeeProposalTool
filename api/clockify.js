@@ -187,11 +187,35 @@ export default async function handler(req, res) {
       });
     });
 
-    /* The day each person last logged time FOR. The summary report is
-       month-grained, so walk the detailed report newest-first and stop as
-       soon as every user in the summary has a date (or after 5,000
-       entries). Carried on every row of that user so the CSV stays flat. */
+    /* The day each person last logged time FOR. A second summary report,
+       grouped USER → DATE, gives one row per person per day for the whole
+       range in a single response — every person gets a date, however long
+       ago it was. (The earlier newest-first walk of the detailed report
+       stopped at 5,000 entries and left quiet people undated.) The detailed
+       walk stays as a fallback if the day grouping is ever unavailable. */
     const lastWorked = {};
+    const toDay = (name) => {
+      const n = String(name || '').trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(n)) return n.slice(0, 10);
+      const t = Date.parse(n); return isNaN(t) ? '' : new Date(t).toISOString().slice(0, 10);
+    };
+    try {
+      const byDay = await fetch(`https://reports.api.clockify.me/v1/workspaces/${ws}/reports/summary`, {
+        method: 'POST',
+        headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dateRangeStart: start + 'T00:00:00.000', dateRangeEnd: end + 'T23:59:59.999',
+          summaryFilter: { groups: ['USER', 'DATE'] }, exportType: 'JSON',
+        }),
+      });
+      if (byDay.ok) {
+        const dj = await byDay.json();
+        (dj.groupOne || []).forEach(user => {
+          const u = user.name || ''; if (!u) return;
+          (user.children || []).forEach(d => { const day = toDay(d.name); if (day && (!lastWorked[u] || day > lastWorked[u])) lastWorked[u] = day; });
+        });
+      }
+    } catch (e) { /* fall through to the detailed walk */ }
     try {
       const users = new Set(rows.map(r => r[0]).filter(Boolean));
       let page = 1;
