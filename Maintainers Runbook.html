@@ -567,6 +567,10 @@
   </div>
 
   <h2><span class="n">15</span> Known operational caveats</h2>
+  <div class="box">
+    <span class="tag">Box API allowance (noted Sep 2026 — no change made)</span>
+    Box does not bill per API call on a Business / Enterprise plan; each plan carries a monthly allowance for the whole enterprise (Box staff quote 50k for Business and Business Plus, 100k for Enterprise, 200k for Enterprise Advanced) and exceeding it means selective throttling (HTTP 429), not a charge. This app uses roughly: 3–5 calls per page open, 1–3 calls every 3 minutes per <em>visible</em> tab (polling pauses while a tab is hidden), 1–3 per save, and 1–2 for the weekly backup — about 30–45k a month for a team of ten in normal use. The one thing that inflates it is a tab left visible all day (an Executive Reporting screen ≈ 14k/month on its own). Levers if ever needed: lengthen the poll in <code>boot.js startLiveRefresh</code> and the staffing refresh in <code>staffing-page.js</code> (both 180000 ms), or stop polling after an hour idle. Check the plan and the real count with the Box admin (Admin Console → Reports → platform activity) before touching either.
+  </div>
   <ul>
     <li><strong>Client-side access limit</strong> (&sect;6) — Box folder permission is the true boundary.</li>
     <li><strong>rates.json must exist in Box</strong> with its id set, or every page gates closed.</li>

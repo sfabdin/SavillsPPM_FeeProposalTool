@@ -713,6 +713,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
     [base + 2, base + 3].forEach(i => { const c = ws.getCell(`${colLetter(i)}${r}`); c.numFmt = '#,##0.0'; c.alignment = { horizontal: 'right' }; });
     ws.getCell(`${colLetter(base + 4)}${r}`).value = emp === 'internal' ? 'Internal' : emp === 'part' ? `Part time · ${p.capacityPct}%` : 'Full time';
     ws.getCell(`${colLetter(base + 5)}${r}`).value = [
+      (S.complianceNote ? S.complianceNote(row, comp).text : ''),
       row.joinedMid ? 'Joined ' + S.ymLabel(row.joined) : '',
       row.leaveMonths ? row.leaveMonths + ' mo leave' : '',
     ].filter(Boolean).join(' · ');
