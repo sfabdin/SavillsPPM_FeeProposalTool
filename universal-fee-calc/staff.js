@@ -1441,11 +1441,13 @@
 
   /** The one line that says where a person stands — the trend column on the
       Clockify Reporting tab and the Flags column of its export both read it.
+      "last entry dated 9/3" is the DATE ON the latest time entry (the day the
+      work was performed), never the day it was keyed in.
       Returns { text, tone } with tone 'bad' | 'warn' | 'ok' | 'mute' | 'leave'. */
   function fmtDayShort(iso) { const d = new Date(String(iso) + 'T00:00:00Z'); return isNaN(d) ? String(iso) : (d.getUTCMonth() + 1) + '/' + d.getUTCDate(); }
   function lastTimeEntered(row, months) {
     const day = (readDb().meta.lastWorked || {})[row.person.id];
-    if (day) return 'last time entered ' + fmtDayShort(day);
+    if (day) return 'last entry dated ' + fmtDayShort(day);   // the day the work was done, per the entry itself — not the day it was typed in
     const withHours = (months || []).filter(m => row.byMonth[m] && row.byMonth[m] !== 'leave' && row.byMonth[m].h > 0);
     return withHours.length ? 'last hours in ' + ymLabel(withHours[withHours.length - 1]) + ' (re-pull actuals for the exact day)' : 'no hours in this window';
   }

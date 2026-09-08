@@ -1545,7 +1545,7 @@
     // ---- lateness join: rows from the API, per person over the window ----
     const lateRows = late.rows.filter(r => ms.includes(r.ym));
     const latePP = {};
-    /* Latest day each person logged time FOR, from every lateness row we
+    /* Latest day each person logged time FOR (the entry's own date), from every lateness row we
        hold (not just the window) — the most useful fact about someone who
        has gone quiet. Falls back to the last month with hours when the
        lateness pull has not been run. */
