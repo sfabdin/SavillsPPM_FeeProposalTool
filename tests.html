@@ -1961,6 +1961,20 @@
       return ST.getPerson('stp_rh').leftYm === null && ST.getPerson('stp_rh').active !== false || 'clearing did not reactivate';
     });
 
+    test('Staffing · compliance', 'the actuals pull remembers the last day each person logged time for', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'stp_ld', name: 'Dana Fixture', title: 'PM', capacityPct: 100 });
+      const csv = 'User,Project,Client,Duration (decimal),Start Date,Last Worked\nDana Fixture,Qx Fixture Four,Acme,40,2026-07-01,2026-08-14\nDana Fixture,Qx Fixture Four,Acme,12,2026-08-01,2026-08-14\n';
+      const rep = ST.analyzeClockify(csv);
+      if (!rep || !rep.ok) return 'parse failed: ' + JSON.stringify(rep && rep.error);
+      if (rep.lastWorked['stp_ld'] !== '2026-08-14') return 'last day not read: ' + JSON.stringify(rep.lastWorked);
+      ST.commitClockify(rep, 'merge');
+      if (ST.lastWorkedDays()['stp_ld'] !== '2026-08-14') return 'not kept after commit';
+      const older = Object.assign({}, rep, { lastWorked: { stp_ld: '2026-06-02' } });
+      ST.commitClockify(older, 'merge');
+      return ST.lastWorkedDays()['stp_ld'] === '2026-08-14' || 'an older pull moved the date backwards';
+    });
+
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field

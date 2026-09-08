@@ -1549,19 +1549,13 @@
        hold (not just the window) — the most useful fact about someone who
        has gone quiet. Falls back to the last month with hours when the
        lateness pull has not been run. */
-    const lastDayPP = {};
-    late.rows.forEach(r => {
-      if (!r.lastWorked) return;
-      const person = S.listPeople().find(p => S.namesMatch(p.name, r.user));
-      const pid = person ? person.id : 'x:' + r.user;
-      if (!lastDayPP[pid] || r.lastWorked > lastDayPP[pid]) lastDayPP[pid] = r.lastWorked;
-    });
+    const lastDayPP = S.lastWorkedDays ? S.lastWorkedDays() : {};
     const fmtDay = (iso) => { const d = new Date(iso + 'T00:00:00Z'); return isNaN(d) ? iso : d.getUTCDate() + ' ' + S.ymLabel(iso.slice(0, 7)); };
     const lastTimeFor = (r) => {
       const day = lastDayPP[r.person.id];
       if (day) return 'last time entered ' + fmtDay(day);
       const withHours = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && r.byMonth[m].h > 0);
-      return withHours.length ? 'last hours in ' + S.ymLabel(withHours[withHours.length - 1]) : 'no hours in this window';
+      return withHours.length ? 'last hours in ' + S.ymLabel(withHours[withHours.length - 1]) + ' (re-pull actuals for the exact day)' : 'no hours in this window';
     };
     lateRows.forEach(r => {
       const person = S.listPeople().find(p => S.namesMatch(p.name, r.user));
