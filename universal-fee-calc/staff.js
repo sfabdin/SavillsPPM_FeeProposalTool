@@ -551,6 +551,9 @@
     const rMeta = remote.meta || {}, lMeta = local.meta || {};
     const localNewer = (lMeta.updatedAt || '') >= (rMeta.updatedAt || '');
     out.meta = localNewer ? Object.assign({}, rMeta, lMeta) : Object.assign({}, lMeta, rMeta);
+    // Last-worked days merge per person, newest wins — never one side's whole map.
+    out.meta.lastWorked = Object.assign({}, rMeta.lastWorked || {});
+    Object.entries(lMeta.lastWorked || {}).forEach(([pid, d]) => { if (!out.meta.lastWorked[pid] || d > out.meta.lastWorked[pid]) out.meta.lastWorked[pid] = d; });
     // Lateness: its own stamp, because it arrives on its own schedule.
     out.lateness = (((lMeta.latenessAt || '') >= (rMeta.latenessAt || '')) ? local.lateness : remote.lateness)
                    || local.lateness || remote.lateness || [];
@@ -1111,7 +1114,8 @@
     const cDur = cDurDec || findCol(sample, ['duration', 'time']);
     const cDate = findCol(sample, ['startdate', 'date', 'day']);
     const cTitle = findCol(sample, ['jobtitle', 'title', 'position']);
-    const titles = {};
+    const cLast = findCol(sample, ['lastworked', 'lastday', 'lastentry']);
+    const titles = {}, lastWorked = {};
     if (!cProject) return { error: 'Could not find a "Project" column. Export a Clockify Detailed or Summary report as CSV.' };
     if (!cDur) return { error: 'Could not find a duration/time column. Include "Duration (decimal)" or "Time (h)" in the export.' };
 
@@ -1136,6 +1140,9 @@
       const personId = person ? person.id : ('unmatched:' + nkey(uname));
       if (!person) unmatchedUsers[uname] = (unmatchedUsers[uname] || 0) + hrs;
       if (person && cTitle && r[cTitle] && !titles[personId]) titles[personId] = String(r[cTitle]).trim();
+      if (person && cLast && /^\d{4}-\d{2}-\d{2}$/.test(String(r[cLast] || '').trim())) { const d = String(r[cLast]).trim(); if (!lastWorked[personId] || d > lastWorked[personId]) lastWorked[personId] = d; }
+      // A detailed export carries a real day per row; that is a last-worked day too.
+      if (person && cDate && !cLast && /^\d{4}-\d{2}-\d{2}/.test(String(r[cDate] || '').trim())) { const d = String(r[cDate]).trim().slice(0, 10); if (!/-01$/.test(d) && (!lastWorked[personId] || d > lastWorked[personId])) lastWorked[personId] = d; }   // a summary export dates every row the 1st; a detailed one carries real days
       // match project: saved mapping → exact name → Salesforce ID → fuzzy
       let projName, via = null;
       if (pMap) { projName = pMap; via = 'mapped'; }
@@ -1150,7 +1157,7 @@
       totalHours += hrs; rowCount++;
     });
     return {
-      ok: true, agg, totalHours: Math.round(totalHours * 10) / 10, rowCount, sfHits, titles,
+      ok: true, agg, totalHours: Math.round(totalHours * 10) / 10, rowCount, sfHits, titles, lastWorked,
       matchDetail: Object.entries(matchDetail).map(([from, d]) => ({ from, to: d.to, via: d.via, hours: Math.round(d.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours),
       months: [...monthsSeen].sort(),
       matchedUsers: Object.keys(db.people).length,
@@ -1183,6 +1190,9 @@
     logStaff('staff-actuals', { mode, months: (report.months || []).join(', '), written, skipped });
     // Clockify carries the job title — fill roster titles that are still blank.
     Object.entries(report.titles || {}).forEach(([pid, t]) => { if (db.people[pid] && !db.people[pid].title) { db.people[pid].title = t; db.people[pid].updatedAt = new Date().toISOString(); } });
+    // The day each person last logged time for — newest wins, never goes backwards.
+    db.meta.lastWorked = db.meta.lastWorked || {};
+    Object.entries(report.lastWorked || {}).forEach(([pid, d]) => { if (db.people[pid] && (!db.meta.lastWorked[pid] || d > db.meta.lastWorked[pid])) db.meta.lastWorked[pid] = d; });
     writeDb(db);
     return { written, skipped };
   }
@@ -1299,6 +1309,18 @@
   }
 
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
+  /** personId → 'YYYY-MM-DD' of the last day they logged time for (from the
+      actuals pull; the lateness pull tops it up). */
+  function lastWorkedDays() {
+    const db = readDb();
+    const out = Object.assign({}, db.meta.lastWorked || {});
+    (db.lateness || []).forEach(r => {
+      if (!r.lastWorked) return;
+      const person = Object.values(db.people).find(p => namesMatch(p.name, r.user));
+      if (person && (!out[person.id] || r.lastWorked > out[person.id])) out[person.id] = r.lastWorked;
+    });
+    return out;
+  }
 
   /** TIME-ENTRY COMPLIANCE — who logged how much of the bar that applies to
       THEM, month by month. Shared by the Time Entry tab and its Excel export
@@ -2344,7 +2366,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, hasLeftBy, complianceRows, currentMonthExpectation, COMPLIANCE_GRACE_WORKING_DAYS,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, hasLeftBy, complianceRows, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,

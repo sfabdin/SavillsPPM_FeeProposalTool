@@ -187,8 +187,40 @@ export default async function handler(req, res) {
       });
     });
 
-    const csv = 'User,Project,Client,Duration (decimal),Start Date\n'
-      + rows.map(r => r.map(csvCell).join(',')).join('\n');
+    /* The day each person last logged time FOR. The summary report is
+       month-grained, so walk the detailed report newest-first and stop as
+       soon as every user in the summary has a date (or after 5,000
+       entries). Carried on every row of that user so the CSV stays flat. */
+    const lastWorked = {};
+    try {
+      const users = new Set(rows.map(r => r[0]).filter(Boolean));
+      let page = 1;
+      while (page <= 5 && users.size > Object.keys(lastWorked).length) {
+        const det = await fetch(`https://reports.api.clockify.me/v1/workspaces/${ws}/reports/detailed`, {
+          method: 'POST',
+          headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dateRangeStart: start + 'T00:00:00.000', dateRangeEnd: end + 'T23:59:59.999',
+            sortOrder: 'DESCENDING',
+            detailedFilter: { page, pageSize: 1000, sortColumn: 'DATE' }, exportType: 'JSON',
+          }),
+        });
+        if (!det.ok) break;
+        const dj = await det.json();
+        const entries = dj.timeentries || [];
+        entries.forEach(t => {
+          const u = t.userName || ''; const s = t.timeInterval && t.timeInterval.start;
+          if (!u || !s) return;
+          const day = s.slice(0, 10);
+          if (!lastWorked[u] || day > lastWorked[u]) lastWorked[u] = day;
+        });
+        if (entries.length < 1000) break;
+        page++;
+      }
+    } catch (e) { /* the dates are a bonus — the actuals still land without them */ }
+
+    const csv = 'User,Project,Client,Duration (decimal),Start Date,Last Worked\n'
+      + rows.map(r => r.concat([lastWorked[r[0]] || '']).map(csvCell).join(',')).join('\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.status(200).send(csv);
