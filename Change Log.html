@@ -138,6 +138,7 @@
 <script>window.UFC_NEEDS = ['activity'];</script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/confirmed-book.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/boot.js"></script>
 <script src="universal-fee-calc/ui.js"></script>
@@ -149,6 +150,7 @@
   const STORE = window.UFC_Store;
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const money = (n) => '$' + Math.abs(Math.round(n)).toLocaleString();
+  const cycleName = (ym) => (window.UFC_Confirm && window.UFC_Confirm.ymLong) ? window.UFC_Confirm.ymLong(ym) : String(ym || '');
 
   /* Every action the trail can carry. One the page has never heard of still
      renders, under its own raw name — a trail that silently hides entries it
@@ -172,6 +174,8 @@
     'baseline-save': 'Baseline saved', 'baseline-delete': 'Baseline deleted',
     'scenario-save': 'Scenario saved', 'scenario-delete': 'Scenario deleted',
     'activity-migrate': 'Trail moved to its own store',
+    'confirm-book': 'Book confirmed', 'cycle-open': 'Month opened', 'cycle-deadline': 'Deadline changed',
+    'cycle-lock': 'Month locked', 'cycle-reopen': 'Month reopened', 'cycle-review': 'Late confirmation reviewed',
     'staff-alloc-add': 'Staffed', 'staff-alloc': 'Staffing changed', 'staff-alloc-remove': 'Unstaffed',
     'staff-person-add': 'Person added', 'staff-person': 'Roster changed', 'staff-hours': 'Month hours',
     'staff-import': 'Matrix imported', 'staff-reseed': 'Matrix re-seeded', 'staff-reset': 'Matrix reset',
@@ -185,9 +189,9 @@
   const ACTION_KIND = (a) =>
     /^(create|co-create|project-from-ledger|restore)$/.test(a) ? 'create'
     : /^(delete|purge|ledger-remove|baseline-delete|scenario-delete)$/.test(a) ? 'delete'
-    : /^(book|co-approve)$/.test(a) ? 'book'
+    : /^(book|co-approve|confirm-book)$/.test(a) ? 'book'
     : /^(status|slip|slip-remove)$/.test(a) ? 'status'
-    : /^(maintenance|vocab|import|activity-migrate|ledger-migrate)$/.test(a) ? 'system'
+    : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-lock|cycle-reopen|cycle-review)$/.test(a) ? 'system'
     : /^staff-/.test(a) ? 'staff'
     : /^(ledger-|plan-adjust$|schedule-shift$|reconcile-commit$)/.test(a) ? 'ledger'
     : 'edit';
@@ -322,6 +326,13 @@
     if (a === 'co-create') return 'Raised a change order against this contract';
     if (a === 'co-approve') return 'Approved the change order — it now counts in the revised contract';
     if (a === 'reconcile-commit') return 'Committed the staffing to match imported actuals';
+    if (a === 'confirm-book') return 'Confirmed the <b>' + esc(cycleName(m.cycle)) + '</b> book — <b>' + (m.projects || 0) + ' project' + (m.projects === 1 ? '' : 's') + '</b>'
+      + (m.fee ? ', ' + money(m.fee) : '') + (m.afterLock ? ' · <b>after the month was locked</b>' + (m.reason ? ' — “' + esc(m.reason) + '”' : '') : m.late ? ' · after the deadline' : '');
+    if (a === 'cycle-open') return 'Opened <b>' + esc(cycleName(m.cycle)) + '</b> for confirmation — confirm by ' + esc(m.deadline || '');
+    if (a === 'cycle-deadline') return 'Moved the <b>' + esc(cycleName(m.cycle)) + '</b> confirm-by date to ' + esc(m.deadline || '');
+    if (a === 'cycle-lock') return 'Locked the <b>' + esc(cycleName(m.cycle)) + '</b> confirmed book — ' + (m.confirmed || 0) + ' confirmed, ' + (m.carried || 0) + ' carried in unconfirmed';
+    if (a === 'cycle-reopen') return 'Reopened <b>' + esc(cycleName(m.cycle)) + '</b> for confirmation';
+    if (a === 'cycle-review') return 'Reviewed a late confirmation for <b>' + esc(cycleName(m.cycle)) + '</b>';
 
     /* The reconciliation actions. Each one says the DECISION, with the figures
        either side of it, because "someone touched March" is not an audit. */
@@ -670,6 +681,7 @@
   if (window.ufcReady && window.ufcReady.then) { window.ufcReady.then(boot); } else { boot(); }
 })();
 </script>
+<script src="universal-fee-calc/confirm-widget.js"></script>
 <script src="universal-fee-calc/nav.js"></script>
 </body>
 </html>

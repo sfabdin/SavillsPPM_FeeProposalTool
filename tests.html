@@ -58,6 +58,7 @@
 <script src="universal-fee-calc/ui.js"></script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/confirmed-book.js"></script>
 <script src="universal-fee-calc/staff.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/vendor-lazy.js"></script>
@@ -2311,6 +2312,181 @@
       const m = S.mergeHistory(remote, local);
       return eq(Object.keys(m.snapshots).sort().join(','), '2026-05-01,2026-06-01', 'union of ids') &&
              eq(m.snapshots['2026-06-01'].projects, 222, 'the newer capture survives');
+    });
+  })();
+
+  /* ============ MONTHLY CONFIRMED BOOK ============
+     One confirmation per leader per month; confirm copies every project
+     they lead; the most recent confirmation supplies a shared project; a
+     locked month carries the unconfirmed in, flagged; the merge is keyed. */
+  (function () {
+    const C = window.UFC_Confirm;
+    if (!C) { test('Confirmed book', 'module loads', () => 'UFC_Confirm not present'); return; }
+    const YM = '2026-09';
+    const sq = (x, y, label) => (x === y) ? true : label + ': ' + JSON.stringify(x) + ' ≠ ' + JSON.stringify(y);
+    const rec = (id, leadId, extra) => Object.assign(base({ id, project: Object.assign({ name: 'P ' + id, client: 'Acme', status: 'active', leadId }, extra || {}) }), { updatedAt: '2026-09-01T00:00:00Z' });
+    const book = () => [
+      rec('cb_a', 'esobel'),                                   // Emily alone
+      rec('cb_b', 'esobel', { clientRelOwner: 'jsantoro' }),   // shared Emily + Jeff
+      rec('cb_c', 'jsantoro'),                                 // Jeff alone
+      rec('cb_d', 'jsantoro', { status: 'lost' }),             // Jeff's lost pursuit — still copied, never "active"
+      rec('cb_e', null),                                       // nobody's
+    ];
+    const prevId = S.getRealIdentity();
+    const as = (login, name) => S.setRealIdentity({ username: login, name });
+    const reset = () => { localStorage.removeItem(C.KEY); };
+    const open = () => { reset(); as('sabdin@savills.us', 'Sarah Abdin'); return C.createCycle({ cycle: YM, deadline: '2026-09-15' }); };
+    const restore = () => { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); };
+
+    test('Confirmed book', 'everyone with an active project is expected; unassigned when a project has no leader', () => {
+      const e = C.expectedLeaders(book());
+      return sq(e.join(','), 'esobel,jsantoro,unassigned', 'expected');
+    });
+    test('Confirmed book', 'a leader whose only project is lost is not expected', () => {
+      const e = C.expectedLeaders([rec('cb_x', 'jsantoro', { status: 'lost' })]);
+      return sq(e.length, 0, 'expected none');
+    });
+    test('Confirmed book', 'confirm copies every project the leader leads, shared ones included, and stamps each copy', () => {
+      try {
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        const k = C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        const c = C.getCycle(YM);
+        const ids = Object.keys(c.projects).sort().join(',');
+        const copy = c.projects.cb_b;
+        const ps = C.projectStatus(c, book()[1], {});
+        return sq(k.projects, 2, 'stamp count') && sq(ids, 'cb_a,cb_b', 'copied ids') &&
+               sq(copy._confirmedBy, 'esobel', 'copy stamped') && sq(copy._confirmedAt, '2026-09-08T21:14:00Z', 'copy time') &&
+               sq(ps.waiting.join(','), 'jsantoro', 'shared awaits Jeff') && sq(ps.full, false, 'not fully confirmed yet');
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'the most recent confirmation supplies a shared project; both confirmed → fully confirmed', () => {
+      try {
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        as('jsantoro@savills.us', 'Jeff Santoro');
+        C.confirm(YM, 'jsantoro', { records: book(), now: '2026-09-09T14:41:00Z' });
+        const c = C.getCycle(YM);
+        const ps = C.projectStatus(c, book()[1], {});
+        return sq(c.projects.cb_b._confirmedBy, 'jsantoro', 'later confirmation wins') && sq(ps.full, true, 'fully confirmed') &&
+               sq(Object.keys(c.projects).length, 4, 'a, b, c and the lost one — nothing duplicated') &&
+               sq(c.projects.cb_a._confirmedBy, 'esobel', 'Emily\'s own copy untouched');
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'one confirmation per month — a second is refused', () => {
+      try {
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        try { C.confirm(YM, 'esobel', { records: book(), now: '2026-09-09T10:00:00Z' }); return 'second confirmation went through'; }
+        catch (e) { return /already confirmed/.test(e.message) || e.message; }
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'you can only confirm your own book', () => {
+      try {
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        try { C.confirm(YM, 'jsantoro', { records: book() }); return 'confirmed someone else\'s book'; }
+        catch (e) { return /own book/.test(e.message) || e.message; }
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'status: due → overdue (bold) → confirmed → changed when a project is edited after the stamp', () => {
+      try {
+        open(); const recs = book();
+        const c0 = C.getCycle(YM);
+        const due = C.statusFor(c0, 'esobel', recs, '2026-09-09T12:00:00');
+        const over = C.statusFor(c0, 'esobel', recs, '2026-09-17T12:00:00');
+        as('esobel@savills.us', 'Emily Sobel');
+        C.confirm(YM, 'esobel', { records: recs, now: '2026-09-10T12:00:00Z' });
+        const c1 = C.getCycle(YM);
+        const ok = C.statusFor(c1, 'esobel', recs, '2026-09-11T12:00:00');
+        recs[0].updatedAt = '2026-09-12T09:00:00Z';
+        const ch = C.statusFor(c1, 'esobel', recs, '2026-09-13T12:00:00');
+        const none = C.statusFor(c1, 'bking', recs, '2026-09-13T12:00:00');
+        return sq(due.k, 'due', 'before the deadline') && sq(due.days, 6, 'days left') &&
+               sq(over.k, 'overdue', 'past the deadline') && sq(!!over.bold, true, 'overdue is bold') &&
+               sq(ok.k, 'confirmed', 'confirmed') && sq(ch.k, 'changed', 'edited since') && sq(ch.changed, 1, 'one project changed') &&
+               sq(none.k, 'none', 'no projects → nothing to confirm');
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'lock carries the unconfirmed in, flagged, without touching a peer\'s confirmed copy', () => {
+      try {
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        as('sabdin@savills.us', 'Sarah Abdin');
+        const r = C.lockCycle(YM, { records: book(), now: '2026-09-18T15:00:00Z' });
+        const c = C.getCycle(YM);
+        const missed = C.statusFor(c, 'jsantoro', book(), '2026-09-19T12:00:00');
+        return sq(r.carried.join(','), 'jsantoro,unassigned', 'who was carried') &&
+               sq(!!c.projects.cb_c._carried, true, 'Jeff\'s own project carried') &&
+               sq(!!c.projects.cb_e._carried, true, 'the unassigned project carried') &&
+               sq(c.projects.cb_b._confirmedBy, 'esobel', 'the shared copy Emily confirmed stands') &&
+               sq(!!c.projects.cb_b._carried, false, 'and is not marked carried') &&
+               sq(missed.k, 'missed', 'Jeff shows as missed') && sq(!!missed.bold, true, 'in bold');
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'after lock a confirmation needs a reason, then replaces the carried copies', () => {
+      try {
+        open(); as('sabdin@savills.us', 'Sarah Abdin');
+        C.lockCycle(YM, { records: book(), now: '2026-09-18T15:00:00Z' });
+        as('jsantoro@savills.us', 'Jeff Santoro');
+        try { C.confirm(YM, 'jsantoro', { records: book(), now: '2026-09-19T10:00:00Z' }); return 'late confirmation went through without a reason'; }
+        catch (e) { if (!/reason/.test(e.message)) return e.message; }
+        const k = C.confirm(YM, 'jsantoro', { records: book(), now: '2026-09-19T10:00:00Z', reason: 'Was out on site all week' });
+        const c = C.getCycle(YM);
+        const w = C.widgetState({ username: 'jsantoro@savills.us', name: 'Jeff Santoro', role: 'member' }, '2026-09-19T12:00:00');
+        return sq(!!k.afterLock, true, 'flagged after lock') && sq(!!k.late, true, 'and late') &&
+               sq(!!c.projects.cb_c._carried, false, 'carried copy replaced') && sq(c.projects.cb_c._confirmedBy, 'jsantoro', 'now his') &&
+               sq(c.carried.join(','), 'unassigned', 'no longer carried') && sq(C.cycleSummary(YM).lateReviews, 1, 'awaiting review') &&
+               sq(w.kind, 'quiet', 'nothing left to nag about');
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'merge is keyed: newest stamp per leader, a confirmed copy beats a carried one', () => {
+      const mk = (over) => Object.assign({ schemaVersion: 1, cycle: YM, deadline: '2026-09-15', metaUpdatedAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z', lockedAt: null, confirmations: {}, projects: {}, carried: [] }, over);
+      const remote = mk({ confirmations: { esobel: { at: '2026-09-08T21:14:00Z', updatedAt: '2026-09-08T21:14:00Z', projects: 2 } },
+        projects: { cb_a: { id: 'cb_a', _confirmedBy: 'esobel', _confirmedAt: '2026-09-08T21:14:00Z' }, cb_c: { id: 'cb_c', _carried: true, _confirmedAt: '2026-09-18T15:00:00Z' } },
+        lockedAt: '2026-09-18T15:00:00Z', metaUpdatedAt: '2026-09-18T15:00:00Z', carried: ['jsantoro'] });
+      const local = mk({ confirmations: { jsantoro: { at: '2026-09-19T10:00:00Z', updatedAt: '2026-09-19T10:00:00Z', projects: 2, afterLock: true } },
+        projects: { cb_c: { id: 'cb_c', _confirmedBy: 'jsantoro', _confirmedAt: '2026-09-19T10:00:00Z' }, cb_b: { id: 'cb_b', _confirmedBy: 'jsantoro', _confirmedAt: '2026-09-19T10:00:00Z' } } });
+      const m = C.mergeCycle(remote, local);
+      return sq(Object.keys(m.confirmations).sort().join(','), 'esobel,jsantoro', 'both stamps') &&
+             sq(m.projects.cb_c._confirmedBy, 'jsantoro', 'confirmed beats carried') && sq(!!m.projects.cb_a, true, 'remote-only copy kept') &&
+             sq(m.lockedAt, '2026-09-18T15:00:00Z', 'the newer header (locked) wins') && sq(m.carried.length, 0, 'Jeff no longer carried');
+    });
+    test('Confirmed book', 'the widget goes bold red past the deadline and shows admins the count', () => {
+      try {
+        open();
+        const dbKey = 'savills-ppm-fee-db:v1'; const prevDb = localStorage.getItem(dbKey);
+        const db = { schemaVersion: 2, projects: {} }; book().forEach(r => { db.projects[r.id] = r; });
+        localStorage.setItem(dbKey, JSON.stringify(db));
+        try {
+          const em = { username: 'esobel@savills.us', name: 'Emily Sobel', role: 'admin' };
+          const w1 = C.widgetState(em, '2026-09-10T12:00:00');
+          const w2 = C.widgetState(em, '2026-09-17T12:00:00');
+          const adm = C.widgetState({ username: 'sabdin@savills.us', name: 'Sarah Abdin', role: 'admin' }, '2026-09-10T12:00:00');
+          const nobody = C.widgetState({ username: 'zz@savills.us', name: 'Nobody', role: 'member' }, '2026-09-10T12:00:00');
+          return sq(w1.kind, 'due', 'due before') && sq(w2.kind, 'overdue', 'overdue after') &&
+                 sq(adm.kind, 'admin', 'admin view') && sq(adm.expected, 3, 'expected count incl. unassigned') && sq(adm.done, 0, 'none yet') &&
+                 sq(nobody.kind, 'quiet', 'not a leader → nothing shown');
+        } finally { if (prevDb == null) localStorage.removeItem(dbKey); else localStorage.setItem(dbKey, prevDb); }
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'the confirmed book reads back in projects.json shape and maps in Executive Reporting', () => {
+      try {
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        const db = C.asProjectsDb(YM);
+        const CORE = window.EXEC_CORE;
+        if (!CORE) return 'EXEC_CORE not present';
+        CORE.configure({ ratings: S.RATINGS, statusDefaultRating: S.STATUS_DEFAULT_RATING, leaders: S.REVENUE_LEADERS, industries: S.INDUSTRIES, fmtMoney: S.fmtMoney });
+        const m = CORE.mapProjects(db);
+        return sq(Object.keys(db.projects).length, 2, 'two copies') && sq(!!m.ok, true, 'maps: ' + (m.error || '')) && sq(m.projects.length, 2, 'two mapped');
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'only a leadership admin opens or locks a month', () => {
+      try {
+        reset(); as('bshepparding@savills.us', 'Brianna King');   // a leader, not on the leadership list
+        try { C.createCycle({ cycle: YM, deadline: '2026-09-15' }); return 'a leader opened a month'; } catch (e) { if (!/leadership admin/.test(e.message)) return e.message; }
+        open(); as('bshepparding@savills.us', 'Brianna King');
+        try { C.lockCycle(YM, { records: book() }); return 'a leader locked a month'; } catch (e) { return /leadership admin/.test(e.message) || e.message; }
+      } finally { restore(); reset(); }
     });
   })();
 

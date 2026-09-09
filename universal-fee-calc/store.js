@@ -4599,7 +4599,7 @@
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, monthlySeries,
     computeFinancials, restampFinancials,
-    isChangeOrder, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
+    isChangeOrder, isApprovedChangeOrder, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
     reconcileImport,
     projectSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries,

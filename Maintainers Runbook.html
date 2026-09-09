@@ -549,7 +549,7 @@
   </div>
   <div class="box">
     <span class="tag">Script order on a page</span>
-    Every page loads, in this order: <code>vendor-lazy.js</code> (only if it exports) &rarr; <code>rates-catalog.js</code> &rarr; <code>store.js</code> &rarr; <code>box-adapter.js</code> &rarr; <code>boot.js</code> &rarr; <code>ui.js</code> &rarr; <code>sync-status.js</code> &rarr; <code>staff.js</code> (only if it reads staffing) &rarr; the page's own controller &rarr; <code>guide.js</code> &rarr; <code>nav.js</code>. Before <code>boot.js</code>, set <code>window.UFC_NEEDS</code> to the extra Box stores the page reads (<code>'staff'</code>, <code>'studio'</code>, <code>'revenue'</code>, <code>'activity'</code>); projects and rates always load.
+    Every page loads, in this order: <code>vendor-lazy.js</code> (only if it exports) &rarr; <code>rates-catalog.js</code> &rarr; <code>store.js</code> &rarr; <code>confirmed-book.js</code> &rarr; <code>box-adapter.js</code> &rarr; <code>boot.js</code> &rarr; <code>ui.js</code> &rarr; <code>sync-status.js</code> &rarr; <code>staff.js</code> (only if it reads staffing) &rarr; the page's own controller &rarr; <code>guide.js</code> &rarr; <code>confirm-widget.js</code> &rarr; <code>nav.js</code>. Before <code>boot.js</code>, set <code>window.UFC_NEEDS</code> to the extra Box stores the page reads (<code>'staff'</code>, <code>'studio'</code>, <code>'revenue'</code>, <code>'activity'</code>, <code>'confirmed'</code>); projects and rates always load.
     Page-specific CSS lives in <code>universal-fee-calc/&lt;page&gt;.css</code>, not in a <code>&lt;style&gt;</code> block, so it can be cached.
   </div>
   <div class="box">
@@ -570,6 +570,10 @@
   <div class="box">
     <span class="tag">Box API allowance (noted Sep 2026 — no change made)</span>
     Box does not bill per API call on a Business / Enterprise plan; each plan carries a monthly allowance for the whole enterprise (Box staff quote 50k for Business and Business Plus, 100k for Enterprise, 200k for Enterprise Advanced) and exceeding it means selective throttling (HTTP 429), not a charge. This app uses roughly: 3–5 calls per page open, 1–3 calls every 3 minutes per <em>visible</em> tab (polling pauses while a tab is hidden), 1–3 per save, and 1–2 for the weekly backup — about 30–45k a month for a team of ten in normal use. The one thing that inflates it is a tab left visible all day (an Executive Reporting screen ≈ 14k/month on its own). Levers if ever needed: lengthen the poll in <code>boot.js startLiveRefresh</code> and the staffing refresh in <code>staffing-page.js</code> (both 180000 ms), or stop polling after an hour idle. Check the plan and the real count with the Box admin (Admin Console → Reports → platform activity) before touching either.
+  </div>
+  <div class="box">
+    <span class="tag">Monthly Confirmed Book (Sep 2026)</span>
+    One file per month in the shared folder, <code>confirmed-YYYY-MM.json</code>: the cycle header (deadline, opened/locked by whom), one timestamped confirmation per leader, and one stamped copy of every project (<code>_confirmedBy</code>, <code>_confirmedAt</code>, <code>_carried</code>). Rules and merge live in <code>confirmed-book.js</code>; the sync (create, pull by etag, If-Match push, 412 &rarr; pull &rarr; keyed merge &rarr; retry) in <code>box-adapter.js</code> next to the activity shards. Locking a month carries in anyone unconfirmed (flagged), makes it Executive Reporting's default book (header picker), and saves a Revenue Diff snapshot labelled <em>Confirmed Mon-YY</em>. The countdown pill on every page costs one folder listing plus one etag check per page open, at most once per three minutes per browser; the home page runs it from the local cache only.
   </div>
   <ul>
     <li><strong>Client-side access limit</strong> (&sect;6) — Box folder permission is the true boundary.</li>

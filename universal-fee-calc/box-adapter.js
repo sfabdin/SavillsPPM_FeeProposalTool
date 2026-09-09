@@ -1404,6 +1404,162 @@
     } catch (e) { /* backups must never break boot */ }
   }
 
+  /* ---- MONTHLY CONFIRMED BOOK (confirmed-YYYY-MM.json) --------------------
+     One file per month, created by an admin when the month opens. Every
+     leader's confirmation writes into it, so — exactly like the activity
+     shards — no upload ever goes out without merging onto Box's copy first,
+     and a 412 is answered with pull → merge → retry. The merge is keyed per
+     leader and per project (confirmed-book.js), so two people confirming at
+     the same moment both land. ---- */
+  const CONF_PREFIX = 'confirmed-';
+  const CONF_IDS_KEY = 'ufc_confirmed_file_ids';
+  const Confirm = () => window.UFC_Confirm;
+  const _confEtags = {};
+  function confIds() { try { return JSON.parse(localStorage.getItem(CONF_IDS_KEY) || '{}') || {}; } catch (e) { return {}; } }
+  function rememberConfId(ym, id) { const m = confIds(); m[ym] = id; try { localStorage.setItem(CONF_IDS_KEY, JSON.stringify(m)); } catch (e) {} }
+  function forgetConfId(ym) { const m = confIds(); delete m[ym]; try { localStorage.setItem(CONF_IDS_KEY, JSON.stringify(m)); } catch (e) {} }
+  const confName = (ym) => CONF_PREFIX + ym + '.json';
+
+  /** Which months exist in Box — one folder listing, no downloads. */
+  Box.listConfirmCycles = async function () {
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    if (!res.ok) throw new Error('could not list the Box folder: ' + res.status);
+    const j = await res.json(); const out = [];
+    (j.entries || []).forEach(e => {
+      if (e.type !== 'file') return;
+      const m = /^confirmed-(\d{4}-\d{2})\.json$/.exec(e.name || '');
+      if (!m) return;
+      rememberConfId(m[1], e.id); out.push(m[1]);
+    });
+    out.sort();
+    if (Confirm()) Confirm().rememberKnown(out);
+    return out;
+  };
+  async function resolveConfId(ym, create) {
+    const cached = confIds()[ym];
+    if (cached) return cached;
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    if (res.ok) {
+      const j = await res.json();
+      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === confName(ym));
+      if (hit) { rememberConfId(ym, hit.id); return hit.id; }
+    }
+    if (!create) return null;
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const seed = (Confirm() && Confirm().serialize(ym)) || JSON.stringify({ schemaVersion: 1, cycle: ym, confirmations: {}, projects: {} });
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: confName(ym), parent: { id: BOX_CONFIG.folderId } }));
+    form.append('file', new Blob([seed], { type: 'application/json' }), confName(ym));
+    const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+    if (up.status === 409) {
+      try { const j = await up.json(); const cid = j.context_info && j.context_info.conflicts && j.context_info.conflicts.id;
+            if (cid) { rememberConfId(ym, cid); return cid; } } catch (e) {}
+      throw new Error(confName(ym) + ' create conflict — reload to retry');
+    }
+    if (!up.ok) throw new Error('could not create ' + confName(ym) + ': HTTP ' + up.status);
+    const j = await up.json(); const nid = j.entries && j.entries[0] && j.entries[0].id;
+    if (!nid) throw new Error(confName(ym) + ' create returned no id');
+    rememberConfId(ym, nid);
+    try { if (j.entries[0].etag) _confEtags[ym] = j.entries[0].etag; } catch (e) {}
+    return nid;
+  }
+  /** One month as Box holds it. null when it does not exist; 'unchanged'
+      when the etag matches what this browser already merged (one small
+      metadata call, no download). */
+  async function pullConfCycle(ym, opts) {
+    const id = await resolveConfId(ym, false);
+    if (!id) return null;
+    const meta = await boxFetch('/files/' + id + '?fields=etag');
+    if (meta.ok) {
+      const m = await meta.json();
+      if (opts && opts.ifChanged && _confEtags[ym] && m.etag === _confEtags[ym]) return 'unchanged';
+      _confEtags[ym] = m.etag;
+    }
+    const res = await boxFetch('/files/' + id + '/content');
+    if (res.status === 404) { forgetConfId(ym); delete _confEtags[ym]; return null; }
+    if (!res.ok) throw new Error('confirmed-book pull failed for ' + ym + ': ' + res.status);
+    const txt = await res.text();
+    if (!txt || !txt.trim()) return null;
+    try { const p = JSON.parse(txt); return (p && p.cycle) ? p : null; } catch (e) { return null; }
+  }
+  async function uploadConfCycle(ym, depth) {
+    const C = Confirm(); if (!C || !C.getCycle(ym)) return;
+    if (!_confEtags[ym]) {                                   // never seen Box's copy — merge first
+      const remote = await pullConfCycle(ym);
+      if (remote) C.hydrateCycle(ym, remote);
+    }
+    const id = await resolveConfId(ym, true);
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const body = C.serialize(ym);
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name: confName(ym) }));
+    form.append('file', new Blob([body], { type: 'application/json' }), confName(ym));
+    const res = await fetch('https://upload.box.com/api/2.0/files/' + id + '/content', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, ...(_confEtags[ym] ? { 'If-Match': _confEtags[ym] } : {}) },
+      body: form,
+    });
+    if (res.status === 412) {
+      if ((depth || 0) >= 4) throw new Error('confirmed-book push failed: repeated conflicts on ' + ym);
+      await conflictPause(depth);
+      const remote = await pullConfCycle(ym);
+      if (remote) C.hydrateCycle(ym, remote);
+      return uploadConfCycle(ym, (depth || 0) + 1);
+    }
+    if (!res.ok) throw new Error('confirmed-book push failed for ' + ym + ': ' + res.status);
+    try { const j = await res.json(); if (j.entries && j.entries[0]) _confEtags[ym] = j.entries[0].etag; } catch (e) {}
+    C.markCycleClean(ym);
+  }
+  let _confTimer = null, _confPushing = null;
+  async function confirmPushNow() {
+    if (_confPushing) return _confPushing;
+    const C = Confirm(); if (!C) return;
+    const yms = C.dirtyCycles();
+    if (!yms.length) return;
+    emitSync('syncing', 'Saving the confirmed book…');
+    _confPushing = (async () => {
+      let failed = null;
+      for (const ym of yms) {
+        try { await uploadConfCycle(ym); }
+        catch (e) { failed = e; console.warn('confirmed-book push failed (it stays queued)', ym, e); }
+      }
+      if (failed) { emitSync('error', 'Confirmation not saved to Box yet — retrying'); _confTimer = setTimeout(confirmPushNow, 5000 + Math.random() * 5000); }
+      else emitSync('synced', '');
+    })().finally(() => { _confPushing = null; });
+    return _confPushing;
+  }
+  function scheduleConfirmPush() {
+    clearTimeout(_confTimer);
+    _confTimer = setTimeout(confirmPushNow, BOX_CONFIG.pushDebounceMs);
+  }
+  Box.flushConfirm = async function () { clearTimeout(_confTimer); await confirmPushNow(); };
+  /** Pull one month into the local store. Returns the merged cycle or null. */
+  Box.pullConfirmCycle = async function (ym, opts) {
+    const C = Confirm(); if (!C) return null;
+    const remote = await pullConfCycle(ym, opts);
+    if (remote && remote !== 'unchanged') C.hydrateCycle(ym, remote);
+    return C.getCycle(ym);
+  };
+  /** What every page needs: the list of months, then the open month(s) and
+      the latest locked one, each skipped when its etag has not moved. */
+  Box.syncConfirmed = async function (opts) {
+    const C = Confirm(); if (!C) return [];
+    C.attachRemote(scheduleConfirmPush);
+    const yms = await Box.listConfirmCycles();
+    const want = new Set();
+    const cycles = yms.map(y => C.getCycle(y));
+    yms.forEach((y, i) => { if (!cycles[i] || !cycles[i].lockedAt) want.add(y); });   // unknown or open → look
+    const locked = yms.filter((y, i) => cycles[i] && cycles[i].lockedAt);
+    if (locked.length) want.add(locked[locked.length - 1]);
+    (opts && opts.also || []).forEach(y => want.add(y));
+    for (const y of [...want].sort()) {
+      try { await Box.pullConfirmCycle(y, { ifChanged: true }); }
+      catch (e) { console.warn('confirmed-book pull failed', y, e); }
+    }
+    if (C.dirtyCycles().length) scheduleConfirmPush();
+    return yms;
+  };
+
   /* ---- OPT-IN STORES ------------------------------------------------------
      studio.json and revenue.json used to be pulled by every page in the app,
      on every load. Exactly one page reads each: Executive Reporting reads the
@@ -1445,6 +1601,9 @@
        Declaring 'activity' is for the page that READS the trail, and even then
        it takes only the current month; the Change Log asks for older months by
        name as you widen the window. */
+    /* The monthly confirmed book. Declared by the page that confirms and by
+       Executive Reporting, which reads a locked month by default. */
+    confirmed: async () => { await Box.syncConfirmed(); },
     activity: async () => {
       Store.attachActivityRemote(scheduleActivityPush);
       Store.migrateActivityOutOfProjects();      // lift anything still in projects.json

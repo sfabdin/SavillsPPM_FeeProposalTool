@@ -168,7 +168,13 @@
   function assemble() {
     configureCore();
     const S = window.UFC_Store;
-    DATA.projectsRaw = JSON.parse(S.exportDb());          // the projects.json shape, from the store's own serialiser
+    initBook();
+    const C = Confirm();
+    const fromBook = !!(BOOK.ym && C && C.getCycle(BOOK.ym));
+    if (!fromBook) BOOK.ym = null;
+    /* The projects.json shape either way: the store's own serialiser for the
+       live book, or the confirmed month's copies for a confirmed book. */
+    DATA.projectsRaw = fromBook ? C.asProjectsDb(BOOK.ym) : JSON.parse(S.exportDb());
     /* Revenue is the ENGINE's answer, the same series Revenue Projections
        draws: billingSeries on each parent plus its approved change orders.
        The mapper reads it from rec.resolvedByMonth ahead of the imported
@@ -177,7 +183,7 @@
     (function attachResolvedRevenue() {
       const cat = window.RATES_CATALOG;
       if (!S.billingSeries || !cat) return;
-      const coIndex = S.approvedChangeOrdersIndex ? S.approvedChangeOrdersIndex() : null;
+      const coIndex = fromBook ? C.changeOrderIndex(BOOK.ym) : (S.approvedChangeOrdersIndex ? S.approvedChangeOrdersIndex() : null);
       Object.values(DATA.projectsRaw.projects || {}).forEach((rec) => {
         if (!rec || rec._deleted) return;
         if (S.isChangeOrder && S.isChangeOrder(rec)) { rec.resolvedByMonth = {}; return; }
@@ -200,7 +206,12 @@
     DATA.projectsRaw.activity = S.listActivity ? S.listActivity(null) : [];
     DATA.studioRaw = S.readStudio();
     const pulled = new Date();
-    computeAll('Live from Box · pulled ' + pulled.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET');
+    const bs = fromBook ? C.cycleSummary(BOOK.ym) : null;
+    computeAll(bs
+      ? (bs.lockedAt ? bs.label + ' confirmed book · locked ' + new Date(bs.lockedAt).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET' + (bs.lockedByName ? ' by ' + bs.lockedByName : '')
+                     : bs.label + ' confirmed book · still open · ' + bs.confirmed + ' confirmed so far')
+        + (bs.carried.length ? ' · ' + bs.carried.length + ' leader' + (bs.carried.length === 1 ? '' : 's') + ' carried in unconfirmed' : '')
+      : 'Live from Box · pulled ' + pulled.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET');
   }
 
   function computeAll(asOf) {
@@ -237,6 +248,29 @@
     { key: 'glossary', label: 'Definitions', internal: true },
   ];
   let activeTab = 'pipeline';
+  /* Which book the module reads. Default: the latest LOCKED confirmed month
+     (what the leaders signed off), else the live book. Remembered for the
+     session so switching tabs does not reset it. */
+  const BOOK = { ym: null, inited: false };
+  const Confirm = () => window.UFC_Confirm;
+  function bookChoices() {
+    const C = Confirm(); if (!C) return [];
+    return C.listCycles().slice().reverse().map((c) => ({ ym: c.cycle, label: C.ymLong(c.cycle) + (c.lockedAt ? ' · confirmed book' : ' · open, in progress'), locked: !!c.lockedAt }));
+  }
+  function initBook() {
+    if (BOOK.inited) return; BOOK.inited = true;
+    let saved = null; try { saved = sessionStorage.getItem('ufc_exec_book'); } catch (e) {}
+    const C = Confirm();
+    if (saved === 'live') { BOOK.ym = null; return; }
+    if (saved && C && C.getCycle(saved)) { BOOK.ym = saved; return; }
+    const latest = C && C.latestLocked ? C.latestLocked() : null;
+    BOOK.ym = latest ? latest.cycle : null;
+  }
+  function setBook(ym) {
+    BOOK.ym = ym || null;
+    try { sessionStorage.setItem('ufc_exec_book', ym || 'live'); } catch (e) {}
+  }
+  const bookSummary = () => (BOOK.ym && Confirm()) ? Confirm().cycleSummary(BOOK.ym) : null;
 
   function render(root, dev) {
     if (!DATA.mapped || !DATA.mapped.ok) {
@@ -249,13 +283,28 @@
     root.innerHTML =
       '<div class="wrap">' +
       '<div class="hdr"><h1>Executive Reporting · ' + d.year + '</h1>' +
-      (dev ? '<span class="dflag demo">DEV FIXTURES</span>' : '<span class="badge">LIVE</span>') +
-      '<span class="asof">' + esc(d.asOf) + '</span></div>' +
+      (dev ? '<span class="dflag demo">DEV FIXTURES</span>' : BOOK.ym ? '<span class="badge">CONFIRMED · ' + esc(Confirm().ymShort(BOOK.ym).toUpperCase()) + '</span>' : '<span class="badge">LIVE</span>') +
+      '<span class="asof">' + esc(d.asOf) + '</span>' +
+      (bookChoices().length ? '<label class="bookpick"><span>Book</span><select id="exec-book">' +
+        '<option value="live"' + (BOOK.ym ? '' : ' selected') + '>Live · as it stands now</option>' +
+        bookChoices().map((c) => '<option value="' + esc(c.ym) + '"' + (c.ym === BOOK.ym ? ' selected' : '') + '>' + esc(c.label) + '</option>').join('') +
+        '</select></label>' : '') +
+      '</div>' +
+      ((bs => bs && bs.carried.length ? '<div class="booknote">' + bs.carried.length + ' leader' + (bs.carried.length === 1 ? '' : 's') + ' did not confirm before this month was locked — their live projects were carried in and are flagged in the Leaders tab: ' +
+        esc(bs.carried.map((id) => Confirm().leaderName(id)).join(', ')) + '.</div>' : '')(bookSummary())) +
       '<div class="tabbar">' + TABS.map((t) =>
         '<button data-tab="' + t.key + '" class="' + (t.key === activeTab ? 'on ' : '') + (t.internal ? 'internal' : '') + '">' + esc(t.label) + '</button>'
       ).join('') + '</div>' +
       '<div id="exec-tab"></div>' +
       '</div>';
+    const pick = root.querySelector('#exec-book');
+    if (pick) pick.addEventListener('change', async () => {
+      const v = pick.value === 'live' ? null : pick.value;
+      const C = Confirm(); const Box = window.UFC_Box;
+      if (v && C && !C.getCycle(v) && Box && Box.pullConfirmCycle) { try { await Box.pullConfirmCycle(v); } catch (e) { /* falls back to live below */ } }
+      setBook(v);
+      assemble(); render(root, dev);
+    });
     root.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('click', () => {
       activeTab = b.dataset.tab;
       root.querySelectorAll('.tabbar button').forEach((x) => x.classList.toggle('on', x === b));
@@ -804,8 +853,9 @@
       const aging = b.aging.amber + b.aging.red > 0
         ? '<span class="tone-amber">' + (b.aging.amber + b.aging.red) + ' ageing · ' + fm(b.aging.amberRedValue) + '</span>'
         : '<span class="tone-good">on track</span>';
-      return '<div style="display:grid;grid-template-columns:150px 1fr 110px 150px;gap:10px;align-items:center;margin:6px 0" title="' + esc(clientTip) + '">' +
-        '<div style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + '</div>' +
+      const carried = (bookSummary() && bookSummary().carried.indexOf(b.id) >= 0);
+      return '<div style="display:grid;grid-template-columns:150px 1fr 110px 150px;gap:10px;align-items:center;margin:6px 0" title="' + esc(clientTip) + (carried ? ' · NOT CONFIRMED — carried in at lock' : '') + '">' +
+        '<div style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + (carried ? ' <span class="tone-amber" style="font-size:9px;letter-spacing:.08em;font-weight:800">NOT CONFIRMED</span>' : '') + '</div>' +
         '<div style="position:relative;height:16px;border:1px solid var(--hairline);background:#fff">' +
         '<div class="hatch" style="position:absolute;top:0;bottom:0;left:0;width:' + w + '%;background:rgba(31,138,76,.15)"></div>' +
         '<div style="position:absolute;top:0;bottom:0;left:0;width:' + bw2 + '%;background:var(--r1)"></div></div>' +
