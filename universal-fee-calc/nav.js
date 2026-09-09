@@ -32,6 +32,8 @@
       desc: 'Finance-owned monthly close: import the actuals, reconcile billed vs accrued vs forecast per project, disposition every variance, and export the monthly flash.' },
     { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Operations', admin: true,
       desc: 'Revenue with Clockify burn (hours × cost rate) laid against it — margin per project, per month.' },
+    { href: 'Monthly Confirmed Book.html',   label: 'Monthly Confirmed Book', group: 'Projects',
+      desc: 'Confirm your book once a month, see who has and who has not, and (admins) open and lock each month.' },
     { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Projects',
       desc: 'Completeness tracker — your projects by revenue leader, with the fields still missing.' },
     { href: 'Change Log.html',               label: 'Change Log',          group: 'Projects',

@@ -22,6 +22,9 @@ body.exec-page { margin: 0; background: var(--page); overflow-x: hidden; }
 .exec .hdr { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; padding: 18px 0 6px; }
 .exec .hdr h1 { font-size: 21px; margin: 0; letter-spacing: -.2px; }
 .exec .hdr .asof { color: var(--mut); font-size: 12px; }
+.exec .hdr .bookpick { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 11px; color: var(--mut); letter-spacing: .08em; text-transform: uppercase; font-weight: 700; }
+.exec .hdr .bookpick select { font: inherit; font-size: 12px; text-transform: none; letter-spacing: 0; font-weight: 600; padding: 5px 8px; border: 1px solid var(--hairline); background: #fff; color: inherit; }
+.exec .booknote { margin: 4px 0 10px; padding: 9px 12px; font-size: 12px; background: rgba(217,164,0,.12); border-left: 4px solid #D9A400; }
 .exec .hdr .badge { font-size: 9px; font-weight: 800; letter-spacing: .12em; padding: 3px 7px; border: 1px solid var(--good); color: var(--good); background: rgba(31,122,68,.07); }
 .exec .wrap { max-width: 1180px; margin: 0 auto; padding: 0 22px 60px; }
 

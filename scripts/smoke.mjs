@@ -17,7 +17,7 @@ const srv=http.createServer((q,r)=>{const u=decodeURIComponent(q.url.split('?')[
  r.writeHead(200,{'content-type':types[path.extname(f)]||'application/octet-stream'});r.end(fs.readFileSync(f));});
 await new Promise(r=>srv.listen(0,r)); const port=srv.address().port;
 const browser=await chromium.launch();
-const pages=process.argv.slice(2).length?process.argv.slice(2):['Change Log.html','Staffing Matrix.html','Revenue Reconciliation.html','Projects Index.html','Universal Fee Calculator.html','Profitability.html','Executive Reporting.html','Bulk Editor.html','Revenue Projections.html','Data Repair.html','Fee Generator.html','Benchmarking Dashboard.html','Ingestion Studio.html','Proposal Analytics.html','Data Entry Status.html','Rate Grid Reconciliation.html','Import Small Works.html','Getting Started.html','Change Log.html'];
+const pages=process.argv.slice(2).length?process.argv.slice(2):['Change Log.html','Staffing Matrix.html','Revenue Reconciliation.html','Projects Index.html','Universal Fee Calculator.html','Profitability.html','Executive Reporting.html','Bulk Editor.html','Revenue Projections.html','Data Repair.html','Fee Generator.html','Benchmarking Dashboard.html','Ingestion Studio.html','Proposal Analytics.html','Data Entry Status.html','Rate Grid Reconciliation.html','Import Small Works.html','Getting Started.html','Monthly Confirmed Book.html','Change Log.html'];
 let bad=0;
 for (const p of [...new Set(pages)]){const page=await browser.newPage();const errs=[];
  page.on('pageerror',e=>errs.push('PAGEERROR: '+e.message));page.on('console',m=>{if(m.type()==='error')errs.push('CONSOLE: '+m.text());});

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Savills PPM Fee &amp; Revenue System">
+<title>Savills PPM · Monthly Confirmed Book</title>
+<link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Book.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Bold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<link rel="stylesheet" href="universal-fee-calc/confirmed-book.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div class="title-block">
+      <h1><a href="Fee Generator.html">Monthly Confirmed Book</a></h1>
+      <p class="tagline">Once a month, every revenue leader confirms their book. The confirmed book is what leadership reports on and what next month is compared against.</p>
+    </div>
+  </header>
+
+  <div class="identity-bar">
+    <div class="id-who">
+      <span class="id-label">Viewing as</span>
+      <select id="id-user"></select>
+      <span class="id-role" id="id-role"></span>
+      <span class="id-note" id="id-note"></span>
+    </div>
+  </div>
+
+  <div class="cb-tabs" role="tablist">
+    <button role="tab" data-tab="book" aria-selected="true">My book</button>
+    <button role="tab" data-tab="tracker">Tracker</button>
+    <button role="tab" data-tab="months" id="tab-months" hidden>Months · admin</button>
+  </div>
+
+  <section id="pane-book" class="cb-pane"></section>
+  <section id="pane-tracker" class="cb-pane" hidden></section>
+  <section id="pane-months" class="cb-pane" hidden></section>
+
+  <div class="foot">
+    <strong>How this works.</strong> &nbsp; Confirming copies every project you lead into this month's confirmed book with your name and the time on each copy. One confirmation per month — it is locked in. If a project changes afterwards the tracker says so, and the change waits for next month. A project shared between two leaders is fully confirmed once both have confirmed; the most recent confirmation supplies the copy. When an admin locks the month, anyone who has not confirmed has their live projects carried in and flagged, and can still confirm afterwards with a reason.
+  </div>
+
+</div>
+
+<script>window.UFC_NEEDS = ['confirmed'];</script>
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/confirmed-book.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/ui.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/confirmed-book-page.js"></script>
+<script src="universal-fee-calc/guide.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+</body>
+</html>
