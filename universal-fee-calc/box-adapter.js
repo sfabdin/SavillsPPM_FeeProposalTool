@@ -474,11 +474,17 @@
   // projects Box knows about (a corrupted cache, a bad import, a cleared browser).
   // Deletes are tombstones, so a legitimate delete never shrinks the key count —
   // a big shrink always means something is wrong. Box.forcePush() overrides.
+  /* A 412 means a teammate's save landed first. Retrying INSTANTLY means
+     every tab that collided retries in the same instant and collides again —
+     with a room full of leaders saving before a deadline that is a storm.
+     Each retry now waits a random 0.4–1.2 s, longer on each attempt, so the
+     writers spread out and each one's merge lands. */
+  const conflictPause = (depth) => new Promise(r => setTimeout(r, (400 + Math.random() * 800) * ((depth || 0) + 1)));
   let _forcePush = false;
   Box.forcePush = async function () { _forcePush = true; try { await syncNow(); } finally { _forcePush = false; } };
   async function uploadRemote(db, depth) {
     depth = depth || 0;
-    if (depth > 3) throw new Error('sync conflict — too many concurrent saves, will retry');
+    if (depth > 5) throw new Error('sync conflict — too many concurrent saves, will retry');
     const localCount = Object.keys((db && db.projects) || {}).length;
     if (!_forcePush && _remoteCount >= 10 && localCount < _remoteCount * 0.5) {
       throw new Error('Sync blocked to protect data: this browser has ' + localCount + ' projects but Box has ' + _remoteCount + '. Reload the page to re-sync first.');
@@ -495,7 +501,8 @@
       body: form,
     });
     if (res.status === 412) {
-      // Etag mismatch: someone else saved first. Pull, merge, retry once.
+      // Etag mismatch: someone else saved first. Wait a beat, pull, merge, retry.
+      await conflictPause(depth);
       const remote = await pullRemote();
       const merged = mergeDb(remote, db);
       Store.hydrateFromRemote(merged);
@@ -648,6 +655,12 @@
       _pending = db;                       // keep the pending data so a retry can flush it
       emitSync('error', e.message || 'Sync failed');
       console.warn('Box push failed', e);
+      /* "will retry" must be true: re-arm in 5–10 s (jittered) rather than
+         waiting for the next save, tab switch or close. */
+      if (/conflict|412|failed: 5\d\d|network|fetch/i.test(String(e && e.message))) {
+        clearTimeout(_pushTimer);
+        _pushTimer = setTimeout(pushNow, 5000 + Math.random() * 5000);
+      }
     }
   }
   // Manual "Sync now": flush pending, or re-push the current local db if nothing is pending.
@@ -773,7 +786,8 @@
     if (res.status === 412) {
       /* Someone else saved first. Re-uploading our copy would erase their rows,
          so PULL → MERGE at record level → push the merged result. */
-      if ((depth || 0) >= 2) throw new Error('staff push failed: repeated conflicts');
+      if ((depth || 0) >= 3) throw new Error('staff push failed: repeated conflicts');
+      await conflictPause(depth);
       const remote = await pullStaff();          // also refreshes _staffEtag
       const Staff = window.UFC_Staff;
       let merged = db;
@@ -833,7 +847,8 @@
       // Someone else saved first. Re-uploading our copy as-is would erase their
       // baselines/scenarios, so PULL → MERGE at record level → retry, same as
       // staff.json — this used to just give up silently here, dropping the edit.
-      if ((depth || 0) >= 2) throw new Error('studio push failed: repeated conflicts');
+      if ((depth || 0) >= 3) throw new Error('studio push failed: repeated conflicts');
+      await conflictPause(depth);
       const remote = await pullStudio();          // also refreshes _studioEtag
       const merged = mergeStudioDb(remote, s);
       Store.hydrateStudioFromRemote(merged);
@@ -975,7 +990,8 @@
     if (res.status === 412) {
       // A teammate saved first. Re-uploading ours as-is would erase their work,
       // so pull → merge per row → retry.
-      if ((depth || 0) >= 2) throw new Error('revenue push failed: repeated conflicts');
+      if ((depth || 0) >= 3) throw new Error('revenue push failed: repeated conflicts');
+      await conflictPause(depth);
       const remote = await pullRevenue();          // also refreshes _revEtag
       const merged = mergeRevenueDb(remote, r);
       Store.hydrateRevenueFromRemote(merged);
@@ -1078,7 +1094,8 @@
     if (res.status === 412) {
       /* A teammate wrote first. Snapshots are immutable once taken, so the
          merge is a plain union by id — no field-level conflict to resolve. */
-      if ((depth || 0) >= 2) throw new Error('history push failed: repeated conflicts');
+      if ((depth || 0) >= 3) throw new Error('history push failed: repeated conflicts');
+      await conflictPause(depth);
       const remote = await pullHistory();
       const merged = Store.mergeHistory(remote, h);
       Store.hydrateHistoryFromRemote(merged);
@@ -1268,7 +1285,8 @@
       body: form,
     });
     if (res.status === 412) {
-      if ((depth || 0) >= 3) throw new Error('activity push failed: repeated conflicts on ' + month);
+      if ((depth || 0) >= 4) throw new Error('activity push failed: repeated conflicts on ' + month);
+      await conflictPause(depth);
       const remote = await pullActShard(month);                // also refreshes the etag
       if (remote) Store.hydrateActivityShard(month, remote);   // union — their entries and ours
       return uploadActShard(month, (depth || 0) + 1);
