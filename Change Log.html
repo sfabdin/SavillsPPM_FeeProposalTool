@@ -71,6 +71,14 @@
 .recover .btn{margin-right:8px;margin-top:6px}
 .recover .out{display:block;margin-top:6px;color:#79828C}
 @media print{.toolbar,.identity-bar{display:none!important}}
+  .ent.run{background:#fbfaf7;border-left:3px solid var(--sav-yellow)}
+  .ent .e-time .e-to{display:block;font-size:10px;color:#9aa0aa}
+  .e-runs{margin-top:8px;font-size:12px}
+  .e-runs summary{cursor:pointer;color:var(--sav-teal);font-weight:700;list-style:none}
+  .e-runs summary::-webkit-details-marker{display:none}
+  .e-runs summary::before{content:'▸ ';font-size:10px}
+  .e-runs[open] summary::before{content:'▾ '}
+  .e-runs .ent.sub{border:0;border-top:1px solid rgba(37,39,58,.08);padding:8px 0 4px;background:transparent;margin:0}
 </style>
 </head>
 <body>
@@ -519,6 +527,50 @@
       byDay[key].rows.push(e);
     });
 
+    /* A working session leaves a trail of near-identical saves — a −$5 here,
+       a −$27 there. Consecutive saves by the same person on the same project,
+       each within an hour of the last, fold into one card that shows the net
+       movement, with every individual save one click away. Creates, status
+       changes, bookings and deletions never fold: those are events. */
+    const FOLD_MS = 60 * 60000;
+    const foldable = (e) => e.projectId && /^(edit|plan-adjust|schedule-shift|ledger-allocate|ledger-note|staff-alloc)$/.test(e.action);
+    function foldRuns(items) {            // items newest-first
+      /* Other people's entries interleave with a working session, so a run is
+         keyed by person + project + action, not by adjacency: an entry joins
+         the open run for that key while it is within an hour of the run's
+         oldest save. The card sits where the run's newest save was. */
+      const out = [], open = {};
+      items.forEach(e => {
+        if (!foldable(e)) { out.push({ single: e }); return; }
+        const key = (e.actor || '') + '|' + e.projectId + '|' + e.action;
+        const run = open[key];
+        if (run && (new Date(run.oldest.ts) - new Date(e.ts)) <= FOLD_MS) { run.run.push(e); run.oldest = e; return; }
+        const fresh = { run: [e], actor: e.actor, projectId: e.projectId, action: e.action, newest: e, oldest: e };
+        open[key] = fresh; out.push(fresh);
+      });
+      return out.map(x => (x.run && x.run.length === 1) ? { single: x.run[0] } : x);
+    }
+    function runChips(run) {              // run newest-first; net movement reads oldest → newest
+      const first = run[run.length - 1], lastE = run[0];
+      const out = [];
+      const f0 = first.meta && first.meta.fee, f1 = lastE.meta && lastE.meta.fee;
+      if (f0 && f1 && f0.from != null && f1.to != null) {
+        const delta = f1.to - f0.from, up = delta > 0;
+        out.push('<span class="chip fee ' + (up ? 'up' : delta < 0 ? 'down' : '') + '">Net fee <b>' + (delta === 0 ? 'unchanged' : (up ? '+' : '−') + money(delta)) + '</b>'
+          + '<span class="arw">·</span>' + money(f0.from) + '<span class="arw">→</span>' + money(f1.to) + '</span>');
+      }
+      const fields = new Map();          // field → { from (oldest), to (newest), detail }
+      run.slice().reverse().forEach(e => (e.meta && e.meta.changes || []).forEach(c => {
+        const cur = fields.get(c.field);
+        if (!cur) fields.set(c.field, { from: c.from, to: c.to, detail: c.detail });
+        else { cur.to = c.to; if (c.detail) cur.detail = (cur.detail ? cur.detail + ' · ' : '') + c.detail; }
+      }));
+      fields.forEach((v, k) => {
+        out.push('<span class="chip"><b>' + esc(k) + '</b> ' + esc(v.from) + '<span class="arw">→</span>' + esc(v.to) + '</span>');
+        if (k === 'Team' && v.detail) out.push('<span class="chip detail">' + esc(v.detail) + '</span>');
+      });
+      return out.length ? '<div class="chips">' + out.join('') + '</div>' : '';
+    }
     const today = new Date().toISOString().slice(0, 10);
     const yday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const shown = rows.slice(0, limit);
@@ -531,21 +583,41 @@
         : g.d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
       return '<div class="daygrp"><div class="dayhead"><h2>' + esc(label) + '</h2>'
         + '<span class="dcount">' + items.length + ' change' + (items.length === 1 ? '' : 's') + '</span></div>'
-        + items.map(e => {
-          const t = new Date(e.ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-          const nm = projName(e), cl = projClient(e);
-          const link = e.projectId && STORE.getProject(e.projectId)
-            ? '<a class="e-proj" href="Universal Fee Calculator.html?id=' + esc(e.projectId) + '">' + esc(nm) + '</a>'
+        + foldRuns(items).map(x => {
+          const card = (e, cls) => {
+            const t = new Date(e.ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+            const nm = projName(e), cl = projClient(e);
+            const link = e.projectId && STORE.getProject(e.projectId)
+              ? '<a class="e-proj" href="Universal Fee Calculator.html?id=' + esc(e.projectId) + '">' + esc(nm) + '</a>'
+              : '<span class="e-proj">' + esc(nm) + '</span>';
+            return '<div class="ent' + (cls ? ' ' + cls : '') + '">'
+              + '<div class="e-time">' + esc(t) + '</div>'
+              + '<div class="e-who"><b>' + esc(e.actorName || e.actor || 'Unknown') + '</b>'
+                + (e.viewingAs ? '<span>while previewing ' + esc(e.viewingAs) + '</span>' : '') + '</div>'
+              + '<div class="e-main">'
+                + '<div class="e-top"><span class="badge ' + esc(ACTION_KIND(e.action)) + '">' + esc(ACTION_LABEL[e.action] || e.action) + '</span>'
+                + link + (cl ? '<span class="e-client">' + esc(cl) + '</span>' : '') + '</div>'
+                + '<div class="e-line">' + headline(e) + '</div>'
+                + chips(e)
+              + '</div></div>';
+          };
+          if (x.single) return card(x.single);
+          const run = x.run, newest = run[0], oldest = run[run.length - 1];
+          const fmtT = (ts) => new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          const mins = Math.max(1, Math.round((new Date(newest.ts) - new Date(oldest.ts)) / 60000));
+          const nm = projName(newest), cl = projClient(newest);
+          const link = newest.projectId && STORE.getProject(newest.projectId)
+            ? '<a class="e-proj" href="Universal Fee Calculator.html?id=' + esc(newest.projectId) + '">' + esc(nm) + '</a>'
             : '<span class="e-proj">' + esc(nm) + '</span>';
-          return '<div class="ent">'
-            + '<div class="e-time">' + esc(t) + '</div>'
-            + '<div class="e-who"><b>' + esc(e.actorName || e.actor || 'Unknown') + '</b>'
-              + (e.viewingAs ? '<span>while previewing ' + esc(e.viewingAs) + '</span>' : '') + '</div>'
+          return '<div class="ent run">'
+            + '<div class="e-time">' + esc(fmtT(oldest.ts)) + '<span class="e-to">– ' + esc(fmtT(newest.ts)) + '</span></div>'
+            + '<div class="e-who"><b>' + esc(newest.actorName || newest.actor || 'Unknown') + '</b></div>'
             + '<div class="e-main">'
-              + '<div class="e-top"><span class="badge ' + esc(ACTION_KIND(e.action)) + '">' + esc(ACTION_LABEL[e.action] || e.action) + '</span>'
+              + '<div class="e-top"><span class="badge ' + esc(ACTION_KIND(newest.action)) + '">' + esc(ACTION_LABEL[newest.action] || newest.action) + '</span>'
               + link + (cl ? '<span class="e-client">' + esc(cl) + '</span>' : '') + '</div>'
-              + '<div class="e-line">' + headline(e) + '</div>'
-              + chips(e)
+              + '<div class="e-line">' + run.length + ' saves over ' + mins + ' minute' + (mins === 1 ? '' : 's') + ' — net effect below</div>'
+              + runChips(run)
+              + '<details class="e-runs"><summary>Show each of the ' + run.length + ' saves</summary>' + run.map(e => card(e, 'sub')).join('') + '</details>'
             + '</div></div>';
         }).join('') + '</div>';
     }).join('')
