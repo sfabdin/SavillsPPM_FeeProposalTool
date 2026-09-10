@@ -2557,6 +2557,73 @@
     });
   })();
 
+  /* ============ PASS-THROUGH BY MONTH + THE IMPORT RULE ============
+     The five small-works records Brianna flagged: the dash read a frozen
+     pass-through snapshot that edits never refreshed, and honoured a hidden
+     import month over the leader's timeline and cost. */
+  (function () {
+    const sq = (x, y, label) => (x === y) ? true : label + ': ' + JSON.stringify(x) + ' ≠ ' + JSON.stringify(y);
+    const r2 = (n) => Math.round(n * 100) / 100;
+    const sw = (over) => Object.assign({
+      id: 'sw_' + Math.random().toString(36).slice(2, 8), createdAt: '2026-07-17T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z',
+      project: { name: 'SW test', client: 'JPMC', status: 'closed', rating: 1 },
+      timeline: { startMonth: 5, startYear: 2026, endMonth: 5, endYear: 2026 },
+      phases: [{ id: 'p1', name: 'Delivery', length: 1 }], groups: [{ id: 'core', name: 'Core' }], roles: [],
+      assumptions: S.defaultAssumptions({ catalogBaseYear: 2024 }),
+    }, over || {});
+    const pt = (lines) => ({ enabled: true, lines });
+    test('Pass-through · months', 'no split → spread evenly over the timeline; a split → its shape, scaled to the cost', () => {
+      const even = S.ptLineDistribution({ cost: 3000, markupPct: 10 }, [{ year: 2026, month: 3 }, { year: 2026, month: 4 }, { year: 2026, month: 5 }]);
+      const shaped = S.ptLineDistribution({ cost: 2579.79, markupPct: 10, monthly: { '2026-5': 3300 } }, [{ year: 2026, month: 5 }]);
+      return sq(Object.keys(even.byMonth).join(','), '2026-03,2026-04,2026-05', 'even months') && sq(r2(even.byMonth['2026-04']), 1000, 'even amount') &&
+             sq(shaped.source, 'split', 'the split is used') && sq(r2(shaped.byMonth['2026-05']), 2579.79, 'but scaled to the edited cost') && sq(!!shaped.scaled, true, 'and flagged as scaled');
+    });
+    test('Pass-through · months', 'a split entirely outside the timeline is ignored — the timeline is the newer edit', () => {
+      // Bowen 8th Floor: imported into August, timeline moved to October.
+      const d = S.ptLineDistribution({ cost: 86750, markupPct: 10, monthly: { '2026-8': 86750 } }, [{ year: 2026, month: 10 }]);
+      return sq(d.source, 'even', 'fell back to the timeline') && sq(r2(d.byMonth['2026-10']), 86750, 'all of it in October') && sq(d.droppedMonths.join(','), '2026-08', 'and says which month was dropped');
+    });
+    test('Pass-through · months', 'billed vs managed: the client is billed cost+fee, or the fee alone', () => {
+      const p = sw({ passthrough: pt([{ id: 'a', cost: 1000, markupPct: 10, mode: 'billed' }, { id: 'b', cost: 2000, markupPct: 10, mode: 'managed' }]) });
+      const m = S.passThroughMonths(p);
+      return sq(r2(m.client['2026-05']), 1300, 'client billed: 1,100 + 200') && sq(r2(m.cost['2026-05']), 1000, 'only billed cost flows out') && sq(r2(m.markup['2026-05']), 300, 'fee on both');
+    });
+    test('Pass-through · projections', 'the dash reads pass-through LIVE — a stale frozen snapshot no longer wins (SW-390)', () => {
+      const p = sw({
+        passthrough: pt([{ id: 'a', label: 'Unity Electric', cost: '2579.79', markupPct: 10, mode: 'billed', monthly: { '2026-5': 3300 } }, { id: 'b', label: 'Managed', cost: '3358', markupPct: '10', mode: 'managed' }]),
+        source: { importedByMonth: { '2026-4': 3173.77 }, reconciled: false },
+        financials: { net: 0, stale: true, byMonth: [{ ym: '2026-05', net: 0, broker: 0, passCost: 0, passMarkup: 330, passClient: 330, invoice: 330, revenue: 330 }] },
+      });
+      const bs = S.billingSeries(p, C);
+      const may = bs.find(x => x.ym === '2026-05');
+      return sq(bs.length, 1, 'one month') && sq(r2(may.invoice), r2(2579.79 * 1.1 + 335.8), 'May is what the calculator says, not the stale 330') && sq(r2(may.passCost), 2579.79, 'vendor cost out');
+    });
+    test('Pass-through · projections', 'a line added after the freeze reaches the dash (CxLoyalty Carpet second phase)', () => {
+      const p = sw({
+        timeline: { startMonth: 3, startYear: 2026, endMonth: 7, endYear: 2026 }, phases: [{ id: 'p1', name: 'Delivery', length: 1 }, { id: 'p2', name: 'New phase', length: 4 }],
+        passthrough: pt([{ id: 'a', cost: 272846, markupPct: 10, mode: 'billed', monthly: { '2026-3': 272846 } }, { id: 'b', cost: '25992', markupPct: '10' }]),
+        source: { importedByMonth: { '2026-2': 300130.6 }, reconciled: false },
+        financials: { net: 0, stale: true, byMonth: [{ ym: '2026-03', net: 0, broker: 0, passCost: 272846, passMarkup: 27284.6, passClient: 300130.6, invoice: 300130.6, revenue: 27284.6 }] },
+      });
+      const bs = S.billingSeries(p, C);
+      const tot = bs.reduce((t, x) => t + x.invoice, 0);
+      return sq(bs.length, 5, 'March to July') && sq(r2(bs.find(x => x.ym === '2026-03').invoice), r2(300130.6 + 25992 * 1.1 / 5), 'March: first line plus a fifth of the second') &&
+             sq(r2(tot), r2(300130.6 + 25992 * 1.1), 'total = both lines') && sq(bs.some(x => x.ym === '2026-02'), false, 'the February import no longer competes');
+    });
+    test('Pass-through · projections', 'the import is a starting point: a pass-through line supersedes it, and until then every imported month shows', () => {
+      const untouched = sw({ source: { importedByMonth: { '2026-4': 3173.77 }, reconciled: false } });   // timeline is May; import says April
+      const edited = sw({ source: { importedByMonth: { '2026-4': 3173.77 }, reconciled: false }, passthrough: pt([{ id: 'a', cost: 1000, markupPct: 10, mode: 'billed' }]) });
+      const a = S.billingSeries(untouched, C), b = S.billingSeries(edited, C);
+      return sq(a.map(x => x.ym + ':' + r2(x.invoice)).join(','), '2026-04:3173.77,2026-05:0', 'imported April shows even though the timeline is May') &&
+             sq(b.map(x => x.ym + ':' + r2(x.invoice)).join(','), '2026-05:1100', 'once a line exists, the line is the number');
+    });
+    test('Pass-through · projections', 'staffing being built does NOT supersede the import (that is the bridge workflow)', () => {
+      const p = Object.assign(base({ source: { importedByMonth: { '2026-1': 10000, '2026-2': 10000, '2026-3': 10000, '2026-4': 10000 } } }), { financials: null });
+      const ms = S.monthlySeries(p, C);
+      return sq(r2(ms.find(x => x.month === 2).amount), 10000, 'February is still the imported figure');
+    });
+  })();
+
   /* ============ ROUND TRIPS + THE BOX FAKE ============ */
   (function () {
     const B = window.UFC_BulkExcel, Box = window.UFC_Box;

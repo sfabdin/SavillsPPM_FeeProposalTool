@@ -418,25 +418,13 @@
       cost + markup; managed lines = markup fee only. Explicit monthly distribution wins. */
   function ptBilledMap() {
     const map = {}; if (!ptOn()) return map;
-    const keys = getMonths().map(m => m.year + '-' + m.month);
-    ptLines().forEach(l => {
-      const cost = parseFloat(l.cost) || 0; if (!cost) return;
-      const mkFrac = (parseFloat(l.markupPct) || 0) / 100;
-      const managed = ptIsManaged(l);
-      const toClient = (c) => managed ? c * mkFrac : c * (1 + mkFrac);
-      const mo = (l.monthly && Object.keys(l.monthly).length) ? l.monthly : null;
-      if (mo) {
-        Object.keys(mo).forEach(ym => {
-          const norm = ym.split('-')[0] + '-' + parseInt(ym.split('-')[1], 10);
-          map[norm] = (map[norm] || 0) + toClient(parseFloat(mo[ym]) || 0);
-        });
-      } else if (keys.length) {
-        const per = toClient(cost) / keys.length;
-        keys.forEach(k => { map[k] = (map[k] || 0) + per; });
-      }
-    });
+    // The store's rule, so this table, the summary and Revenue Projections agree.
+    const ptm = STORE.passThroughMonths(state);
+    Object.keys(ptm.client).forEach(ym => { const [y, m] = ym.split('-').map(Number); map[y + '-' + m] = ptm.client[ym]; });
     return map;
   }
+  /** One line's cost split by timeline month, per the store's rule. */
+  function ptLineSplit(l) { return STORE.ptLineDistribution(l, getMonths()); }
   /** A phase's display FTE for a role = the rounded average of its months'
       effective FTE. Phase is a derived rollup; months are canonical. */
   function phaseAvgFte(role, phaseId) {
@@ -2174,7 +2162,7 @@
             <td class="pt-c-num pt-ro pt-fee" data-id="${l.id}">${fmtMoney(mkAmt)}</td>
             <td class="pt-c-num pt-ro pt-client" data-id="${l.id}">${fmtMoney(clientBilled)}</td>
             <td class="pt-c-x"><button type="button" class="icon-btn pt-rm" data-id="${l.id}" title="Remove line">×</button></td>
-          </tr>`;
+          </tr>` + ptMonthsRow(l);
         }).join('');
       }
     }
@@ -2189,10 +2177,84 @@
     // wire line inputs — text/number inputs update state + derived cells IN PLACE
     // (never rebuild the rows on keystroke, or the focused field would deselect).
     $$('.pt-label').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.label = e.target.value; markDirty(); } }));
-    $$('.pt-cost').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.cost = e.target.value; refreshPtLive(); } }));
+    $$('.pt-cost').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.cost = e.target.value; refreshPtMonthsTotals(); refreshPtLive(); } }));
     $$('.pt-mk').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.markupPct = e.target.value; refreshPtLive(); } }));
     $$('.pt-mode').forEach(s => s.addEventListener('change', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.mode = e.target.value; refreshPtLive(); } }));
     $$('.pt-rm').forEach(b => b.addEventListener('click', e => { const id = e.target.dataset.id; ptState().lines = ptLines().filter(x => x.id !== id); onPtChange(); }));
+    wirePtMonths();
+  }
+  /* ----- Billing months per line -----
+     The month split is the leader's to set: which months, how much each. It
+     must bridge to the line's cost — the cost is the total, the split is the
+     shape — so a split that drifts is shown in red with a one-click fix, and
+     the pricing scales it to the cost meanwhile. Months outside the timeline
+     (the July import placed every line in its anticipated billing month) are
+     ignored and said so. */
+  function ptMonthsRow(l) {
+    const cost = parseFloat(l.cost) || 0;
+    const months = getMonths();
+    if (!cost || !months.length) return '';
+    const d = ptLineSplit(l);
+    // What is shown is what is PRICED: the split as typed while it is in play,
+    // the even spread once it has been dropped or was never set.
+    const raw = (d.source === 'split' && l.monthly && typeof l.monthly === 'object') ? l.monthly : null;
+    const rawTot = raw ? d.rawTotal : cost;
+    const cells = months.map(m => {
+      const k = m.year + '-' + m.month, ym = m.year + '-' + String(m.month).padStart(2, '0');
+      const v = raw ? (parseFloat(raw[k]) || 0) : (d.byMonth[ym] || 0);
+      return `<label class="pt-mo"><span>${escapeHtml(m.label)}</span><input type="text" inputmode="decimal" class="pt-mo-in" data-id="${l.id}" data-k="${k}" value="${v ? Math.round(v * 100) / 100 : ''}" placeholder="0"></label>`;
+    }).join('');
+    const dropped = d.droppedMonths.map(ym => { const [y, mm] = ym.split('-').map(Number); return monthLabel(y, mm); });
+    const note = dropped.length ? `<span class="pt-mo-warn">Imported into ${escapeHtml(dropped.join(', '))} — outside this project's timeline, so ignored. Set the months above or <button type="button" class="pt-mo-clear" data-id="${l.id}">clear the import</button>.</span>` : '';
+    return `<tr class="pt-months" data-id="${l.id}"><td colspan="7">
+      <div class="pt-mo-head"><span class="pt-mo-lbl">Billing months</span>
+        <span class="pt-mo-tot" data-id="${l.id}">${ptMonthsTotalText(l, rawTot, cost)}</span>
+        <button type="button" class="pt-mo-even" data-id="${l.id}">Spread evenly</button>
+        <button type="button" class="pt-mo-fix" data-id="${l.id}"${raw && Math.abs(rawTot - cost) > 0.005 ? '' : ' hidden'}>Scale to cost</button>
+        ${note}</div>
+      <div class="pt-mo-grid">${cells}</div></td></tr>`;
+  }
+  function ptMonthsTotalText(l, tot, cost) {
+    const gap = tot - cost;
+    if (Math.abs(gap) <= 0.005) return `<span class="ok">Months ${fmtMoney(tot)} = cost ${fmtMoney(cost)}</span>`;
+    return `<span class="bad">Months ${fmtMoney(tot)} vs cost ${fmtMoney(cost)} · ${gap > 0 ? 'over' : 'under'} by ${fmtMoney(Math.abs(gap))} — priced scaled to cost until fixed</span>`;
+  }
+  function refreshPtMonthsTotals() {
+    ptLines().forEach(l => {
+      const el = document.querySelector(`.pt-mo-tot[data-id="${l.id}"]`); if (!el) return;
+      const cost = parseFloat(l.cost) || 0;
+      const d = ptLineSplit(l);
+      const tot = d.source === 'split' ? d.rawTotal : cost;
+      el.innerHTML = ptMonthsTotalText(l, tot, cost);
+      const fix = document.querySelector(`.pt-mo-fix[data-id="${l.id}"]`);
+      if (fix) fix.hidden = !(d.source === 'split' && Math.abs(tot - cost) > 0.005);
+    });
+  }
+  function wirePtMonths() {
+    $$('.pt-mo-in').forEach(i => i.addEventListener('input', e => {
+      const l = ptLines().find(x => x.id === e.target.dataset.id); if (!l) return;
+      // Typing a month makes the split explicit: every timeline month as shown.
+      if (!l.monthly || typeof l.monthly !== 'object') l.monthly = {};
+      const v = parseFloat(String(e.target.value).replace(/[$,\s]/g, ''));
+      if (isNaN(v) || v === 0) delete l.monthly[e.target.dataset.k]; else l.monthly[e.target.dataset.k] = v;
+      // Keep the other visible months as the leader sees them, so one edit does not re-spread the rest.
+      $$(`.pt-mo-in[data-id="${l.id}"]`).forEach(o => { if (o === e.target) return; const ov = parseFloat(String(o.value).replace(/[$,\s]/g, '')); if (!isNaN(ov) && ov !== 0) l.monthly[o.dataset.k] = ov; });
+      refreshPtMonthsTotals(); refreshPtLive();
+    }));
+    $$('.pt-mo-even').forEach(b => b.addEventListener('click', e => {
+      const l = ptLines().find(x => x.id === e.target.dataset.id); if (!l) return;
+      delete l.monthly; onPtChange();
+    }));
+    $$('.pt-mo-fix').forEach(b => b.addEventListener('click', e => {
+      const l = ptLines().find(x => x.id === e.target.dataset.id); if (!l) return;
+      const d = ptLineSplit(l); l.monthly = {};
+      Object.keys(d.byMonth).forEach(ym => { const [y, m] = ym.split('-').map(Number); l.monthly[y + '-' + m] = Math.round(d.byMonth[ym] * 100) / 100; });
+      onPtChange();
+    }));
+    $$('.pt-mo-clear').forEach(b => b.addEventListener('click', e => {
+      const l = ptLines().find(x => x.id === e.target.dataset.id); if (!l) return;
+      delete l.monthly; onPtChange();
+    }));
   }
   /** Recompute derived cells + totals + summary/monthly WITHOUT rebuilding the
       input rows, so the field being typed in keeps focus. */
