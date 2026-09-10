@@ -2939,6 +2939,81 @@
 
   /** Stable signature of every fee-affecting input. Any change flips a booked
       snapshot to `stale`. */
+  /* ============================================================
+     PASS-THROUGH BY MONTH — the one rule
+     ------------------------------------------------------------
+     Each line has a COST (the edited truth) and, optionally, a month
+     split `line.monthly` ({ 'YYYY-M': amount }). The split says WHERE
+     and in WHAT PROPORTION; the cost says HOW MUCH — so a split that
+     no longer sums to the cost (the July import seeded every line
+     with its original amount) is scaled to the cost, never trusted
+     over it. Months of the split outside the project's timeline are
+     dropped, and a split left with nothing falls back to an even
+     spread over the timeline: the timeline is an edit too, and an
+     edit beats what was imported. No split at all = even spread.
+     Keys out are ZERO-PADDED 'YYYY-MM'.
+     ============================================================ */
+  const ptLineActive = (l) => !!l && (parseFloat(l.cost) || 0) > 0;
+  function ptActive(p) {
+    const pt = p && p.passthrough;
+    return !!(pt && pt.enabled && Array.isArray(pt.lines) && pt.lines.some(ptLineActive));
+  }
+  /** One line's vendor cost by month (padded keys), per the rule above.
+      `months` = the project's timeline months [{year, month}]. Also says
+      whether the stored split was ignored because it sat outside the timeline. */
+  function ptLineDistribution(line, months) {
+    const cost = parseFloat(line && line.cost) || 0;
+    const ymAll = (months || []).map(m => m.year + '-' + String(m.month).padStart(2, '0'));
+    const inWin = new Set(ymAll);
+    const out = { byMonth: {}, cost, source: 'even', droppedMonths: [] };
+    if (!cost) return out;
+    const raw = (line.monthly && typeof line.monthly === 'object') ? line.monthly : null;
+    const kept = {};
+    let keptTot = 0;
+    if (raw) Object.keys(raw).forEach(k => {
+      const parts = String(k).split('-'); if (parts.length < 2) return;
+      const ym = parts[0] + '-' + String(parseInt(parts[1], 10)).padStart(2, '0');
+      const v = parseFloat(raw[k]) || 0;
+      if (!v) return;
+      if (!inWin.has(ym)) { out.droppedMonths.push(ym); return; }
+      kept[ym] = (kept[ym] || 0) + v; keptTot += v;
+    });
+    out.rawTotal = keptTot;
+    if (keptTot > 0) {
+      out.source = 'split';
+      out.scaled = Math.abs(keptTot - cost) > 0.005;
+      Object.keys(kept).forEach(ym => { out.byMonth[ym] = kept[ym] / keptTot * cost; });
+      return out;
+    }
+    if (ymAll.length) { const per = cost / ymAll.length; ymAll.forEach(ym => { out.byMonth[ym] = per; }); }
+    return out;
+  }
+  /** Every active line folded together: client-billed, vendor cost out, and
+      markup (Savills revenue) by month, plus the totals. */
+  function passThroughMonths(p) {
+    const res = { client: {}, cost: {}, markup: {}, clientTotal: 0, costTotal: 0, markupTotal: 0, lines: [] };
+    if (!ptActive(p)) return res;
+    const months = enumerateMonths(p.timeline);
+    (p.passthrough.lines || []).forEach(line => {
+      if (!ptLineActive(line)) return;
+      const mk = (parseFloat(line.markupPct) || 0) / 100;
+      const managed = line.mode === 'managed';   // direct-bill: Savills invoices only the fee
+      const d = ptLineDistribution(line, months);
+      res.lines.push(Object.assign({ id: line.id, managed }, d));
+      Object.keys(d.byMonth).forEach(ym => {
+        const c = d.byMonth[ym];
+        const markup = c * mk;
+        const client = managed ? markup : (c + markup);
+        res.client[ym] = (res.client[ym] || 0) + client;
+        res.markup[ym] = (res.markup[ym] || 0) + markup;
+        if (!managed) res.cost[ym] = (res.cost[ym] || 0) + c;
+        res.clientTotal += client; res.markupTotal += markup;
+        if (!managed) res.costTotal += c;
+      });
+    });
+    return res;
+  }
+
   function financialsInputsHash(p) {
     const a = p.assumptions || {};
     const sig = JSON.stringify({
@@ -3038,48 +3113,14 @@
 
     // ---- Pass-through / principal billing (vendor cost billed THROUGH Savills) ----
     // Not fee: the COST flows straight out to the vendor; only the MARKUP is Savills
-    // revenue. Walled off from discount / rate-lock / escalation. Distributed per
-    // line across the timeline (explicit monthly overrides, else spread evenly).
-    const pt = p.passthrough || {};
-    const ptLines = (pt.enabled && Array.isArray(pt.lines)) ? pt.lines : [];
-    const ymAll = months.map(m => m.year + '-' + String(m.month).padStart(2, '0'));
-    // Per-month: passClientM = billed THROUGH Savills; passCostM = vendor cost that
-    // flows OUT (billed lines only — managed vendors bill the client direct, so no
-    // cost passes through us); passMarkM = the markup fee (revenue, both modes).
-    const passClientM = {}, passCostM = {}, passMarkM = {};
-    let ptClientTot = 0, ptCostTot = 0, ptMarkTot = 0;
-    ptLines.forEach(line => {
-      const cost = parseFloat(line.cost) || 0;
-      const mk = (parseFloat(line.markupPct) || 0) / 100;
-      if (!cost) return;
-      const managed = line.mode === 'managed';   // direct-bill: Savills invoices only the fee
-      const dist = {};
-      const explicit = line.monthly && Object.keys(line.monthly).length;
-      if (explicit) {
-        Object.keys(line.monthly).forEach(ym => {
-          const norm = ym.split('-')[0] + '-' + String(parseInt(ym.split('-')[1], 10)).padStart(2, '0');
-          dist[norm] = (dist[norm] || 0) + (parseFloat(line.monthly[ym]) || 0);
-        });
-      } else if (ymAll.length) {
-        const per = cost / ymAll.length;
-        ymAll.forEach(ym => { dist[ym] = per; });
-      }
-      Object.keys(dist).forEach(ym => {
-        const c = dist[ym];
-        const markup = c * mk;
-        // managed → client billed = markup fee only; billed → cost + markup.
-        const client = managed ? markup : (c + markup);
-        passClientM[ym] = (passClientM[ym] || 0) + client;
-        passMarkM[ym] = (passMarkM[ym] || 0) + markup;
-        if (!managed) passCostM[ym] = (passCostM[ym] || 0) + c;   // only billed cost flows through us
-        ptClientTot += client;
-        ptMarkTot += markup;
-        if (!managed) ptCostTot += c;
-      });
-    });
-    const ptCostTotal = round2(ptCostTot);
-    const ptMarkupTotal = round2(ptMarkTot);
-    const ptClientTotal = round2(ptClientTot);   // what the client is billed for pass-through (through Savills)
+    // revenue. Walled off from discount / rate-lock / escalation. One rule for
+    // every reader — passThroughMonths() — so the calculator, the projections
+    // and this snapshot can never disagree about a pass-through month.
+    const ptm = passThroughMonths(p);
+    const passClientM = ptm.client, passCostM = ptm.cost, passMarkM = ptm.markup;
+    const ptCostTotal = round2(ptm.costTotal);
+    const ptMarkupTotal = round2(ptm.markupTotal);
+    const ptClientTotal = round2(ptm.clientTotal);   // what the client is billed for pass-through (through Savills)
 
     // Materialized monthly billing series — read directly by Revenue Projections / Studio
     // (no re-derivation downstream). invoice = TOTAL the CLIENT is billed (fee on-top grossed
@@ -3449,11 +3490,22 @@
     // stays locked (so projections never move as staffing is built) until the
     // project is explicitly reconciled. Not sliced by service line.
     const imp = p.source && p.source.importedByMonth;
-    if (imp && !slFilter && !(p.source && p.source.reconciled)) {
+    /* The imported monthly $ is a STARTING POINT. Building staffing keeps it
+       (that is the bridge-to-the-import workflow, ended by an explicit
+       reconcile), but entering a pass-through line is a different edit: the
+       line IS the number, and the import steps aside — it used to keep
+       winning, and to drop any imported month outside the timeline on the
+       floor. Records that still ride the import show every imported month,
+       timeline or not: it is the only figure they have. */
+    const untouched = !ptActive(p);
+    if (imp && untouched && !slFilter && !(p.source && p.source.reconciled)) {
       /* Locked against staffing, not against people. An override is someone
          saying "this month is X"; a slip is Finance saying it moved. Both
          used to be painted on the grid and then silently not applied. */
-      return applyOverrides(months.map(m => ({ year: m.year, month: m.month, amount: +imp[m.year + '-' + m.month] || 0 })), p, slFilter, opts && opts.raw);
+      const keys = new Set(months.map(m => m.year + '-' + m.month));
+      const extra = Object.keys(imp).filter(k => !keys.has(k) && (+imp[k] || 0)).map(k => { const [y, mm] = k.split('-').map(Number); return { year: y, month: mm }; });
+      const all = months.concat(extra).sort((a, b) => a.year - b.year || a.month - b.month);
+      return applyOverrides(all.map(m => ({ year: m.year, month: m.month, amount: +imp[m.year + '-' + m.month] || 0 })), p, slFilter, opts && opts.raw);
     }
     // Which group ids are in the requested service line (if filtering)
     let allowedGroups = null;
@@ -3867,6 +3919,14 @@
           broker: s.amount * pct, passCost: 0, passClient: 0 };
       });
     }
+    /* Pass-through is never frozen. It is not priced off the rate grid, so
+       there is nothing to protect — and the frozen copy went stale the moment
+       a line, a cost or the timeline was edited (a booked record only marks
+       drift, it does not re-price). Read it live from the lines, through the
+       same rule the calculator uses, so the two can never disagree. */
+    const ptm = passThroughMonths(p);
+    const ptFor = (k) => { const ym = padYM(k); return { passClient: ptm.client[ym] || 0, passCost: ptm.cost[ym] || 0 }; };
+    Object.keys(base).forEach(k => { const x = ptFor(k); base[k].passClient = x.passClient; base[k].passCost = x.passCost; });
     // The live series carries the same months with overrides + changes folded
     // in; use it as the authority on `net` and on the flags.
     const live = monthlySeries(p, catalog) || [];
@@ -3874,10 +3934,11 @@
     const seen = {};
     live.forEach(s => {
       const k = s.year + '-' + s.month;
-      const b = base[k] || { net: s.amount, broker: 0, passCost: 0, passClient: 0 };
+      const x = ptFor(k);
+      const b = base[k] || { net: s.amount, broker: 0, passCost: x.passCost, passClient: x.passClient };
       const net = s.amount;
-      // Broker/pass-through ride the ORIGINAL proportions — a monthly edit
-      // changes what we bill, not the deal behind it.
+      // Broker rides the ORIGINAL proportions — a monthly edit changes what
+      // we bill, not the deal behind it.
       const ratio = b.net ? net / b.net : 1;
       const broker = (b.broker || 0) * ratio;
       out.push({
@@ -3891,8 +3952,16 @@
     // Months the snapshot knows about that the live compute doesn't reach.
     Object.entries(base).forEach(([k, b]) => {
       if (seen[k]) return;
+      seen[k] = true;
       out.push({ ym: padYM(k), year: b.year, month: b.month, net: b.net, invoice: (onTop ? b.net + b.broker : b.net) + (b.passClient || 0),
                  broker: b.broker, passCost: b.passCost, passClient: b.passClient, overridden: false, slipOut: 0, slipIn: 0, adjusted: 0 });
+    });
+    // Pass-through months neither reaches (a split placed where no fee bills).
+    Object.keys(ptm.client).forEach(ym => {
+      const [y, m] = ym.split('-').map(Number); const k = y + '-' + m;
+      if (seen[k] || !(ptm.client[ym] || ptm.cost[ym])) return;
+      out.push({ ym, year: y, month: m, net: 0, invoice: ptm.client[ym] || 0, broker: 0, passCost: ptm.cost[ym] || 0, passClient: ptm.client[ym] || 0,
+                 overridden: false, slipOut: 0, slipIn: 0, adjusted: 0 });
     });
     return out.sort((a, b) => a.year - b.year || a.month - b.month);
   }
@@ -4625,7 +4694,7 @@
     seedMappingFromLedger, autoMapLedger, mappingReport, 
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, monthlySeries,
-    computeFinancials, restampFinancials,
+    computeFinancials, restampFinancials, passThroughMonths, ptLineDistribution, ptActive,
     isChangeOrder, isApprovedChangeOrder, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
     reconcileImport,
     projectSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
