@@ -576,7 +576,8 @@
     // Vocabulary: additive on both sides, so union it — a list value added in
     // one browser must never be removed by a save from another.
     const rv = remote.vocab || {}, lv = local.vocab || {};
-    if (rv.industries || lv.industries || rv.projectTypes || lv.projectTypes || rv.lossReasons || lv.lossReasons || rv.leaders || lv.leaders) {
+    if (rv.industries || lv.industries || rv.projectTypes || lv.projectTypes || rv.lossReasons || lv.lossReasons || rv.leaders || lv.leaders
+        || rv.admins || lv.admins || rv.toolAdmins || lv.toolAdmins || rv.reportYears || lv.reportYears) {
       const uniq = (a, b) => [...new Set([...(a || []), ...(b || [])])];
       const byId = (a, b, key) => {
         const map = {};
@@ -588,7 +589,14 @@
         lossReasons: uniq(rv.lossReasons, lv.lossReasons),
         projectTypes: byId(rv.projectTypes, lv.projectTypes, 'name'),
         leaders: byId(rv.leaders, lv.leaders, 'id'),
+        // Admin grants are additive too — a grant made in one browser must
+        // survive a save from another.
+        admins: uniq(rv.admins, lv.admins),
+        toolAdmins: uniq(rv.toolAdmins, lv.toolAdmins),
       };
+      // Reporting years: one setting, the later change wins.
+      const ry = [rv.reportYears, lv.reportYears].filter(Boolean).sort((a, b) => String(a.setAt || '').localeCompare(String(b.setAt || ''))).pop();
+      if (ry) out.vocab.reportYears = ry;
     }
     /* Revenue ledger + flash snapshots: union by PERIOD, never whole-key.
        Both are built up over time, often from different machines — Finance

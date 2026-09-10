@@ -268,6 +268,7 @@
   /* ================= MONTHS (admin) ================= */
   function paneMonths() {
     const recs = records(); const cycles = C.listCycles().slice().reverse();
+    const years = S.getReportYears();
     const known = C.knownCycles();
     const last = known.length ? known[known.length - 1] : null;
     const today = new Date().toISOString().slice(0, 7);
@@ -287,7 +288,7 @@
       return '<tr><td><b>' + esc(C.ymLong(y)) + '</b></td><td class="mono">confirmed-' + esc(y) + '.json</td><td>' + state + '</td><td>' + dl + '</td>' +
         '<td>' + done + ' of ' + exp.length + '</td><td>' + (c.lockedAt ? (c.carried || []).length + (carriedN ? ' · ' + plural(carriedN, 'project') : '') : '—') + '</td>' +
         '<td class="money">' + (copies.length ? money(fee) : '—') + '</td><td>' + esc(C.fmtDay(c.openedAt)) + (c.openedByName ? '<div class="sub">' + esc(c.openedByName) + '</div>' : '') + '</td>' +
-        '<td style="white-space:nowrap">' + act + '<button class="btn btn-ghost small" data-dl-json="' + esc(y) + '">JSON</button></td></tr>';
+        '<td style="white-space:nowrap">' + act + '<button class="btn btn-ghost small" data-dl-xlsx="' + esc(y) + '" title="Revenue Projections format for ' + esc(years.join(' and ')) + ', plus a pivotable data sheet">Excel</button> <button class="btn btn-ghost small" data-dl-json="' + esc(y) + '">JSON</button></td></tr>';
     }).join('');
     return '<div class="cb-head"><div><div class="eyebrow">Leadership admins</div><h2>Open a month, set its deadline, lock it</h2>' +
       '<p>Opening a month writes a new file in the shared Box folder; nothing lands in it until a leader confirms. Locking freezes it, carries in anyone who never confirmed (flagged), and makes it the book Executive Reporting reads.</p></div></div>' +
@@ -296,9 +297,65 @@
       '<div class="field"><label for="ad-deadline">Confirm by</label><input id="ad-deadline" type="date" value="' + esc(C.defaultDeadline(nextYm)) + '"><div class="hint">Counted down on every page; bold red once it passes</div></div>' +
       '<div class="field"><button class="btn btn-primary" id="ad-create">Open ' + esc(C.ymLong(nextYm)) + '</button></div>' +
       '</div><p class="sub" style="margin:14px 0 0">Everyone with at least one active project is expected, even if nothing changed. Leaders with no projects show grey, never red. On lock, a Revenue Diff snapshot of the confirmed book is saved so any two months can be compared.</p></div></div>' +
+      reportYearsPanel(years) +
       '<div class="panel"><div class="ph"><h3>Months</h3><span class="sub">one file each, in the same Box folder as projects.json</span></div>' +
       '<div class="tw"><table class="cb-table"><thead><tr><th>Month</th><th>File</th><th>State</th><th>Confirm by</th><th>Confirmed</th><th>Carried in</th><th class="money">Book fee</th><th>Opened</th><th></th></tr></thead>' +
       '<tbody>' + (rows || '<tr><td colspan="9" class="sub">No months yet.</td></tr>') + '</tbody></table></div></div>';
+  }
+  /* The calendar years every report and export covers. Moved forward by a
+     leadership admin as the year turns; synced to everyone through the book. */
+  function reportYearsPanel(years) {
+    const now = new Date().getFullYear(); const set = S.getReportYearsSetting();
+    const opts = (sel) => { let h = ''; for (let y = now - 2; y <= now + 5; y++) h += '<option value="' + y + '"' + (y === sel ? ' selected' : '') + '>' + y + '</option>'; return h; };
+    return '<div class="panel"><div class="ph"><h3>Reporting years</h3><span class="sub">' +
+      (set ? 'set ' + esc(C.fmtDay(set.setAt)) + (set.setBy ? ' by ' + esc(S.displayNameForLogin ? S.displayNameForLogin(set.setBy) : set.setBy) : '') : 'default · this year and next') + '</span></div>' +
+      '<div class="pb"><div class="form">' +
+      '<div class="field"><label for="ry-from">First year</label><select id="ry-from">' + opts(years[0]) + '</select></div>' +
+      '<div class="field"><label for="ry-to">Last year</label><select id="ry-to">' + opts(years[years.length - 1]) + '</select></div>' +
+      '<div class="field"><button class="btn btn-secondary" id="ry-save">Save reporting years</button></div>' +
+      '</div><p class="sub" style="margin:14px 0 0">The Excel download of a confirmed month covers these years in full — every month of ' + esc(years.join(' and ')) + ' — and so will other reports as they adopt the setting. Come November, move it forward a year.</p></div></div>';
+  }
+  async function exportBookExcel(ym) {
+    const X = window.UFC_ProjectionsXlsx;
+    if (!window.UFC_Vendor || !X) { toast('The Excel writer is not loaded on this page.'); return; }
+    await window.UFC_Vendor.excel();
+    if (typeof ExcelJS === 'undefined') { toast('Excel library not loaded.'); return; }
+    const c = C.getCycle(ym); if (!c) { toast('That month is not loaded.'); return; }
+    const years = S.getReportYears();
+    const rows = X.bookRows(C.bookRecords(ym), C.changeOrderIndex(ym), window.RATES_CATALOG);
+    if (!rows.length) { toast('Nothing in the ' + C.monthName(ym) + ' book yet — no one has confirmed.'); return; }
+    const V = X.viewFor(rows, years);
+    const sum = C.cycleSummary(ym);
+    const state = c.lockedAt ? 'locked ' + C.fmtStamp(c.lockedAt) + (c.lockedByName ? ' by ' + c.lockedByName : '') : 'still open · ' + sum.confirmed + ' confirmed so far';
+    const wb = new ExcelJS.Workbook(); wb.creator = 'Savills PPM';
+    X.writeProjectionsSheet(wb, V, {
+      title: 'Revenue Projections · ' + C.ymLong(ym) + ' confirmed book',
+      subtitle: V.rows.length + ' projects · ' + years.join(' and ') + ' · ' + state + (sum.carried.length ? ' · ' + sum.carried.length + ' leader' + (sum.carried.length === 1 ? '' : 's') + ' carried in unconfirmed' : ''),
+    });
+    X.writeDataSheet(wb, V, {
+      extraHeaders: ['Confirmed by', 'Confirmed at', 'Carried in (not confirmed)'],
+      extra: (row) => [row.p._carried ? '' : C.leaderName(row.p._confirmedBy), row.p._confirmedAt ? C.fmtStamp(row.p._confirmedAt) : '', row.p._carried ? 'Yes' : ''],
+    });
+    // About: the cycle and who confirmed when.
+    const ab = wb.addWorksheet('About');
+    ab.getColumn(1).width = 26; ab.getColumn(2).width = 22; ab.getColumn(3).width = 12; ab.getColumn(4).width = 16; ab.getColumn(5).width = 16; ab.getColumn(6).width = 40;
+    const put = (r, a, b) => { ab.getCell(r, 1).value = a; ab.getCell(r, 1).font = { name: 'Calibri', bold: true }; ab.getCell(r, 2).value = b; };
+    put(1, 'Month', C.ymLong(ym)); put(2, 'State', state); put(3, 'Confirm by', c.deadline);
+    put(4, 'Opened', C.fmtStamp(c.openedAt) + (c.openedByName ? ' by ' + c.openedByName : '')); put(5, 'Reporting years', years.join(', '));
+    put(6, 'Projects in the book', Object.keys(c.projects).length); put(7, 'Carried in unconfirmed', sum.carried.map(C.leaderName).join(', ') || 'none');
+    put(8, 'Exported', new Date().toLocaleString());
+    const hr = 10;
+    ['Revenue leader', 'Confirmed at', 'Projects', 'Fee (' + ym.slice(0, 4) + ')', 'Timing', 'Reason'].forEach((h, i) => { const cell = ab.getCell(hr, i + 1); cell.value = h; cell.font = { name: 'Calibri', bold: true, color: { argb: 'FFFFFFFF' } }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF25273A' } }; });
+    let r = hr + 1;
+    Object.keys(c.confirmations).sort((a, b) => C.leaderName(a).localeCompare(C.leaderName(b))).forEach(id => {
+      const k = c.confirmations[id];
+      ab.getCell(r, 1).value = C.leaderName(id); ab.getCell(r, 2).value = C.fmtStamp(k.at); ab.getCell(r, 3).value = k.projects;
+      ab.getCell(r, 4).value = k.fee; ab.getCell(r, 4).numFmt = '#,##0';
+      ab.getCell(r, 5).value = k.afterLock ? 'After lock' : k.late ? 'After deadline' : 'On time'; ab.getCell(r, 6).value = k.reason || '';
+      r++;
+    });
+    sum.carried.forEach(id => { ab.getCell(r, 1).value = C.leaderName(id); ab.getCell(r, 5).value = 'Not confirmed · carried in'; r++; });
+    await X.download(wb, 'Confirmed Book ' + C.ymShort(ym) + '.xlsx');
   }
   async function snapshotLocked(ym) {
     if (!Box || !Box.enabled || !Box.pullHistory) return false;
@@ -345,6 +402,14 @@
       if (!window.confirm('Reopen ' + C.ymLong(y) + '? Leaders who have not confirmed can then confirm without a reason. Executive Reporting stops treating it as a locked book until it is locked again.')) return;
       try { C.reopenCycle(y); toast(C.ymLong(y) + ' reopened.', 'ok'); if (Box && Box.flushConfirm) Box.flushConfirm().catch(() => {}); announce(); render(); } catch (e) { toast(e.message); }
     }));
+    host.querySelectorAll('button[data-dl-xlsx]').forEach(b => b.addEventListener('click', () => {
+      exportBookExcel(b.dataset.dlXlsx).catch(e => toast('Excel export failed: ' + (e.message || e)));
+    }));
+    const rySave = $('#ry-save', host);
+    if (rySave) rySave.addEventListener('click', () => {
+      try { const ys = S.setReportYears($('#ry-from', host).value, $('#ry-to', host).value); toast('Reporting years: ' + ys.join(', ') + '.', 'ok'); render(); }
+      catch (e) { toast(e.message); }
+    });
     host.querySelectorAll('button[data-dl-json]').forEach(b => b.addEventListener('click', () => {
       const y = b.dataset.dlJson; S.downloadJson('confirmed-' + y + '.json', JSON.stringify(C.getCycle(y), null, 2));
     }));

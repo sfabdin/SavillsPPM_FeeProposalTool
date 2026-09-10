@@ -59,6 +59,7 @@
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/confirmed-book.js"></script>
+<script src="universal-fee-calc/projections-xlsx.js"></script>
 <script src="universal-fee-calc/staff.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/vendor-lazy.js"></script>
@@ -2487,6 +2488,46 @@
         open(); as('bshepparding@savills.us', 'Brianna King');
         try { C.lockCycle(YM, { records: book() }); return 'a leader locked a month'; } catch (e) { return /leadership admin/.test(e.message) || e.message; }
       } finally { restore(); reset(); }
+    });
+  })();
+
+  /* ============ REPORTING YEARS + THE SHARED PROJECTIONS WRITER ============ */
+  (function () {
+    const X = window.UFC_ProjectionsXlsx;
+    const sq = (x, y, label) => (x === y) ? true : label + ': ' + JSON.stringify(x) + ' ≠ ' + JSON.stringify(y);
+    const prevId = S.getRealIdentity();
+    const restore = () => { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); };
+    test('Reporting years', 'default is this year and next; a leadership admin moves it; a leader cannot', () => {
+      const dbKey = 'savills-ppm-fee-db:v1'; const prevDb = localStorage.getItem(dbKey);
+      try {
+        localStorage.setItem(dbKey, JSON.stringify({ schemaVersion: 2, projects: {} }));
+        const y = new Date().getFullYear();
+        const d = S.getReportYears();
+        S.setRealIdentity({ username: 'bshepparding@savills.us', name: 'Brianna King' });
+        let refused = false; try { S.setReportYears(2027, 2028); } catch (e) { refused = /leadership admin/.test(e.message); }
+        S.setRealIdentity({ username: 'sabdin@savills.us', name: 'Sarah Abdin' });
+        const set = S.setReportYears(2027, 2028);
+        let bad = false; try { S.setReportYears(2028, 2027); } catch (e) { bad = true; }
+        return sq(d.join(','), y + ',' + (y + 1), 'default') && sq(refused, true, 'leader refused') &&
+               sq(set.join(','), '2027,2028', 'moved') && sq(S.getReportYears().join(','), '2027,2028', 'read back') &&
+               sq(!!S.getReportYearsSetting().setAt, true, 'stamped') && sq(bad, true, 'reversed range refused');
+      } finally { restore(); if (prevDb == null) localStorage.removeItem(dbKey); else localStorage.setItem(dbKey, prevDb); }
+    });
+    test('Projections writer', 'bookRows folds a change order into its parent and viewFor lays out whole years', () => {
+      if (!X) return 'UFC_ProjectionsXlsx not present';
+      const rec = (id, client, name, rating, monthly) => Object.assign(base({ id, project: { name, client, status: 'active', rating, leadId: 'esobel' } }), {
+        financials: { net: monthly * 12, gross: monthly * 12, byMonth: Array.from({ length: 12 }, (_, i) => ({ ym: '2026-' + (i + 1), year: 2026, month: i + 1, amount: monthly, invoice: monthly, net: monthly })), stale: false, frozenAt: '2026-01-10T00:00:00Z' } });
+      const rows = X.bookRows([rec('x_a', 'Bloomberg', 'Fit-out', 1, 1000), rec('x_b', 'Acme', 'Study', 5, 500)], {}, C);
+      const V = X.viewFor(rows, [2026, 2027]);
+      // The writer lays out and aggregates; pricing is the engine's. So the
+      // expectations come from each row's own monthly map.
+      const a = rows.find(r => r.p.id === 'x_a'), b2 = rows.find(r => r.p.id === 'x_b');
+      const sum = (m, y) => Object.keys(m).filter(k => !y || k.startsWith(y + '-')).reduce((t, k) => t + m[k], 0);
+      const w5 = S.ratingMeta(5).weight;
+      return sq(rows.length, 2, 'rows') && sq(V.cols.length, 24, 'two whole years') && sq(V.years.map(y => y.y + ':' + y.span).join(','), '2026:12,2027:12', 'year spans') &&
+             sq(V.rows[0].client, 'Acme', 'sorted by client') && sq(Math.round(V.colTot['2026-3']), Math.round(a.map['2026-3'] || 0), 'rated 1–4 only in the total') &&
+             sq(Math.round(V.grandTot), Math.round(sum(a.map)), 'grand total') && sq(Math.round(V.colWt['2026-3']), Math.round((a.map['2026-3'] || 0) + (b2.map['2026-3'] || 0) * w5), 'weighted takes every rating') &&
+             sq(Math.round(V.booked), Math.round(sum(a.map, 2026)), 'booked KPI is the first year') && sq(sum(a.map) > 0, true, 'the fixture prices');
     });
   })();
 

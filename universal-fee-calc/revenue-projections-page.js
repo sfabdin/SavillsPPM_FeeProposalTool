@@ -422,38 +422,7 @@
     if (typeof ExcelJS === 'undefined') { alert('Excel library not loaded.'); return; }
     if (!LAST_VIEW || !LAST_VIEW.rows.length) { alert('Nothing to export — adjust the filters so projects are visible.'); return; }
     const V = LAST_VIEW;
-    const NAVY='FF25273A', YEL='FFFFDF00', TEAL='FF0E7C7B', CREAM='FFEEE8E3', STEEL='FF79828C', WHITE='FFFFFFFF', HAIR='FFE2DFDA';
-    const RCOL = { 1:'FF1F8A5B', 2:'FF3AA95C', 3:'FFD9A300', 4:'FFD2691E', 5:STEEL, 6:STEEL, 7:STEEL };
-    const wb = new ExcelJS.Workbook();
-    wb.creator = 'Savills PPM';
-    const ws = wb.addWorksheet('Revenue Projections', {
-      views: [{ state: 'frozen', xSplit: 1, ySplit: 5 }],
-      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
-    });
-    const nCols = V.cols.length;
-    const M0 = 5;                            // first month column (1 Project, 2 Client, 3 Rating, 4 Leader)
-    const lastCol = M0 + nCols;              // months + total
-    const colL = (i) => { let s=''; i++; while(i>0){ s=String.fromCharCode(65+(i-1)%26)+s; i=Math.floor((i-1)/26);} return s; };
-    ws.getColumn(1).width = 30; ws.getColumn(2).width = 22; ws.getColumn(3).width = 16; ws.getColumn(4).width = 18;
-    for (let i=0;i<nCols;i++) ws.getColumn(M0+i).width = 10;
-    ws.getColumn(lastCol).width = 14;
-    const leaderName = (pj) => { const l = STORE.resolveLeader && STORE.resolveLeader(pj.leadId || pj.lead); return l ? l.displayName : (pj.lead || ''); };
-
-    const money = (n) => n;   // full precision in the cell; numFmt controls DISPLAY only
-    const setMoney = (cell, n, opts={}) => {
-      cell.value = n ? money(n) : (opts.dash ? '·' : null);
-      cell.numFmt = '#,##0.00';
-      cell.alignment = { horizontal: 'right' };
-      if (opts.font) cell.font = opts.font;
-      if (opts.fill) cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:opts.fill} };
-    };
-
-    // ----- Title + KPI band (rows 1-3) -----
-    ws.mergeCells(1,1,1,lastCol);
-    const t = ws.getCell('A1');
-    t.value = 'Revenue Projections';
-    t.font = { name:'Calibri', bold:true, size:18, color:{argb:NAVY} };
-    ws.getRow(1).height = 26;
+    const X = window.UFC_ProjectionsXlsx;
     const fbits = [];
     const f = V.filters;
     if (f.client) fbits.push('Client: '+f.client);
@@ -464,142 +433,15 @@
     if (f.year) fbits.push('Year: '+f.year);
     if (f.quarter) fbits.push(f.quarter);
     if (f.month) fbits.push('Month: '+MONTHS[parseInt(f.month)-1]);
-    ws.mergeCells(2,1,2,lastCol);
-    const sub = ws.getCell('A2');
-    sub.value = `${V.rows.length} projects · as of ${new Date().toLocaleDateString()}` + (fbits.length ? '  ·  '+fbits.join('  ·  ') : '  ·  all projects') + (V.showExcluded ? '' : '  ·  rated 1–4 only') + (V.showClosed ? '' : '  ·  closed out excluded');
-    sub.font = { name:'Calibri', italic:true, size:10, color:{argb:STEEL} };
-    // KPI cells (row 4)
-    const kpis = [
-      ['Booked (rated 1)', V.booked, NAVY, WHITE],
-      ['Pipeline (2–4)', V.pipeline14, CREAM, NAVY],
-      ['Projected total (1–4)', V.grandTot, TEAL, WHITE],
-      ['Probability-weighted', V.grandWt, CREAM, NAVY],
-    ];
-    let kc = 1;
-    const kpiSpan = Math.max(2, Math.floor((lastCol) / 4));
-    kpis.forEach((k, idx) => {
-      const c0 = kc, c1 = (idx === 3) ? lastCol : Math.min(lastCol, kc + kpiSpan - 1);
-      ws.mergeCells(4, c0, 4, c1);
-      const cell = ws.getCell(4, c0);
-      cell.value = `${k[0]}:  ${fmtFull(k[1])}`;
-      cell.font = { name:'Calibri', bold:true, size:11, color:{argb:k[3]} };
-      cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:k[2]} };
-      cell.alignment = { horizontal:'left', vertical:'middle', indent:1 };
-      kc = c1 + 1;
-    });
-    ws.getRow(4).height = 22;
-
-    // ----- Header: year spans (row 5) + months (row 6) -----
-    const yearRow = 5, monRow = 6;
-    [[1,`Project · ${V.rows.length}`],[2,'Client'],[3,'Rating'],[4,'Revenue Leader']].forEach(([col,label]) => {
-      ws.mergeCells(yearRow,col,monRow,col);
-      const hc = ws.getCell(yearRow,col);
-      hc.value = label;
-      hc.font = { name:'Calibri', bold:true, color:{argb:WHITE} };
-      hc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
-      hc.alignment = { vertical:'middle' };
-    });
-    let ci = M0;
-    V.years.forEach(yr => {
-      ws.mergeCells(yearRow, ci, yearRow, ci + yr.span - 1);
-      const yc = ws.getCell(yearRow, ci);
-      yc.value = yr.y;
-      yc.font = { name:'Calibri', bold:true, color:{argb:NAVY} };
-      yc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:YEL} };
-      yc.alignment = { horizontal:'center' };
-      ci += yr.span;
-    });
-    ws.mergeCells(yearRow, lastCol, monRow, lastCol);
-    const tc = ws.getCell(yearRow, lastCol);
-    tc.value = 'Total';
-    tc.font = { name:'Calibri', bold:true, color:{argb:WHITE} };
-    tc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
-    tc.alignment = { horizontal:'right', vertical:'middle' };
-    V.cols.forEach((c, i) => {
-      const cell = ws.getCell(monRow, M0 + i);
-      cell.value = MONTHS[c.m - 1];
-      cell.font = { name:'Calibri', size:9, bold:true, color:{argb:STEEL} };
-      cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:CREAM} };
-      cell.alignment = { horizontal:'center' };
-    });
-
-    // ----- Body: rating groups + project rows -----
-    let r = monRow + 1;
-    let lastRating = null;
-    V.rows.forEach(row => {
-      const excluded = row.rating > 4;
-      if (excluded && !V.showExcluded) return;
-      const meta = STORE.ratingMeta(row.rating);
-      if (SORT.key === 'rating' && row.rating !== lastRating) {
-        lastRating = row.rating;
-        ws.mergeCells(r, 1, r, lastCol);
-        const g = ws.getCell(r, 1);
-        g.value = `  ${row.rating} · ${meta.label}${excluded ? ' — excluded from totals' : ''}`;
-        g.font = { name:'Calibri', bold:true, size:10, color:{argb: excluded ? STEEL : NAVY} };
-        g.fill = { type:'pattern', pattern:'solid', fgColor:{argb: excluded ? 'FFF4F4F3' : 'FFF0EFEC'} };
-        ws.getRow(r).height = 18;
-        r++;
-      }
-      const pj = row.p.project || {};
-      ws.getCell(r, 1).value = (pj.name || 'Untitled') + (row.coCount ? '  (incl. '+row.coCount+' CO'+(row.coCount===1?'':'s')+')' : '');
-      ws.getCell(r, 1).font = { name:'Calibri', bold:true, size:11, color:{argb: excluded ? STEEL : NAVY} };
-      ws.getCell(r, 1).alignment = { vertical:'middle' };
-      ws.getCell(r, 2).value = pj.client || '';
-      ws.getCell(r, 2).font = { name:'Calibri', size:10, color:{argb: excluded ? STEEL : NAVY} };
-      ws.getCell(r, 3).value = row.rating + ' · ' + (meta.short || meta.label || '')
-        + (STORE.isPlaceholder(row.p) ? ' · ESTIMATE' : '');
-      ws.getCell(r, 3).font = { name:'Calibri', size:10, color:{argb: RCOL[row.rating] || NAVY}, bold:true };
-      /* The export is where Finance actually reads these numbers, so the
-         caveat has to travel with the workbook — a badge that only exists
-         on screen is a badge nobody downstream ever sees. */
-      if (STORE.isPlaceholder(row.p)) {
-        ws.getCell(r, 3).note = 'The dollars on this row were assumed to hold the space, not priced from scope. Counted at full value; treat the amount as an estimate.';
-      }
-      ws.getCell(r, 4).value = leaderName(pj);
-      ws.getCell(r, 4).font = { name:'Calibri', size:10, color:{argb: STEEL} };
-      let rvt = 0;
-      V.cols.forEach((c, i) => {
-        const v = row.map[c.key] || 0; rvt += v;
-        const isOv = row.ov && row.ov[c.key] != null;
-        const cell = ws.getCell(r, M0 + i);
-        setMoney(cell, v, { dash:true, font:{ name:'Calibri', size:10, color:{argb: isOv ? TEAL : (excluded ? STEEL : NAVY)}, bold: !!isOv } });
-      });
-      setMoney(ws.getCell(r, lastCol), rvt, { font:{ name:'Calibri', bold:true, color:{argb: RCOL[row.rating] || NAVY} } });
-      r++;
-    });
-
-    // ----- Totals rows -----
-    const totRow = r + 1;
-    ws.mergeCells(totRow,1,totRow,4);
-    ws.getCell(totRow,1).value = 'Projected (rated 1–4)';
-    ws.getCell(totRow,1).font = { name:'Calibri', bold:true, color:{argb:WHITE} };
-    ws.getCell(totRow,1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} };
-    [2,3,4].forEach(cc=>{ ws.getCell(totRow,cc).fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} }; });
-    V.cols.forEach((c, i) => setMoney(ws.getCell(totRow, M0+i), V.colTot[c.key], { dash:true, font:{name:'Calibri', bold:true, color:{argb:WHITE}}, fill:NAVY }));
-    setMoney(ws.getCell(totRow, lastCol), V.grandTot, { font:{name:'Calibri', bold:true, color:{argb:YEL}}, fill:NAVY });
-    ws.getRow(totRow).height = 20;
-
-    const wtRow = totRow + 1;
-    ws.mergeCells(wtRow,1,wtRow,4);
-    ws.getCell(wtRow,1).value = 'Probability-weighted (all)';
-    ws.getCell(wtRow,1).font = { name:'Calibri', bold:true, color:{argb:NAVY} };
-    ws.getCell(wtRow,1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:CREAM} };
-    [2,3,4].forEach(cc=>{ ws.getCell(wtRow,cc).fill = { type:'pattern', pattern:'solid', fgColor:{argb:CREAM} }; });
-    V.cols.forEach((c, i) => setMoney(ws.getCell(wtRow, M0+i), V.colWt[c.key], { dash:true, font:{name:'Calibri', color:{argb:NAVY}}, fill:CREAM }));
-    setMoney(ws.getCell(wtRow, lastCol), V.grandWt, { font:{name:'Calibri', bold:true, color:{argb:NAVY}}, fill:CREAM });
-
-    // borders on the matrix
-    for (let rr = yearRow; rr <= wtRow; rr++) for (let cc = 1; cc <= lastCol; cc++) {
-      ws.getCell(rr, cc).border = { bottom:{style:'thin', color:{argb:HAIR}}, right:{style:'thin', color:{argb:HAIR}} };
-    }
-
-    const buf = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `Revenue Projections ${new Date().toISOString().slice(0,10)}.xlsx`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    const subtitle = `${V.rows.length} projects · as of ${new Date().toLocaleDateString()}` + (fbits.length ? '  ·  '+fbits.join('  ·  ') : '  ·  all projects') + (V.showExcluded ? '' : '  ·  rated 1–4 only') + (V.showClosed ? '' : '  ·  closed out excluded');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Savills PPM';
+    /* The matrix exactly as viewed, then the same figures flat — one row per
+       project and month — for a pivot table. Shared writer (projections-xlsx.js),
+       so the Monthly Confirmed Book download reads the same way. */
+    X.writeProjectionsSheet(wb, V, { title: 'Revenue Projections', subtitle, groupByRating: SORT.key === 'rating' });
+    X.writeDataSheet(wb, V);
+    await X.download(wb, `Revenue Projections ${new Date().toISOString().slice(0,10)}.xlsx`);
   }
 
   /** Commit a manual monthly override (or rating) and persist to the project. */
