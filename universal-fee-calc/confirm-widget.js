@@ -27,7 +27,7 @@
     background:#fff;color:#25273A;box-shadow:0 4px 16px rgba(37,39,58,.16);max-width:min(72vw,520px);}
   #ufc-confirm .dot{width:9px;height:9px;border-radius:50%;flex:none;background:#79828C}
   #ufc-confirm .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #ufc-confirm .k{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;opacity:.7;padding-right:9px;margin-right:-1px;border-right:1px solid currentColor}
+  #ufc-confirm .k{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;opacity:.7;padding-right:9px;margin-right:-1px;border-right:1px solid currentColor;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #ufc-confirm[data-tone="g"]{border-color:rgba(31,122,76,.35)} #ufc-confirm[data-tone="g"] .dot{background:#1E7A4C}
   #ufc-confirm[data-tone="y"]{border-color:rgba(217,164,0,.5)} #ufc-confirm[data-tone="y"] .dot{background:#D9A400}
   #ufc-confirm[data-tone="r"]{background:#25273A;color:#fff;border-color:#25273A} #ufc-confirm[data-tone="r"] .dot{background:#FFDF00}
@@ -51,9 +51,8 @@
     const el = document.getElementById('ufc-confirm'); if (!el) return;
     let w; try { w = C.widgetState(); } catch (e) { w = { kind: 'quiet' }; }
     if (!w || w.kind === 'quiet') { el.style.display = 'none'; return; }
-    const ym = w.cycle ? C.monthName(w.cycle.cycle) : '';
     const dl = w.cycle ? C.fmtDay(w.cycle.deadline + 'T12:00:00') : '';
-    let tone = 'r', k = ym + ' book', text = '';
+    let tone = 'r', k = w.cycle ? C.bookTitle(w.cycle) : 'Confirmed book', text = '';
     const s = w.status || {};
     if (w.kind === 'confirmed') { tone = 'g'; text = 'Confirmed ' + C.fmtDay(s.at); }
     else if (w.kind === 'changed') { tone = 'y'; text = 'Confirmed ' + C.fmtDay(s.at) + ' · ' + s.changed + ' edited since'; }

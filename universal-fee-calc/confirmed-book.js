@@ -1,25 +1,29 @@
 /* ============================================================
    SAVILLS PPM · MONTHLY CONFIRMED BOOK
    ------------------------------------------------------------
-   Once a month every revenue leader confirms their book. The
-   confirmation copies each project they lead into that month's
-   file — confirmed-YYYY-MM.json in the shared Box folder — with
-   their name and a timestamp on every copy. That file is the
-   confirmed book: what Executive Reporting reads by default, and
-   what next month is compared against.
+   A leadership admin creates a BOOK — "Revenue Projections #12" —
+   with a period month as its label and a confirm-by date. Every
+   revenue leader then confirms their projects into it. Each
+   confirmation copies each project they lead into the book's file —
+   confirmed-<book id>.json in the shared Box folder — with their name
+   and a timestamp on every copy. That file is the confirmed book:
+   what Executive Reporting reads by default, and what the next one
+   is compared against. Books are not tied to months: three books in
+   one month are three files. (Books created before names existed
+   are keyed by their month and show the month as their name.)
 
    Rules, as agreed with the revenue leaders:
-     • One confirmation per leader per month. It is locked in. If a
+     • One confirmation per leader per book. It is locked in. If a
        project changes afterwards the tracker says so (yellow), but
-       the change waits for next month's confirmation.
+       the change waits for the next book.
      • Confirm covers every project the person leads, shared ones
        included. One copy per project; the most recent confirmation
        supplies it. A shared project is fully confirmed only once
        every leader on it has confirmed.
      • Everyone with at least one active project is expected, even
-       when nothing changed since last month.
+       when nothing changed since the last book.
      • Past the deadline without confirming: red, bold, everywhere.
-     • When an admin LOCKS the month, leaders who never confirmed
+     • When an admin LOCKS the book, leaders who never confirmed
        have their live projects carried in, flagged "not confirmed".
        They can still confirm afterwards — with a reason, which an
        admin reviews.
@@ -46,8 +50,20 @@
       if (!p || typeof p !== 'object' || !p.cycles) return defaultDb();
       if (!Array.isArray(p.dirty)) p.dirty = [];
       if (!Array.isArray(p.known)) p.known = [];
+      Object.keys(p.cycles).forEach(k => normalize(p.cycles[k], k));
       return p;
     } catch (e) { return defaultDb(); }
+  }
+  /** Every book carries id, name and period, whichever version wrote it.
+      A book from before names existed is keyed by its month: the month
+      becomes its period and, failing a name, its title. */
+  function normalize(c, key) {
+    if (!c) return c;
+    if (!c.id) c.id = c.cycle || key;
+    if (!c.cycle) c.cycle = c.id;
+    if (!c.period) c.period = isYm(c.cycle) ? c.cycle : (isYm(String(c.deadline || '').slice(0, 7)) ? String(c.deadline).slice(0, 7) : '');
+    if (c.name == null) c.name = '';
+    return c;
   }
   function writeDb(db, opts) {
     db.schemaVersion = 1;
@@ -98,6 +114,13 @@
   /** Default deadline for a month: the 15th. */
   const defaultDeadline = (ym) => isYm(ym) ? ym + '-15' : '';
   const nextYm = (ym) => { const y = +ym.slice(0, 4), m = +ym.slice(5, 7); return m === 12 ? (y + 1) + '-01' : y + '-' + String(m + 1).padStart(2, '0'); };
+  /** What a book is called: its name, else its period month, else its id. */
+  const bookTitle = (c) => c ? (c.name || (isYm(c.period) ? ymLong(c.period) : String(c.id || c.cycle || ''))) : '';
+  const periodLabel = (c) => c && isYm(c.period) ? ymLong(c.period) : '';
+  /** The calendar year a book's fee figures are quoted in. */
+  const bookYear = (c) => { const p = c && (c.period || String(c.deadline || '').slice(0, 7)); return isYm(p) ? +p.slice(0, 4) : new Date().getFullYear(); };
+  const cleanName = (v) => String(v || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  const slug = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'book';
 
   /* ---------- who leads what ---------- */
   /** Revenue-leader ids on a record: lead PE and client relationship owner,
@@ -174,44 +197,81 @@
   }
 
   /* ---------- cycles ---------- */
-  const getCycle = (ym) => readDb().cycles[String(ym)] || null;
-  function listCycles() { const c = readDb().cycles; return Object.keys(c).sort().map(k => c[k]); }
-  /** The month everyone is confirming now: the earliest still open. */
-  function currentCycle() { return listCycles().find(c => !c.lockedAt) || null; }
-  function latestLocked() { const l = listCycles().filter(c => c.lockedAt); return l.length ? l[l.length - 1] : null; }
+  const getCycle = (id) => readDb().cycles[String(id)] || null;
+  /** Every book this browser holds, oldest first (by when it was created). */
+  function listCycles() {
+    const c = readDb().cycles;
+    return Object.keys(c).map(k => c[k]).sort((a, b) => String(a.openedAt || '').localeCompare(String(b.openedAt || '')) || String(a.id).localeCompare(String(b.id)));
+  }
+  /** The book everyone is confirming now: the open one due first. */
+  function currentCycle() {
+    const open = listCycles().filter(c => !c.lockedAt);
+    return open.sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')) || String(a.openedAt || '').localeCompare(String(b.openedAt || '')))[0] || null;
+  }
+  const openCycles = () => listCycles().filter(c => !c.lockedAt);
+  /** The most recently locked book — Executive Reporting's default. */
+  function latestLocked() {
+    const l = listCycles().filter(c => c.lockedAt).sort((a, b) => String(a.lockedAt).localeCompare(String(b.lockedAt)));
+    return l.length ? l[l.length - 1] : null;
+  }
   const isLeadership = (user) => { const st = S(); return !!(st.seesAllProjects && st.seesAllProjects(user || st.getCurrentUser())); };
   const actorStamp = () => { const u = S().getCurrentUser() || {}; return { by: u.username || '', name: u.name || u.username || '' }; };
 
+  /** Create a book: a name, a period month (its label), a confirm-by date.
+      The id is date + name, so files sort by when they were created and
+      read like "confirmed-2026-09-10-revenue-projections-12.json". */
   function createCycle(opts) {
-    const st = S();
-    if (!isLeadership()) throw new Error('Only a leadership admin can open a month.');
-    const ym = String((opts && opts.cycle) || '').trim();
-    if (!isYm(ym)) throw new Error('Pick a month.');
-    const deadline = String((opts && opts.deadline) || defaultDeadline(ym)).trim();
+    const st = S(); const o = opts || {};
+    if (!isLeadership()) throw new Error('Only a leadership admin can create a book.');
+    const name = cleanName(o.name);
+    if (name.length < 2) throw new Error('Give the book a name — “Revenue Projections #12”, for example.');
+    const period = String(o.period || o.cycle || '').trim();
+    if (period && !isYm(period)) throw new Error('The period should be a month.');
+    const deadline = String(o.deadline || defaultDeadline(period || new Date().toISOString().slice(0, 7))).trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline) || !deadlineEnd(deadline)) throw new Error('Pick a confirm-by date.');
     const db = readDb();
-    if (db.cycles[ym]) throw new Error(ymLong(ym) + ' is already open.');
-    const now = new Date().toISOString(); const a = actorStamp();
-    db.cycles[ym] = {
-      schemaVersion: 1, cycle: ym, deadline,
+    const now = o.now || new Date().toISOString(); const a = actorStamp();
+    let id = now.slice(0, 10) + '-' + slug(name), n = 2;
+    while (db.cycles[id] || db.known.indexOf(id) >= 0) { id = now.slice(0, 10) + '-' + slug(name) + '-' + (n++); }
+    db.cycles[id] = {
+      schemaVersion: 2, id, cycle: id, name, period: period || deadline.slice(0, 7), deadline,
       openedAt: now, openedBy: a.by, openedByName: a.name,
       lockedAt: null, lockedBy: '', lockedByName: '', reopenedAt: null,
       metaUpdatedAt: now, updatedAt: now,
       confirmations: {}, projects: {}, carried: [],
     };
-    markDirty(db, ym);
+    markDirty(db, id);
     writeDb(db);
-    st.logSystem('cycle-open', { cycle: ym, deadline });
-    return db.cycles[ym];
+    st.logSystem('cycle-open', { cycle: id, name, period: db.cycles[id].period, deadline });
+    return db.cycles[id];
   }
-  function setDeadline(ym, deadline) {
-    if (!isLeadership()) throw new Error('Only a leadership admin can change a deadline.');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(deadline || '')) || !deadlineEnd(deadline)) throw new Error('Pick a confirm-by date.');
-    const db = readDb(); const c = db.cycles[ym]; if (!c) throw new Error('No such month.');
+  function editHeader(id, what, apply) {
+    if (!isLeadership()) throw new Error('Only a leadership admin can change a book\'s ' + what + '.');
+    const db = readDb(); const c = db.cycles[id]; if (!c) throw new Error('No such book.');
+    apply(c);
     const now = new Date().toISOString();
-    c.deadline = deadline; c.metaUpdatedAt = now; c.updatedAt = now;
-    markDirty(db, ym); writeDb(db);
-    S().logSystem('cycle-deadline', { cycle: ym, deadline });
+    c.metaUpdatedAt = now; c.updatedAt = now;
+    markDirty(db, id); writeDb(db);
+    return c;
+  }
+  function setDeadline(id, deadline) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(deadline || '')) || !deadlineEnd(deadline)) throw new Error('Pick a confirm-by date.');
+    const c = editHeader(id, 'deadline', b => { b.deadline = deadline; });
+    S().logSystem('cycle-deadline', { cycle: id, name: c.name, deadline });
+    return c;
+  }
+  function setName(id, name) {
+    const nm = cleanName(name);
+    if (nm.length < 2) throw new Error('A book needs a name.');
+    const c = editHeader(id, 'name', b => { b.name = nm; });
+    S().logSystem('cycle-name', { cycle: id, name: nm });
+    return c;
+  }
+  function setPeriod(id, period) {
+    const p = String(period || '').trim();
+    if (!isYm(p)) throw new Error('The period should be a month.');
+    const c = editHeader(id, 'period', b => { b.period = p; });
+    S().logSystem('cycle-period', { cycle: id, name: c.name, period: p });
     return c;
   }
 
@@ -225,23 +285,23 @@
     return copy;
   }
 
-  /** THE confirmation. Once per leader per month. */
+  /** THE confirmation. Once per leader per book. */
   function confirm(ym, leaderId, opts) {
     const st = S(); const o = opts || {};
     const db = readDb(); const c = db.cycles[ym];
-    if (!c) throw new Error('That month is not open for confirmation.');
+    if (!c) throw new Error('That book is not open for confirmation.');
     const me = myLeaderId();
     const allowed = leaderId === UNASSIGNED ? isLeadership() : (me && me === leaderId);
     if (!allowed) throw new Error('You can only confirm your own book.');
-    if (c.confirmations[leaderId]) throw new Error('Your ' + monthName(ym) + ' book is already confirmed and locked in. Changes since then are noted and carry into next month.');
+    if (c.confirmations[leaderId]) throw new Error('“' + bookTitle(c) + '” is already confirmed and locked in. Changes since then are noted and carry into the next book.');
     const reason = String(o.reason || '').trim();
-    if (c.lockedAt && reason.length < 5) throw new Error(monthName(ym) + ' is locked. Add a short reason with your late confirmation — an admin will review it.');
+    if (c.lockedAt && reason.length < 5) throw new Error('“' + bookTitle(c) + '” is locked. Add a short reason with your late confirmation — an admin will review it.');
     const records = bookFor(leaderId, o.records || st.listProjects());
     if (!records.length) throw new Error('There is nothing to confirm — no projects are on your book.');
     const now = o.now || new Date().toISOString();
     records.forEach(r => { c.projects[r.id] = stampCopy(r, leaderId, now, false); });
     const a = actorStamp();
-    const fee = feeInYear(records, +ym.slice(0, 4));
+    const fee = feeInYear(records, bookYear(c));
     c.confirmations[leaderId] = {
       at: now, by: a.by, name: leaderId === UNASSIGNED ? a.name + ' (admin)' : leaderName(leaderId),
       projects: records.length, fee,
@@ -251,18 +311,18 @@
     c.carried = (c.carried || []).filter(x => x !== leaderId);
     c.updatedAt = now;
     markDirty(db, ym); writeDb(db);
-    st.logSystem('confirm-book', { cycle: ym, leaderId, projects: records.length, fee, late: c.confirmations[leaderId].late, afterLock: !!c.lockedAt, reason: reason || undefined });
+    st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: records.length, fee, late: c.confirmations[leaderId].late, afterLock: !!c.lockedAt, reason: reason || undefined });
     return c.confirmations[leaderId];
   }
 
-  /** Lock the month. Leaders who never confirmed are carried in from the live
+  /** Lock the book. Leaders who never confirmed are carried in from the live
       book, flagged, so the confirmed book is still whole. */
   function lockCycle(ym, opts) {
     const st = S(); const o = opts || {};
-    if (!isLeadership()) throw new Error('Only a leadership admin can lock a month.');
+    if (!isLeadership()) throw new Error('Only a leadership admin can lock a book.');
     const db = readDb(); const c = db.cycles[ym];
-    if (!c) throw new Error('No such month.');
-    if (c.lockedAt) throw new Error(ymLong(ym) + ' is already locked.');
+    if (!c) throw new Error('No such book.');
+    if (c.lockedAt) throw new Error('“' + bookTitle(c) + '” is already locked.');
     const records = o.records || st.listProjects();
     const now = o.now || new Date().toISOString();
     const carried = []; let carriedProjects = 0;
@@ -279,19 +339,19 @@
     c.lockedAt = now; c.lockedBy = a.by; c.lockedByName = a.name;
     c.carried = carried; c.metaUpdatedAt = now; c.updatedAt = now;
     markDirty(db, ym); writeDb(db);
-    st.logSystem('cycle-lock', { cycle: ym, carried: carried.length, carriedProjects, confirmed: Object.keys(c.confirmations).length });
+    st.logSystem('cycle-lock', { cycle: ym, name: c.name, period: c.period, carried: carried.length, carriedProjects, confirmed: Object.keys(c.confirmations).length });
     return { carried, carriedProjects };
   }
   function reopenCycle(ym) {
-    if (!isLeadership()) throw new Error('Only a leadership admin can reopen a month.');
+    if (!isLeadership()) throw new Error('Only a leadership admin can reopen a book.');
     const db = readDb(); const c = db.cycles[ym];
-    if (!c) throw new Error('No such month.');
-    if (!c.lockedAt) throw new Error(ymLong(ym) + ' is not locked.');
+    if (!c) throw new Error('No such book.');
+    if (!c.lockedAt) throw new Error('“' + bookTitle(c) + '” is not locked.');
     const now = new Date().toISOString();
     c.lockedAt = null; c.lockedBy = ''; c.lockedByName = ''; c.reopenedAt = now;
     c.metaUpdatedAt = now; c.updatedAt = now;
     markDirty(db, ym); writeDb(db);
-    S().logSystem('cycle-reopen', { cycle: ym });
+    S().logSystem('cycle-reopen', { cycle: ym, name: c.name });
     return c;
   }
   /** An admin has read a late confirmation's reason. */
@@ -302,7 +362,7 @@
     const now = new Date().toISOString(); const a = actorStamp();
     k.reviewedAt = now; k.reviewedBy = a.name || a.by; k.updatedAt = now; c.updatedAt = now;
     markDirty(db, ym); writeDb(db);
-    S().logSystem('cycle-review', { cycle: ym, leaderId });
+    S().logSystem('cycle-review', { cycle: ym, name: c.name, leaderId });
     return k;
   }
 
@@ -324,8 +384,8 @@
     if (k) {
       const changed = mine.filter(r => (r.updatedAt || '') > k.at);
       const when = fmtDay(k.at);
-      // Edits after the stamp matter while the month is open; once it is
-      // locked they belong to the next month, so a locked month stays green.
+      // Edits after the stamp matter while the book is open; once it is
+      // locked they belong to the next book, so a locked book stays green.
       if (changed.length && !cycle.lockedAt) return { k: 'changed', tone: 'y', at: k.at, changed: changed.length,
         text: when + ' · ' + changed.length + ' edited since' };
       return { k: 'confirmed', tone: 'g', at: k.at, text: when + (k.afterLock ? ' · after lock' : k.late ? ' · late' : '') };
@@ -362,7 +422,7 @@
     const me = myLeaderId(u); const lead = isLeadership(u);
     const records = st.listProjects();
     const cur = currentCycle();
-    // A locked month they never confirmed keeps nagging until they do.
+    // A locked book they never confirmed keeps nagging until they do.
     const missed = me ? listCycles().filter(c => c.lockedAt && !c.confirmations[me] && (c.carried || []).indexOf(me) >= 0)
       .filter(c => (t - new Date(c.lockedAt)) < 60 * 86400000).pop() : null;
     if (missed) return { kind: 'missed', cycle: missed, leaderId: me, status: statusFor(missed, me, records, t) };
@@ -405,7 +465,8 @@
   function cycleSummary(ym) {
     const c = getCycle(ym); if (!c) return null;
     const ids = Object.keys(c.projects);
-    return { cycle: ym, label: ymLong(ym), lockedAt: c.lockedAt, lockedByName: c.lockedByName, deadline: c.deadline,
+    return { cycle: ym, id: ym, name: c.name || '', period: c.period || '', title: bookTitle(c), label: periodLabel(c) || bookTitle(c),
+      lockedAt: c.lockedAt, lockedByName: c.lockedByName, deadline: c.deadline,
       projects: ids.length, carriedProjects: ids.filter(id => c.projects[id]._carried).length,
       confirmed: Object.keys(c.confirmations).length, carried: (c.carried || []).slice(),
       lateReviews: Object.keys(c.confirmations).filter(k => c.confirmations[k].afterLock && !c.confirmations[k].reviewedAt).length };
@@ -419,7 +480,8 @@
     if (!remote) return local; if (!local) return remote;
     const newerMeta = (String(local.metaUpdatedAt || '') > String(remote.metaUpdatedAt || '')) ? local : remote;
     const out = Object.assign({}, remote, local, {
-      deadline: newerMeta.deadline, lockedAt: newerMeta.lockedAt, lockedBy: newerMeta.lockedBy, lockedByName: newerMeta.lockedByName,
+      deadline: newerMeta.deadline, name: newerMeta.name || '', period: newerMeta.period || remote.period || local.period || '',
+      lockedAt: newerMeta.lockedAt, lockedBy: newerMeta.lockedBy, lockedByName: newerMeta.lockedByName,
       reopenedAt: newerMeta.reopenedAt, metaUpdatedAt: newerMeta.metaUpdatedAt,
       openedAt: remote.openedAt || local.openedAt, openedBy: remote.openedBy || local.openedBy, openedByName: remote.openedByName || local.openedByName,
       confirmations: {}, projects: {}, carried: [],
@@ -439,11 +501,11 @@
     const carriedAll = new Set([...(remote.carried || []), ...(local.carried || [])]);
     out.carried = [...carriedAll].filter(id => !out.confirmations[id]);
     out.updatedAt = [remote.updatedAt, local.updatedAt].filter(Boolean).sort().pop() || null;
-    return out;
+    return normalize(out, out.id || out.cycle);
   }
   function hydrateCycle(ym, remote) {
     const db = readDb(); const m = String(ym);
-    db.cycles[m] = mergeCycle(remote, db.cycles[m]);
+    db.cycles[m] = normalize(mergeCycle(remote, db.cycles[m]), m);
     writeDb(db, { quiet: true });
     return db.cycles[m];
   }
@@ -454,8 +516,9 @@
     KEY, UNASSIGNED,
     readDb, defaultDb, attachRemote, dirtyCycles, markCycleClean, rememberKnown, knownCycles, listedAt,
     ymShort, ymLong, monthName, isYm, daysUntil, pastDeadline, defaultDeadline, nextYm, fmtDay, fmtStamp,
+    bookTitle, periodLabel, bookYear, normalize,
     leadersOf, isActiveRecord, bookFor, expectedLeaders, leaderName, myLeaderId, feeInYear, isLeadership,
-    getCycle, listCycles, currentCycle, latestLocked, createCycle, setDeadline, confirm, lockCycle, reopenCycle, reviewLate,
+    getCycle, listCycles, openCycles, currentCycle, latestLocked, createCycle, setDeadline, setName, setPeriod, confirm, lockCycle, reopenCycle, reviewLate,
     statusFor, projectStatus, widgetState,
     asProjectsDb, bookRecords, changeOrderIndex, cycleSummary,
     mergeCycle, hydrateCycle, serialize,
