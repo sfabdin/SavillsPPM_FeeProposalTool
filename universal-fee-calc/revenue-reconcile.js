@@ -1373,7 +1373,7 @@
        recognised, and the two figures that make up the difference. The three
        that did not exist before the ledger are highlighted, so it is obvious
        what this page added to a report people already knew. */
-    let h = `<thead><tr><th class="l">Project</th><th class="l">Client</th><th class="l">Revenue leader</th>
+    let h = `<thead><tr><th class="l">Client</th><th class="l">Project</th><th class="l">Revenue leader</th>
       <th>Earned<span class="sub">FEE TOOL</span></th>
       <th class="new-col">Realized</th><th class="new-col">Invoiced</th><th class="new-col">Accrued</th>
       <th>Fee share</th><th>Variance</th><th class="l new-col">Disposition</th>
@@ -1383,8 +1383,8 @@
       tot.plan += x.plan; tot.billed += x.billed; tot.fee += x.fee; tot.acc += x.acc; tot.rec += x.rec;
       const v = x.rec - x.plan;
       h += `<tr class="${x.row.isFeeShare ? 'fee-row' : ''}">
-        <td class="l">${x.row.isFeeShare ? feeLabel(x.fee) + ' — ' : ''}${esc(x.row.name || '')}</td>
         <td class="l">${esc(x.row.client || '—')}</td>
+        <td class="l">${x.row.isFeeShare ? feeLabel(x.fee) + ' — ' : ''}${esc(x.row.name || '')}</td>
         <td class="l lead-c">${esc(x.leader || '—')}</td>
         <td class="${x.unassigned ? 'unassigned-c' : ''}" title="${x.unassigned ? money(x.unassigned) + ' of this month\'s earned revenue has no accrual and invoice month' : ''}">${x.plan ? money(x.plan) : '—'}${x.unassigned ? `<div class="comp-note">${money(x.unassigned)} unassigned</div>` : ''}</td>
         <td class="new-col strong">${money(x.rec)}</td>

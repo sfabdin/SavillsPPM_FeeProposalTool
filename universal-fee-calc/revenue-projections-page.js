@@ -841,10 +841,10 @@
     const tot = dupes.reduce((a, d) => a + d.amount, 0);
     bar.innerHTML = `<div class="dup-head">⚠ <b>${dupes.length} row${dupes.length === 1 ? '' : 's'} may be counted twice</b>
       — ${fmtFull(tot)} across the flagged months. Each of these matches the sum of its client\u2019s other rows, which is what a roll-up sitting on top of its own parts looks like.</div>
-      <table class="dup-tbl"><thead><tr><th>Project</th><th>Client</th><th>Months</th><th style="text-align:right">In those months</th></tr></thead><tbody>`
+      <table class="dup-tbl"><thead><tr><th>Client</th><th>Project</th><th>Months</th><th style="text-align:right">In those months</th></tr></thead><tbody>`
       + dupes.map(d => `<tr>
-          <td><a href="Universal Fee Calculator.html?id=${encodeURIComponent(d.row.p.id)}">${esc((d.row.pj || {}).name || 'Untitled')}</a></td>
           <td>${esc(d.row.client || '')}</td>
+          <td><a href="Universal Fee Calculator.html?id=${encodeURIComponent(d.row.p.id)}">${esc((d.row.pj || {}).name || 'Untitled')}</a></td>
           <td>${d.months.length} of ${Object.keys(d.row.map).length}<span class="dup-mo"> · ${esc(d.months.slice(0, 3).map(ymLabel).join(', '))}${d.months.length > 3 ? '…' : ''}</span></td>
           <td style="text-align:right">${fmtFull(d.amount)}</td>
         </tr>`).join('')
