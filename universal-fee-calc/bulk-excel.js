@@ -69,8 +69,8 @@
   const PROJECT_COLS = [
     { key: 'id',            h: 'Project ID',        w: 20, lock: true },
     { key: 'action',        h: 'Action',            w: 10 },
-    { key: 'name',          h: 'Project name',      w: 38 },
     { key: 'client',        h: 'Client',            w: 26 },
+    { key: 'name',          h: 'Project name',      w: 38 },
     { key: 'status',        h: 'Status',            w: 14, list: 'Status' },
     { key: 'lossReason',    h: 'Loss reason',       w: 20, list: 'LossReason' },
     { key: 'rating',        h: 'Rating',            w: 18, list: 'Rating' },

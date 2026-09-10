@@ -297,8 +297,8 @@
         }).join('');
         const mc = r.a.missing.length;
         return `<tr>
-          <td><a class="pj-name" href="Universal Fee Calculator.html?id=${esc(r.p.id)}">${esc(pj.name || 'Untitled')}</a>${r.imported?'<span class="imp-tag">Imported</span>':''}</td>
           <td>${esc(pj.client || '—')}</td>
+          <td><a class="pj-name" href="Universal Fee Calculator.html?id=${esc(r.p.id)}">${esc(pj.name || 'Untitled')}</a>${r.imported?'<span class="imp-tag">Imported</span>':''}</td>
           <td>${esc((STORE.STATUS_LABELS && STORE.STATUS_LABELS[pj.status]) || pj.status || '—')}</td>
           ${chips}
           <td class="center"><span class="miss-n ${mc?'some':'zero'}">${mc || '✓'}</span></td>
@@ -321,7 +321,7 @@
           <div style="overflow:auto;">
           <table class="dt">
             <thead><tr>
-              <th>Project</th><th>Client</th><th>Status</th>
+              <th>Client</th><th>Project</th><th>Status</th>
               ${FIELD_ORDER.map(f => `<th class="center">${esc(f)}</th>` + (f === 'Staffing' ? '<th class="center info-th" title="Informational — pass-through billing never counts as missing data">Pass-through</th>' : '')).join('')}
               <th class="center">Missing</th>
             </tr></thead>

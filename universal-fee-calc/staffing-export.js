@@ -167,8 +167,8 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
   s1.columns = [
     { header: 'Person', key: 'person', width: 22 },
     { header: 'Title', key: 'title', width: 22 },
-    { header: 'Project', key: 'project', width: 34 },
     { header: 'Client', key: 'client', width: 22 },
+    { header: 'Project', key: 'project', width: 34 },
     { header: 'Status', key: 'status', width: 12 },
     { header: 'Type', key: 'type', width: 14 },
     { header: 'Start', key: 'start', width: 10 },
@@ -204,8 +204,8 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
   const s2 = wb.addWorksheet('Actuals', { views: [{ state: 'frozen', ySplit: 1 }] });
   s2.columns = [
     { header: 'Person', key: 'person', width: 22 },
-    { header: 'Project', key: 'project', width: 34 },
     { header: 'Client', key: 'client', width: 22 },
+    { header: 'Project', key: 'project', width: 34 },
     { header: 'Month', key: 'month', width: 12 },
     { header: 'Actual Hours', key: 'hours', width: 14 },
   ];
@@ -273,7 +273,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
   s3.getCell(`A${row}`).value = '  PROJECT SUMMARY (totals across full range)';
   s3.getRow(row).height = 22; row++;
   const sumHdr = row;
-  ['Project', 'Client', 'Plan (hrs)', 'Contract (hrs)', 'Actual (hrs)', 'Variance (Act − Plan)', '% of plan'].forEach((h, i) => {
+  ['Client', 'Project', 'Plan (hrs)', 'Contract (hrs)', 'Actual (hrs)', 'Variance (Act − Plan)', '% of plan'].forEach((h, i) => {
     const c = s3.getCell(`${colLetter(i + 1)}${sumHdr}`);
     c.value = h; styleHeader(c, { align: i >= 2 ? 'right' : 'left' });
   });
@@ -287,8 +287,8 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     const con = contractByProj[pn] ? contractByProj[pn].total : 0;
     gPlan += plan; gAct += act; gCon += con;
     const r = row;
-    s3.getCell(`A${r}`).value = pn;
-    s3.getCell(`B${r}`).value = perProjTotals[pn].client;
+    s3.getCell(`A${r}`).value = perProjTotals[pn].client;
+    s3.getCell(`B${r}`).value = pn;
     s3.getCell(`C${r}`).value = round1(plan);
     s3.getCell(`D${r}`).value = round1(con);
     s3.getCell(`E${r}`).value = round1(act);
@@ -331,8 +331,8 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     s3.getRow(row).height = 20; row++;
 
     const hdrRow = row;
-    s3.getCell(`A${hdrRow}`).value = 'Project'; styleHeader(s3.getCell(`A${hdrRow}`));
-    s3.getCell(`B${hdrRow}`).value = 'Client'; styleHeader(s3.getCell(`B${hdrRow}`));
+    s3.getCell(`A${hdrRow}`).value = 'Client'; styleHeader(s3.getCell(`A${hdrRow}`));
+    s3.getCell(`B${hdrRow}`).value = 'Project'; styleHeader(s3.getCell(`B${hdrRow}`));
     months.forEach((ym, i) => { const c = s3.getCell(`${colLetter(3 + i)}${hdrRow}`); c.value = S.ymLabel(ym); styleHeader(c, { align: 'right' }); });
     s3.getCell(`${totColL}${hdrRow}`).value = 'Total'; styleHeader(s3.getCell(`${totColL}${hdrRow}`), { align: 'right' });
     s3.getRow(hdrRow).height = 20; row++;
@@ -341,8 +341,8 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     let grand = 0;
     projNames.forEach(pn => {
       const r = row;
-      s3.getCell(`A${r}`).value = pn;
-      s3.getCell(`B${r}`).value = perProjTotals[pn].client;
+      s3.getCell(`A${r}`).value = perProjTotals[pn].client;
+      s3.getCell(`B${r}`).value = pn;
       let rowTot = 0;
       months.forEach((ym, i) => {
         const v = round1(valueFor(pn, ym));
@@ -389,15 +389,15 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
   {
     const ws = wb.addWorksheet('By Project', { views: [{ state: 'frozen', ySplit: 1, xSplit: 2 }] });
     headerRow(ws, [
-      { h: 'Project', w: 34 }, { h: 'Client', w: 22 }, { h: 'People', w: 9, align: 'right' },
+      { h: 'Client', w: 22 }, { h: 'Project', w: 34 }, { h: 'People', w: 9, align: 'right' },
       { h: 'Peak FTE', w: 10, align: 'right' }, { h: 'Fee link', w: 30 },
       ...months.map(m => ({ h: S.ymLabel(m), w: 9, align: 'right' })),
     ], { xSplit: 2 });
     const roll = S.projectRollup(months, { includePursuit: true });
     let r = 2;
     roll.forEach(p => {
-      ws.getCell(`A${r}`).value = p.project;
-      ws.getCell(`B${r}`).value = p.client || '';
+      ws.getCell(`A${r}`).value = p.client || '';
+      ws.getCell(`B${r}`).value = p.project;
       ws.getCell(`C${r}`).value = p.headcount;
       ws.getCell(`D${r}`).value = round1(p.peakFte);
       ws.getCell(`E${r}`).value = p.feeProject ? (p.feeProject.name || '') : '';
@@ -466,7 +466,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
   {
     const ws = wb.addWorksheet('Contract vs Staffing', { views: [{ state: 'frozen', ySplit: 1 }] });
     headerRow(ws, [
-      { h: 'Project', w: 34 }, { h: 'Client', w: 20 }, { h: 'Contract resource', w: 24 },
+      { h: 'Client', w: 20 }, { h: 'Project', w: 34 }, { h: 'Contract resource', w: 24 },
       { h: 'Role', w: 24 }, { h: 'Open role?', w: 11 }, { h: 'On roster?', w: 12 },
       { h: 'Top-up?', w: 10 }, { h: 'Window', w: 20 },
       { h: 'Contract %', w: 11, align: 'right' }, { h: 'Already staffed %', w: 15, align: 'right' },
@@ -478,8 +478,8 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     let r = 2;
     gaps.forEach(g => {
       (g.segments || []).forEach((sg, i) => {
-        ws.getCell(`A${r}`).value = g.project;
-        ws.getCell(`B${r}`).value = g.client || '';
+        ws.getCell(`A${r}`).value = g.client || '';
+        ws.getCell(`B${r}`).value = g.project;
         ws.getCell(`C${r}`).value = g.open ? '(open role — needs a name)' : (g.resource || '');
         ws.getCell(`D${r}`).value = g.roleTitle || '';
         ws.getCell(`E${r}`).value = g.open ? 'Yes' : 'No';

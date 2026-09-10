@@ -436,12 +436,13 @@
       const tag = m.added ? '<span class="dflag live">NEW</span>'
         : m.removed ? '<span class="dflag demo">GONE</span>'
         : m.rerated ? '<span class="dflag demo">R' + m.fromRating + '→R' + m.toRating + '</span>' : '';
-      return '<tr><td><a href="#" data-project="' + esc(m.id) + '" title="Open this deal\'s box score">' + esc(m.name) + '</a> ' + tag + '</td>' +
-        '<td>' + esc(m.client) + '</td><td class="num">' + fm(m.from) + '</td><td class="num">' + fm(m.to) + '</td>' +
+      return '<tr><td>' + esc(m.client) + '</td>' +
+        '<td><a href="#" data-project="' + esc(m.id) + '" title="Open this deal\'s box score">' + esc(m.name) + '</a> ' + tag + '</td>' +
+        '<td class="num">' + fm(m.from) + '</td><td class="num">' + fm(m.to) + '</td>' +
         '<td class="num">' + (m.delta ? arrowCell(m.delta) : '<span style="color:var(--mut)">—</span>') + '</td></tr>';
     }).join('');
     const moverTable = movers.length
-      ? '<table class="vtable"><thead><tr><th>Project</th><th>Client</th><th class="num">' + esc(a.asOf) +
+      ? '<table class="vtable"><thead><tr><th>Client</th><th>Project</th><th class="num">' + esc(a.asOf) +
         '</th><th class="num">' + esc(b.asOf) + '</th><th class="num">Movement</th></tr></thead><tbody>' + mrows + '</tbody></table>' +
         (d.projects.length > movers.length ? '<div class="note">' + (d.projects.length - movers.length) + ' smaller movements not shown.</div>' : '')
       : '<div class="note">No project changed between these two snapshots.</div>';
@@ -669,14 +670,14 @@
         .map((b) => '<div style="width:' + ((b[1] / bandTotal) * 100) + '%;min-width:60px;background:' + b[3] + ';color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">' + b[0] + ': ' + b[1] + ' · ' + fm(b[2]) + '</div>').join('') +
       '</div>';
     const staleRows = p.stale.rows.map((r) =>
-      '<tr><td><a href="#" data-project="' + esc(r.projectId) + '" title="Open this deal\'s box score">' + esc(r.name) + '</a></td><td>' + esc(r.client) + '</td><td class="num">R' + r.rating + '</td>' +
+      '<tr><td>' + esc(r.client) + '</td><td><a href="#" data-project="' + esc(r.projectId) + '" title="Open this deal\'s box score">' + esc(r.name) + '</a></td><td class="num">R' + r.rating + '</td>' +
       '<td class="num">' + fm(r.value) + '</td>' +
       '<td class="num">' + (r.days === null ? '<span style="color:var(--mut)">awaiting history</span>'
         : '<span class="' + (r.days >= 90 ? 'tone-bad' : r.days >= 30 ? 'tone-amber' : 'tone-good') + '">' + r.days + '</span>') + '</td></tr>').join('');
     const stalePanel = panel('Pipeline staleness - how long since a deal last moved', liveFlag(), esc(p.stale.msg),
       'What it is: for each not-yet-booked deal (R2-R4), the time since its rating or value last changed - graded 0-30 on track, 30-90 ageing, 90+ stale. Why we show it: deals only convert if they are actively worked, so a long stretch with no movement is a warning that a deal may be stalling. Booked (R1) is set aside (it is won, not pipeline). Showing the 15 stalest; the change history began accruing ' + esc(p.stale.started) + '.',
       bandStrip +
-      '<table class="vtable"><thead><tr><th>Project (stalest first)</th><th>Client</th><th class="num">Rating</th><th class="num">' + d.year + ' value</th><th class="num">Days since last move</th></tr></thead><tbody>' + staleRows + '</tbody></table>');
+      '<table class="vtable"><thead><tr><th>Client</th><th>Project (stalest first)</th><th class="num">Rating</th><th class="num">' + d.year + ' value</th><th class="num">Days since last move</th></tr></thead><tbody>' + staleRows + '</tbody></table>');
 
     return kpis + bridgePanel + mixPanel + leaderPanel + topPanel + monthlyPanel + vintagePanel + stalePanel;
   }
@@ -1230,14 +1231,14 @@
 
     // true margin by project
     const marginRows = d.margins.slice(0, 15).map((m2) =>
-      '<tr><td><a href="#" data-project="' + esc(m2.projectId) + '" title="Open this project\'s box score">' + esc(m2.name) + '</a></td><td>' + esc(m2.client) + '</td>' +
+      '<tr><td>' + esc(m2.client) + '</td><td><a href="#" data-project="' + esc(m2.projectId) + '" title="Open this project\'s box score">' + esc(m2.name) + '</a></td>' +
       '<td class="num">' + (m2.rating == null ? '-' : 'R' + m2.rating) + '</td>' +
       '<td class="num">' + Math.round(m2.hours).toLocaleString() + 'h</td><td class="num">' + m2.people + '</td>' +
       '<td class="num">' + fm(m2.cost) + '</td><td class="num">' + fm(m2.revenue) + '</td>' +
       '<td class="num ' + (m2.margin >= 0 ? 'tone-good' : 'tone-bad') + '">' + fm(m2.margin) + (m2.marginPct == null ? '' : ' (' + Math.round(m2.marginPct) + '%)') + '</td></tr>').join('');
     const marginPanel = panel('True margin by project - revenue less delivery cost', liveFlag(), esc(d.marginMsg),
       'What it is: for every project with mapped hours, its ' + d.window.label.slice(-4) + ' revenue against the cost of the time actually logged on it (cost = the rate grid\'s floor where the person\'s title maps, a flat rate where it does not - the coverage panel says how much of the cost is grid-backed). Showing the 15 heaviest by hours.',
-      '<table class="vtable"><thead><tr><th>Project</th><th>Client</th><th class="num">Rating</th><th class="num">Hours</th><th class="num">People</th><th class="num">Delivery cost</th><th class="num">Revenue</th><th class="num">Margin</th></tr></thead><tbody>' + marginRows + '</tbody></table>');
+      '<table class="vtable"><thead><tr><th>Client</th><th>Project</th><th class="num">Rating</th><th class="num">Hours</th><th class="num">People</th><th class="num">Delivery cost</th><th class="num">Revenue</th><th class="num">Margin</th></tr></thead><tbody>' + marginRows + '</tbody></table>');
 
     // client economics
     const cliRows = d.clientEconomics.slice(0, 10).map((r) =>
@@ -1551,8 +1552,8 @@
         t.trueProfit.map((r) => [r.client, Math.round(r.hours), r.cost, r.invoiced, r.profit]));
     } else if (kind === 'clockify') {
       const t = delivery();
-      if (t) sheet('Margins', ['Project', 'Client', 'Rating', 'Hours', 'People', 'Cost', 'Revenue', 'Margin'],
-        t.margins.map((m2) => [m2.name, m2.client, m2.rating, Math.round(m2.hours), m2.people, m2.cost, m2.revenue, m2.margin]));
+      if (t) sheet('Margins', ['Client', 'Project', 'Rating', 'Hours', 'People', 'Cost', 'Revenue', 'Margin'],
+        t.margins.map((m2) => [m2.client, m2.name, m2.rating, Math.round(m2.hours), m2.people, m2.cost, m2.revenue, m2.margin]));
       if (t) sheet('People', ['Person', 'Title', 'Hours', 'Billable share', 'Cost rate'],
         t.people.map((p) => [p.name, p.title, Math.round(p.hours), p.billableShare, p.costPerHour]));
     }

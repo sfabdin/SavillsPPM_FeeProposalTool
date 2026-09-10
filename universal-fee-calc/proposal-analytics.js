@@ -187,13 +187,13 @@
       <div class="hd yellow"><b>${counts.yellow}</b><span>🟡 Needs review</span></div>
       <div class="hd red"><b>${counts.red}</b><span>🔴 Exec review</span></div>`;
     const watch = live.filter(x => x.h.band !== 'green').sort((a, b) => a.h.score - b.h.score).slice(0, 10);
-    const head = `<thead><tr><th class="l">Proposal</th><th class="l">Client</th><th>Fee</th><th>Score</th><th class="l">Top flag</th></tr></thead>`;
+    const head = `<thead><tr><th class="l">Client</th><th class="l">Proposal</th><th>Fee</th><th>Score</th><th class="l">Top flag</th></tr></thead>`;
     if (!watch.length) { $('#health-watch').innerHTML = head + `<tbody><tr><td colspan="5" class="empty">All live proposals are healthy. 🟢</td></tr></tbody>`; return; }
     const body = watch.map(x => {
       const worst = x.h.signals.slice().sort((a, b) => a.score - b.score)[0];
       return `<tr>
-        <td class="l">${esc(x.r.name)}</td>
         <td class="l">${esc(x.r.client)}</td>
+        <td class="l">${esc(x.r.name)}</td>
         <td class="num">${fmtK(x.r.fee)}</td>
         <td class="num"><span class="score-pill ${x.h.band}">${x.h.score}</span></td>
         <td class="l">${esc(worst.label)} <span style="color:#9aa0aa">(${esc(worst.detail)})</span></td></tr>`;

@@ -13,6 +13,7 @@
   /* ---------- State ---------- */
   let filters = {
     search: '',
+    client: '',
     status: '',
     industry: '',
     ptype: '',
@@ -92,9 +93,17 @@
     const indSel = $('#filter-industry');
     const ptSel = $('#filter-ptype');
     const leadSel = $('#filter-lead');
+    const clientSel = $('#filter-client');
 
     // Build options (preserve current selections)
     const curStatus = filters.status, curInd = filters.industry, curLead = filters.lead;
+    if (clientSel) {
+      // Clients first — pick one from the list instead of typing it.
+      const curClient = filters.client;
+      const clients = [...new Set(projects.map(p => String(p.project?.client || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      clientSel.innerHTML = '<option value="">All clients</option>' +
+        clients.map(c => `<option value="${esc(c)}" ${c===curClient?'selected':''}>${esc(c)}</option>`).join('');
+    }
     statusSel.innerHTML = '<option value="">All statuses</option>' +
       STORE.STATUSES.map(s => `<option value="${s}" ${s===curStatus?'selected':''}>${STORE.STATUS_LABELS[s]}</option>`).join('');
 
@@ -171,11 +180,12 @@
         : `Showing only projects led or owned by <strong>${esc(cur.name || '—')}</strong>. Other teams' fees are hidden.`;
     }
     const exit = document.getElementById('id-exit');
-    if (exit) exit.addEventListener('click', (e) => { e.preventDefault(); STORE.clearImpersonation(); filters = { search: '', status: '', industry: '', ptype: '', lead: '' }; render(); });
+    if (exit) exit.addEventListener('click', (e) => { e.preventDefault(); STORE.clearImpersonation(); filters = { search: '', client: '', status: '', industry: '', ptype: '', lead: '' }; render(); });
   }
   function applyFilters(projects) {
     return projects.filter(p => {
       const pj = p.project || {};
+      if (filters.client && String(pj.client || '').trim() !== filters.client) return false;
       if (filters.status && pj.status !== filters.status) return false;
       if (filters.industry && pj.industry !== filters.industry) return false;
       if (filters.ptype && pj.projectType !== filters.ptype) return false;
@@ -398,8 +408,8 @@
     }
 
     const cols = [
-      { key: 'name',      label: 'Project' },
       { key: 'client',    label: 'Client · location' },
+      { key: 'name',      label: 'Project' },
       { key: 'status',    label: 'Status' },
       { key: 'industry',  label: 'Industry' },
       { key: 'ptype',     label: 'Project type', sortable: false },
@@ -438,18 +448,18 @@
         : `<span class="pname-sub">${esc(pj.industry || '—')}</span>`;
       return `<tr data-id="${p.id}">
         ${quickEdit ? `
-        <td><input class="qe-in" data-qe="name" data-id="${p.id}" value="${esc(pj.name || '')}" placeholder="Project name"></td>
         <td>
           <input class="qe-in" data-qe="client" data-id="${p.id}" value="${esc(pj.client || '')}" placeholder="Client">
           <input class="qe-in qe-sm" data-qe="location" data-id="${p.id}" value="${esc(pj.location || '')}" placeholder="Location">
         </td>
+        <td><input class="qe-in" data-qe="name" data-id="${p.id}" value="${esc(pj.name || '')}" placeholder="Project name"></td>
         <td><select class="qe-sel" data-qe="status" data-id="${p.id}">${STORE.STATUSES.map(x => `<option value="${esc(x)}" ${pj.status === x ? 'selected' : ''}>${esc(STORE.STATUS_LABELS[x] || x)}</option>`).join('')}</select></td>` : `
-        <td>
-          <div class="pname">${esc(pj.name || 'Untitled')}${nameSub}</div>
-        </td>
         <td>
           <div class="pclient">${esc(pj.client || '—')}</div>
           <div class="pclient-sub">${esc(pj.location || '')}</div>
+        </td>
+        <td>
+          <div class="pname">${esc(pj.name || 'Untitled')}${nameSub}</div>
         </td>
         <td><span class="pill status-${statusKey}">${esc(statusLabel)}</span></td>`}
         ${quickEdit ? `
@@ -585,7 +595,7 @@
       STORE.setImpersonation(v);
     }
     // reset filters so a stale lead filter doesn't compound with the wall
-    filters = { search: '', status: '', industry: '', ptype: '', lead: '' };
+    filters = { search: '', client: '', status: '', industry: '', ptype: '', lead: '' };
     $('#search-input').value = '';
     render();
   });
@@ -593,6 +603,7 @@
   $('#filter-industry')?.addEventListener('change', e => { filters.industry = e.target.value; render(); });
   $('#filter-ptype')?.addEventListener('change', e => { filters.ptype = e.target.value; render(); });
   $('#filter-lead')?.addEventListener('change', e => { filters.lead = e.target.value; render(); });
+  $('#filter-client')?.addEventListener('change', e => { filters.client = e.target.value; render(); });
   // Quick edit — the button only exists for the superuser's REAL identity
   // (impersonation previews don't unlock it).
   {
@@ -608,7 +619,7 @@
     });
   }
   $('#clear-btn')?.addEventListener('click', () => {
-    filters = { search: '', status: '', industry: '', ptype: '', lead: '' };
+    filters = { search: '', client: '', status: '', industry: '', ptype: '', lead: '' };
     $('#search-input').value = '';
     render();
   });
@@ -673,6 +684,7 @@
     if (f.status) bits.push('Status: ' + (STORE.STATUS_LABELS[f.status] || f.status));
     if (f.industry) bits.push('Industry: ' + f.industry);
     if (f.ptype) bits.push('Type: ' + f.ptype);
+    if (f.client) bits.push('Client: ' + f.client);
     if (f.lead) bits.push('Lead: ' + f.lead);
     ws.mergeCells('A2:K2');
     ws.getCell('A2').value = V.rows.length + ' of ' + V.total + ' projects'
@@ -681,7 +693,7 @@
     ws.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
 
     const cols = [
-      ['Project', 34], ['Client', 24], ['Location', 18], ['Status', 14],
+      ['Client', 24], ['Project', 34], ['Location', 18], ['Status', 14],
       ['Industry', 18], ['Project type', 22], ['Lead PE', 18],
       ['Period', 18], ['Net fee', 14], ['FTE-months', 12], ['Last updated', 14],
     ];
@@ -705,8 +717,9 @@
       const rowNet = rc.coCount ? rc.revisedNet : fin.net;
       net += rowNet || 0; fte += fin.fteMonths || 0;
       const r = ws.addRow([
+        pj.client || '',
         (pj.name || 'Untitled') + (rc.coCount ? '  (incl. ' + rc.coCount + ' CO' + (rc.coCount === 1 ? '' : 's') + ')' : ''),
-        pj.client || '', pj.location || '',
+        pj.location || '',
         STORE.STATUS_LABELS[pj.status] || pj.status || '',
         pj.industry || '', pj.projectType || '', pj.lead || '',
         fmtPeriod(p), rowNet || 0, +(fin.fteMonths || 0).toFixed(1),
@@ -714,7 +727,7 @@
       ]);
       r.getCell(9).numFmt = '"$"#,##0';
       r.getCell(10).numFmt = '#,##0.0';
-      r.getCell(1).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+      r.getCell(2).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
       if (STORE.isPlaceholder && STORE.isPlaceholder(p)) {
         // Carry the estimate caveat into the workbook — a badge that only
         // exists on screen is one nobody downstream ever sees.

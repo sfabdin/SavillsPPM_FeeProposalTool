@@ -481,8 +481,8 @@
         chip = ` <a href="#" class="mv-chip" data-inline-topup="${gi}" style="background:#fdf3d7;color:#8a6d00;font-weight:700;text-decoration:none;white-space:nowrap" title="The contract staffs ${esc(g.resource)} beyond what's allocated here — click to add the difference as its own row">⚠ contract ${label} — add?</a>`;
       }
       body += `<tr class="${isP ? 'pursuit-row' : ''}"${isLeave ? ' style="background:#faf7fd"' : ''}>
-        <td class="pname">${esc(a.project)}</td>
         <td>${esc(a.client || '—')}</td>
+        <td class="pname">${esc(a.project)}</td>
         <td>${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${person.isPool ? ' <span class="nh-tag" style="background:#dff0ee;color:#0E7C7B" title="Shared contract pool — several people can bill toward this line">POOL</span>' : ''}</td>
         <td>${isLeave ? '<span class="badge" style="background:#efe6f7;color:#6b3fa0">🌴 Leave</span>' : `<span class="badge ${isP ? 'pursuit' : 'active'}">${esc(a.status)}${a.type === 'Opportunity' ? ' · opp' : ''}</span>`}</td>
         <td>${esc(a.start ? S.ymLabel(a.start) : '—')} – ${esc(a.end ? S.ymLabel(a.end) : '—')}${isLeave && a.end ? ` <span class="vmini" style="color:#6b3fa0">back ${esc(S.ymLabel(S.ymAdd(a.end, 1)))}</span>` : ''}</td>
@@ -491,7 +491,7 @@
         <td><span class="row-act"><button data-edit="${a.id}">Edit</button><button class="del" data-del="${a.id}">Del</button></span></td>
       </tr>`;
     });
-    const table = list.length ? `<table class="dt"><thead><tr><th>Project</th><th>Client</th><th>Person</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note / decision</th><th></th></tr></thead><tbody>${body}</tbody></table>`
+    const table = list.length ? `<table class="dt"><thead><tr><th>Client</th><th>Project</th><th>Person</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note / decision</th><th></th></tr></thead><tbody>${body}</tbody></table>`
       : `<div class="empty">No allocations match. <a href="#" id="al-clear">Clear filters</a></div>`;
     $('#p-allocations').innerHTML = dupAllocSectionHtml() + bridgeSectionHtml() + leaveSectionHtml() + toolbar + table;
     wireBridge();

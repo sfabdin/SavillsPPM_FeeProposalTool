@@ -111,7 +111,7 @@
 }
 .toolbar .filter-chip {
   flex: 1 1 0;
-  min-width: 0;
+  min-width: 150px;   /* five chips now — a label must never truncate; the row wraps instead */
   background-position: right 8px center;
 }
 .toolbar .actions-group {
