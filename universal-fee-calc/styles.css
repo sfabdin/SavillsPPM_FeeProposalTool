@@ -1773,18 +1773,20 @@ html, body {
 .pt-table td.pt-c-num { text-align: right; white-space: nowrap; }
 .pt-table td.pt-ro { font-weight: 700; font-size: 15px; color: var(--sav-navy); font-variant-numeric: tabular-nums; }
 /* Billing months per pass-through line */
-.pt-table tr.pt-months td { padding: 0 12px 14px; border-bottom: 1px solid rgba(37,39,58,0.10); }
-.pt-mo-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); margin-bottom: 8px; }
+.pt-table tr.pt-months td { padding: 0 12px 12px; border-bottom: 1px solid rgba(37,39,58,0.10); }
+.pt-months .pt-mo-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); padding: 8px 12px; background: #f7f8fa; border: 1px solid rgba(37,39,58,0.08); border-bottom: 0; }
 .pt-mo-lbl { font-family: var(--font-display); font-weight: 800; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sav-navy); }
+.pt-mo-hint { color: var(--sav-steel); }
 .pt-mo-tot .ok { color: #1f7a44; } .pt-mo-tot .bad { color: var(--sav-red); font-weight: 700; }
-.pt-mo-head button { font-family: var(--font-display); font-weight: 700; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; background: transparent; border: 1px solid rgba(37,39,58,0.25); color: var(--sav-navy); padding: 4px 8px; cursor: pointer; }
+.pt-mo-head button { font-family: var(--font-display); font-weight: 700; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; background: #fff; border: 1px solid rgba(37,39,58,0.25); color: var(--sav-navy); padding: 4px 9px; cursor: pointer; }
 .pt-mo-head button:hover { border-color: var(--sav-navy); }
 .pt-mo-warn { color: #8a6d00; background: #fdf3d7; padding: 3px 8px; }
-.pt-mo-warn button { border: 0; padding: 0; text-decoration: underline; text-transform: none; letter-spacing: 0; font-size: 12px; font-family: var(--font-body); color: inherit; }
-.pt-mo-grid { display: flex; flex-wrap: wrap; gap: 6px 8px; }
-.pt-mo { display: inline-flex; flex-direction: column; gap: 2px; }
-.pt-mo span { font-family: var(--font-display); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sav-steel); }
-.pt-mo input { width: 92px; font-family: var(--font-body); font-size: 12.5px; padding: 5px 7px; border: 1px solid rgba(37,39,58,0.22); text-align: right; }
+.pt-mo-warn button { border: 0; padding: 0; background: transparent; text-decoration: underline; text-transform: none; letter-spacing: 0; font-size: 12px; font-family: var(--font-body); color: inherit; }
+.pt-mo-grid { display: flex; flex-wrap: wrap; gap: 8px 10px; padding: 10px 12px 12px; background: #f7f8fa; border: 1px solid rgba(37,39,58,0.08); border-top: 0; }
+.pt-mo { display: inline-flex; flex-direction: column; gap: 3px; width: 104px; }
+.pt-mo span { font-family: var(--font-display); font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sav-steel); }
+.pt-mo input { width: 100%; box-sizing: border-box; font-family: var(--font-body); font-size: 12.5px; padding: 6px 8px; border: 1px solid rgba(37,39,58,0.22); background: #fff; text-align: right; font-variant-numeric: tabular-nums; }
+.pt-mo input:focus { border-color: var(--sav-navy); outline: none; }
 
 .pt-table input[type=text] { font-family: var(--font-body); font-size: 15px; padding: 9px 11px; border: 1px solid rgba(37,39,58,0.22); background: #fff; color: var(--sav-navy); width: 100%; }
 .pt-table td.pt-c-num input { text-align: right; width: 130px; display: inline-block; }

@@ -2507,6 +2507,22 @@
                sq(C.latestLocked().id, '2026-08', 'found by latestLocked') && sq(C.cycleSummary('2026-08').title, 'August 2026', 'summary title');
       } finally { reset(); }
     });
+    test('Confirmed book', 'a book nobody confirmed into can be deleted; one with confirmations cannot; a file gone from Box is pruned', () => {
+      try {
+        const c1 = open();
+        const c2 = C.createCycle({ name: 'Real one', period: YM, deadline: '2026-09-20', now: '2026-09-02T09:00:00Z' });
+        as('esobel@savills.us', 'Emily Sobel'); C.confirm(c2.id, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        as('sabdin@savills.us', 'Sarah Abdin');
+        let kept = false; try { C.deleteCycle(c2.id); } catch (e) { kept = /confirmations/.test(e.message); }
+        const title = C.deleteCycle(c1.id);
+        const c3 = C.createCycle({ name: 'Stale in cache', period: YM, deadline: '2026-09-25', now: '2026-09-03T09:00:00Z' });
+        C.markCycleClean(c3.id); C.markCycleClean(c2.id);
+        const dropped = C.pruneMissing([c2.id]);          // Box now lists only the real one
+        return sq(kept, true, 'a book with confirmations is refused') && sq(title, 'Revenue Projections #12', 'deleted by title') &&
+               sq(!!C.getCycle(c1.id), false, 'gone from the cache') && sq(dropped, 1, 'the missing one pruned') &&
+               sq(C.listCycles().map(c => c.id).join(','), c2.id, 'only the real one remains');
+      } finally { restore(); reset(); }
+    });
     test('Confirmed book', 'only a leadership admin opens or locks a month', () => {
       try {
         reset(); as('bshepparding@savills.us', 'Brianna King');   // a leader, not on the leadership list
@@ -2616,6 +2632,24 @@
       const a = S.billingSeries(untouched, C), b = S.billingSeries(edited, C);
       return sq(a.map(x => x.ym + ':' + r2(x.invoice)).join(','), '2026-04:3173.77,2026-05:0', 'imported April shows even though the timeline is May') &&
              sq(b.map(x => x.ym + ':' + r2(x.invoice)).join(','), '2026-05:1100', 'once a line exists, the line is the number');
+    });
+    test('Pass-through · cleanup', 'the one-time cleanup rewrites stale import splits to the priced months, once, for a leadership admin only', () => {
+      const dbKey = 'savills-ppm-fee-db:v1'; const prevDb = localStorage.getItem(dbKey); const prevId = S.getRealIdentity();
+      try {
+        const a = sw({ id: 'cl_a', timeline: { startMonth: 10, startYear: 2026, endMonth: 10, endYear: 2026 }, passthrough: pt([{ id: 'x', cost: 86750, markupPct: 10, mode: 'billed', monthly: { '2026-8': 86750 } }]) });
+        const b = sw({ id: 'cl_b', passthrough: pt([{ id: 'y', cost: 1000, markupPct: 10, mode: 'billed', monthly: { '2026-5': 1000 } }]) });   // already exact
+        localStorage.setItem(dbKey, JSON.stringify({ schemaVersion: 2, projects: { cl_a: a, cl_b: b } }));
+        S.setRealIdentity({ username: 'bshepparding@savills.us', name: 'Brianna King' });
+        const none = S.runDataCleanups();
+        S.setRealIdentity({ username: 'sabdin@savills.us', name: 'Sarah Abdin' });
+        const ran = S.runDataCleanups();
+        const again = S.runDataCleanups();
+        const pa = S.getProject('cl_a'), pb = S.getProject('cl_b');
+        return sq(none.length, 0, 'a leader\'s browser does nothing') && sq(ran.length, 1, 'ran once') && sq(ran[0].res.lines, 1, 'one line rewritten') &&
+               sq(JSON.stringify(pa.passthrough.lines[0].monthly), '{"2026-10":86750}', 'moved into the timeline') &&
+               sq(JSON.stringify(pb.passthrough.lines[0].monthly), '{"2026-5":1000}', 'an exact split is left alone') &&
+               sq(again.length, 0, 'flagged — does not run twice') && sq(!!S.getReportYearsSetting || true, true, 'ok');
+      } finally { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); if (prevDb == null) localStorage.removeItem(dbKey); else localStorage.setItem(dbKey, prevDb); }
     });
     test('Pass-through · projections', 'staffing being built does NOT supersede the import (that is the bridge workflow)', () => {
       const p = Object.assign(base({ source: { importedByMonth: { '2026-1': 10000, '2026-2': 10000, '2026-3': 10000, '2026-4': 10000 } } }), { financials: null });
