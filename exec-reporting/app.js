@@ -208,8 +208,8 @@
     const pulled = new Date();
     const bs = fromBook ? C.cycleSummary(BOOK.ym) : null;
     computeAll(bs
-      ? (bs.lockedAt ? bs.label + ' confirmed book · locked ' + new Date(bs.lockedAt).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET' + (bs.lockedByName ? ' by ' + bs.lockedByName : '')
-                     : bs.label + ' confirmed book · still open · ' + bs.confirmed + ' confirmed so far')
+      ? (bs.lockedAt ? '“' + bs.title + '” confirmed book · locked ' + new Date(bs.lockedAt).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET' + (bs.lockedByName ? ' by ' + bs.lockedByName : '')
+                     : '“' + bs.title + '” confirmed book · still open · ' + bs.confirmed + ' confirmed so far')
         + (bs.carried.length ? ' · ' + bs.carried.length + ' leader' + (bs.carried.length === 1 ? '' : 's') + ' carried in unconfirmed' : '')
       : 'Live from Box · pulled ' + pulled.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET');
   }
@@ -255,7 +255,7 @@
   const Confirm = () => window.UFC_Confirm;
   function bookChoices() {
     const C = Confirm(); if (!C) return [];
-    return C.listCycles().slice().reverse().map((c) => ({ ym: c.cycle, label: C.ymLong(c.cycle) + (c.lockedAt ? ' · confirmed book' : ' · open, in progress'), locked: !!c.lockedAt }));
+    return C.listCycles().slice().reverse().map((c) => ({ ym: c.id, label: C.bookTitle(c) + (C.periodLabel(c) && C.periodLabel(c) !== C.bookTitle(c) ? ' · ' + C.periodLabel(c) : '') + (c.lockedAt ? ' · locked' : ' · open, in progress'), locked: !!c.lockedAt }));
   }
   function initBook() {
     if (BOOK.inited) return; BOOK.inited = true;
@@ -264,7 +264,7 @@
     if (saved === 'live') { BOOK.ym = null; return; }
     if (saved && C && C.getCycle(saved)) { BOOK.ym = saved; return; }
     const latest = C && C.latestLocked ? C.latestLocked() : null;
-    BOOK.ym = latest ? latest.cycle : null;
+    BOOK.ym = latest ? latest.id : null;
   }
   function setBook(ym) {
     BOOK.ym = ym || null;
@@ -283,14 +283,14 @@
     root.innerHTML =
       '<div class="wrap">' +
       '<div class="hdr"><h1>Executive Reporting · ' + d.year + '</h1>' +
-      (dev ? '<span class="dflag demo">DEV FIXTURES</span>' : BOOK.ym ? '<span class="badge">CONFIRMED · ' + esc(Confirm().ymShort(BOOK.ym).toUpperCase()) + '</span>' : '<span class="badge">LIVE</span>') +
+      (dev ? '<span class="dflag demo">DEV FIXTURES</span>' : BOOK.ym ? '<span class="badge">CONFIRMED' + ((bs => bs && bs.period ? ' · ' + esc(Confirm().ymShort(bs.period).toUpperCase()) : '')(bookSummary())) + '</span>' : '<span class="badge">LIVE</span>') +
       '<span class="asof">' + esc(d.asOf) + '</span>' +
       (bookChoices().length ? '<label class="bookpick"><span>Book</span><select id="exec-book">' +
         '<option value="live"' + (BOOK.ym ? '' : ' selected') + '>Live · as it stands now</option>' +
         bookChoices().map((c) => '<option value="' + esc(c.ym) + '"' + (c.ym === BOOK.ym ? ' selected' : '') + '>' + esc(c.label) + '</option>').join('') +
         '</select></label>' : '') +
       '</div>' +
-      ((bs => bs && bs.carried.length ? '<div class="booknote">' + bs.carried.length + ' leader' + (bs.carried.length === 1 ? '' : 's') + ' did not confirm before this month was locked — their live projects were carried in and are flagged in the Leaders tab: ' +
+      ((bs => bs && bs.carried.length ? '<div class="booknote">' + bs.carried.length + ' leader' + (bs.carried.length === 1 ? '' : 's') + ' did not confirm before this book was locked — their live projects were carried in and are flagged in the Leaders tab: ' +
         esc(bs.carried.map((id) => Confirm().leaderName(id)).join(', ')) + '.</div>' : '')(bookSummary())) +
       '<div class="tabbar">' + TABS.map((t) =>
         '<button data-tab="' + t.key + '" class="' + (t.key === activeTab ? 'on ' : '') + (t.internal ? 'internal' : '') + '">' + esc(t.label) + '</button>'

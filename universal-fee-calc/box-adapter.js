@@ -1412,8 +1412,10 @@
     } catch (e) { /* backups must never break boot */ }
   }
 
-  /* ---- MONTHLY CONFIRMED BOOK (confirmed-YYYY-MM.json) --------------------
-     One file per month, created by an admin when the month opens. Every
+  /* ---- CONFIRMED BOOKS (confirmed-<book id>.json) ---------------------------
+     One file per book, created by an admin. A book id is the creation date
+     plus the name ("2026-09-10-revenue-projections-12"); books from before
+     names existed are keyed by their month ("2026-09"). Every
      leader's confirmation writes into it, so — exactly like the activity
      shards — no upload ever goes out without merging onto Box's copy first,
      and a 412 is answered with pull → merge → retry. The merge is keyed per
@@ -1435,7 +1437,7 @@
     const j = await res.json(); const out = [];
     (j.entries || []).forEach(e => {
       if (e.type !== 'file') return;
-      const m = /^confirmed-(\d{4}-\d{2})\.json$/.exec(e.name || '');
+      const m = /^confirmed-([A-Za-z0-9._-]+)\.json$/.exec(e.name || '');
       if (!m) return;
       rememberConfId(m[1], e.id); out.push(m[1]);
     });
@@ -1454,7 +1456,7 @@
     }
     if (!create) return null;
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
-    const seed = (Confirm() && Confirm().serialize(ym)) || JSON.stringify({ schemaVersion: 1, cycle: ym, confirmations: {}, projects: {} });
+    const seed = (Confirm() && Confirm().serialize(ym)) || JSON.stringify({ schemaVersion: 2, id: ym, cycle: ym, confirmations: {}, projects: {} });
     const form = new FormData();
     form.append('attributes', JSON.stringify({ name: confName(ym), parent: { id: BOX_CONFIG.folderId } }));
     form.append('file', new Blob([seed], { type: 'application/json' }), confName(ym));
@@ -1488,7 +1490,7 @@
     if (!res.ok) throw new Error('confirmed-book pull failed for ' + ym + ': ' + res.status);
     const txt = await res.text();
     if (!txt || !txt.trim()) return null;
-    try { const p = JSON.parse(txt); return (p && p.cycle) ? p : null; } catch (e) { return null; }
+    try { const p = JSON.parse(txt); return (p && (p.id || p.cycle)) ? p : null; } catch (e) { return null; }
   }
   async function uploadConfCycle(ym, depth) {
     const C = Confirm(); if (!C || !C.getCycle(ym)) return;

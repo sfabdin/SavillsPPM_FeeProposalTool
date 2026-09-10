@@ -2323,7 +2323,8 @@
   (function () {
     const C = window.UFC_Confirm;
     if (!C) { test('Confirmed book', 'module loads', () => 'UFC_Confirm not present'); return; }
-    const YM = '2026-09';
+    const YM = '2026-09';            // the period label
+    let ID = '';                     // the book id, set by open()
     const sq = (x, y, label) => (x === y) ? true : label + ': ' + JSON.stringify(x) + ' ≠ ' + JSON.stringify(y);
     const rec = (id, leadId, extra) => Object.assign(base({ id, project: Object.assign({ name: 'P ' + id, client: 'Acme', status: 'active', leadId }, extra || {}) }), { updatedAt: '2026-09-01T00:00:00Z' });
     const book = () => [
@@ -2336,7 +2337,7 @@
     const prevId = S.getRealIdentity();
     const as = (login, name) => S.setRealIdentity({ username: login, name });
     const reset = () => { localStorage.removeItem(C.KEY); };
-    const open = () => { reset(); as('sabdin@savills.us', 'Sarah Abdin'); return C.createCycle({ cycle: YM, deadline: '2026-09-15' }); };
+    const open = () => { reset(); as('sabdin@savills.us', 'Sarah Abdin'); const c = C.createCycle({ name: 'Revenue Projections #12', period: YM, deadline: '2026-09-15', now: '2026-09-01T13:00:00Z' }); ID = c.id; return c; };
     const restore = () => { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); };
 
     test('Confirmed book', 'everyone with an active project is expected; unassigned when a project has no leader', () => {
@@ -2350,8 +2351,8 @@
     test('Confirmed book', 'confirm copies every project the leader leads, shared ones included, and stamps each copy', () => {
       try {
         open(); as('esobel@savills.us', 'Emily Sobel');
-        const k = C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
-        const c = C.getCycle(YM);
+        const k = C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        const c = C.getCycle(ID);
         const ids = Object.keys(c.projects).sort().join(',');
         const copy = c.projects.cb_b;
         const ps = C.projectStatus(c, book()[1], {});
@@ -2363,10 +2364,10 @@
     test('Confirmed book', 'the most recent confirmation supplies a shared project; both confirmed → fully confirmed', () => {
       try {
         open(); as('esobel@savills.us', 'Emily Sobel');
-        C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
         as('jsantoro@savills.us', 'Jeff Santoro');
-        C.confirm(YM, 'jsantoro', { records: book(), now: '2026-09-09T14:41:00Z' });
-        const c = C.getCycle(YM);
+        C.confirm(ID, 'jsantoro', { records: book(), now: '2026-09-09T14:41:00Z' });
+        const c = C.getCycle(ID);
         const ps = C.projectStatus(c, book()[1], {});
         return sq(c.projects.cb_b._confirmedBy, 'jsantoro', 'later confirmation wins') && sq(ps.full, true, 'fully confirmed') &&
                sq(Object.keys(c.projects).length, 4, 'a, b, c and the lost one — nothing duplicated') &&
@@ -2376,27 +2377,27 @@
     test('Confirmed book', 'one confirmation per month — a second is refused', () => {
       try {
         open(); as('esobel@savills.us', 'Emily Sobel');
-        C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
-        try { C.confirm(YM, 'esobel', { records: book(), now: '2026-09-09T10:00:00Z' }); return 'second confirmation went through'; }
+        C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        try { C.confirm(ID, 'esobel', { records: book(), now: '2026-09-09T10:00:00Z' }); return 'second confirmation went through'; }
         catch (e) { return /already confirmed/.test(e.message) || e.message; }
       } finally { restore(); }
     });
     test('Confirmed book', 'you can only confirm your own book', () => {
       try {
         open(); as('esobel@savills.us', 'Emily Sobel');
-        try { C.confirm(YM, 'jsantoro', { records: book() }); return 'confirmed someone else\'s book'; }
+        try { C.confirm(ID, 'jsantoro', { records: book() }); return 'confirmed someone else\'s book'; }
         catch (e) { return /own book/.test(e.message) || e.message; }
       } finally { restore(); }
     });
     test('Confirmed book', 'status: due → overdue (bold) → confirmed → changed when a project is edited after the stamp', () => {
       try {
         open(); const recs = book();
-        const c0 = C.getCycle(YM);
+        const c0 = C.getCycle(ID);
         const due = C.statusFor(c0, 'esobel', recs, '2026-09-09T12:00:00');
         const over = C.statusFor(c0, 'esobel', recs, '2026-09-17T12:00:00');
         as('esobel@savills.us', 'Emily Sobel');
-        C.confirm(YM, 'esobel', { records: recs, now: '2026-09-10T12:00:00Z' });
-        const c1 = C.getCycle(YM);
+        C.confirm(ID, 'esobel', { records: recs, now: '2026-09-10T12:00:00Z' });
+        const c1 = C.getCycle(ID);
         const ok = C.statusFor(c1, 'esobel', recs, '2026-09-11T12:00:00');
         recs[0].updatedAt = '2026-09-12T09:00:00Z';
         const ch = C.statusFor(c1, 'esobel', recs, '2026-09-13T12:00:00');
@@ -2410,10 +2411,10 @@
     test('Confirmed book', 'lock carries the unconfirmed in, flagged, without touching a peer\'s confirmed copy', () => {
       try {
         open(); as('esobel@savills.us', 'Emily Sobel');
-        C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
         as('sabdin@savills.us', 'Sarah Abdin');
-        const r = C.lockCycle(YM, { records: book(), now: '2026-09-18T15:00:00Z' });
-        const c = C.getCycle(YM);
+        const r = C.lockCycle(ID, { records: book(), now: '2026-09-18T15:00:00Z' });
+        const c = C.getCycle(ID);
         const missed = C.statusFor(c, 'jsantoro', book(), '2026-09-19T12:00:00');
         return sq(r.carried.join(','), 'jsantoro,unassigned', 'who was carried') &&
                sq(!!c.projects.cb_c._carried, true, 'Jeff\'s own project carried') &&
@@ -2426,16 +2427,16 @@
     test('Confirmed book', 'after lock a confirmation needs a reason, then replaces the carried copies', () => {
       try {
         open(); as('sabdin@savills.us', 'Sarah Abdin');
-        C.lockCycle(YM, { records: book(), now: '2026-09-18T15:00:00Z' });
+        C.lockCycle(ID, { records: book(), now: '2026-09-18T15:00:00Z' });
         as('jsantoro@savills.us', 'Jeff Santoro');
-        try { C.confirm(YM, 'jsantoro', { records: book(), now: '2026-09-19T10:00:00Z' }); return 'late confirmation went through without a reason'; }
+        try { C.confirm(ID, 'jsantoro', { records: book(), now: '2026-09-19T10:00:00Z' }); return 'late confirmation went through without a reason'; }
         catch (e) { if (!/reason/.test(e.message)) return e.message; }
-        const k = C.confirm(YM, 'jsantoro', { records: book(), now: '2026-09-19T10:00:00Z', reason: 'Was out on site all week' });
-        const c = C.getCycle(YM);
+        const k = C.confirm(ID, 'jsantoro', { records: book(), now: '2026-09-19T10:00:00Z', reason: 'Was out on site all week' });
+        const c = C.getCycle(ID);
         const w = C.widgetState({ username: 'jsantoro@savills.us', name: 'Jeff Santoro', role: 'member' }, '2026-09-19T12:00:00');
         return sq(!!k.afterLock, true, 'flagged after lock') && sq(!!k.late, true, 'and late') &&
                sq(!!c.projects.cb_c._carried, false, 'carried copy replaced') && sq(c.projects.cb_c._confirmedBy, 'jsantoro', 'now his') &&
-               sq(c.carried.join(','), 'unassigned', 'no longer carried') && sq(C.cycleSummary(YM).lateReviews, 1, 'awaiting review') &&
+               sq(c.carried.join(','), 'unassigned', 'no longer carried') && sq(C.cycleSummary(ID).lateReviews, 1, 'awaiting review') &&
                sq(w.kind, 'quiet', 'nothing left to nag about');
       } finally { restore(); }
     });
@@ -2472,8 +2473,8 @@
     test('Confirmed book', 'the confirmed book reads back in projects.json shape and maps in Executive Reporting', () => {
       try {
         open(); as('esobel@savills.us', 'Emily Sobel');
-        C.confirm(YM, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
-        const db = C.asProjectsDb(YM);
+        C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        const db = C.asProjectsDb(ID);
         const CORE = window.EXEC_CORE;
         if (!CORE) return 'EXEC_CORE not present';
         CORE.configure({ ratings: S.RATINGS, statusDefaultRating: S.STATUS_DEFAULT_RATING, leaders: S.REVENUE_LEADERS, industries: S.INDUSTRIES, fmtMoney: S.fmtMoney });
@@ -2481,12 +2482,37 @@
         return sq(Object.keys(db.projects).length, 2, 'two copies') && sq(!!m.ok, true, 'maps: ' + (m.error || '')) && sq(m.projects.length, 2, 'two mapped');
       } finally { restore(); }
     });
+    test('Confirmed book', 'a book has a name, a period label and a date-stamped id; two in one month are two books', () => {
+      try {
+        const c1 = open();
+        const c2 = C.createCycle({ name: 'Revenue Projections #12', period: YM, deadline: '2026-09-20', now: '2026-09-01T14:00:00Z' });
+        const c3 = C.createCycle({ name: 'Board pack', period: YM, deadline: '2026-09-25', now: '2026-09-02T09:00:00Z' });
+        C.setName(c3.id, 'Board pack (final)'); C.setPeriod(c3.id, '2026-10'); C.setDeadline(c3.id, '2026-09-26');
+        const c3b = C.getCycle(c3.id);
+        let bad = false; try { C.createCycle({ name: '', period: YM, deadline: '2026-09-15' }); } catch (e) { bad = /name/.test(e.message); }
+        return sq(c1.id, '2026-09-01-revenue-projections-12', 'id is date + name') && sq(c2.id, '2026-09-01-revenue-projections-12-2', 'same name same day → suffixed') &&
+               sq(C.listCycles().length, 3, 'three books in one month') && sq(C.bookTitle(c1), 'Revenue Projections #12', 'title is the name') &&
+               sq(C.periodLabel(c1), 'September 2026', 'period label') && sq(C.bookYear(c1), 2026, 'fee year from the period') &&
+               sq(C.currentCycle().id, c1.id, 'the open book due first is current') &&
+               sq(c3b.name + '|' + c3b.period + '|' + c3b.deadline, 'Board pack (final)|2026-10|2026-09-26', 'renamed, relabelled, redated') &&
+               sq(bad, true, 'a book needs a name');
+      } finally { restore(); reset(); }
+    });
+    test('Confirmed book', 'a book from before names existed still loads: keyed by its month, titled by it', () => {
+      try {
+        reset();
+        const legacy = { schemaVersion: 1, cycle: '2026-08', deadline: '2026-08-14', openedAt: '2026-08-01T13:00:00Z', lockedAt: '2026-08-20T15:00:00Z', metaUpdatedAt: '2026-08-20T15:00:00Z', updatedAt: '2026-08-20T15:00:00Z', confirmations: {}, projects: {}, carried: [] };
+        const c = C.hydrateCycle('2026-08', legacy);
+        return sq(c.id, '2026-08', 'id from the month') && sq(c.period, '2026-08', 'period from the month') && sq(C.bookTitle(c), 'August 2026', 'titled by the month') &&
+               sq(C.latestLocked().id, '2026-08', 'found by latestLocked') && sq(C.cycleSummary('2026-08').title, 'August 2026', 'summary title');
+      } finally { reset(); }
+    });
     test('Confirmed book', 'only a leadership admin opens or locks a month', () => {
       try {
         reset(); as('bshepparding@savills.us', 'Brianna King');   // a leader, not on the leadership list
-        try { C.createCycle({ cycle: YM, deadline: '2026-09-15' }); return 'a leader opened a month'; } catch (e) { if (!/leadership admin/.test(e.message)) return e.message; }
+        try { C.createCycle({ name: 'Sneaky', period: YM, deadline: '2026-09-15' }); return 'a leader created a book'; } catch (e) { if (!/leadership admin/.test(e.message)) return e.message; }
         open(); as('bshepparding@savills.us', 'Brianna King');
-        try { C.lockCycle(YM, { records: book() }); return 'a leader locked a month'; } catch (e) { return /leadership admin/.test(e.message) || e.message; }
+        try { C.lockCycle(ID, { records: book() }); return 'a leader locked a month'; } catch (e) { return /leadership admin/.test(e.message) || e.message; }
       } finally { restore(); reset(); }
     });
   })();
