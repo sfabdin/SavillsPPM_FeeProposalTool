@@ -214,7 +214,34 @@
   function readVocab() {
     const v = (readDb() || {}).vocab || {};
     return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [], leaders: v.leaders || [],
-             admins: v.admins || [], toolAdmins: v.toolAdmins || [] };
+             admins: v.admins || [], toolAdmins: v.toolAdmins || [], reportYears: v.reportYears || null };
+  }
+  /* ---- Reporting years ----
+     The calendar years reports and exports cover — this year and next by
+     default, moved forward by a leadership admin as the year turns (come
+     November, next year is the one that matters). A data setting synced
+     through projects.json, so one change reaches every browser. */
+  function getReportYears() {
+    const v = readVocab().reportYears;
+    const y = new Date().getFullYear();
+    let from = v && Number(v.from), to = v && Number(v.to);
+    if (!from || !to || from > to || to - from > 5) { from = y; to = y + 1; }
+    const out = []; for (let k = from; k <= to; k++) out.push(k);
+    return out;
+  }
+  function getReportYearsSetting() { return readVocab().reportYears || null; }
+  function setReportYears(from, to) {
+    if (!seesAllProjects(getCurrentUser())) throw new Error('Only a leadership admin can change the reporting years.');
+    const f = Number(from), t = Number(to);
+    if (!f || !t || f < 2000 || t < f) throw new Error('Pick a first year and a last year, in order.');
+    if (t - f > 5) throw new Error('Six years at most.');
+    const db = readDb();
+    const v = db.vocab = db.vocab || { industries: [], projectTypes: [], lossReasons: [] };
+    const cu = getCurrentUser() || {};
+    v.reportYears = { from: f, to: t, setAt: new Date().toISOString(), setBy: cu.username || '' };
+    writeDb(db);
+    logSystem('report-years', { from: f, to: t });
+    return getReportYears();
   }
   function allIndustries() {
     const extra = readVocab().industries.filter(x => x && !BASE_INDUSTRIES.includes(x));
@@ -4607,7 +4634,7 @@
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
-    getMaintenance, setMaintenance, 
+    getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,

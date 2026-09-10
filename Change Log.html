@@ -175,7 +175,7 @@
     'scenario-save': 'Scenario saved', 'scenario-delete': 'Scenario deleted',
     'activity-migrate': 'Trail moved to its own store',
     'confirm-book': 'Book confirmed', 'cycle-open': 'Month opened', 'cycle-deadline': 'Deadline changed',
-    'cycle-lock': 'Month locked', 'cycle-reopen': 'Month reopened', 'cycle-review': 'Late confirmation reviewed',
+    'cycle-lock': 'Month locked', 'cycle-reopen': 'Month reopened', 'cycle-review': 'Late confirmation reviewed', 'report-years': 'Reporting years',
     'staff-alloc-add': 'Staffed', 'staff-alloc': 'Staffing changed', 'staff-alloc-remove': 'Unstaffed',
     'staff-person-add': 'Person added', 'staff-person': 'Roster changed', 'staff-hours': 'Month hours',
     'staff-import': 'Matrix imported', 'staff-reseed': 'Matrix re-seeded', 'staff-reset': 'Matrix reset',
@@ -191,7 +191,7 @@
     : /^(delete|purge|ledger-remove|baseline-delete|scenario-delete)$/.test(a) ? 'delete'
     : /^(book|co-approve|confirm-book)$/.test(a) ? 'book'
     : /^(status|slip|slip-remove)$/.test(a) ? 'status'
-    : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-lock|cycle-reopen|cycle-review)$/.test(a) ? 'system'
+    : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-lock|cycle-reopen|cycle-review|report-years)$/.test(a) ? 'system'
     : /^staff-/.test(a) ? 'staff'
     : /^(ledger-|plan-adjust$|schedule-shift$|reconcile-commit$)/.test(a) ? 'ledger'
     : 'edit';
@@ -333,6 +333,7 @@
     if (a === 'cycle-lock') return 'Locked the <b>' + esc(cycleName(m.cycle)) + '</b> confirmed book — ' + (m.confirmed || 0) + ' confirmed, ' + (m.carried || 0) + ' carried in unconfirmed';
     if (a === 'cycle-reopen') return 'Reopened <b>' + esc(cycleName(m.cycle)) + '</b> for confirmation';
     if (a === 'cycle-review') return 'Reviewed a late confirmation for <b>' + esc(cycleName(m.cycle)) + '</b>';
+    if (a === 'report-years') return 'Set the reporting years to <b>' + esc(m.from) + '–' + esc(m.to) + '</b>';
 
     /* The reconciliation actions. Each one says the DECISION, with the figures
        either side of it, because "someone touched March" is not an audit. */
