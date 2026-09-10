@@ -178,7 +178,7 @@
     'scenario-save': 'Scenario saved', 'scenario-delete': 'Scenario deleted',
     'activity-migrate': 'Trail moved to its own store',
     'confirm-book': 'Book confirmed', 'cycle-open': 'Book created', 'cycle-deadline': 'Deadline changed', 'cycle-name': 'Book renamed', 'cycle-period': 'Book period',
-    'cycle-lock': 'Book locked', 'cycle-reopen': 'Book reopened', 'cycle-review': 'Late confirmation reviewed', 'report-years': 'Reporting years',
+    'cycle-lock': 'Book locked', 'cycle-reopen': 'Book reopened', 'cycle-review': 'Late confirmation reviewed', 'cycle-delete': 'Book deleted', 'report-years': 'Reporting years', 'pt-months-cleanup': 'Pass-through months cleaned up',
     'staff-alloc-add': 'Staffed', 'staff-alloc': 'Staffing changed', 'staff-alloc-remove': 'Unstaffed',
     'staff-person-add': 'Person added', 'staff-person': 'Roster changed', 'staff-hours': 'Month hours',
     'staff-import': 'Matrix imported', 'staff-reseed': 'Matrix re-seeded', 'staff-reset': 'Matrix reset',
@@ -194,7 +194,7 @@
     : /^(delete|purge|ledger-remove|baseline-delete|scenario-delete)$/.test(a) ? 'delete'
     : /^(book|co-approve|confirm-book)$/.test(a) ? 'book'
     : /^(status|slip|slip-remove)$/.test(a) ? 'status'
-    : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-name|cycle-period|cycle-lock|cycle-reopen|cycle-review|report-years)$/.test(a) ? 'system'
+    : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-name|cycle-period|cycle-lock|cycle-reopen|cycle-review|cycle-delete|report-years|pt-months-cleanup)$/.test(a) ? 'system'
     : /^staff-/.test(a) ? 'staff'
     : /^(ledger-|plan-adjust$|schedule-shift$|reconcile-commit$)/.test(a) ? 'ledger'
     : 'edit';
@@ -337,6 +337,8 @@
     if (a === 'cycle-period') return 'Labelled <b>' + esc(cycleName(m.cycle, m)) + '</b> as ' + esc(cycleName(m.period));
     if (a === 'cycle-lock') return 'Locked the confirmed book <b>' + esc(cycleName(m.cycle, m)) + '</b> — ' + (m.confirmed || 0) + ' confirmed, ' + (m.carried || 0) + ' carried in unconfirmed';
     if (a === 'cycle-reopen') return 'Reopened <b>' + esc(cycleName(m.cycle, m)) + '</b> for confirmation';
+    if (a === 'cycle-delete') return 'Deleted the book <b>' + esc(cycleName(m.cycle, m)) + '</b> (nobody had confirmed into it)';
+    if (a === 'pt-months-cleanup') return 'One-time cleanup: rewrote the July import\'s hidden billing months on <b>' + (m.lines || 0) + ' pass-through line' + (m.lines === 1 ? '' : 's') + '</b> across ' + ((m.projects || []).length) + ' projects to the months they already price in — ' + esc((m.projects || []).join(', '));
     if (a === 'cycle-review') return 'Reviewed a late confirmation for <b>' + esc(cycleName(m.cycle, m)) + '</b>';
     if (a === 'report-years') return 'Set the reporting years to <b>' + esc(m.from) + '–' + esc(m.to) + '</b>';
 

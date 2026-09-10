@@ -293,7 +293,8 @@
       const periodCell = '<input type="month" value="' + esc(c.period || '') + '" data-period="' + esc(y) + '" aria-label="Period month" style="font:inherit;font-size:12px;padding:4px 6px;border:1px solid rgba(37,39,58,.25)"> <button class="btn btn-ghost small" data-saveperiod="' + esc(y) + '">Save</button>';
       const act = c.lockedAt
         ? '<button class="btn btn-ghost small" data-reopen="' + esc(y) + '">Reopen</button> '
-        : '<button class="btn small btn-secondary" data-lock="' + esc(y) + '">Lock book</button> ';
+        : '<button class="btn small btn-secondary" data-lock="' + esc(y) + '">Lock book</button> ' +
+          (Object.keys(c.confirmations || {}).length ? '' : '<button class="btn btn-ghost small" data-delete="' + esc(y) + '" title="Nobody has confirmed into this book yet — it can be deleted outright">Delete</button> ');
       return '<tr><td>' + nameCell + '</td><td>' + periodCell + '</td><td>' + state + '</td><td>' + dl + '</td>' +
         '<td>' + done + ' of ' + exp.length + '</td><td>' + (c.lockedAt ? (c.carried || []).length + (carriedN ? ' · ' + plural(carriedN, 'project') : '') : '—') + '</td>' +
         '<td class="money">' + (copies.length ? money(fee) : '—') + '</td><td>' + esc(C.fmtDay(c.openedAt)) + (c.openedByName ? '<div class="sub">' + esc(c.openedByName) + '</div>' : '') + '</td>' +
@@ -421,6 +422,15 @@
       const y = b.dataset.reopen; const title = C.bookTitle(C.getCycle(y));
       if (!window.confirm('Reopen “' + title + '”? Leaders who have not confirmed can then confirm without a reason. Executive Reporting stops treating it as a locked book until it is locked again.')) return;
       try { C.reopenCycle(y); toast('“' + title + '” reopened.', 'ok'); if (Box && Box.flushConfirm) Box.flushConfirm().catch(() => {}); announce(); render(); } catch (e) { toast(e.message); }
+    }));
+    host.querySelectorAll('button[data-delete]').forEach(b => b.addEventListener('click', async () => {
+      const y = b.dataset.delete; const title = C.bookTitle(C.getCycle(y));
+      if (!window.confirm('Delete “' + title + '”? Nobody has confirmed into it. The file is removed from Box and the countdown stops for everyone within a few minutes.')) return;
+      let name;
+      try { name = C.deleteCycle(y); } catch (e) { toast(e.message); return; }
+      try { if (Box && Box.enabled && Box.deleteConfirmCycle) await Box.deleteConfirmCycle(y); }
+      catch (e) { toast('Removed here, but the Box file could not be deleted: ' + (e.message || e)); announce(); render(); return; }
+      toast('“' + name + '” deleted.', 'ok'); announce(); render();
     }));
     host.querySelectorAll('button[data-dl-xlsx]').forEach(b => b.addEventListener('click', () => {
       exportBookExcel(b.dataset.dlXlsx).catch(e => toast('Excel export failed: ' + (e.message || e)));

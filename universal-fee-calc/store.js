@@ -214,7 +214,58 @@
   function readVocab() {
     const v = (readDb() || {}).vocab || {};
     return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [], leaders: v.leaders || [],
-             admins: v.admins || [], toolAdmins: v.toolAdmins || [], reportYears: v.reportYears || null };
+             admins: v.admins || [], toolAdmins: v.toolAdmins || [], reportYears: v.reportYears || null, cleanups: v.cleanups || {} };
+  }
+  /* ---- One-time data cleanups ----
+     Run in a leadership admin's browser after the book has been pulled from
+     Box; each is keyed in vocab.cleanups (synced), so it runs once for the
+     whole team and is logged as its own Change Log entry. */
+  const CLEANUPS = {
+    /* The July small-works import seeded every pass-through line with a
+       hidden month split in its anticipated billing month. Leaders since
+       moved timelines and re-costed lines; the pricing already follows the
+       edit (passThroughMonths), this rewrites the stored split to match so
+       the "imported into Aug-26" notes and red totals go away. */
+    'pt-splits-2026-09': (db) => {
+      const out = []; let lines = 0;
+      Object.values(db.projects || {}).forEach(p => {
+        if (!p || p._deleted || !ptActive(p)) return;
+        const months = enumerateMonths(p.timeline);
+        let touched = 0;
+        (p.passthrough.lines || []).forEach(l => {
+          if (!ptLineActive(l) || !l.monthly || !Object.keys(l.monthly).length || !months.length) return;
+          const d = ptLineDistribution(l, months);
+          if (d.source === 'split' && !d.scaled && !d.droppedMonths.length) return;   // already exact
+          const next = {};
+          Object.keys(d.byMonth).forEach(ym => { const [y, m] = ym.split('-').map(Number); next[y + '-' + m] = Math.round(d.byMonth[ym] * 100) / 100; });
+          l.monthly = next; touched++;
+        });
+        if (touched) { lines += touched; p.updatedAt = new Date().toISOString(); out.push({ id: p.id, name: (p.project || {}).name || p.id, lines: touched }); }
+      });
+      return { projects: out, lines };
+    },
+  };
+  function runDataCleanups() {
+    if (!seesAllProjects(getCurrentUser())) return [];
+    const db = readDb();
+    if (!db.projects || !Object.keys(db.projects).length) return [];
+    const v = db.vocab = db.vocab || { industries: [], projectTypes: [], lossReasons: [] };
+    v.cleanups = v.cleanups || {};
+    const ran = [];
+    Object.keys(CLEANUPS).forEach(key => {
+      if (v.cleanups[key]) return;
+      let res = null;
+      try { res = CLEANUPS[key](db); } catch (e) { console.warn('cleanup ' + key + ' failed', e); return; }
+      const cu = getCurrentUser() || {};
+      v.cleanups[key] = { at: new Date().toISOString(), by: cu.username || '', projects: (res && res.projects || []).length, lines: (res && res.lines) || 0 };
+      ran.push({ key, res });
+    });
+    if (!ran.length) return [];
+    writeDb(db);
+    ran.forEach(({ key, res }) => {
+      if (key === 'pt-splits-2026-09') logSystem('pt-months-cleanup', { lines: res.lines, projects: res.projects.map(x => x.name) });
+    });
+    return ran;
   }
   /* ---- Reporting years ----
      The calendar years reports and exports cover — this year and next by
@@ -4703,7 +4754,7 @@
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
-    getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears,
+    getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
     attachRemote, hydrateFromRemote, defaultDb, runMigrations,
     attachStudioRemote, hydrateStudioFromRemote, readStudio, defaultStudio,

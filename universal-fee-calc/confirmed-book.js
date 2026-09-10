@@ -354,6 +354,35 @@
     S().logSystem('cycle-reopen', { cycle: ym, name: c.name });
     return c;
   }
+  /** Delete a book outright — a test, a mistake. Only while nobody has
+      confirmed into it; a book with confirmations is history, so lock or
+      reopen it instead. */
+  function deleteCycle(id) {
+    if (!isLeadership()) throw new Error('Only a leadership admin can delete a book.');
+    const db = readDb(); const c = db.cycles[id];
+    if (!c) throw new Error('No such book.');
+    if (Object.keys(c.confirmations || {}).length) throw new Error('“' + bookTitle(c) + '” has confirmations in it. A book with confirmations is history — lock it instead.');
+    const title = bookTitle(c);
+    delete db.cycles[id];
+    db.dirty = db.dirty.filter(x => x !== id);
+    db.known = db.known.filter(x => x !== id);
+    writeDb(db, { quiet: true });
+    S().logSystem('cycle-delete', { cycle: id, name: title });
+    return title;
+  }
+  /** Box no longer has these: drop them from the cache so a deleted book
+      stops showing (and nagging) everywhere. A dirty one is kept — it may be
+      brand new and not yet pushed. */
+  function pruneMissing(presentIds) {
+    const db = readDb(); const keep = new Set(presentIds || []); let dropped = 0;
+    Object.keys(db.cycles).forEach(id => {
+      if (keep.has(id) || db.dirty.indexOf(id) >= 0) return;
+      delete db.cycles[id]; dropped++;
+    });
+    db.known = db.known.filter(id => keep.has(id) || db.dirty.indexOf(id) >= 0);
+    if (dropped) writeDb(db, { quiet: true });
+    return dropped;
+  }
   /** An admin has read a late confirmation's reason. */
   function reviewLate(ym, leaderId) {
     if (!isLeadership()) throw new Error('Only a leadership admin can review a late confirmation.');
@@ -521,6 +550,6 @@
     getCycle, listCycles, openCycles, currentCycle, latestLocked, createCycle, setDeadline, setName, setPeriod, confirm, lockCycle, reopenCycle, reviewLate,
     statusFor, projectStatus, widgetState,
     asProjectsDb, bookRecords, changeOrderIndex, cycleSummary,
-    mergeCycle, hydrateCycle, serialize,
+    mergeCycle, hydrateCycle, serialize, deleteCycle, pruneMissing,
   };
 })();

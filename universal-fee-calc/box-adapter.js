@@ -577,7 +577,7 @@
     // one browser must never be removed by a save from another.
     const rv = remote.vocab || {}, lv = local.vocab || {};
     if (rv.industries || lv.industries || rv.projectTypes || lv.projectTypes || rv.lossReasons || lv.lossReasons || rv.leaders || lv.leaders
-        || rv.admins || lv.admins || rv.toolAdmins || lv.toolAdmins || rv.reportYears || lv.reportYears) {
+        || rv.admins || lv.admins || rv.toolAdmins || lv.toolAdmins || rv.reportYears || lv.reportYears || rv.cleanups || lv.cleanups) {
       const uniq = (a, b) => [...new Set([...(a || []), ...(b || [])])];
       const byId = (a, b, key) => {
         const map = {};
@@ -597,6 +597,8 @@
       // Reporting years: one setting, the later change wins.
       const ry = [rv.reportYears, lv.reportYears].filter(Boolean).sort((a, b) => String(a.setAt || '').localeCompare(String(b.setAt || ''))).pop();
       if (ry) out.vocab.reportYears = ry;
+      // One-time cleanups: a cleanup that ran anywhere has run everywhere.
+      if (rv.cleanups || lv.cleanups) out.vocab.cleanups = Object.assign({}, rv.cleanups || {}, lv.cleanups || {});
     }
     /* Revenue ledger + flash snapshots: union by PERIOD, never whole-key.
        Both are built up over time, often from different machines — Finance
@@ -1543,6 +1545,16 @@
     _confTimer = setTimeout(confirmPushNow, BOX_CONFIG.pushDebounceMs);
   }
   Box.flushConfirm = async function () { clearTimeout(_confTimer); await confirmPushNow(); };
+  /** Delete a book's file in Box. The store has already refused if anyone
+      confirmed into it; here the file simply goes. */
+  Box.deleteConfirmCycle = async function (ym) {
+    const id = await resolveConfId(ym, false);
+    if (!id) return false;
+    const res = await boxFetch('/files/' + id, { method: 'DELETE' });
+    if (!res.ok && res.status !== 404) throw new Error('could not delete ' + confName(ym) + ': HTTP ' + res.status);
+    forgetConfId(ym); delete _confEtags[ym];
+    return true;
+  };
   /** Pull one month into the local store. Returns the merged cycle or null. */
   Box.pullConfirmCycle = async function (ym, opts) {
     const C = Confirm(); if (!C) return null;
@@ -1556,6 +1568,9 @@
     const C = Confirm(); if (!C) return [];
     C.attachRemote(scheduleConfirmPush);
     const yms = await Box.listConfirmCycles();
+    // A book deleted in Box must leave every browser too, or its countdown
+    // and its red nag outlive it. Never drops one this browser still owes.
+    try { C.pruneMissing(yms); } catch (e) { /* the cache is what it is */ }
     const want = new Set();
     const cycles = yms.map(y => C.getCycle(y));
     yms.forEach((y, i) => { if (!cycles[i] || !cycles[i].lockedAt) want.add(y); });   // unknown or open → look
@@ -1674,6 +1689,15 @@
     if (changed) {
       try { document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true, background: true } })); } catch (e) {}
     }
+    runCleanupsSoon();
+  }
+  /* One-time data cleanups (store.js CLEANUPS) — after the real book has
+     landed, in a leadership admin's browser, once for the whole team. */
+  function runCleanupsSoon() {
+    setTimeout(() => {
+      try { const ran = Store.runDataCleanups && Store.runDataCleanups(); if (ran && ran.length) console.info('data cleanups ran', ran.map(r => r.key)); }
+      catch (e) { console.warn('data cleanup failed', e); }
+    }, 1500);
   }
 
   async function boot() {
@@ -1795,6 +1819,7 @@
        actually logged, and the upload pulls the one month it is writing. */
     Store.attachActivityRemote(scheduleActivityPush);
     weeklyBackup();   // fire and forget; failures never affect boot
+    runCleanupsSoon();
 
     /* studio.json and revenue.json are NOT pulled here any more — see the
        opt-in stores above. Pages that read them declare window.UFC_NEEDS and
