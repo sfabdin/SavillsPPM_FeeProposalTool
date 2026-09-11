@@ -113,7 +113,12 @@
     const mine = C.bookFor(leaderId, recs).sort((a, b) => ((a.project || {}).client || '').localeCompare((b.project || {}).client || '') || ((a.project || {}).name || '').localeCompare((b.project || {}).name || ''));
     const st = C.statusFor(cycle, leaderId, recs);
     const k = cycle.confirmations[leaderId];
-    const fee = C.feeInYear(mine, year);
+    // Every reporting year, not just the book's: a leader confirms the whole
+    // snapshot, and the reviewers read next year alongside this one.
+    const years = S.getReportYears ? S.getReportYears() : [year];
+    if (years.indexOf(year) < 0) years.unshift(year);
+    const feeBy = {}; years.forEach(y => { feeBy[y] = C.feeInYear(mine, y); });
+    const fee = feeBy[year];
     const shared = mine.filter(r => C.leadersOf(r, byId).length > 1).length;
     const d = C.daysUntil(cycle.deadline); const over = C.pastDeadline(cycle.deadline);
     const who = leaderId === C.UNASSIGNED ? 'the unassigned projects' : 'your book';
@@ -148,7 +153,7 @@
       return '<tr><td>' + esc(pj.client || '') + '</td>' +
         '<td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(r.id) + '" style="color:inherit;font-weight:600">' + esc(pj.name || 'Untitled') + '</a><div class="mono">' + esc(pj.projectNumber || r.id) + '</div></td>' +
         '<td>' + esc(ratingLabel(r)) + '</td>' +
-        '<td class="money">' + money(C.feeInYear([r], year)) + '</td>' +
+        years.map(y => '<td class="money">' + money(C.feeInYear([r], y)) + '</td>').join('') +
         '<td>' + esc(C.fmtStamp(r.updatedAt)) + '</td>' +
         '<td>' + (others.length ? esc(others.join(', ')) : '<span class="sub">—</span>') + '</td>' +
         '<td>' + inBook + '</td></tr>';
@@ -159,13 +164,13 @@
       '<div><span class="pill ' + pillCls + '"><i></i>' + esc(pillTxt) + '</span></div></div>' +
       '<div class="panel"><div class="kpis">' +
       '<div class="kpi"><div class="v">' + mine.length + '</div><div class="s">projects in ' + esc(who) + '</div></div>' +
-      '<div class="kpi"><div class="v">' + money(fee) + '</div><div class="s">' + year + ' fee</div></div>' +
+      years.map(y => '<div class="kpi"><div class="v">' + money(feeBy[y]) + '</div><div class="s">' + y + ' fee</div></div>').join('') +
       '<div class="kpi"><div class="v">' + shared + '</div><div class="s">shared with another leader</div></div>' +
       '<div class="kpi"><div class="v small">' + (k ? esc(C.fmtStamp(k.at)) : '—') + '</div><div class="s">' + (k ? 'confirmed' : 'not confirmed yet') + '</div></div>' +
       '</div><div class="confirm' + (over && !k ? ' overdue' : '') + '"><div class="stamp">' + stamp + '</div>' + btn + '</div></div>' +
       '<div class="panel"><div class="ph"><h3>Projects in this confirmation</h3><span class="sub">' + plural(mine.length, 'project') + '</span></div>' +
-      '<div class="tw"><table class="cb-table"><thead><tr><th>Client</th><th>Project</th><th>Rating</th><th class="money">' + year + ' fee</th><th>Last edited</th><th>Shared with</th><th>In this book</th></tr></thead>' +
-      '<tbody>' + (rows || '<tr><td colspan="7" class="sub">No projects.</td></tr>') + '</tbody></table></div></div>';
+      '<div class="tw"><table class="cb-table"><thead><tr><th>Client</th><th>Project</th><th>Rating</th>' + years.map(y => '<th class="money">' + y + ' fee</th>').join('') + '<th>Last edited</th><th>Shared with</th><th>In this book</th></tr></thead>' +
+      '<tbody>' + (rows || '<tr><td colspan="' + (6 + years.length) + '" class="sub">No projects.</td></tr>') + '</tbody></table></div></div>';
   }
 
   function wireBook(host) {

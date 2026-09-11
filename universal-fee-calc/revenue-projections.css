@@ -219,3 +219,13 @@ table.proj thead th.sortable.sorted { text-decoration: underline; text-decoratio
 table.proj thead th .sort-ind { font-size: 8px; margin-left: 4px; color: var(--sav-yellow); }
 table.proj td.proj-cell .rtag, table.proj td.proj-cell select.rtag-edit { margin-right: 0; }
 table.proj .today-tag { margin: 0 -10px 0; line-height: 9px; font-size: 7px; }
+
+/* Subtotals by rating at the top of the grid — follow every filter */
+table.proj tr.totals.subtot td { background: #f4f4f3; color: var(--sav-navy); font-size: 12px; font-weight: 700; }
+table.proj tr.totals.subtot td.proj-cell { background: #f4f4f3; color: var(--sav-navy); }
+table.proj tr.totals.subtot td.proj-cell .rtag { margin-right: 6px; }
+table.proj tr.totals.subtot td.rowtot { background: #ebebe9; }
+table.proj tr.totals.subtot-all td { background: var(--sav-navy); color: #fff; font-weight: 800; }
+table.proj tr.totals.subtot-all td.proj-cell { background: var(--sav-navy); color: #fff; }
+table.proj tr.totals.subtot-all td.rowtot { background: var(--sav-navy); color: var(--sav-yellow); }
+table.proj tr.subtot-gap td { height: 8px; padding: 0; background: #fff; border: 0; }
