@@ -113,7 +113,8 @@
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
       const feeSharePct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
       const ptCost = (p.financials && p.financials.passThroughCost) || 0;
-      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, netMap, passClientMap, total, ov: p.monthlyOverrides || null, slipMap,
+      let ptLines = []; try { ptLines = STORE.passThroughLines ? STORE.passThroughLines(p) : []; } catch (e) { ptLines = []; }
+      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, netMap, passClientMap, ptLines, total, ov: p.monthlyOverrides || null, slipMap,
                coCount: cos.length, feeSharePct, ptCost, status: (pj.status || '').trim(),
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim(), projectType: (pj.projectType || '').trim() };
     });
@@ -158,6 +159,7 @@
       client: $('#f-client').value, leader: $('#f-leader').value,
       service: $('#f-service').value, industry: $('#f-industry').value, ptype: $('#f-ptype').value,
       year: $('#f-year').value, quarter: $('#f-quarter').value, month: $('#f-month').value,
+      has: ($('#f-has') || {}).value || '',
     };
   }
 
@@ -168,8 +170,8 @@
     const f = currentFilters();
 
     // mark active filter selects
-    ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => {
-      $('#' + id).classList.toggle('active', !!$('#' + id).value);
+    ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month','f-has'].forEach(id => {
+      const el = $('#' + id); if (el) el.classList.toggle('active', !!el.value);
     });
 
     // Row filters
@@ -180,6 +182,14 @@
       if (f.service && !r.serviceLines.includes(f.service)) return false;
       if (f.industry && r.industry !== f.industry) return false;
       if (f.ptype && r.projectType !== f.ptype) return false;
+      if (f.has) {
+        // Isolate the projects that carry a pass-through line or a broker fee share.
+        const hasPass = (r.ptLines && r.ptLines.length > 0) || r.ptCost > 0, hasBroker = r.feeSharePct > 0;
+        if (f.has === 'pass' && !hasPass) return false;
+        if (f.has === 'broker' && !hasBroker) return false;
+        if (f.has === 'either' && !hasPass && !hasBroker) return false;
+        if (f.has === 'none' && (hasPass || hasBroker)) return false;
+      }
       return true;
     });
     // When a service line is selected, slice each project to only that line's fees.
@@ -197,6 +207,7 @@
     const closedHidden = showClosed ? 0 : ALL.filter(r => r.status === 'closed').length;
     $('#filt-count').textContent = `${rows.length} of ${ALL.length} projects`
       + (f.service ? ` · ${f.service} only` : '')
+      + ({ pass: ' · with pass-through', broker: ' · with broker fee share', either: ' · with pass-through or fee share', none: ' · neither pass-through nor fee share' }[f.has] || '')
       + (closedHidden ? ` · ${closedHidden} closed out hidden` : '');
 
     // Column (time) filter predicate
@@ -253,6 +264,29 @@
       html += `<th class="sortable ${(sep + today).trim()}${SORT.key === 'm:' + c.key ? ' sorted' : ''}" data-sort="m:${c.key}" title="Sort by ${MONTHS[c.m - 1]} ${c.y}">${c.key === _ck ? '<span class="today-tag">CURRENT</span>' : ''}${MONTHS[c.m - 1]}${sortInd('m:' + c.key)}</th>`;
     });
     html += '</tr></thead><tbody>';
+
+    // ---- Subtotals by rating, at the top so they follow every filter ----
+    // Total 1, 2, 3, 4 and the 1–4 subtotal, by month: the cut Emily and Jeff
+    // read first. (The same rows close the table, with the weighted total.)
+    {
+      const byR = {}; [1, 2, 3, 4].forEach(n => { byR[n] = {}; cols.forEach(c => { byR[n][c.key] = 0; }); });
+      rows.forEach(rw => { if (rw.rating >= 1 && rw.rating <= 4) cols.forEach(c => { byR[rw.rating][c.key] += rw.map[c.key] || 0; }); });
+      const present = [1, 2, 3, 4].filter(n => rows.some(rw => rw.rating === n));
+      present.forEach(n => {
+        const meta = STORE.ratingMeta(n) || {};
+        let t = 0;
+        html += `<tr class="totals subtot r${n}"><td class="proj-cell" colspan="3"><span class="rtag r${n}">${n}</span> Total · ${esc(meta.label || '')}</td>`;
+        cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const today = c.key === _ck ? ' today' : ''; const v = byR[n][c.key]; t += v; html += `<td class="num${sep}${today}"${v ? ` title="${fmtExact(v)}"` : ''}>${v ? fmtK(v) : '·'}</td>`; });
+        html += `<td class="rowtot num" title="${fmtExact(t)}">${fmtK(t)}</td></tr>`;
+      });
+      if (present.length) {
+        let t = 0;
+        html += `<tr class="totals subtot-all"><td class="proj-cell" colspan="3">Subtotal · rated 1–4</td>`;
+        cols.forEach((c, i) => { const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : ''; const today = c.key === _ck ? ' today' : ''; const v = [1, 2, 3, 4].reduce((a, n) => a + byR[n][c.key], 0); t += v; html += `<td class="num${sep}${today}"${v ? ` title="${fmtExact(v)}"` : ''}>${v ? fmtK(v) : '·'}</td>`; });
+        html += `<td class="rowtot num" title="${fmtExact(t)}">${fmtK(t)}</td></tr>`;
+        html += `<tr class="subtot-gap"><td colspan="${cols.length + 4}"></td></tr>`;
+      }
+    }
 
     // Column totals (ratings 1–4 only) + weighted (all, × confidence)
     const colTot = {}, colWt = {};
@@ -326,20 +360,26 @@
         });
         html += `<td class="rowtot num broker">−${fmtK(rowBroker)}</td></tr>`;
       }
-      // Pass-through pull-out sub-line (toggle): vendor cost billed through, flows out.
-      if (showPass && r.ptCost > 0) {
-        const pm = r.passMap || {};
-        let rowPass = 0;
-        html += `<tr class="pass-row"><td class="proj-cell" colspan="3">↳ Pass-through cost</td>`;
-        cols.forEach((c, i) => {
-          const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
-          const today = c.key === _ck ? ' today' : '';
-          const b = pm[c.key] || 0;
-          rowPass += b;
-          html += `<td class="num pass${sep}${today}"${b ? ` title="−${fmtExact(b)}"` : ''}>${b ? '−' + fmtK(b) : ''}</td>`;
-          if (!excluded) { colPass[c.key] = (colPass[c.key] || 0) + b; grandPass += b; }
+      // Pass-through pull-out sub-lines (toggle): one per line, named as typed
+      // on the calculator — the vendor, the co-PM, the party a fixed fee share
+      // goes to — so the reader sees who the money flows out to.
+      if (showPass && ((r.ptLines && r.ptLines.length) || r.ptCost > 0)) {
+        const lines = (r.ptLines && r.ptLines.length) ? r.ptLines : [{ label: 'all lines', cost: r.passMap || {} }];
+        lines.forEach(L => {
+          const pm = L.cost || {};
+          let rowPass = 0;
+          const lbl = 'Pass-through · ' + (L.label || 'line') + (L.managed ? ' · managed, fee only' : '');
+          html += `<tr class="pass-row"><td class="proj-cell" colspan="3" title="${esc(lbl)}">↳ ${esc(lbl)}</td>`;
+          cols.forEach((c, i) => {
+            const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
+            const today = c.key === _ck ? ' today' : '';
+            const b = pm[c.key] || 0;
+            rowPass += b;
+            html += `<td class="num pass${sep}${today}"${b ? ` title="−${fmtExact(b)}"` : ''}>${b ? '−' + fmtK(b) : ''}</td>`;
+            if (!excluded) { colPass[c.key] = (colPass[c.key] || 0) + b; grandPass += b; }
+          });
+          html += `<td class="rowtot num pass">${rowPass ? '−' + fmtK(rowPass) : '·'}</td></tr>`;
         });
-        html += `<td class="rowtot num pass">−${fmtK(rowPass)}</td></tr>`;
       }
     });
 
@@ -435,6 +475,7 @@
     if (f.year) fbits.push('Year: '+f.year);
     if (f.quarter) fbits.push(f.quarter);
     if (f.month) fbits.push('Month: '+MONTHS[parseInt(f.month)-1]);
+    if (f.has) fbits.push({ pass: 'With pass-through', broker: 'With broker fee share', either: 'With pass-through or fee share', none: 'Neither' }[f.has] || '');
     const subtitle = `${V.rows.length} projects · as of ${new Date().toLocaleDateString()}` + (fbits.length ? '  ·  '+fbits.join('  ·  ') : '  ·  all projects') + (V.showExcluded ? '' : '  ·  rated 1–4 only') + (V.showClosed ? '' : '  ·  closed out excluded');
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Savills PPM';
@@ -619,11 +660,11 @@
   $('#show-broker')?.addEventListener('change', e => { showBroker = e.target.checked; build(); });
   $('#show-pass')?.addEventListener('change', e => { showPass = e.target.checked; build(); });
   $('#xlsx-export')?.addEventListener('click', exportProjections);
-  ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => {
+  ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month','f-has'].forEach(id => {
     $('#' + id)?.addEventListener('change', () => { $('#empty').innerHTML = 'No projects yet. <a href="Universal Fee Calculator.html">Build one in the calculator →</a> or <a href="Ingestion Studio.html">ingest a proposal →</a>'; build(); });
   });
   $('#clear-filters')?.addEventListener('click', () => {
-    ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
+    ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month','f-has'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
     $('#empty').innerHTML = 'No projects yet. <a href="Universal Fee Calculator.html">Build one in the calculator →</a> or <a href="Ingestion Studio.html">ingest a proposal →</a>';
     build();
   });

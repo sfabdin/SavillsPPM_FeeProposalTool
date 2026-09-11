@@ -3076,7 +3076,10 @@
       const mk = (parseFloat(line.markupPct) || 0) / 100;
       const managed = line.mode === 'managed';   // direct-bill: Savills invoices only the fee
       const d = ptLineDistribution(line, months);
-      res.lines.push(Object.assign({ id: line.id, managed }, d));
+      // Per-line client / cost by month ride along so reports can name the
+      // party on each pass-through line (a vendor, a co-PM, a fee share).
+      const L = Object.assign({ id: line.id, managed, label: String(line.label || '').trim(), mode: line.mode || 'billed', clientByMonth: {}, costByMonth: {} }, d);
+      res.lines.push(L);
       Object.keys(d.byMonth).forEach(ym => {
         const c = d.byMonth[ym];
         const markup = c * mk;
@@ -3086,6 +3089,7 @@
         if (!managed) res.cost[ym] = (res.cost[ym] || 0) + c;
         res.clientTotal += client; res.markupTotal += markup;
         if (!managed) res.costTotal += c;
+        L.clientByMonth[ym] = client; L.costByMonth[ym] = managed ? 0 : c;
       });
     });
     return res;
@@ -3118,6 +3122,23 @@
     out.fee = round2(fee);
     out.total = round2(fee + (out.brokerOnTop ? out.broker : 0) + out.pass);
     return out;
+  }
+
+  /** Reporting view of a project's pass-through lines: one entry per line
+      with its label as typed on the calculator (the vendor, the co-PM, the
+      party a fixed fee share goes to), client-billed and vendor-cost by
+      month on unpadded 'YYYY-M' keys, the way the projections rows key
+      their months. Never changes an input — it only names what is there. */
+  function passThroughLines(p) {
+    const ptm = passThroughMonths(p);
+    return (ptm.lines || []).map((L, i) => {
+      const client = {}, cost = {};
+      const unpad = (ym) => { const [y, m] = ym.split('-').map(Number); return y + '-' + m; };
+      Object.keys(L.clientByMonth || {}).forEach(ym => { const k = unpad(ym); client[k] = (client[k] || 0) + L.clientByMonth[ym]; });
+      Object.keys(L.costByMonth || {}).forEach(ym => { const k = unpad(ym); cost[k] = (cost[k] || 0) + L.costByMonth[ym]; });
+      return { id: L.id, label: L.label || ('line ' + (i + 1)), mode: L.mode, managed: !!L.managed, client, cost,
+               clientTotal: Object.values(client).reduce((a, b) => a + b, 0), costTotal: Object.values(cost).reduce((a, b) => a + b, 0) };
+    });
   }
 
   function financialsInputsHash(p) {
@@ -4830,7 +4851,7 @@
     seedMappingFromLedger, autoMapLedger, mappingReport, 
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, monthlySeries,
-    computeFinancials, restampFinancials, passThroughMonths, ptLineDistribution, ptActive, clientBillOf,
+    computeFinancials, restampFinancials, passThroughMonths, passThroughLines, ptLineDistribution, ptActive, clientBillOf,
     isChangeOrder, isApprovedChangeOrder, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
     reconcileImport,
     projectSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,

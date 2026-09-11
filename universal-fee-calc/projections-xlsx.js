@@ -58,7 +58,8 @@
       const leaders = [...new Set([pj.leadId || pj.lead, pj.clientRelOwner]
         .map(x => (STORE.leaderDisplay ? STORE.leaderDisplay(x) : (x || '')).trim()).filter(Boolean))];
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
-      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, netMap, passClientMap, total, ov: p.monthlyOverrides || null,
+      let ptLines = []; try { ptLines = STORE.passThroughLines ? STORE.passThroughLines(p) : []; } catch (e) { ptLines = []; }
+      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, netMap, passClientMap, ptLines, total, ov: p.monthlyOverrides || null,
                coCount: cos.length, feeSharePct: fs.enabled ? (parseFloat(fs.pct) || 0) : 0,
                ptCost: (p.financials && p.financials.passThroughCost) || 0,
                status: (pj.status || '').trim(), client: (pj.client || '').trim(), leaders,
@@ -106,6 +107,8 @@
     const nCols = V.cols.length;
     const M0 = 5;                            // first month column (1 Client, 2 Project, 3 Rating, 4 Leader)
     const lastCol = M0 + nCols;              // months + total
+    const colL = (n) => { let sN = ''; while (n > 0) { const r = (n - 1) % 26; sN = String.fromCharCode(65 + r) + sN; n = Math.floor((n - 1) / 26); } return sN; };
+    const numFmt = '#,##0.00;[Red]-#,##0.00;"·"';
     ws.getColumn(1).width = 22; ws.getColumn(2).width = 30; ws.getColumn(3).width = 16; ws.getColumn(4).width = 18;
     for (let i = 0; i < nCols; i++) ws.getColumn(M0 + i).width = 10;
     ws.getColumn(lastCol).width = 14;
@@ -186,6 +189,7 @@
     // ----- Body: (rating groups when asked) + project rows -----
     let r = monRow + 1;
     let lastRating = null;
+    let firstBody = null, lastBody = null;
     V.rows.forEach(row => {
       const excluded = row.rating > 4;
       if (excluded && !V.showExcluded) return;
@@ -219,29 +223,77 @@
         const isOv = row.ov && row.ov[c.key] != null;
         setMoney(ws.getCell(r, M0 + i), v, { dash: true, font: { name: 'Calibri', size: 10, color: { argb: isOv ? TEAL : (excluded ? STEEL : NAVY) }, bold: !!isOv } });
       });
-      setMoney(ws.getCell(r, lastCol), rvt, { font: { name: 'Calibri', bold: true, color: { argb: RCOL[row.rating] || NAVY } } });
+      // Row total is a live SUM so a corrected month carries to the total.
+      const tcell = ws.getCell(r, lastCol);
+      tcell.value = { formula: `SUM(${colL(M0)}${r}:${colL(lastCol - 1)}${r})`, result: Math.round(rvt * 100) / 100 };
+      tcell.numFmt = numFmt; tcell.alignment = { horizontal: 'right' };
+      tcell.font = { name: 'Calibri', bold: true, color: { argb: RCOL[row.rating] || NAVY } };
+      if (firstBody == null) firstBody = r;
+      lastBody = r;
       r++;
     });
 
-    // ----- Totals rows -----
-    const totRow = r + 1;
-    ws.mergeCells(totRow, 1, totRow, 4);
+    // ----- Totals rows: one per rating 1–4, the 1–4 subtotal, the weighted
+    // total — every one a live formula over the rows above (SUMIF on the
+    // rating column), with the value cached for viewers that do not calc.
+    const bodyFrom = firstBody == null ? monRow + 1 : firstBody, bodyTo = lastBody == null ? monRow + 1 : lastBody;
+    const ratingCol = colL(3);
+    const ratingSum = (n, c) => `SUMIF($${ratingCol}$${bodyFrom}:$${ratingCol}$${bodyTo},"${n} ·*",${colL(c)}${bodyFrom}:${colL(c)}${bodyTo})`;
+    const ratingVal = (n, key) => V.rows.reduce((t, rw) => (rw.rating === n && (V.showExcluded || rw.rating <= 4)) ? t + (rw.map[key] || 0) : t, 0);
+    const r2 = (n) => Math.round(n * 100) / 100;
+    const styleRow = (rr, fill, color, bold) => {
+      ws.mergeCells(rr, 1, rr, 4);
+      ws.getCell(rr, 1).font = { name: 'Calibri', bold: !!bold, color: { argb: color } };
+      for (let cc = 1; cc <= lastCol; cc++) ws.getCell(rr, cc).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+    };
+    const putF = (rr, cc, formula, result, color, bold) => {
+      const cell = ws.getCell(rr, cc);
+      cell.value = { formula, result: r2(result) };
+      cell.numFmt = numFmt; cell.alignment = { horizontal: 'right' };
+      cell.font = { name: 'Calibri', bold: !!bold, color: { argb: color } };
+    };
+    let rr = r + 1;
+    const ratingRows = {};
+    [1, 2, 3, 4].forEach(n => {
+      const meta = STORE.ratingMeta(n) || {};
+      ws.getCell(rr, 1).value = 'Total · ' + n + ' ' + (meta.label || '');
+      styleRow(rr, 'FFF4F4F3', RCOL[n] || NAVY, true);
+      V.cols.forEach((c, i) => putF(rr, M0 + i, ratingSum(n, M0 + i), ratingVal(n, c.key), NAVY, false));
+      putF(rr, lastCol, `SUM(${colL(M0)}${rr}:${colL(lastCol - 1)}${rr})`, V.cols.reduce((t, c) => t + ratingVal(n, c.key), 0), RCOL[n] || NAVY, true);
+      ratingRows[n] = rr; rr++;
+    });
+    const totRow = rr;
     ws.getCell(totRow, 1).value = 'Projected (rated 1–4)';
-    ws.getCell(totRow, 1).font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
-    ws.getCell(totRow, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-    [2, 3, 4].forEach(cc => { ws.getCell(totRow, cc).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
-    V.cols.forEach((c, i) => setMoney(ws.getCell(totRow, M0 + i), V.colTot[c.key], { dash: true, font: { name: 'Calibri', bold: true, color: { argb: WHITE } }, fill: NAVY }));
-    setMoney(ws.getCell(totRow, lastCol), V.grandTot, { font: { name: 'Calibri', bold: true, color: { argb: YEL } }, fill: NAVY });
+    styleRow(totRow, NAVY, WHITE, true);
+    V.cols.forEach((c, i) => putF(totRow, M0 + i, [1, 2, 3, 4].map(n => `${colL(M0 + i)}${ratingRows[n]}`).join('+'), V.colTot[c.key], WHITE, true));
+    putF(totRow, lastCol, `SUM(${colL(M0)}${totRow}:${colL(lastCol - 1)}${totRow})`, V.grandTot, YEL, true);
     ws.getRow(totRow).height = 20;
 
     const wtRow = totRow + 1;
-    ws.mergeCells(wtRow, 1, wtRow, 4);
     ws.getCell(wtRow, 1).value = 'Probability-weighted (all)';
-    ws.getCell(wtRow, 1).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
-    ws.getCell(wtRow, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
-    [2, 3, 4].forEach(cc => { ws.getCell(wtRow, cc).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } }; });
-    V.cols.forEach((c, i) => setMoney(ws.getCell(wtRow, M0 + i), V.colWt[c.key], { dash: true, font: { name: 'Calibri', color: { argb: NAVY } }, fill: CREAM }));
-    setMoney(ws.getCell(wtRow, lastCol), V.grandWt, { font: { name: 'Calibri', bold: true, color: { argb: NAVY } }, fill: CREAM });
+    styleRow(wtRow, CREAM, NAVY, true);
+    const weights = [1, 2, 3, 4, 5, 6, 7].map(n => ((STORE.ratingMeta(n) || {}).weight || 0));
+    V.cols.forEach((c, i) => {
+      const f = [1, 2, 3, 4, 5, 6, 7].filter(n => weights[n - 1]).map(n => `${weights[n - 1]}*${ratingSum(n, M0 + i)}`).join('+') || '0';
+      putF(wtRow, M0 + i, f, V.colWt[c.key], NAVY, false);
+    });
+    putF(wtRow, lastCol, `SUM(${colL(M0)}${wtRow}:${colL(lastCol - 1)}${wtRow})`, V.grandWt, NAVY, true);
+
+    // ----- Focus window: the current month and the two before it stay open;
+    // every other month is grouped and collapsed — one click on the + above
+    // the columns brings the full year back. The totals still cover every month.
+    if (o.focus !== false) {
+      const now = new Date(); const cur = now.getFullYear() * 12 + now.getMonth();
+      const idxOf = (c) => c.y * 12 + (c.m - 1);
+      const inWindow = (c) => { const d = cur - idxOf(c); return d >= 0 && d <= 2; };
+      if (V.cols.some(inWindow)) {
+        V.cols.forEach((c, i) => { if (!inWindow(c)) { const col = ws.getColumn(M0 + i); col.outlineLevel = 1; col.hidden = true; } });
+        ws.properties.outlineProperties = { summaryRight: false, summaryBelow: false };
+        const open = V.cols.filter(inWindow).map(c => MONTHS[c.m - 1] + ' ' + c.y);
+        const sub = ws.getCell('A2');
+        sub.value = (sub.value || '') + '  ·  showing ' + open[0] + ' – ' + open[open.length - 1] + '; other months are collapsed — click the + above the columns to expand';
+      }
+    }
 
     for (let rr = yearRow; rr <= wtRow; rr++) for (let cc = 1; cc <= lastCol; cc++) {
       ws.getCell(rr, cc).border = { bottom: { style: 'thin', color: { argb: HAIR } }, right: { style: 'thin', color: { argb: HAIR } } };
@@ -279,9 +331,24 @@
     const passClient = (row.passClientMap && row.passClientMap[key]) || 0;
     const broker = (row.brokerMap && row.brokerMap[key]) || 0;
     const passCost = (row.passMap && row.passMap[key]) || 0;
-    const raw = [inv - passClient, passClient, broker, passCost];
     const out = [];
-    LINES.forEach((L, i) => { const v = raw[i]; if (Math.abs(v) > 0.005) out.push({ line: L.line, group: L.group, amount: L.sign * v }); });
+    const push = (i, v, party) => { if (Math.abs(v) > 0.005) out.push({ line: LINES[i].line, group: LINES[i].group, amount: LINES[i].sign * v, party: party || '' }); };
+    push(0, inv - passClient, '');
+    // Pass-through: one line per line on the calculator, named as typed there —
+    // "Pass-through · Unity Electric", "Pass-through · Dallas PM fee share" —
+    // so the party is visible whether it is a vendor or a fee share.
+    const lines = row.ptLines || [];
+    if (lines.length) {
+      lines.forEach(L => {
+        const party = 'Pass-through · ' + (L.label || 'line');
+        push(1, (L.client && L.client[key]) || 0, party);
+        push(3, (L.cost && L.cost[key]) || 0, party);
+      });
+    } else {
+      push(1, passClient, 'Pass-through');
+      push(3, passCost, 'Pass-through');
+    }
+    push(2, broker, brokerOf(row) || 'Broker');
     return out;
   }
 
@@ -290,7 +357,7 @@
       a pivot summing Amount by Line is the revenue bridge, and by Line group
       splits what the client is billed from what flows out. */
   const DATA_HEADERS = ['Client', 'Project', 'Project ID', 'Revenue leader', 'Relationship owner', 'Status', 'Rating', 'Rating label', 'Confidence',
-    'Industry', 'Project type', 'Service line', 'Broker', 'Year', 'Month', 'Month #', 'Period', 'Line', 'Line group', 'Amount', 'Weighted amount', 'Overridden'];
+    'Industry', 'Project type', 'Service line', 'Party', 'Year', 'Month', 'Month #', 'Period', 'Line', 'Line group', 'Amount', 'Weighted amount', 'Overridden'];
   const DC = {};   // header → column letter, for the dashboard's SUMIFS
   DATA_HEADERS.forEach((h, i) => { DC[h] = String.fromCharCode(65 + i); });
   function writeDataSheet(wb, V, opts) {
@@ -315,13 +382,13 @@
       const dims = [pj.client || '', pj.name || 'Untitled', pj.projectNumber || pj.projectId365 || pj.salesforceId || row.p.id,
         lead ? lead.displayName : (pj.lead || ''), owner ? owner.displayName : (pj.clientRelOwner || ''),
         (STORE.STATUS_LABELS && STORE.STATUS_LABELS[pj.status]) || pj.status || '', row.rating, meta.label || '', meta.weight || 0,
-        pj.industry || '', pj.projectType || '', (row.serviceLines || []).join('; '), brokerOf(row)];
+        pj.industry || '', pj.projectType || '', (row.serviceLines || []).join('; ')];
       V.cols.forEach(c => {
         const lines = linesFor(row, c.key);
         if (!lines.length) return;
         const ov = (row.ov && row.ov[c.key] != null) ? 'Yes' : '';
         lines.forEach(L => {
-          const xr = ws.addRow(dims.concat([c.y, MONTHS[c.m - 1], c.m, MONTHS[c.m - 1] + '-' + String(c.y).slice(2),
+          const xr = ws.addRow(dims.concat([L.party || '', c.y, MONTHS[c.m - 1], c.m, MONTHS[c.m - 1] + '-' + String(c.y).slice(2),
             L.line, L.group, L.amount, L.amount * (meta.weight || 0), ov], extra));
           money(xr.getCell(20)); money(xr.getCell(21));
           xr.getCell(9).numFmt = '0%';
@@ -370,12 +437,13 @@
         if (crit.rating != null && row.rating !== crit.rating) return;
         if (crit.client != null && (row.client || '') !== crit.client) return;
         if (crit.leader != null && leaderOf(row) !== crit.leader) return;
-        if (crit.broker != null && brokerOf(row) !== crit.broker) return;
+
         V.cols.forEach(c => {
           if (crit.year != null && c.y !== crit.year) return;
           if (crit.key != null && c.key !== crit.key) return;
           linesFor(row, c.key).forEach(L => {
             if (crit.line && L.line !== crit.line) return;
+            if (crit.party != null && (L.party || '') !== crit.party) return;
             t += crit.weighted ? L.amount * (meta.weight || 0) : L.amount;
           });
         });
@@ -395,7 +463,7 @@
       if (crit.key != null) { const [y, m] = crit.key.split('-').map(Number); parts.push(rng('Year'), y, rng('Month #'), m); }
       if (crit.client != null) parts.push(rng('Client'), q(crit.client));
       if (crit.leader != null) parts.push(rng('Revenue leader'), q(crit.leader));
-      if (crit.broker != null) parts.push(rng('Broker'), q(crit.broker));
+      if (crit.party != null) parts.push(rng('Party'), q(crit.party));
       return 'SUMIFS(' + parts.join(',') + ')';
     };
     const put = (r, c, crit, style) => {
@@ -494,8 +562,8 @@
     table('By month', 'every month of the reporting years', V.cols.map(c => ({ label: MONTHS[c.m - 1] + ' ' + c.y, key: c.key })), it => ({ key: it.key }));
     table('By revenue leader', 'the lead on the project', uniq(rowsIn.map(leaderOf)).map(l => ({ label: l, leader: l })), it => ({ leader: it.leader }));
     table('By client', '', uniq(rowsIn.map(rw => rw.client || '')).map(cl => ({ label: cl, client: cl })), it => ({ client: it.client }));
-    const brokers = uniq(rowsIn.map(brokerOf));
-    if (brokers.length) table('By broker', 'who receives the fee share', brokers.map(b => ({ label: b, broker: b })), it => ({ broker: it.broker }));
+    const parties = uniq(rowsIn.flatMap(rw => V.cols.flatMap(c => linesFor(rw, c.key).map(L => L.party))));
+    if (parties.length) table('By party', 'each pass-through line as named on the calculator, and each broker', parties.map(b => ({ label: b, party: b })), it => ({ party: it.party }));
     table('By rating', 'ignores the ceiling — every rating on its own row', [1, 2, 3, 4, 5, 6, 7].map(n => ({ label: n + ' · ' + ((STORE.ratingMeta(n) || {}).label || ''), rating: n })), it => ({ rating: it.rating, allRatings: true }));
     if (wb.calcProperties) wb.calcProperties.fullCalcOnLoad = true; else wb.calcProperties = { fullCalcOnLoad: true };
     return ws;

@@ -2588,7 +2588,23 @@
              sq(r2(by['Fee billed']), r2(m.feeInvoice), 'fee billed = fee incl. broker on top') && sq(r2(by['Pass-through billed']), r2(m.passClient), 'pass-through billed') &&
              sq(r2(by['Broker fee share']), r2(-m.broker), 'broker is a minus') && sq(r2(by['Pass-through cost']), r2(-m.passCost), 'vendor cost is a minus') &&
              sq(sum, r2(m.revenue), 'the lines add to Savills revenue') && sq(r2(by['Fee billed'] + by['Pass-through billed']), r2(m.invoice), 'billed lines add to the invoice') &&
-             sq(X.brokerOf(row), 'CBRE · J. Doe', 'the broker name rides along') && sq(X.DATA_HEADERS.indexOf('Broker') > 0, true, 'and has its own column');
+             sq(X.brokerOf(row), 'CBRE · J. Doe', 'the broker name rides along') && sq(X.DATA_HEADERS.indexOf('Party') > 0, true, 'and the party has its own column') &&
+             sq(lines.find(L => L.line === 'Broker fee share').party, 'CBRE · J. Doe', 'the broker line is named to the broker') &&
+             sq(lines.find(L => L.line === 'Pass-through cost').party, 'Pass-through · Movers', 'the pass-through line is named as typed on the calculator');
+    });
+    test('Projections writer', 'two pass-through lines report as two named parties — a vendor and a fixed fee share side by side', () => {
+      if (!X) return 'UFC_ProjectionsXlsx not present';
+      const p = base({ id: 'x_parties', project: { name: 'Parties', client: 'Fanatics', status: 'active', rating: 1 },
+        passthrough: { enabled: true, lines: [{ id: 'a', label: 'Unity Electric', cost: 4000, markupPct: 10, mode: 'billed' }, { id: 'b', label: 'Dallas PM fee share', cost: 8000, markupPct: 0, mode: 'billed' }] } });
+      const pl = S.passThroughLines(p);
+      const row = X.bookRows([p], {}, C)[0];
+      const lines = X.linesFor(row, '2026-3');
+      const costs = lines.filter(L => L.line === 'Pass-through cost').map(L => L.party + '=' + Math.round(L.amount));
+      const billed = lines.filter(L => L.line === 'Pass-through billed').reduce((t, L) => t + L.amount, 0);
+      return sq(pl.length, 2, 'two lines') && sq(pl.map(l => l.label).join('|'), 'Unity Electric|Dallas PM fee share', 'labels as typed') &&
+             sq(Math.round(pl[1].costTotal), 8000, 'fixed share cost') &&
+             sq(costs.join(','), 'Pass-through · Unity Electric=-1000,Pass-through · Dallas PM fee share=-2000', 'each line its own minus, a quarter of the cost per month') &&
+             sq(Math.round(billed), 1100 + 2000, 'billed lines add to the pass-through billed to the client');
     });
   })();
 
