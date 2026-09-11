@@ -488,7 +488,7 @@
   <p>Draft / negotiation records have <strong>no</strong> snapshot — their numbers are working estimates and recompute live in the projection views. Reporting either ignores them or treats them clearly as "live estimate," never as committed revenue.</p>
 
   <h3>Keeping a snapshot honest</h3>
-  <p>A snapshot would drift if someone edits a booked project afterward. The app does <strong>not</strong> silently overwrite it: editing a booked record sets <code>financials.stale = true</code> and the calculator shows the stale-contract banner (&sect;11). The figures only refresh on an explicit <strong>restamp</strong> or are superseded by an approved <strong>change order</strong>. A booked number never changes by accident.</p>
+  <p>A snapshot would drift if someone edits a booked project afterward. The app does <strong>not</strong> silently overwrite it: editing a booked record sets <code>financials.stale = true</code> on autosave and the calculator shows the stale-contract banner (&sect;11) as soon as that save lands — no reload needed. The figures only refresh on an explicit <strong>restamp</strong> or are superseded by an approved <strong>change order</strong>. A booked number never changes by accident.</p>
 
   <div class="box">
     <span class="tag">Status · implemented</span>

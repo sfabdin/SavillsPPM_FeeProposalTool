@@ -3415,6 +3415,12 @@
       state.createdAt = saved.createdAt;
       state.updatedAt = saved.updatedAt;
       baseUpdatedAt = saved.updatedAt;
+      /* The store decides on save whether a booked contract has drifted
+         (financials.stale) or freezes it for the first time. Carry that back
+         into the tab and redraw the banner now — it used to stay as loaded, so
+         "Restamp contract" only ever appeared after a reload. */
+      state.financials = saved.financials ? JSON.parse(JSON.stringify(saved.financials)) : null;
+      updateChangeOrderBanner();
       conflicted = false;
       clearConflictBanner();
       setProjectIdInUrl(saved.id);
