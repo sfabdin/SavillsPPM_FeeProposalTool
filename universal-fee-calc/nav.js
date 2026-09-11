@@ -29,7 +29,7 @@
     { href: 'Staffing Matrix.html',          label: 'Staffing & Bandwidth', group: 'Operations', admin: true,
       desc: 'Who is working on what and how loaded they are — allocations, bandwidth, and contract-vs-staffing checks.' },
     { href: 'Revenue Reconciliation.html',   label: 'Revenue Reconciliation', group: 'Operations', admin: true,
-      desc: 'Finance-owned monthly close: import the actuals, reconcile billed vs accrued vs forecast per project, disposition every variance, and export the monthly flash.' },
+      desc: 'Finance\'s monthly book, built from the fee tool: a status on every fee, pass-through and fee-share line, the monthly flash, and a lock per month — a project edit that moves a locked month is flagged red.' },
     { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Operations', admin: true,
       desc: 'Revenue with Clockify burn (hours × cost rate) laid against it — margin per project, per month.' },
     { href: 'Monthly Confirmed Book.html',   label: 'Monthly Confirmed Book', group: 'Projects',
