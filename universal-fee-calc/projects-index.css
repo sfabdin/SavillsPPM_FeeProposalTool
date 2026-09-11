@@ -247,6 +247,10 @@
   color: var(--sav-steel);
   margin-top: 2px;
 }
+.pfee-notes { display: inline-flex; flex-wrap: wrap; gap: 2px 10px; }
+.pfee-pt, .pfee-bk { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pfee-pt { color: var(--sav-teal); }
+.pfee-bk { color: var(--sav-red); }
 
 /* Status pills */
 /* Quick edit (superuser): inline selects in the table */

@@ -2633,6 +2633,21 @@
       return sq(a.map(x => x.ym + ':' + r2(x.invoice)).join(','), '2026-04:3173.77,2026-05:0', 'imported April shows even though the timeline is May') &&
              sq(b.map(x => x.ym + ':' + r2(x.invoice)).join(','), '2026-05:1100', 'once a line exists, the line is the number');
     });
+    test('Projects Index · total fee', 'a pass-through-only closed-out record shows what the client is billed, not $0 (Mitchell & Ness CO 01)', () => {
+      const p = sw({ timeline: { startMonth: 1, startYear: 2026, endMonth: 1, endYear: 2026 },
+        passthrough: pt([{ id: 'a', label: 'Savills Relocation', cost: 52400, markupPct: 19.084, mode: 'billed' }]),
+        source: { importedByMonth: { '2026-1': 62400 }, reconciled: false }, financials: { net: 0, byMonth: [] } });
+      const b = S.clientBillOf(p, C);
+      return sq(b.fee, 0, 'no staffed fee') && sq(b.pass, 62400.02, 'pass-through billed to the client') && sq(b.total, 62400.02, 'the row is the total billed') && sq(b.imported, true, 'still riding the import');
+    });
+    test('Projects Index · total fee', 'an imported fee plus a broker: on top is billed to the client, off the top is not', () => {
+      const imp = { importedByMonth: { '2026-5': 10000 }, reconciled: false };
+      const ontop = sw({ source: imp, assumptions: S.defaultAssumptions({ catalogBaseYear: 2024, feeShare: { enabled: true, pct: 10, mode: 'ontop' } }) });
+      const offtop = sw({ source: imp, assumptions: S.defaultAssumptions({ catalogBaseYear: 2024, feeShare: { enabled: true, pct: 10, mode: 'offtop' } }) });
+      const a = S.clientBillOf(ontop, C), b = S.clientBillOf(offtop, C);
+      return sq(a.fee, 10000, 'imported fee') && sq(a.broker, 1000, 'broker $') && sq(a.total, 11000, 'on top: client pays fee + broker') &&
+             sq(b.broker, 1000, 'same broker $') && sq(b.total, 10000, 'off the top: client pays the fee') && sq(b.brokerOnTop, false, 'flagged as off the top');
+    });
     test('Pass-through · cleanup', 'the one-time cleanup rewrites stale import splits to the priced months, once, for a leadership admin only', () => {
       const dbKey = 'savills-ppm-fee-db:v1'; const prevDb = localStorage.getItem(dbKey); const prevId = S.getRealIdentity();
       try {

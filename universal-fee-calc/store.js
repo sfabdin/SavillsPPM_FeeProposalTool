@@ -3065,6 +3065,35 @@
     return res;
   }
 
+  /** What the CLIENT is billed for a project, live, in one place: the staffed
+      fee (or the imported figure while the record still rides its import),
+      plus the broker markup when the fee share sits on top of the fee, plus
+      every pass-through line billed through Savills. The Projects Index
+      headline reads this so it can never disagree with the calculator's. */
+  function clientBillOf(p, catalog) {
+    const out = { fee: 0, broker: 0, brokerOnTop: false, pass: 0, passCost: 0, total: 0, fteMonths: 0, imported: false };
+    if (!p) return out;
+    const round2 = (n) => Math.round(n * 100) / 100;
+    out.imported = !!(p.source && p.source.importedByMonth && !p.source.reconciled);
+    let fee = 0;
+    if (out.imported) {
+      fee = (monthlySeries(p, catalog) || []).reduce((a, s) => a + (s.amount || 0), 0);
+    } else {
+      const fin = projectFinancials(p, r => getTierRateFromCatalog(r, catalog, p));
+      fee = fin.net || 0; out.fteMonths = fin.fteMonths || 0;
+    }
+    const fs = (p.assumptions && p.assumptions.feeShare) || {};
+    const pct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
+    out.brokerOnTop = fs.mode === 'ontop';
+    out.broker = round2(fee * pct / 100);
+    const ptm = passThroughMonths(p);
+    out.pass = round2(ptm.clientTotal || 0);
+    out.passCost = round2(ptm.costTotal || 0);
+    out.fee = round2(fee);
+    out.total = round2(fee + (out.brokerOnTop ? out.broker : 0) + out.pass);
+    return out;
+  }
+
   function financialsInputsHash(p) {
     const a = p.assumptions || {};
     const sig = JSON.stringify({
@@ -4745,7 +4774,7 @@
     seedMappingFromLedger, autoMapLedger, mappingReport, 
     yearTotals, openCells,
     projectFinancials, getTierRateFromCatalog, monthlySeries,
-    computeFinancials, restampFinancials, passThroughMonths, ptLineDistribution, ptActive,
+    computeFinancials, restampFinancials, passThroughMonths, ptLineDistribution, ptActive, clientBillOf,
     isChangeOrder, isApprovedChangeOrder, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
     reconcileImport,
     projectSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
