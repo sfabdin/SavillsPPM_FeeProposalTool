@@ -117,7 +117,10 @@
     // snapshot, and the reviewers read next year alongside this one.
     const years = S.getReportYears ? S.getReportYears() : [year];
     if (years.indexOf(year) < 0) years.unshift(year);
-    const feeBy = {}; years.forEach(y => { feeBy[y] = C.feeInYear(mine, y); });
+    /* One pass of the billing engine per project: the row cells and the KPI
+       totals both read from it, instead of pricing every project four times. */
+    const feeOf = new Map(); mine.forEach(r => { const m = {}; years.forEach(y => { m[y] = C.feeInYear([r], y); }); feeOf.set(r, m); });
+    const feeBy = {}; years.forEach(y => { feeBy[y] = mine.reduce((t, r) => t + feeOf.get(r)[y], 0); });
     const fee = feeBy[year];
     const shared = mine.filter(r => C.leadersOf(r, byId).length > 1).length;
     const d = C.daysUntil(cycle.deadline); const over = C.pastDeadline(cycle.deadline);
@@ -153,7 +156,7 @@
       return '<tr><td>' + esc(pj.client || '') + '</td>' +
         '<td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(r.id) + '" style="color:inherit;font-weight:600">' + esc(pj.name || 'Untitled') + '</a><div class="mono">' + esc(pj.projectNumber || r.id) + '</div></td>' +
         '<td>' + esc(ratingLabel(r)) + '</td>' +
-        years.map(y => '<td class="money">' + money(C.feeInYear([r], y)) + '</td>').join('') +
+        years.map(y => '<td class="money">' + money(feeOf.get(r)[y]) + '</td>').join('') +
         '<td>' + esc(C.fmtStamp(r.updatedAt)) + '</td>' +
         '<td>' + (others.length ? esc(others.join(', ')) : '<span class="sub">—</span>') + '</td>' +
         '<td>' + inBook + '</td></tr>';
@@ -458,16 +461,34 @@
     else if (tab === 'tracker') { const h = $('#pane-tracker'); h.innerHTML = paneTracker(); wireTracker(h); }
     else { const h = $('#pane-months'); h.innerHTML = paneMonths(); wireMonths(h); }
   }
+  /* Background redraws — a teammate's save landing from Box, the countdown
+     tick — used to replace the whole pane on the spot. On the Books tab that
+     wiped a half-typed name or date; on the tracker it moved under the mouse.
+     Now they wait until nothing in the pane has focus, and a burst of events
+     becomes one draw. A click on a tab or a button still draws at once. */
+  let _redrawTimer = null, _redrawQueued = false;
+  const editing = () => { const a = document.activeElement; return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.closest('.cb-pane')); };
+  function softRender() {
+    clearTimeout(_redrawTimer);
+    _redrawTimer = setTimeout(() => {
+      if (document.hidden) { _redrawQueued = true; return; }
+      if (editing()) { _redrawQueued = true; return; }
+      _redrawQueued = false; render();
+    }, 200);
+  }
   function start() {
     wireTabs(); render();
-    document.addEventListener('ufc:remote-updated', render);
+    document.addEventListener('ufc:remote-updated', softRender);
+    document.addEventListener('focusout', () => { if (_redrawQueued) softRender(); }, true);
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden || !Box || !Box.enabled || !Box.syncConfirmed) return;
+      if (document.hidden) return;
+      if (_redrawQueued) softRender();
+      if (!Box || !Box.enabled || !Box.syncConfirmed) return;
       const at = C.listedAt();
       if (at && (Date.now() - new Date(at).getTime()) < 3 * 60 * 1000) return;
-      Box.syncConfirmed().then(render).catch(() => {});
+      Box.syncConfirmed().then(softRender).catch(() => {});
     });
-    setInterval(() => { if (!document.hidden) render(); }, 5 * 60 * 1000);   // the countdown keeps time
+    setInterval(softRender, 5 * 60 * 1000);   // the countdown keeps time
   }
   if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(start, start); else start();
 })();

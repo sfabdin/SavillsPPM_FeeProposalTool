@@ -43,14 +43,26 @@
   let _remote = null;
   function attachRemote(fn) { _remote = typeof fn === 'function' ? fn : null; }
   const defaultDb = () => ({ schemaVersion: 1, cycles: {}, dirty: [], listedAt: null, known: [] });
+  /* PARSED CACHE. A book with everyone's copies in it is about a megabyte, and
+     the tracker asked for it (getCycle, listCycles, currentCycle, knownCycles)
+     a dozen times per draw — a dozen full parses. The cache is keyed on the raw
+     string, as the project store's is: comparing the text is far cheaper than
+     parsing it, and it stays right when another tab or the test harness writes
+     the key behind our back. Callers mutate the object and writeDb() it; that
+     is the contract, so the cached object itself is handed out. */
+  let _cache = null, _raw = null, _memOnly = false;
   function readDb() {
+    if (_memOnly && _cache) return _cache;           // storage is full: memory is the truth, see writeDb
     try {
       const raw = localStorage.getItem(KEY);
-      const p = raw ? JSON.parse(raw) : null;
+      if (!raw) { _cache = null; _raw = null; return defaultDb(); }
+      if (_cache && raw === _raw) return _cache;
+      const p = JSON.parse(raw);
       if (!p || typeof p !== 'object' || !p.cycles) return defaultDb();
       if (!Array.isArray(p.dirty)) p.dirty = [];
       if (!Array.isArray(p.known)) p.known = [];
       Object.keys(p.cycles).forEach(k => normalize(p.cycles[k], k));
+      _cache = p; _raw = raw;
       return p;
     } catch (e) { return defaultDb(); }
   }
@@ -65,18 +77,35 @@
     if (c.name == null) c.name = '';
     return c;
   }
+  const trySet = (raw) => { try { localStorage.setItem(KEY, raw); return true; } catch (e) { return false; } };
   function writeDb(db, opts) {
     db.schemaVersion = 1;
-    try { localStorage.setItem(KEY, JSON.stringify(db)); }
-    catch (e) {
+    let raw = JSON.stringify(db);
+    let ok = trySet(raw);
+    if (!ok) {
       /* Out of storage: shed the oldest LOCKED cycle (safe in Box) and retry. */
       const yms = Object.keys(db.cycles).filter(k => db.cycles[k].lockedAt && db.dirty.indexOf(k) < 0).sort();
-      if (yms.length) { delete db.cycles[yms[0]]; try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e2) { return db; } }
-      else return db;
+      if (yms.length) { delete db.cycles[yms[0]]; raw = JSON.stringify(db); ok = trySet(raw); }
+    }
+    if (ok) {
+      _cache = db; _raw = raw;
+      if (_memOnly) { _memOnly = false; try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'synced', message: '', at: Date.now() } })); } catch (e) {} }
+    } else {
+      /* The write failed and nothing could be shed. This used to return here —
+         BEFORE the push — so a leader's confirmation showed a green toast, was
+         never written anywhere, and had vanished on the next draw. Now memory
+         holds the book for the rest of this page (readDb serves it), the push
+         to Box still goes out, and the sync pill says why. */
+      _cache = db; _raw = null; _memOnly = true;
+      console.error('confirmed-book: local cache write failed (storage full?) — holding the book in memory and pushing to Box');
+      try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error', at: Date.now(),
+        message: 'Browser storage is full — the confirmed book is held in memory on this page and still saves to Box. Clear old site data or contact the maintainer.' } })); } catch (e) {}
     }
     if (!(opts && opts.quiet) && _remote) { try { _remote(db.dirty.slice()); } catch (e) { console.warn('confirmed-book push failed', e); } }
     return db;
   }
+  /** Test hook: forget the cache and the storage-full state. */
+  function _resetCache() { _cache = null; _raw = null; _memOnly = false; }
   function markDirty(db, ym) { if (db.dirty.indexOf(ym) < 0) db.dirty.push(ym); }
   function dirtyCycles() { return readDb().dirty.slice(); }
   function markCycleClean(ym) {
@@ -141,6 +170,23 @@
     return ids;
   }
   const indexById = (records) => { const m = {}; (records || []).forEach(r => { if (r && r.id) m[r.id] = r; }); return m; };
+  /* Who leads each record, worked out once per records array. The tracker
+     asks statusFor() for every leader × every book, and each asked bookFor()
+     to resolve the leaders of all 300 records again — 62,000 directory
+     lookups per draw. Keyed on the array itself (a WeakMap), so a page that
+     passes the same list through one draw pays once and nothing is ever
+     stale across draws. */
+  const _leadMemo = new WeakMap();
+  function leadersIndex(records) {
+    const list = records || [];
+    let m = _leadMemo.get(list);
+    if (m) return m;
+    const byId = indexById(list); const leaders = new Map();
+    list.forEach(r => { if (r) leaders.set(r, leadersOf(r, byId)); });
+    m = { byId, leaders };
+    _leadMemo.set(list, m);
+    return m;
+  }
   /** A record still in play: not lost or closed out, not a placeholder. */
   function isActiveRecord(rec) {
     const st = S(); const pj = (rec && rec.project) || {};
@@ -153,10 +199,10 @@
       status — the confirmed book must be as complete as the live one. */
   function bookFor(leaderId, records) {
     const list = records || S().listProjects();
-    const byId = indexById(list);
+    const idx = leadersIndex(list);
     return list.filter(r => {
       if (!r || r._deleted) return false;
-      const ls = leadersOf(r, byId);
+      const ls = idx.leaders.get(r) || [];
       return leaderId === UNASSIGNED ? ls.length === 0 : ls.indexOf(leaderId) >= 0;
     });
   }
@@ -164,11 +210,11 @@
       record, plus "unassigned" when active records have no leader at all. */
   function expectedLeaders(records) {
     const list = records || S().listProjects();
-    const byId = indexById(list);
+    const idx = leadersIndex(list);
     const set = new Set(); let orphans = false;
     list.forEach(r => {
       if (!isActiveRecord(r)) return;
-      const ls = leadersOf(r, byId);
+      const ls = idx.leaders.get(r) || [];
       if (!ls.length) orphans = true;
       ls.forEach(id => set.add(id));
     });
@@ -412,7 +458,7 @@
     if (!k && !active.length) return { k: 'none', text: 'no projects', tone: 'n' };
     if (k) {
       const changed = mine.filter(r => (r.updatedAt || '') > k.at);
-      const when = fmtDay(k.at);
+      const when = fmtDayTime(k.at);
       // Edits after the stamp matter while the book is open; once it is
       // locked they belong to the next book, so a locked book stays green.
       if (changed.length && !cycle.lockedAt) return { k: 'changed', tone: 'y', at: k.at, changed: changed.length,
@@ -437,6 +483,12 @@
   function fmtDay(iso) {
     const d = new Date(iso); if (isNaN(d)) return '';
     return MN[d.getMonth()] + ' ' + d.getDate();
+  }
+  /** "Sep 8 · 2:14 PM" — the tracker's cell: the day and the time it was submitted. */
+  function fmtDayTime(iso) {
+    const d = new Date(iso); if (isNaN(d)) return '';
+    let h = d.getHours(); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
+    return MN[d.getMonth()] + ' ' + d.getDate() + ' · ' + h + ':' + String(d.getMinutes()).padStart(2, '0') + ' ' + ap;
   }
   function fmtStamp(iso) {
     const d = new Date(iso); if (isNaN(d)) return '';
@@ -543,8 +595,8 @@
 
   window.UFC_Confirm = {
     KEY, UNASSIGNED,
-    readDb, defaultDb, attachRemote, dirtyCycles, markCycleClean, rememberKnown, knownCycles, listedAt,
-    ymShort, ymLong, monthName, isYm, daysUntil, pastDeadline, defaultDeadline, nextYm, fmtDay, fmtStamp,
+    readDb, defaultDb, attachRemote, dirtyCycles, markCycleClean, rememberKnown, knownCycles, listedAt, _resetCache,
+    ymShort, ymLong, monthName, isYm, daysUntil, pastDeadline, defaultDeadline, nextYm, fmtDay, fmtDayTime, fmtStamp,
     bookTitle, periodLabel, bookYear, normalize,
     leadersOf, isActiveRecord, bookFor, expectedLeaders, leaderName, myLeaderId, feeInYear, isLeadership,
     getCycle, listCycles, openCycles, currentCycle, latestLocked, createCycle, setDeadline, setName, setPeriod, confirm, lockCycle, reopenCycle, reviewLate,
