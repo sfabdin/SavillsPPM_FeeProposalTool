@@ -1509,8 +1509,10 @@
 
      LINES — one project-month is up to three lines:
        fee    what the client is billed for the fee, incl. the fee on any pass-through
-       pass   vendor cost billed through Savills (flows out)
+       pass   the vendor cost billed through Savills and passed straight out — a MINUS
        share  the broker / co-party cut — a MINUS
+     Savills revenue = fee + share. The pass-through is a wash (billed, then
+     out); only the fee earned on it is ours, and that lives in fee.
 
      STATUSES — set by an admin, as often as needed until the month locks:
        billed        as planned
@@ -1527,8 +1529,8 @@
      ============================================================ */
   const RECON_LINES = [
     { id: 'fee',   label: 'Fee' },
-    { id: 'pass',  label: 'Pass-through' },
-    { id: 'share', label: 'Fee share' },
+    { id: 'pass',  label: 'Pass-through out' },
+    { id: 'share', label: 'Fee share out' },
   ];
   const RECON_STATUSES = [
     { id: 'billed',      label: 'Billed as planned' },
@@ -1568,8 +1570,9 @@
 
   const reconYmOf = (y, m) => y + '-' + String(m).padStart(2, '0');
   /** A project's three lines by month (padded 'YYYY-MM'), from the same
-      series Revenue Projections draws. fee = invoice less vendor cost;
-      pass = vendor cost; share = −broker. */
+      series Revenue Projections draws. fee = invoice less vendor cost (the
+      fee on a pass-through stays here); pass = −vendor cost (what goes out
+      to the vendor); share = −broker. */
   function reconLinesFor(p, catalog) {
     const out = { fee: {}, pass: {}, share: {} };
     if (!p) return out;
@@ -1578,7 +1581,7 @@
     const r2 = (n) => Math.round(n * 100) / 100;
     series.forEach(s => {
       const k = s.ym || reconYmOf(s.year, s.month);
-      const fee = r2((s.invoice || 0) - (s.passCost || 0)), pass = r2(s.passCost || 0), share = r2(-(s.broker || 0));
+      const fee = r2((s.invoice || 0) - (s.passCost || 0)), pass = r2(-(s.passCost || 0)), share = r2(-(s.broker || 0));
       if (fee) out.fee[k] = (out.fee[k] || 0) + fee;
       if (pass) out.pass[k] = (out.pass[k] || 0) + pass;
       if (share) out.share[k] = (out.share[k] || 0) + share;
