@@ -78,13 +78,24 @@
     return val;
   }
   function computeProjectFee(p) {
-    // Imported projects carry their $ in the locked monthly series, not in roles.
-    if (p.source && p.source.importedByMonth && !(p.source && p.source.reconciled)) {
-      const series = STORE.monthlySeries(p, CATALOG) || [];
-      const net = series.reduce((a, s) => a + (s.amount || 0), 0);
-      return { gross: net, lockCredit: 0, discount: 0, net, fteMonths: 0 };
-    }
-    return STORE.projectFinancials(p, r => STORE.getTierRateFromCatalog(r, CATALOG, p));
+    // The row is what the CLIENT is billed: fee (imported or staffed) + broker
+    // on top + pass-through billed through Savills — the calculator's headline.
+    const b = STORE.clientBillOf(p, CATALOG);
+    return { net: b.total, fee: b.fee, pass: b.pass, broker: b.broker, brokerOnTop: b.brokerOnTop, fteMonths: b.fteMonths || 0 };
+  }
+  /* The tiny note under the total: what of it is pass-through (teal) and what
+     goes to the broker (red). Empty when neither applies. */
+  function feeNotes(fin) {
+    const bits = [];
+    if (fin.pass) bits.push(`<span class="pfee-pt" title="Pass-through billed through Savills — vendor cost plus fee; the cost flows out to the vendor">− ${fmtMoneyFull(fin.pass)} pass-through</span>`);
+    if (fin.broker) bits.push(`<span class="pfee-bk" title="Broker fee share${fin.brokerOnTop ? ' — billed on top of the fee' : ' — comes out of the fee'}">− ${fmtMoneyFull(fin.broker)} broker</span>`);
+    return bits.join('');
+  }
+  /* A parent with approved change orders is worth its REVISED contract; the
+     revised figure is fee-only, so the pass-through and on-top broker ride
+     along from the live record. */
+  function rowTotal(fin, rc) {
+    return rc.coCount ? Math.round((rc.revisedNet + (fin.net - fin.fee)) * 100) / 100 : fin.net;
   }
 
   /* ---------- Populate filter dropdowns ---------- */
@@ -415,7 +426,7 @@
       { key: 'ptype',     label: 'Project type', sortable: false },
       { key: 'lead',      label: 'Lead PE' },
       { key: 'period',    label: 'Period', sortable: false },
-      { key: 'fee',       label: 'Net fee', num: true },
+      { key: 'fee',       label: 'Total fee', num: true },
       { key: 'updatedAt', label: 'Last updated' },
       { key: 'actions',   label: '', sortable: false },
     ];
@@ -438,11 +449,12 @@
       const statusKey = pj.status || 'draft';
       const statusLabel = STORE.STATUS_LABELS[statusKey] || statusKey;
       const coSign = rc.coNetSum >= 0 ? '+' : '−';
+      const notes = feeNotes(fin);
       const feeCell = hasCOs
-        ? `<div class="pfee">${fmtMoneyFull(rc.revisedNet)}</div>
-           <div class="pfee-sub">${fmtMoneyFull(rc.baselineNet)} ${coSign} ${rc.coCount} CO${rc.coCount === 1 ? '' : 's'}</div>`
+        ? `<div class="pfee">${fmtMoneyFull(rowTotal(fin, rc))}</div>
+           <div class="pfee-sub">${fmtMoneyFull(rc.baselineNet)} ${coSign} ${rc.coCount} CO${rc.coCount === 1 ? '' : 's'}</div>${notes ? `<div class="pfee-sub pfee-notes">${notes}</div>` : ''}`
         : `<div class="pfee">${fmtMoneyFull(fin.net)}</div>
-           <div class="pfee-sub">${fin.fteMonths.toFixed(1)} fte-mo</div>`;
+           <div class="pfee-sub">${notes ? `<span class="pfee-notes">${notes}</span>` : `${fin.fteMonths.toFixed(1)} fte-mo`}</div>`;
       const nameSub = hasCOs
         ? `<span class="pname-sub">${esc(pj.industry || '—')} · revised contract</span>`
         : `<span class="pname-sub">${esc(pj.industry || '—')}</span>`;
@@ -673,7 +685,7 @@
 
     // Title + provenance. Which filters produced this matters as much as the
     // rows: a sheet of 12 projects with no context reads as the whole book.
-    ws.mergeCells('A1:K1');
+    ws.mergeCells('A1:M1');
     ws.getCell('A1').value = 'Savills PPM — Projects Index';
     ws.getCell('A1').font = { name: 'Calibri', bold: true, size: 16, color: { argb: NAVY } };
     ws.getRow(1).height = 24;
@@ -686,7 +698,7 @@
     if (f.ptype) bits.push('Type: ' + f.ptype);
     if (f.client) bits.push('Client: ' + f.client);
     if (f.lead) bits.push('Lead: ' + f.lead);
-    ws.mergeCells('A2:K2');
+    ws.mergeCells('A2:M2');
     ws.getCell('A2').value = V.rows.length + ' of ' + V.total + ' projects'
       + (bits.length ? '  ·  ' + bits.join('  ·  ') : '  ·  no filters applied')
       + '  ·  exported ' + new Date().toLocaleString();
@@ -695,7 +707,7 @@
     const cols = [
       ['Client', 24], ['Project', 34], ['Location', 18], ['Status', 14],
       ['Industry', 18], ['Project type', 22], ['Lead PE', 18],
-      ['Period', 18], ['Net fee', 14], ['FTE-months', 12], ['Last updated', 14],
+      ['Period', 18], ['Total fee', 14], ['of which pass-through', 16], ['Broker', 12], ['FTE-months', 12], ['Last updated', 14],
     ];
     cols.forEach((c, i) => { ws.getColumn(i + 1).width = c[1]; });
     const head = ws.getRow(4);
@@ -704,29 +716,29 @@
       cell.value = c[0];
       cell.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
-      cell.alignment = { horizontal: i >= 8 && i <= 9 ? 'right' : 'left' };
+      cell.alignment = { horizontal: i >= 8 && i <= 11 ? 'right' : 'left' };
     });
 
-    let net = 0, fte = 0;
+    let net = 0, fte = 0, pass = 0, broker = 0;
     V.rows.forEach((p) => {
       const pj = p.project || {};
       const fin = projectFee(p);
       const rc = STORE.revisedContract(p.id);
       // A project with approved change orders is worth its REVISED contract —
       // the same figure the on-screen row shows, not the original baseline.
-      const rowNet = rc.coCount ? rc.revisedNet : fin.net;
-      net += rowNet || 0; fte += fin.fteMonths || 0;
+      const rowNet = rowTotal(fin, rc);
+      net += rowNet || 0; fte += fin.fteMonths || 0; pass += fin.pass || 0; broker += fin.broker || 0;
       const r = ws.addRow([
         pj.client || '',
         (pj.name || 'Untitled') + (rc.coCount ? '  (incl. ' + rc.coCount + ' CO' + (rc.coCount === 1 ? '' : 's') + ')' : ''),
         pj.location || '',
         STORE.STATUS_LABELS[pj.status] || pj.status || '',
         pj.industry || '', pj.projectType || '', pj.lead || '',
-        fmtPeriod(p), rowNet || 0, +(fin.fteMonths || 0).toFixed(1),
+        fmtPeriod(p), rowNet || 0, fin.pass || 0, fin.broker || 0, +(fin.fteMonths || 0).toFixed(1),
         p.updatedAt ? new Date(p.updatedAt).toLocaleDateString() : '',
       ]);
-      r.getCell(9).numFmt = '"$"#,##0';
-      r.getCell(10).numFmt = '#,##0.0';
+      [9, 10, 11].forEach((i) => { r.getCell(i).numFmt = '"$"#,##0'; });
+      r.getCell(12).numFmt = '#,##0.0';
       r.getCell(2).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
       if (STORE.isPlaceholder && STORE.isPlaceholder(p)) {
         // Carry the estimate caveat into the workbook — a badge that only
@@ -736,11 +748,11 @@
       }
     });
 
-    const tot = ws.addRow(['TOTAL', '', '', '', '', '', '', '', net, +fte.toFixed(1), '']);
+    const tot = ws.addRow(['TOTAL', '', '', '', '', '', '', '', net, pass, broker, +fte.toFixed(1), '']);
     tot.eachCell((c) => { c.font = { name: 'Calibri', bold: true, color: { argb: NAVY } }; });
-    tot.getCell(9).numFmt = '"$"#,##0';
-    tot.getCell(10).numFmt = '#,##0.0';
-    [9, 10].forEach((i) => { tot.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } }; });
+    [9, 10, 11].forEach((i) => { tot.getCell(i).numFmt = '"$"#,##0'; });
+    tot.getCell(12).numFmt = '#,##0.0';
+    [9, 10, 11, 12].forEach((i) => { tot.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } }; });
     tot.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } };
 
     const buf = await wb.xlsx.writeBuffer();
