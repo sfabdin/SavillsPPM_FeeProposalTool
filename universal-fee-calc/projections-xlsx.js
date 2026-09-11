@@ -309,8 +309,8 @@
                                      and the fee earned on any pass-through)
          Pass-through billed     +   the vendor cost invoiced through Savills
        = Total billed to client
-         Broker fee share        −   the referral cut (either mode)
-         Pass-through cost       −   the same vendor cost, flowing out to the vendor
+         Fee share out           −   the referral cut, and any pass-through line ticked "fee share"
+         Pass-through out        −   the same vendor cost, flowing out to the vendor
        = Savills revenue
      The fee on a pass-through is OURS, so it sits in Fee billed; only the
      amount that goes somewhere else appears as a pass-through line.
@@ -321,8 +321,8 @@
   const LINES = [
     { line: 'Fee billed',          group: 'Billed to client', sign: +1 },
     { line: 'Pass-through billed', group: 'Billed to client', sign: +1 },
-    { line: 'Broker fee share',    group: 'Deduction',        sign: -1 },
-    { line: 'Pass-through cost',   group: 'Deduction',        sign: -1 },
+    { line: 'Fee share out',       group: 'Deduction',        sign: -1 },
+    { line: 'Pass-through out',    group: 'Deduction',        sign: -1 },
   ];
   /** Who receives the fee share — typed on the calculator beside the %. */
   function brokerOf(row) {
@@ -335,23 +335,19 @@
     const passCost = (row.passMap && row.passMap[key]) || 0;
     const out = [];
     const push = (i, v, party) => { if (Math.abs(v) > 0.005) out.push({ line: LINES[i].line, group: LINES[i].group, amount: LINES[i].sign * v, party: party || '' }); };
-    push(0, inv - passCost, '');
-    // Pass-through: one line per line on the calculator, named as typed there —
-    // "Pass-through · Unity Electric", "Pass-through · Dallas PM fee share" —
-    // so the party is visible whether it is a vendor or a fee share.
+    // One line per pass-through line on the calculator, named as the leader
+    // typed it. A line ticked "fee share" is billed as fee and goes out as a
+    // fee share (red); a vendor line is billed through and goes out as a
+    // pass-through (teal).
     const lines = row.ptLines || [];
-    if (lines.length) {
-      lines.forEach(L => {
-        const party = 'Pass-through · ' + (L.label || 'line');
-        const c = (L.cost && L.cost[key]) || 0;
-        push(1, c, party);
-        push(3, c, party);
-      });
-    } else {
-      push(1, passCost, 'Pass-through');
-      push(3, passCost, 'Pass-through');
-    }
+    let vendorCost = 0; const shares = [];
+    if (lines.length) lines.forEach(L => { const c = (L.cost && L.cost[key]) || 0; if (!c) return; if (L.feeShare) shares.push({ c, party: 'Fee share · ' + (L.label || 'line') }); else vendorCost += c; });
+    else vendorCost = passCost;
+    push(0, inv - vendorCost, '');
+    if (lines.length) lines.forEach(L => { if (L.feeShare) return; const party = 'Pass-through · ' + (L.label || 'line'); const c = (L.cost && L.cost[key]) || 0; push(1, c, party); push(3, c, party); });
+    else { push(1, passCost, 'Pass-through'); push(3, passCost, 'Pass-through'); }
     push(2, broker, brokerOf(row) || 'Broker');
+    shares.forEach(x => push(2, x.c, x.party));
     return out;
   }
 
@@ -424,8 +420,8 @@
       { label: 'Fee billed',              line: 'Fee billed' },
       { label: 'Pass-through billed',     line: 'Pass-through billed' },
       { label: 'Total billed to client',  sum: [0, 1], bold: true },
-      { label: 'Broker fee share',        line: 'Broker fee share' },
-      { label: 'Pass-through cost',       line: 'Pass-through cost' },
+      { label: 'Fee share out',           line: 'Fee share out' },
+      { label: 'Pass-through out',        line: 'Pass-through out' },
       { label: 'Savills revenue',         sum: [2, 3, 4], bold: true, fill: YEL },
       { label: 'Probability-weighted revenue', weighted: true },
     ];
@@ -530,7 +526,7 @@
     r += 2;
 
     // ---- shared bridge-table writer for a dimension ----
-    const COLS = ['Fee billed', 'Pass-through billed', 'Total billed', 'Broker fee share', 'Pass-through cost', 'Savills revenue', 'Weighted revenue'];
+    const COLS = ['Fee billed', 'Pass-through billed', 'Total billed', 'Fee share out', 'Pass-through out', 'Savills revenue', 'Weighted revenue'];
     const table = (title, note, items, critOf) => {
       section(r, title, note); r++;
       head(r, [title.replace(/^By /, ''), ...COLS], NAVY); r++;
@@ -541,8 +537,8 @@
         put(r, 2, Object.assign({ line: 'Fee billed' }, base));
         put(r, 3, Object.assign({ line: 'Pass-through billed' }, base));
         ws.getCell(r, 4).value = { formula: `B${r}+C${r}`, result: Math.round((val(Object.assign({ line: 'Fee billed' }, base)) + val(Object.assign({ line: 'Pass-through billed' }, base))) * 100) / 100 };
-        put(r, 5, Object.assign({ line: 'Broker fee share' }, base));
-        put(r, 6, Object.assign({ line: 'Pass-through cost' }, base));
+        put(r, 5, Object.assign({ line: 'Fee share out' }, base));
+        put(r, 6, Object.assign({ line: 'Pass-through out' }, base));
         ws.getCell(r, 7).value = { formula: `D${r}+E${r}+F${r}`, result: val(base) };
         put(r, 8, Object.assign({ weighted: true }, base));
         [4, 7].forEach(c => { const cell = ws.getCell(r, c); cell.numFmt = '#,##0;[Red]-#,##0;"·"'; cell.alignment = { horizontal: 'right' }; cell.font = { name: 'Calibri', bold: true, color: { argb: NAVY } }; });

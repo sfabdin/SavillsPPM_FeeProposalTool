@@ -184,7 +184,7 @@
       if (f.ptype && r.projectType !== f.ptype) return false;
       if (f.has) {
         // Isolate the projects that carry a pass-through line or a broker fee share.
-        const hasPass = (r.ptLines && r.ptLines.length > 0) || r.ptCost > 0, hasBroker = r.feeSharePct > 0;
+        const hasPass = (r.ptLines && r.ptLines.some(L => !L.feeShare)) || (!(r.ptLines && r.ptLines.length) && r.ptCost > 0), hasBroker = r.feeSharePct > 0 || (r.ptLines && r.ptLines.some(L => L.feeShare));
         if (f.has === 'pass' && !hasPass) return false;
         if (f.has === 'broker' && !hasBroker) return false;
         if (f.has === 'either' && !hasPass && !hasBroker) return false;
@@ -351,7 +351,7 @@
       if (showBroker && r.feeSharePct > 0) {
         const bm = r.brokerMap || {};
         let rowBroker = 0;
-        html += `<tr class="broker-row"><td class="proj-cell" colspan="3">↳ Broker fee · ${r.feeSharePct}%</td>`;
+        html += `<tr class="broker-row"><td class="proj-cell" colspan="3">↳ Fee share · ${esc(((r.p.assumptions || {}).feeShare || {}).broker || 'broker')} · ${r.feeSharePct}%</td>`;
         cols.forEach((c, i) => {
           const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
           const today = c.key === _ck ? ' today' : '';
@@ -362,11 +362,25 @@
         });
         html += `<td class="rowtot num broker">−${fmtK(rowBroker)}</td></tr>`;
       }
+      // A pass-through line the leader ticked "fee share" is a share going out — it rides with the fee-share rows, in red.
+      if (showBroker) (r.ptLines || []).filter(L => L.feeShare).forEach(L => {
+        const pm = L.cost || {}; let rowShare = 0;
+        const lbl = 'Fee share · ' + (L.label || 'line');
+        html += `<tr class="broker-row"><td class="proj-cell" colspan="3" title="${esc(lbl)}">↳ ${esc(lbl)}</td>`;
+        cols.forEach((c, i) => {
+          const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
+          const today = c.key === _ck ? ' today' : '';
+          const b = pm[c.key] || 0; rowShare += b;
+          html += `<td class="num broker${sep}${today}"${b ? ` title="−${fmtExact(b)}"` : ''}>${b ? '−' + fmtK(b) : ''}</td>`;
+          if (!excluded) { colBroker[c.key] = (colBroker[c.key] || 0) + b; grandBroker += b; }
+        });
+        html += `<td class="rowtot num broker">${rowShare ? '−' + fmtK(rowShare) : '·'}</td></tr>`;
+      });
       // Pass-through pull-out sub-lines (toggle): one per line, named as typed
       // on the calculator — the vendor, the co-PM, the party a fixed fee share
       // goes to — so the reader sees who the money flows out to.
       if (showPass && ((r.ptLines && r.ptLines.length) || r.ptCost > 0)) {
-        const lines = (r.ptLines && r.ptLines.length) ? r.ptLines : [{ label: 'all lines', cost: r.passMap || {} }];
+        const lines = (r.ptLines && r.ptLines.length) ? r.ptLines.filter(L => !L.feeShare) : [{ label: 'all lines', cost: r.passMap || {} }];
         lines.forEach(L => {
           const pm = L.cost || {};
           let rowPass = 0;

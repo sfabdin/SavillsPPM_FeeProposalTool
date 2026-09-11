@@ -980,24 +980,26 @@
       const p = setup();
       const L = S.reconLinesFor(p, C); const fin = S.computeFinancials(p, C); const m = fin.byMonth.find(x => x.ym === '2026-02');
       const r2 = (n) => Math.round(n * 100) / 100;
-      return sq(r2(L.fee['2026-02']), r2(m.invoice - m.passCost), 'fee keeps the fee on the pass-through') && sq(r2(L.pass['2026-02']), r2(-m.passCost), 'pass-through is the vendor cost going out — a minus') && sq(r2(L.share['2026-02']), r2(-m.broker), 'fee share is a minus') &&
-             sq(r2(L.fee['2026-02'] + L.share['2026-02']), r2(m.revenue), 'fee + fee share is Savills revenue — the pass-through is a wash');
+      const pass = L.out.find(x => x.id === 'pt:v'), share = L.out.find(x => x.id === 'share');
+      return sq(r2(L.fee['2026-02']), r2(m.invoice - m.passCost), 'fee keeps the fee on the pass-through') && sq(r2(pass.byMonth['2026-02']), r2(-m.passCost), 'pass-through is the vendor cost going out — a minus') && sq(pass.label, 'Pass-through · Movers', 'named as the leader typed it') &&
+             sq(r2(share.byMonth['2026-02']), r2(-m.broker), 'fee share is a minus') && sq(share.label, 'Fee share · CBRE · 10%', 'named to the broker') &&
+             sq(r2(L.fee['2026-02'] + share.byMonth['2026-02']), r2(m.revenue), 'fee + fee share is Savills revenue — the pass-through is a wash');
     });
     test('Recon · status', 'statuses are set per line-month by an admin, a different amount and a slip flag the project, and a lock freezes the month', () => {
       const p = setup(); const L = S.reconLinesFor(p, C); const feb = L.fee['2026-02'];
       S.setReconStatus(2026, 'rc_a', 'fee', '2026-01', 'billed', { earned: L.fee['2026-01'] });
       S.setReconStatus(2026, 'rc_a', 'fee', '2026-02', 'billed-diff', { amount: 1000, earned: feb });
-      S.setReconStatus(2026, 'rc_a', 'pass', '2026-02', 'slipped', { earnedIn: '2026-04' });
+      S.setReconStatus(2026, 'rc_a', 'pt:v', '2026-02', 'slipped', { earnedIn: '2026-04' });
       S.setReconStatus(2026, 'rc_a', 'share', '2026-02', 'accrued', { billsIn: '2026-03' });
       const flags = S.reconProjectFlags(p, C);
       const kinds = flags.map(f => f.kind + ':' + f.line).sort().join(',');
-      S.lockReconMonth(2026, 2, { 'rc_a|fee': feb, 'rc_a|pass': L.pass['2026-02'], 'rc_a|share': L.share['2026-02'] });
+      S.lockReconMonth(2026, 2, { 'rc_a|fee': feb, 'rc_a|pt:v': L.out.find(x => x.id === 'pt:v').byMonth['2026-02'], 'rc_a|share': L.out.find(x => x.id === 'share').byMonth['2026-02'] });
       let refused = false; try { S.setReconStatus(2026, 'rc_a', 'fee', '2026-02', 'billed'); } catch (e) { refused = true; }
       const settled = S.settleReconAccrual(2026, 'rc_a', 'share', '2026-02', { billedIn: '2026-03', amount: -50 });
       S.setRealIdentity({ username: 'bshepparding@savills.us', name: 'Brianna King' });
       let leaderRefused = false; try { S.setReconStatus(2026, 'rc_a', 'fee', '2026-03', 'billed'); } catch (e) { leaderRefused = true; }
       asAdmin();
-      return sq(S.reconCell(2026, 'rc_a', 'fee', '2026-02').amount, 1000, 'amount stored') && sq(kinds, 'billed-diff:fee,slipped:pass', 'both flags on the project, the accrual is not a flag') &&
+      return sq(S.reconCell(2026, 'rc_a', 'fee', '2026-02').amount, 1000, 'amount stored') && sq(kinds, 'billed-diff:fee,slipped:pt:v', 'both flags on the project, the accrual is not a flag') &&
              sq(!!S.reconMonth(2026, 2).lockedAt, true, 'locked') && sq(refused, true, 'a locked month refuses a status') &&
              sq(settled.billedIn, '2026-03', 'an accrual from a locked month still settles in an open month') && sq(leaderRefused, true, 'a leader cannot set statuses');
     });
@@ -1010,7 +1012,7 @@
       const lines = S.reconLinesFor(live, C);
       const X = window.UFC_ProjectionsXlsx; const row = X.bookRows([live], {}, C)[0];
       // lock March with the live snapshot the page would take
-      S.lockReconMonth(2026, 3, { 'rc_a|fee': lines.fee['2026-03'], 'rc_a|pass': lines.pass['2026-03'], 'rc_a|share': lines.share['2026-03'] });
+      S.lockReconMonth(2026, 3, { 'rc_a|fee': lines.fee['2026-03'] });
       const snap = S.reconMonth(2026, 3).snapshot['rc_a|fee'];
       // a confirmed-book copy keeps the override too
       const Cb = window.UFC_Confirm; const cyc = Cb.createCycle({ name: 'Override test', period: '2026-03', deadline: '2026-03-31' });
@@ -1027,9 +1029,28 @@
              sq(r2(snap), 12345, 'the lock snapshot froze the typed number') && sq(!!(copy.monthlyOverrides && copy.monthlyOverrides['2026-3']), true, 'the confirmed copy keeps the override') &&
              sq(r2(copyRow.map['2026-3']), r2(series.invoice), 'and its book export shows it');
     });
+    test('Recon · fee-share tick', 'a pass-through line ticked "fee share" reports as a fee share — red, in the fee-share total — while a vendor line stays a pass-through', () => {
+      const p = setup();
+      const rec = S.getProject('rc_a');
+      rec.passthrough.lines.push({ id: 'd', label: 'Dallas PM', cost: 8000, markupPct: 0, mode: 'billed', feeShare: true });
+      S.saveProject(rec, { force: true });
+      const live = S.getProject('rc_a'); const L = S.reconLinesFor(live, C);
+      const d = L.out.find(x => x.id === 'pt:d'), v = L.out.find(x => x.id === 'pt:v');
+      const X = window.UFC_ProjectionsXlsx; const row = X.bookRows([live], {}, C)[0]; const lines = X.linesFor(row, '2026-2');
+      const shareOut = lines.filter(x => x.line === 'Fee share out').map(x => x.party).sort().join('|');
+      const passOut = lines.filter(x => x.line === 'Pass-through out').map(x => x.party).join('|');
+      const feeBilled = lines.find(x => x.line === 'Fee billed').amount; const fin = S.computeFinancials(live, C).byMonth.find(x => x.ym === '2026-02');
+      const bill = S.clientBillOf(live, C);
+      const r2 = (n) => Math.round(n * 100) / 100;
+      return sq(d.kind, 'share', 'ticked line is a fee share') && sq(d.label, 'Fee share · Dallas PM', 'named as typed') && sq(r2(d.byMonth['2026-02']), -2000, 'a quarter of 8,000 goes out each month') &&
+             sq(v.kind, 'pass', 'the vendor line stays a pass-through') && sq(r2(L.fee['2026-02']), r2(fin.invoice - 1000), 'the fee line keeps the ticked share and drops only the vendor cost') &&
+             sq(shareOut, 'CBRE|Fee share · Dallas PM', 'the export lists both fee shares') && sq(passOut, 'Pass-through · Movers', 'and one pass-through') &&
+             sq(r2(feeBilled), r2(fin.invoice - 1000), 'fee billed = invoice less the vendor cost only; the fee share stays billed as fee') &&
+             sq(r2(bill.passCost), 4000, 'the index note counts only the vendor cost as pass-through') && sq(r2(bill.shareOut), 8000, 'and the ticked line as fee share');
+    });
     test('Recon · lock flags', 'a project edit that moves a locked month shows as a locked-month flag; reopening clears the lock', () => {
       const p = setup(); const L = S.reconLinesFor(p, C);
-      S.lockReconMonth(2026, 3, { 'rc_a|fee': L.fee['2026-03'], 'rc_a|pass': L.pass['2026-03'], 'rc_a|share': L.share['2026-03'] });
+      S.lockReconMonth(2026, 3, { 'rc_a|fee': L.fee['2026-03'], 'rc_a|pt:v': L.out.find(x => x.id === 'pt:v').byMonth['2026-03'], 'rc_a|share': L.out.find(x => x.id === 'share').byMonth['2026-03'] });
       const before = S.reconProjectFlags(p, C).filter(f => f.kind === 'locked').length;
       const edited = S.getProject('rc_a'); edited.assumptions.discount = 50; S.saveProject(edited, { force: true });
       const after = S.reconProjectFlags(S.getProject('rc_a'), C).filter(f => f.kind === 'locked');
@@ -1939,11 +1960,11 @@
       const sum = r2(lines.reduce((t, L) => t + L.amount, 0));
       return sq(lines.length, 4, 'four lines in a month with fee, broker and pass-through') &&
              sq(r2(by['Fee billed']), r2(m.feeInvoice + m.passMarkup), 'fee billed = fee incl. broker on top and the fee on the pass-through') && sq(r2(by['Pass-through billed']), r2(m.passCost), 'pass-through billed = the vendor cost only') &&
-             sq(r2(by['Broker fee share']), r2(-m.broker), 'broker is a minus') && sq(r2(by['Pass-through cost']), r2(-m.passCost), 'vendor cost is a minus') &&
+             sq(r2(by['Fee share out']), r2(-m.broker), 'broker is a minus') && sq(r2(by['Pass-through out']), r2(-m.passCost), 'vendor cost is a minus') &&
              sq(sum, r2(m.revenue), 'the lines add to Savills revenue') && sq(r2(by['Fee billed'] + by['Pass-through billed']), r2(m.invoice), 'billed lines add to the invoice') &&
              sq(X.brokerOf(row), 'CBRE · J. Doe', 'the broker name rides along') && sq(X.DATA_HEADERS.indexOf('Party') > 0, true, 'and the party has its own column') &&
-             sq(lines.find(L => L.line === 'Broker fee share').party, 'CBRE · J. Doe', 'the broker line is named to the broker') &&
-             sq(lines.find(L => L.line === 'Pass-through cost').party, 'Pass-through · Movers', 'the pass-through line is named as typed on the calculator');
+             sq(lines.find(L => L.line === 'Fee share out').party, 'CBRE · J. Doe', 'the broker line is named to the broker') &&
+             sq(lines.find(L => L.line === 'Pass-through out').party, 'Pass-through · Movers', 'the pass-through line is named as typed on the calculator');
     });
     test('Projections writer', 'two pass-through lines report as two named parties — a vendor and a fixed fee share side by side', () => {
       if (!X) return 'UFC_ProjectionsXlsx not present';
@@ -1952,7 +1973,7 @@
       const pl = S.passThroughLines(p);
       const row = X.bookRows([p], {}, C)[0];
       const lines = X.linesFor(row, '2026-3');
-      const costs = lines.filter(L => L.line === 'Pass-through cost').map(L => L.party + '=' + Math.round(L.amount));
+      const costs = lines.filter(L => L.line === 'Pass-through out').map(L => L.party + '=' + Math.round(L.amount));
       const billed = lines.filter(L => L.line === 'Pass-through billed').reduce((t, L) => t + L.amount, 0);
       return sq(pl.length, 2, 'two lines') && sq(pl.map(l => l.label).join('|'), 'Unity Electric|Dallas PM fee share', 'labels as typed') &&
              sq(Math.round(pl[1].costTotal), 8000, 'fixed share cost') &&

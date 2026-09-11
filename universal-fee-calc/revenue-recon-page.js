@@ -33,8 +33,10 @@
   const ymLabel = (s) => { const [y, m] = String(s).split('-').map(Number); return MONTHS[m - 1] + ' ' + y; };
   const now = new Date();
   let YEAR = now.getFullYear(), M = now.getMonth() + 1, LEADER = '', Q = '';
-  const LINES = STORE.RECON_LINES, STATUSES = STORE.RECON_STATUSES;
-  const lineLabel = (id) => (LINES.find(l => l.id === id) || {}).label || id;
+  const STATUSES = STORE.RECON_STATUSES;
+  const KIND_ORDER = { fee: 0, pass: 1, share: 2 };
+  /** Label + kind of a line id on a project (fee, share, pt:<id>). */
+  const infoFor = (p, id) => { const e = linesAll().find(x => x.p.id === p.id); return STORE.reconLineInfo(e ? e.lines : null, id); };
   const statusLabel = (id) => (STATUSES.find(s => s.id === id) || {}).label || '';
 
   const admin = () => STORE.isAdmin(STORE.getCurrentUser());
@@ -63,7 +65,7 @@
   /** Live snapshot of one month: { "pid|line": amount } across every project. */
   function liveSnapshot(y, m) {
     const key = ym(y, m), out = {};
-    linesAll().forEach(({ p, lines }) => LINES.forEach(L => { const v = (lines[L.id] || {})[key] || 0; if (Math.abs(v) > 0.005) out[p.id + '|' + L.id] = Math.round(v * 100) / 100; }));
+    linesAll().forEach(({ p, lines }) => (lines.all || []).forEach(L => { const v = (L.byMonth || {})[key] || 0; if (Math.abs(v) > 0.005) out[p.id + '|' + L.id] = Math.round(v * 100) / 100; }));
     return out;
   }
   /** Rows for the month view: this month's earned lines, plus accruals from
@@ -74,12 +76,20 @@
     linesAll().forEach(({ p, lines }) => {
       if (!passes(p)) return;
       const pj = p.project || {};
-      LINES.forEach(L => {
-        const v = (lines[L.id] || {})[key] || 0;
+      (lines.all || []).forEach(L => {
+        const v = (L.byMonth || {})[key] || 0;
         const cell = STORE.reconCell(y, p.id, L.id, key);
         if (Math.abs(v) > 0.005 || (cell && cell.status)) {
-          rows.push({ kind: 'earned', p, pj, line: L.id, ym: key, earned: v, cell: cell || null, leader: leaderName(p) });
+          rows.push({ kind: 'earned', p, pj, line: L.id, lkind: L.kind, label: L.label, ym: key, earned: v, cell: cell || null, leader: leaderName(p) });
         }
+      });
+      // a status set on a line that no longer prices (a removed pass-through line) still shows, so it is not lost
+      Object.keys(R.cells || {}).forEach(k => {
+        const [pid, line, cym] = k.split('|'); if (pid !== p.id || cym !== key) return;
+        if ((lines.all || []).some(L => L.id === line)) return;
+        const c = R.cells[k]; if (!c || !c.status) return;
+        const info = STORE.reconLineInfo(lines, line);
+        rows.push({ kind: 'earned', p, pj, line, lkind: info.kind, label: info.label + ' · no longer on the project', ym: key, earned: 0, cell: c, leader: leaderName(p) });
       });
     });
     // carry-ins: accrued earlier, not yet billed, or billed in this month
@@ -91,10 +101,11 @@
       const open = !c.billedIn;
       if (!settledHere && !open) return;
       const rec = STORE.getProject(pid); if (!rec || !passes(rec)) return;
-      const amt = c.amount != null ? c.amount : ((STORE.reconLinesFor(rec, CATALOG)[line] || {})[cym] || 0);
-      rows.push({ kind: 'carry', p: rec, pj: rec.project || {}, line, ym: key, fromYm: cym, earned: 0, carry: amt, cell: c, leader: leaderName(rec), settledHere });
+      const info = infoFor(rec, line);
+      const amt = c.amount != null ? c.amount : ((info.byMonth || {})[cym] || 0);
+      rows.push({ kind: 'carry', p: rec, pj: rec.project || {}, line, lkind: info.kind, label: info.label, ym: key, fromYm: cym, earned: 0, carry: amt, cell: c, leader: leaderName(rec), settledHere });
     });
-    rows.sort((a, b) => (a.pj.client || '').localeCompare(b.pj.client || '') || (a.pj.name || '').localeCompare(b.pj.name || '') || LINES.findIndex(l => l.id === a.line) - LINES.findIndex(l => l.id === b.line));
+    rows.sort((a, b) => (a.pj.client || '').localeCompare(b.pj.client || '') || (a.pj.name || '').localeCompare(b.pj.name || '') || (KIND_ORDER[a.lkind] || 0) - (KIND_ORDER[b.lkind] || 0) || (a.label || '').localeCompare(b.label || ''));
     return rows;
   }
   /** Billed and accrued lanes by month for the year, from the cells. */
@@ -106,10 +117,10 @@
       if (!passes(p)) return;
       for (let m = 1; m <= 12; m++) {
         const key = ym(y, m);
-        LINES.forEach(L => {
-          const v = (lines[L.id] || {})[key] || 0; if (!v) return;
-          if (L.id !== 'pass') earned[m] += v;                      // ours: fee (incl. the fee on pass-through) + fee share (a minus)
-          if (L.id === 'share') share[m] += v; if (L.id === 'pass') { pass[m] += v; return; }   // the pass-through is a wash — not billed/accrued revenue
+        (lines.all || []).forEach(L => {
+          const v = (L.byMonth || {})[key] || 0; if (!v) return;
+          if (L.kind !== 'pass') earned[m] += v;                    // ours: fee (incl. the fee on pass-through) + fee shares (minuses)
+          if (L.kind === 'share') share[m] += v; if (L.kind === 'pass') { pass[m] += v; return; }   // the pass-through is a wash — not billed/accrued revenue
           const c = STORE.reconCell(y, p.id, L.id, key);
           const st = c && c.status;
           if (!st || st === 'billed') billed[m] += v;
@@ -134,8 +145,8 @@
       keys.forEach(k => {
         const was = snap[k] || 0, is = live[k] || 0;
         if (Math.abs(was - is) <= 0.5) return;
-        const [pid, line] = k.split('|'); const p = STORE.getProject(pid);
-        out.push({ ym: ym(y, +ms), m: +ms, pid, line, was, now: is, p, name: p ? ((p.project || {}).name || pid) : pid, client: p ? ((p.project || {}).client || '') : '',
+        const [pid, line] = k.split('|'); const p = STORE.getProject(pid); const info = p ? infoFor(p, line) : { label: line, kind: 'fee' };
+        out.push({ ym: ym(y, +ms), m: +ms, pid, line, label: info.label, lkind: info.kind, was, now: is, p, name: p ? ((p.project || {}).name || pid) : pid, client: p ? ((p.project || {}).client || '') : '',
                    by: p && p.lastSavedBy ? (p.lastSavedBy.name || p.lastSavedBy.username) : '', at: p ? p.updatedAt : '' });
       });
     });
@@ -171,14 +182,14 @@
     if (flags.length) {
       h += '<div class="rc-flags"><div class="rc-flags-h">⚠ ' + flags.length + ' change' + (flags.length === 1 ? '' : 's') + ' to locked month' + (new Set(flags.map(f => f.m)).size === 1 ? '' : 's') + ' since the lock</div>' +
         '<table class="cb-table rc-flag-table"><thead><tr><th>Month</th><th>Client</th><th>Project</th><th>Line</th><th class="money">Locked at</th><th class="money">Now</th><th class="money">Change</th><th>Last saved</th><th></th></tr></thead><tbody>' +
-        flags.map(f => '<tr><td><b>' + esc(ymLabel(f.ym)) + '</b></td><td>' + esc(f.client) + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(f.pid) + '">' + esc(f.name) + '</a></td><td>' + esc(lineLabel(f.line)) + '</td>' +
+        flags.map(f => '<tr><td><b>' + esc(ymLabel(f.ym)) + '</b></td><td>' + esc(f.client) + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(f.pid) + '">' + esc(f.name) + '</a></td><td class="ln-' + f.lkind + '">' + esc(f.label) + '</td>' +
           '<td class="money">' + money(f.was) + '</td><td class="money">' + money(f.now) + '</td><td class="money ' + (f.now - f.was < 0 ? 'neg' : 'pos') + '"><b>' + money(f.now - f.was) + '</b></td><td>' + esc(f.by || '—') + (f.at ? '<div class="sub">' + esc(fmtStamp(f.at)) + '</div>' : '') + '</td>' +
           '<td>' + (f.m === M ? '' : '<button class="btn btn-ghost small" data-goto="' + f.m + '">Open ' + MONTHS[f.m - 1] + '</button>') + '</td></tr>').join('') +
         '</tbody></table><div class="sub">A locked month does not change here. To accept a change, <b>reopen the month</b>, re-check the statuses, and lock it again. Until then the flash for that month is what was locked.</div></div>';
     }
     // ---- KPIs ----
     const own = rows.filter(r => r.kind === 'earned');
-    const tot = (line) => own.filter(r => r.line === line).reduce((t, r) => t + r.earned, 0);
+    const tot = (kind) => own.filter(r => r.lkind === kind).reduce((t, r) => t + r.earned, 0);
     const billedToClient = tot('fee') - tot('pass');          // pass is negative: the vendor cost the client was invoiced
     const ours = tot('fee') + tot('share');                   // the pass-through is a wash; the fee on it is already in fee
     const billedNow = own.reduce((t, r) => { const st = r.cell && r.cell.status; if (!st || st === 'billed') return t + r.earned; if (st === 'billed-diff') return t + (r.cell.amount != null ? r.cell.amount : r.earned); return t; }, 0)
@@ -203,7 +214,7 @@
       const id = r.p.id;
       if (r.kind === 'carry') {
         const amt = r.cell.billedAmount != null ? r.cell.billedAmount : r.carry;
-        h += '<tr class="rc-carry ln-' + r.line + (r.settledHere ? ' settled' : '') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a><div class="sub">accrued in <b>' + esc(ymLabel(r.fromYm)) + '</b>' + (r.cell.billsIn ? ' · expected ' + esc(ymLabel(r.cell.billsIn)) : '') + '</div></td><td>' + esc(r.leader) + '</td><td>' + esc(lineLabel(r.line)) + ' <span class="pill y"><i></i>carry-in</span></td>' +
+        h += '<tr class="rc-carry ln-' + r.lkind + (r.settledHere ? ' settled' : '') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a><div class="sub">accrued in <b>' + esc(ymLabel(r.fromYm)) + '</b>' + (r.cell.billsIn ? ' · expected ' + esc(ymLabel(r.cell.billsIn)) : '') + '</div></td><td>' + esc(r.leader) + '</td><td>' + esc(r.label) + ' <span class="pill y"><i></i>carry-in</span></td>' +
           '<td class="money"><span class="sub">' + money(r.carry) + ' accrued</span></td>' +
           '<td><select class="rc-settle" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" data-from="' + esc(r.fromYm) + '"' + dis + '><option value=""' + (r.settledHere ? '' : ' selected') + '>Still accrued</option><option value="billed"' + (r.settledHere ? ' selected' : '') + '>Billed in ' + MONTHS[M - 1] + '</option></select></td>' +
           '<td class="money"><input class="rc-amt" type="number" step="1" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" data-from="' + esc(r.fromYm) + '" data-settle="1" value="' + (r.settledHere ? Math.round(amt) : '') + '"' + (r.settledHere && !locked ? '' : ' disabled') + ' placeholder="' + Math.round(r.carry) + '"></td>' +
@@ -212,7 +223,7 @@
       }
       const needsAmt = st === 'billed-diff', needsMonth = st === 'accrued' || st === 'slipped';
       const target = st === 'accrued' ? (c.billsIn || '') : st === 'slipped' ? (c.earnedIn || '') : '';
-      h += '<tr class="' + (st ? 'st-' + st : 'st-none') + ' ln-' + r.line + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a>' + (c.flagged ? '<div class="sub red">flag on the project</div>' : '') + '</td><td>' + esc(r.leader) + '</td><td>' + esc(lineLabel(r.line)) + '</td>' +
+      h += '<tr class="' + (st ? 'st-' + st : 'st-none') + ' ln-' + r.lkind + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a>' + (c.flagged ? '<div class="sub red">flag on the project</div>' : '') + '</td><td>' + esc(r.leader) + '</td><td>' + esc(r.label) + '</td>' +
         '<td class="money' + (r.earned < 0 ? ' neg' : '') + '">' + money(r.earned) + '</td>' +
         '<td><select class="rc-status" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '"' + dis + '><option value="">— status —</option>' + STATUSES.map(s => '<option value="' + s.id + '"' + (st === s.id ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select></td>' +
         '<td class="money"><input class="rc-amt" type="number" step="1" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" value="' + (needsAmt && c.amount != null ? Math.round(c.amount) : '') + '"' + (needsAmt && !locked ? '' : ' disabled') + ' placeholder="' + Math.round(r.earned) + '"></td>' +
@@ -238,7 +249,7 @@
   }
   function yearsAvailable() {
     const ys = new Set([now.getFullYear()]);
-    linesAll().forEach(({ lines }) => LINES.forEach(L => Object.keys(lines[L.id] || {}).forEach(k => ys.add(+k.slice(0, 4)))));
+    linesAll().forEach(({ lines }) => (lines.all || []).forEach(L => Object.keys(L.byMonth || {}).forEach(k => ys.add(+k.slice(0, 4)))));
     Object.keys(STORE.reconYears ? STORE.reconYears() : {}).forEach(y => ys.add(+y));
     return [...ys].filter(y => y >= 2025 && y <= now.getFullYear() + 2).sort();
   }
@@ -272,7 +283,7 @@
     $$('.rc-status', host).forEach(sel => sel.addEventListener('change', () => {
       const pid = sel.dataset.pid, line = sel.dataset.line, key = ym(YEAR, M);
       const st = sel.value || null;
-      const row = linesAll().find(x => x.p.id === pid); const earned = row ? ((row.lines[line] || {})[key] || 0) : 0;
+      const row = linesAll().find(x => x.p.id === pid); const Lx = row ? (row.lines.all || []).find(x => x.id === line) : null; const earned = Lx ? ((Lx.byMonth || {})[key] || 0) : 0;
       try { STORE.setReconStatus(YEAR, pid, line, key, st, { earned }); flush(); } catch (e) { toast(e.message); }
       render();
     }));
@@ -325,18 +336,18 @@
       const c = r.cell || {}; const st = c.status || '';
       let billed = 0, accrued = 0, share = 0, pass = 0, target = '';
       if (r.kind === 'carry') { billed = r.settledHere ? (c.billedAmount != null ? c.billedAmount : r.carry) : 0; accrued = r.settledHere ? -r.carry : 0; target = c.billsIn ? ymLabel(c.billsIn) : ''; }
-      else if (r.line === 'share') { share = r.earned; }
-      else if (r.line === 'pass') { pass = r.earned; }
+      else if (r.lkind === 'share') { share = r.earned; }
+      else if (r.lkind === 'pass') { pass = r.earned; }
       else if (!st || st === 'billed') billed = r.earned;
       else if (st === 'billed-diff') billed = c.amount != null ? c.amount : r.earned;
       else if (st === 'accrued') { accrued = c.amount != null ? c.amount : r.earned; target = c.billsIn ? ymLabel(c.billsIn) : ''; }
       else if (st === 'slipped') target = c.earnedIn ? ymLabel(c.earnedIn) : '';
-      const x = ws.addRow([r.pj.client || '', r.pj.name || 'Untitled', r.leader, lineLabel(r.line), r.kind === 'carry' ? 'Carry-in · accrued ' + ymLabel(r.fromYm) : 'Earned this month',
+      const x = ws.addRow([r.pj.client || '', r.pj.name || 'Untitled', r.leader, r.label, r.kind === 'carry' ? 'Carry-in · accrued ' + ymLabel(r.fromYm) : 'Earned this month',
         r.kind === 'carry' ? null : r.earned, r.kind === 'carry' ? (r.settledHere ? 'Billed here' : 'Still accrued') : (statusLabel(st) || 'no status'), billed || null, accrued || null, pass || null, share || null, target, c.note || '']);
       [6, 8, 9, 10, 11].forEach(i => { x.getCell(i).numFmt = fmt; x.getCell(i).alignment = { horizontal: 'right' }; });
       if (!st && r.kind === 'earned') x.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF0D8' } };
-      if (r.line === 'share') x.eachCell(cell => { cell.font = { name: 'Calibri', color: { argb: RED } }; });
-      if (r.line === 'pass') x.eachCell(cell => { cell.font = { name: 'Calibri', color: { argb: 'FF0E7C7B' } }; });
+      if (r.lkind === 'share') x.eachCell(cell => { cell.font = { name: 'Calibri', color: { argb: RED } }; });
+      if (r.lkind === 'pass') x.eachCell(cell => { cell.font = { name: 'Calibri', color: { argb: 'FF0E7C7B' } }; });
     });
     const r1 = r0 + rows.length - 1;
     const tot = ws.addRow(['TOTAL', '', '', '', '', null, '', null, null, null, null, '', '']);
@@ -370,7 +381,7 @@
     fs.mergeCells('A1:H1'); fs.getCell('A1').value = flags.length ? flags.length + ' change(s) to locked months since they were locked' : 'No changes to locked months.'; fs.getCell('A1').font = { name: 'Calibri', bold: true, size: 13, color: { argb: flags.length ? RED : 'FF1F8A5B' } };
     fs.addRow([]);
     head(fs, ['Month', 'Client', 'Project', 'Line', 'Locked at', 'Now', 'Change', 'Last saved by']);
-    flags.forEach(f => { const x = fs.addRow([ymLabel(f.ym), f.client, f.name, lineLabel(f.line), f.was, f.now, f.now - f.was, f.by + (f.at ? ' · ' + fmtStamp(f.at) : '')]); [5, 6, 7].forEach(i => x.getCell(i).numFmt = fmt); });
+    flags.forEach(f => { const x = fs.addRow([ymLabel(f.ym), f.client, f.name, f.label, f.was, f.now, f.now - f.was, f.by + (f.at ? ' · ' + fmtStamp(f.at) : '')]); [5, 6, 7].forEach(i => x.getCell(i).numFmt = fmt); });
     fs.columns = [{ width: 12 }, { width: 24 }, { width: 40 }, { width: 13 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 30 }];
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
