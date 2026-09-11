@@ -321,7 +321,7 @@
     const m = e.meta || {};
     const a = e.action;
     if (a === 'create') return 'Created this project' + (m.status ? ' as <b>' + esc(statusLabel(m.status)) + '</b>' : '');
-    if (a === 'delete') return 'Deleted this project';
+    if (a === 'delete') return (m.demo ? 'Removed a leftover demo row from the old seed button — ' : '') + 'Deleted this project';
     if (a === 'restore') return 'Restored this project';
     if (a === 'purge') return 'Purged the deleted record for good';
     if (a === 'book') return 'Booked — status <b>' + esc(statusLabel(m.from)) + '</b> → <b>' + esc(statusLabel(m.to)) + '</b>';

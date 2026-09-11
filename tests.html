@@ -2692,10 +2692,29 @@
         const ran = S.runDataCleanups();
         const again = S.runDataCleanups();
         const pa = S.getProject('cl_a'), pb = S.getProject('cl_b');
-        return sq(none.length, 0, 'a leader\'s browser does nothing') && sq(ran.length, 1, 'ran once') && sq(ran[0].res.lines, 1, 'one line rewritten') &&
+        const pt1 = ran.find(r => r.key === 'pt-splits-2026-09');
+        return sq(none.length, 0, 'a leader\'s browser does nothing') && sq(!!pt1, true, 'ran once') && sq(pt1.res.lines, 1, 'one line rewritten') &&
                sq(JSON.stringify(pa.passthrough.lines[0].monthly), '{"2026-10":86750}', 'moved into the timeline') &&
                sq(JSON.stringify(pb.passthrough.lines[0].monthly), '{"2026-5":1000}', 'an exact split is left alone') &&
                sq(again.length, 0, 'flagged — does not run twice') && sq(!!S.getReportYearsSetting || true, true, 'ok');
+      } finally { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); if (prevDb == null) localStorage.removeItem(dbKey); else localStorage.setItem(dbKey, prevDb); }
+    });
+    test('Demo rows · cleanup', 'the two leftover seed projects are tombstoned once, by name and id, and a real project on the same id is left alone', () => {
+      const dbKey = 'savills-ppm-fee-db:v1'; const prevDb = localStorage.getItem(dbKey); const prevId = S.getRealIdentity();
+      try {
+        const pf = sw({ id: 'proj_2bcv5yx5h', project: { name: 'Hudson Yards Build-out', client: 'Pfizer', status: 'active', rating: 1 } });
+        const ci = sw({ id: 'proj_1fr0atzcn', project: { name: 'Something real', client: 'Citi', status: 'lost' } });   // id reused by a real record → untouched
+        const other = sw({ id: 'keep_me', project: { name: 'Hudson Yards Build-out', client: 'Pfizer', status: 'active' } });   // same name, different id → untouched
+        localStorage.setItem(dbKey, JSON.stringify({ schemaVersion: 2, projects: { proj_2bcv5yx5h: pf, proj_1fr0atzcn: ci, keep_me: other } }));
+        S.setRealIdentity({ username: 'sabdin@savills.us', name: 'Sarah Abdin' });
+        const ran = S.runDataCleanups();
+        const demo = ran.find(r => r.key === 'demo-rows-2026-09');
+        const again = S.runDataCleanups();
+        const raw = JSON.parse(localStorage.getItem(dbKey)).projects;
+        return sq(!!demo, true, 'ran') && sq(demo.res.projects.map(x => x.id).join(','), 'proj_2bcv5yx5h', 'only the matching demo row') &&
+               sq(!!raw.proj_2bcv5yx5h._deleted, true, 'Pfizer demo tombstoned') && sq(raw.proj_2bcv5yx5h.project.name, 'Hudson Yards Build-out', 'stub keeps the name for the trail') &&
+               sq(!!raw.proj_1fr0atzcn._deleted, false, 'a real record on the old id is left alone') && sq(!!raw.keep_me._deleted, false, 'same name elsewhere is left alone') &&
+               sq(again.find(r => r.key === 'demo-rows-2026-09'), undefined, 'does not run twice');
       } finally { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); if (prevDb == null) localStorage.removeItem(dbKey); else localStorage.setItem(dbKey, prevDb); }
     });
     test('Pass-through · projections', 'staffing being built does NOT supersede the import (that is the bridge workflow)', () => {
