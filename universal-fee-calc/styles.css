@@ -1874,3 +1874,13 @@ table.fm-tbl tr.is-pinned input.fm-in { border-color: var(--sav-yellow); }
 .whosees b { color: var(--sav-navy); }
 .whosees .ws-row { margin-top: 3px; }
 .whosees .ws-why { color: #8a8f98; }
+
+/* Finance's flags on a project (from the revenue book) */
+.recon-flags { display: flex; gap: 14px; align-items: flex-start; margin: 0 0 14px; padding: 14px 18px; border: 2px solid var(--sav-red); background: #fff5f5; color: var(--sav-navy); }
+.recon-flags.rf-locked { background: var(--sav-red); color: #fff; border-color: #A6131A; }
+.recon-flags .rf-mark { font-size: 22px; line-height: 1; color: var(--sav-red); }
+.recon-flags.rf-locked .rf-mark { color: var(--sav-yellow); }
+.recon-flags .rf-title { font-family: var(--font-display); font-weight: 900; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 6px; }
+.recon-flags ul { margin: 0; padding-left: 18px; font-family: var(--font-body); font-size: 13px; line-height: 1.55; }
+.recon-flags li + li { margin-top: 4px; }
+.recon-flags li.locked b { color: inherit; }

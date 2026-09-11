@@ -2020,6 +2020,30 @@
     banner.hidden = true;
   }
 
+  /** What Finance's revenue book says about this project, for its leader:
+      a month was billed at a different amount (update the project), the work
+      slipped (move it), or a LOCKED month has moved since it was locked. Read
+      from revenue.json; nothing here is editable, the flags clear when the
+      project's own figure agrees again or an admin reopens the month. */
+  function renderReconFlags() {
+    const host = $('#recon-flags'); if (!host || !STORE.reconProjectFlags) return;
+    let flags = [];
+    try { if (state.id) flags = STORE.reconProjectFlags(stateAsRecord(), window.RATES_CATALOG); } catch (e) { flags = []; }
+    if (!flags.length) { host.hidden = true; host.innerHTML = ''; return; }
+    const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const yml = (s) => { const [y, m] = String(s).split('-').map(Number); return MN[m - 1] + ' ' + y; };
+    const line = (id) => ({ fee: 'fee', pass: 'pass-through', share: 'fee share' }[id] || id);
+    const items = flags.map(f => {
+      if (f.kind === 'billed-diff') return `<li><b>${yml(f.ym)} · ${line(f.line)}</b> — Finance billed <b>${fmtMoney(f.billed)}</b>, this project says <b>${fmtMoney(f.expected)}</b>. Update the project so the two agree.${f.note ? ` <i>“${escapeHtml(f.note)}”</i>` : ''}</li>`;
+      if (f.kind === 'slipped') return `<li><b>${yml(f.ym)} · ${line(f.line)}</b> — the work did not happen this month${f.earnedIn ? `; Finance expects it in <b>${yml(f.earnedIn)}</b>` : ''}. Move the staffing so ${yml(f.ym)} no longer earns <b>${fmtMoney(f.expected)}</b>.${f.note ? ` <i>“${escapeHtml(f.note)}”</i>` : ''}</li>`;
+      return `<li class="locked"><b>${yml(f.ym)} is LOCKED · ${line(f.line)}</b> — locked at <b>${fmtMoney(f.was)}</b>, this project now says <b>${fmtMoney(f.now)}</b>. The locked flash stands until Finance reopens the month.</li>`;
+    });
+    const hasLocked = flags.some(f => f.kind === 'locked');
+    host.innerHTML = `<div class="rf-mark">⚑</div><div class="rf-body"><div class="rf-title">${hasLocked ? 'This project changed a locked month' : 'Finance flagged this project'}</div><ul>${items.join('')}</ul></div>`;
+    host.classList.toggle('rf-locked', hasLocked);
+    host.hidden = false;
+  }
+
   /** Shape current editor state as a record for STORE helpers. */
   function stateAsRecord() { return JSON.parse(JSON.stringify(state)); }
 
@@ -2133,6 +2157,7 @@
     updateIntakeButton();
     updateIntakeCallout();
     updateChangeOrderBanner();
+    renderReconFlags();
     const rh = $('#rating-hint');
     if (rh) rh.textContent = ratingGuidanceText(state.project.status);
     updatePlaceholderField();
@@ -3447,6 +3472,7 @@
          "Restamp contract" only ever appeared after a reload. */
       state.financials = saved.financials ? JSON.parse(JSON.stringify(saved.financials)) : null;
       updateChangeOrderBanner();
+      renderReconFlags();
       conflicted = false;
       clearConflictBanner();
       setProjectIdInUrl(saved.id);

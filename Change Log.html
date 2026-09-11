@@ -167,6 +167,7 @@
     slip: 'Slipped', 'slip-remove': 'Slip removed',
     'ledger-post': 'Actuals posted', 'ledger-remove': 'Actuals removed',
     'ledger-status': 'Billing status', 'ledger-amount': 'Figure corrected',
+    'recon-status': 'Billing status', 'recon-settle': 'Accrual settled', 'recon-note': 'Billing note', 'recon-lock': 'Month locked', 'recon-reopen': 'Month reopened', 'recon-flash': 'Flash exported',
     'ledger-allocate': 'Allocation', 'ledger-allocate-auto': 'Allocation (auto)',
     'ledger-accrue-earned': 'Accrued as earned', 'ledger-spread': 'Accrual spread',
     'ledger-note': 'Commentary', 'ledger-map': 'Mapped', 'ledger-match': 'Mapped',
@@ -194,7 +195,7 @@
     : /^(delete|purge|ledger-remove|baseline-delete|scenario-delete)$/.test(a) ? 'delete'
     : /^(book|co-approve|confirm-book)$/.test(a) ? 'book'
     : /^(status|slip|slip-remove)$/.test(a) ? 'status'
-    : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-name|cycle-period|cycle-lock|cycle-reopen|cycle-review|cycle-delete|report-years|pt-months-cleanup)$/.test(a) ? 'system'
+    : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-name|cycle-period|cycle-lock|cycle-reopen|cycle-review|cycle-delete|report-years|pt-months-cleanup|recon-lock|recon-reopen|recon-flash)$/.test(a) ? 'system'
     : /^staff-/.test(a) ? 'staff'
     : /^(ledger-|plan-adjust$|schedule-shift$|reconcile-commit$)/.test(a) ? 'ledger'
     : 'edit';
@@ -328,6 +329,12 @@
     if (a === 'status') return 'Status <b>' + esc(statusLabel(m.from)) + '</b> → <b>' + esc(statusLabel(m.to)) + '</b>';
     if (a === 'co-create') return 'Raised a change order against this contract';
     if (a === 'co-approve') return 'Approved the change order — it now counts in the revised contract';
+    if (a === 'recon-status') return 'Billing status for <b>' + esc(m.ym || '') + ' · ' + esc(m.line || '') + '</b>: ' + esc(m.from || '') + ' → <b>' + esc(m.to || '') + '</b>' + (m.amount != null ? ' · ' + money(m.amount) : '') + (m.billsIn ? ' · bills in ' + esc(m.billsIn) : '') + (m.earnedIn ? ' · earned in ' + esc(m.earnedIn) : '');
+    if (a === 'recon-settle') return 'Accrual from <b>' + esc(m.ym || '') + '</b> ' + (m.billedIn ? 'billed in <b>' + esc(m.billedIn) + '</b>' + (m.amount != null ? ' · ' + money(m.amount) : '') : 'back to open');
+    if (a === 'recon-note') return 'Billing note on <b>' + esc(m.ym || '') + '</b>: ' + esc(m.note || '');
+    if (a === 'recon-lock') return 'Locked <b>' + esc(m.ym || '') + '</b> in the revenue book — ' + (m.lines || 0) + ' lines, ' + money(m.total || 0);
+    if (a === 'recon-reopen') return 'Reopened <b>' + esc(m.ym || '') + '</b> in the revenue book';
+    if (a === 'recon-flash') return 'Exported the <b>' + esc(m.ym || '') + '</b> flash' + (m.locked ? ' (locked)' : ' (working copy)');
     if (a === 'co-detach') return 'Made the change order a separate project' + (m.parent ? ' — amends <b>' + esc(m.parent) + '</b>' : '');
     if (a === 'reconcile-commit') return 'Committed the staffing to match imported actuals';
     if (a === 'confirm-book') return 'Confirmed into <b>' + esc(cycleName(m.cycle, m)) + '</b> — <b>' + (m.projects || 0) + ' project' + (m.projects === 1 ? '' : 's') + '</b>'

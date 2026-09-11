@@ -229,3 +229,7 @@ table.proj tr.totals.subtot-all td { background: var(--sav-navy); color: #fff; f
 table.proj tr.totals.subtot-all td.proj-cell { background: var(--sav-navy); color: #fff; }
 table.proj tr.totals.subtot-all td.rowtot { background: var(--sav-navy); color: var(--sav-yellow); }
 table.proj tr.subtot-gap td { height: 8px; padding: 0; background: #fff; border: 0; }
+
+/* Months locked by Finance in Revenue Reconciliation */
+table.proj thead th.locked { background: #3a3c52; }
+table.proj thead th .lock-tag { display: block; font-size: 9px; line-height: 1; margin: -2px 0 2px; }
