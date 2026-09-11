@@ -2709,6 +2709,9 @@
     if (on) on.checked = !!fs.enabled;
     if (pct && document.activeElement !== pct) pct.value = fs.pct != null ? fs.pct : 10;
     if (pct) pct.disabled = !fs.enabled;
+    const who = $('#fs-broker');
+    if (who && document.activeElement !== who) who.value = fs.broker || '';
+    if (who) who.disabled = !fs.enabled;
     if (ctl) ctl.classList.toggle('is-on', !!fs.enabled);
     // Mode segmented buttons
     const mode = feeShareMode();
@@ -2739,18 +2742,20 @@
     if (!feeShareOn()) return;
     const N = visibleGroups.length;
     const share = baseNet * (feeSharePct() / 100);
+    const who = String((state.assumptions.feeShare && state.assumptions.feeShare.broker) || '').trim();
+    const whoTxt = who ? ' · ' + escapeHtml(who) : '';
     const fs = document.createElement('tr'); fs.className = 'credit-row fee-share-row';
     const rev = document.createElement('tr'); rev.className = 'total grand revenue-row';
     if (showInvoiceCol) {
       // value sits in the rightmost (Invoice) column
-      fs.innerHTML = `<td class="month-col">Less ${feeSharePct()}% broker fee</td><td colspan="${N}"></td><td></td><td class="bk-col"></td><td class="bk-col inv-col">${fmtMoney(-share)}</td>`;
+      fs.innerHTML = `<td class="month-col">Less ${feeSharePct()}% broker fee${whoTxt}</td><td colspan="${N}"></td><td></td><td class="bk-col"></td><td class="bk-col inv-col">${fmtMoney(-share)}</td>`;
       rev.innerHTML = `<td class="month-col">PPM revenue · net of broker</td><td colspan="${N}"></td><td></td><td class="bk-col"></td><td class="bk-col inv-col">${fmtMoney(baseNet)}</td>`;
     } else if (onTop) {
       // bottom-mode on-top: build up to the client invoice
-      fs.innerHTML = `<td class="month-col">Plus ${feeSharePct()}% broker markup · on top</td><td colspan="${N}"></td><td>${fmtMoney(share)}</td><td class="bk-col"></td>`;
+      fs.innerHTML = `<td class="month-col">Plus ${feeSharePct()}% broker markup · on top${whoTxt}</td><td colspan="${N}"></td><td>${fmtMoney(share)}</td><td class="bk-col"></td>`;
       rev.innerHTML = `<td class="month-col">Client invoice · incl. broker</td><td colspan="${N}"></td><td>${fmtMoney(baseNet + share)}</td><td class="bk-col"></td>`;
     } else {
-      fs.innerHTML = `<td class="month-col">Less ${feeSharePct()}% fee share · broker</td><td colspan="${N}"></td><td>${fmtMoney(-share)}</td><td class="bk-col"></td>`;
+      fs.innerHTML = `<td class="month-col">Less ${feeSharePct()}% fee share · broker${whoTxt}</td><td colspan="${N}"></td><td>${fmtMoney(-share)}</td><td class="bk-col"></td>`;
       rev.innerHTML = `<td class="month-col">Revenue · net of fee share</td><td colspan="${N}"></td><td>${fmtMoney(baseNet - share)}</td><td class="bk-col"></td>`;
     }
     tbody.appendChild(fs);
@@ -3076,6 +3081,13 @@
       state.assumptions.feeShare = state.assumptions.feeShare || { enabled: false, pct: 10, mode: 'offtop' };
       state.assumptions.feeShare.pct = parseFloat(e.target.value) || 0;
       syncFeeShare(); renderMonthly(); renderSummary(); markDirty();
+    });
+    // Who receives the fee share — a name for the export, never a pricing input
+    const fsWho = $('#fs-broker');
+    if (fsWho) fsWho.addEventListener('input', e => {
+      state.assumptions.feeShare = state.assumptions.feeShare || { enabled: false, pct: 10, mode: 'offtop' };
+      state.assumptions.feeShare.broker = e.target.value;
+      renderMonthly(); markDirty();
     });
     // Broker fee mode: off-invoice (default) vs on-top markup
     $$('.fsm-btn').forEach(b => b.addEventListener('click', () => {

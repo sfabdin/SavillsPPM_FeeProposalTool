@@ -31,14 +31,16 @@
     const STORE = S();
     const list = (records || []).filter(p => p && !p._deleted && !(STORE.isChangeOrder && STORE.isChangeOrder(p)));
     return list.map(p => {
-      const map = {}, brokerMap = {}, passMap = {};
+      const map = {}, brokerMap = {}, passMap = {}, netMap = {}, passClientMap = {};
       let total = 0;
       try {
         (STORE.billingSeries(p, catalog) || []).forEach(s => {
           const k = s.year + '-' + s.month;
           map[k] = (map[k] || 0) + s.invoice;
+          netMap[k] = (netMap[k] || 0) + (s.net || 0);
           brokerMap[k] = (brokerMap[k] || 0) + (s.broker || 0);
           passMap[k] = (passMap[k] || 0) + (s.passCost || 0);
+          passClientMap[k] = (passClientMap[k] || 0) + (s.passClient || 0);
           total += s.invoice;
         });
       } catch (e) { /* an unpriced record has no series */ }
@@ -48,7 +50,7 @@
           STORE.changeOrderDelta(co).byMonth.forEach(x => {
             const [y, m] = String(x.ym).split('-').map(Number);
             const k = y + '-' + m;
-            map[k] = (map[k] || 0) + x.net; total += x.net;
+            map[k] = (map[k] || 0) + x.net; netMap[k] = (netMap[k] || 0) + x.net; total += x.net;
           });
         } catch (e) { /* a CO that cannot be priced adds nothing */ }
       });
@@ -56,7 +58,7 @@
       const leaders = [...new Set([pj.leadId || pj.lead, pj.clientRelOwner]
         .map(x => (STORE.leaderDisplay ? STORE.leaderDisplay(x) : (x || '')).trim()).filter(Boolean))];
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
-      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, total, ov: p.monthlyOverrides || null,
+      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, netMap, passClientMap, total, ov: p.monthlyOverrides || null,
                coCount: cos.length, feeSharePct: fs.enabled ? (parseFloat(fs.pct) || 0) : 0,
                ptCost: (p.financials && p.financials.passThroughCost) || 0,
                status: (pj.status || '').trim(), client: (pj.client || '').trim(), leaders,
@@ -247,22 +249,62 @@
     return ws;
   }
 
-  /** The flat dump: one row per project × month with revenue, every
-      dimension a pivot table could want alongside it. */
+  /* ---------- The lines behind one project-month ----------
+     What the client is billed, and what comes out of it, as SIGNED
+     stand-alone lines so a pivot on Amount reads as a bridge:
+
+         Fee billed              +   the fee invoiced (broker on top included)
+         Pass-through billed     +   vendor cost + fee, invoiced through Savills
+       = Total billed to client
+         Broker fee share        −   the referral cut (either mode)
+         Pass-through cost       −   the vendor cost that flows straight out
+       = Savills revenue
+
+     Rows built by the Revenue Projections page carry the same maps as
+     bookRows; a row without them (an older caller) falls back to the invoice
+     as the fee so nothing is silently lost. */
+  const LINES = [
+    { line: 'Fee billed',          group: 'Billed to client', sign: +1 },
+    { line: 'Pass-through billed', group: 'Billed to client', sign: +1 },
+    { line: 'Broker fee share',    group: 'Deduction',        sign: -1 },
+    { line: 'Pass-through cost',   group: 'Deduction',        sign: -1 },
+  ];
+  /** Who receives the fee share — typed on the calculator beside the %. */
+  function brokerOf(row) {
+    const fs = (row.p && row.p.assumptions && row.p.assumptions.feeShare) || {};
+    return fs.enabled ? String(fs.broker || '').trim() : '';
+  }
+  function linesFor(row, key) {
+    const inv = (row.map && row.map[key]) || 0;
+    const passClient = (row.passClientMap && row.passClientMap[key]) || 0;
+    const broker = (row.brokerMap && row.brokerMap[key]) || 0;
+    const passCost = (row.passMap && row.passMap[key]) || 0;
+    const raw = [inv - passClient, passClient, broker, passCost];
+    const out = [];
+    LINES.forEach((L, i) => { const v = raw[i]; if (Math.abs(v) > 0.005) out.push({ line: L.line, group: L.group, amount: L.sign * v }); });
+    return out;
+  }
+
+  /** The flat dump: one row per project × month × line, every dimension a
+      pivot table could want alongside it. Amount is signed (see LINES), so
+      a pivot summing Amount by Line is the revenue bridge, and by Line group
+      splits what the client is billed from what flows out. */
+  const DATA_HEADERS = ['Client', 'Project', 'Project ID', 'Revenue leader', 'Relationship owner', 'Status', 'Rating', 'Rating label', 'Confidence',
+    'Industry', 'Project type', 'Service line', 'Broker', 'Year', 'Month', 'Month #', 'Period', 'Line', 'Line group', 'Amount', 'Weighted amount', 'Overridden'];
+  const DC = {};   // header → column letter, for the dashboard's SUMIFS
+  DATA_HEADERS.forEach((h, i) => { DC[h] = String.fromCharCode(65 + i); });
   function writeDataSheet(wb, V, opts) {
     const STORE = S(); const o = opts || {};
     const ws = wb.addWorksheet(o.sheetName || 'Data', { views: [{ state: 'frozen', ySplit: 1 }] });
-    const headers = ['Client', 'Project', 'Project ID', 'Revenue leader', 'Relationship owner', 'Status', 'Rating', 'Rating label', 'Confidence',
-      'Industry', 'Project type', 'Service line', 'Year', 'Month', 'Month #', 'Period', 'Revenue', 'Broker fee', 'Pass-through cost', 'Weighted revenue', 'Overridden']
-      .concat(o.extraHeaders || []);
-    const widths = [24, 34, 14, 20, 20, 14, 8, 14, 11, 18, 22, 18, 7, 7, 8, 9, 14, 12, 16, 16, 11].concat((o.extraHeaders || []).map(() => 20));
+    const headers = DATA_HEADERS.concat(o.extraHeaders || []);
+    const widths = [24, 34, 14, 20, 20, 14, 8, 14, 11, 18, 22, 18, 20, 7, 7, 8, 9, 20, 16, 14, 16, 11].concat((o.extraHeaders || []).map(() => 20));
     headers.forEach((h, i) => {
       const c = ws.getCell(1, i + 1);
       c.value = h; c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
       ws.getColumn(i + 1).width = widths[i] || 14;
     });
-    const money = (cell) => { cell.numFmt = '#,##0.00'; cell.alignment = { horizontal: 'right' }; };
+    const money = (cell) => { cell.numFmt = '#,##0.00;[Red]-#,##0.00'; cell.alignment = { horizontal: 'right' }; };
     let r = 2;
     V.rows.forEach(row => {
       const pj = row.pj || row.p.project || {};
@@ -270,25 +312,192 @@
       const lead = STORE.resolveLeader && STORE.resolveLeader(pj.leadId || pj.lead);
       const owner = STORE.resolveLeader && STORE.resolveLeader(pj.clientRelOwner);
       const extra = o.extra ? (o.extra(row) || []) : [];
+      const dims = [pj.client || '', pj.name || 'Untitled', pj.projectNumber || pj.projectId365 || pj.salesforceId || row.p.id,
+        lead ? lead.displayName : (pj.lead || ''), owner ? owner.displayName : (pj.clientRelOwner || ''),
+        (STORE.STATUS_LABELS && STORE.STATUS_LABELS[pj.status]) || pj.status || '', row.rating, meta.label || '', meta.weight || 0,
+        pj.industry || '', pj.projectType || '', (row.serviceLines || []).join('; '), brokerOf(row)];
       V.cols.forEach(c => {
-        const v = row.map[c.key] || 0;
-        const b = (row.brokerMap && row.brokerMap[c.key]) || 0;
-        const pt = (row.passMap && row.passMap[c.key]) || 0;
-        if (!v && !b && !pt) return;
-        const vals = [pj.client || '', pj.name || 'Untitled', pj.projectNumber || pj.projectId365 || pj.salesforceId || row.p.id,
-          lead ? lead.displayName : (pj.lead || ''), owner ? owner.displayName : (pj.clientRelOwner || ''),
-          (STORE.STATUS_LABELS && STORE.STATUS_LABELS[pj.status]) || pj.status || '', row.rating, meta.label || '', meta.weight || 0,
-          pj.industry || '', pj.projectType || '', (row.serviceLines || []).join('; '),
-          c.y, MONTHS[c.m - 1], c.m, MONTHS[c.m - 1] + '-' + String(c.y).slice(2),
-          v, b, pt, v * (meta.weight || 0), (row.ov && row.ov[c.key] != null) ? 'Yes' : ''].concat(extra);
-        const xr = ws.addRow(vals);
-        [17, 18, 19, 20].forEach(i => money(xr.getCell(i)));
-        xr.getCell(9).numFmt = '0%';
-        r++;
+        const lines = linesFor(row, c.key);
+        if (!lines.length) return;
+        const ov = (row.ov && row.ov[c.key] != null) ? 'Yes' : '';
+        lines.forEach(L => {
+          const xr = ws.addRow(dims.concat([c.y, MONTHS[c.m - 1], c.m, MONTHS[c.m - 1] + '-' + String(c.y).slice(2),
+            L.line, L.group, L.amount, L.amount * (meta.weight || 0), ov], extra));
+          money(xr.getCell(20)); money(xr.getCell(21));
+          xr.getCell(9).numFmt = '0%';
+          if (L.amount < 0) xr.getCell(20).font = { name: 'Calibri', color: { argb: 'FFCE181E' } };
+          r++;
+        });
       });
     });
-    ws.autoFilter = { from: 'A1', to: String.fromCharCode(64 + Math.min(headers.length, 26)) + String(Math.max(r - 1, 1)) };
-    if (headers.length > 26) ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(r - 1, 1), column: headers.length } };
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(r - 1, 1), column: headers.length } };
+    ws.__lastRow = Math.max(r - 1, 1);
+    return ws;
+  }
+
+  /** A dashboard that is nothing but SUMIFS over the Data sheet: the
+      revenue bridge by year, then the same bridge by month, revenue leader,
+      client and rating. Every figure is a live formula (Excel recalculates
+      on open) with the number also cached, so the sheet reads in any viewer
+      and keeps following the Data sheet if someone filters or edits it. The
+      rating ceiling in one cell drives every table but the weighted column,
+      the way the matrix counts rated 1–4 and weights all. */
+  function writeDashboardSheet(wb, V, opts) {
+    const STORE = S(); const o = opts || {};
+    const data = o.dataSheet || 'Data';
+    const N = Math.max(o.dataRows || 2, 2);
+    const ws = wb.addWorksheet(o.sheetName || 'Dashboard', { views: [{ showGridLines: false }] });
+    ws.getColumn(1).width = 30; for (let c = 2; c <= 10; c++) ws.getColumn(c).width = 16;
+    const rng = (h) => `${data}!$${DC[h]}$2:$${DC[h]}$${N}`;
+    const CEIL = '$C$4';
+    const bridge = [
+      { label: 'Fee billed',              line: 'Fee billed' },
+      { label: 'Pass-through billed',     line: 'Pass-through billed' },
+      { label: 'Total billed to client',  sum: [0, 1], bold: true },
+      { label: 'Broker fee share',        line: 'Broker fee share' },
+      { label: 'Pass-through cost',       line: 'Pass-through cost' },
+      { label: 'Savills revenue',         sum: [2, 3, 4], bold: true, fill: YEL },
+      { label: 'Probability-weighted revenue', weighted: true },
+    ];
+    // ---- the JS side of every formula, so the cached value is right ----
+    let ceiling = 4;
+    const rowsIn = V.rows;
+    const val = (crit) => {   // crit: { line?, year?, key?, leader?, client?, rating?, weighted?, allRatings? }
+      let t = 0;
+      rowsIn.forEach(row => {
+        const meta = STORE.ratingMeta(row.rating) || {};
+        if (!crit.weighted && !crit.allRatings && !(row.rating <= ceiling)) return;
+        if (crit.rating != null && row.rating !== crit.rating) return;
+        if (crit.client != null && (row.client || '') !== crit.client) return;
+        if (crit.leader != null && leaderOf(row) !== crit.leader) return;
+        if (crit.broker != null && brokerOf(row) !== crit.broker) return;
+        V.cols.forEach(c => {
+          if (crit.year != null && c.y !== crit.year) return;
+          if (crit.key != null && c.key !== crit.key) return;
+          linesFor(row, c.key).forEach(L => {
+            if (crit.line && L.line !== crit.line) return;
+            t += crit.weighted ? L.amount * (meta.weight || 0) : L.amount;
+          });
+        });
+      });
+      return Math.round(t * 100) / 100;
+    };
+    const leaderOf = (row) => { const pj = row.pj || row.p.project || {}; const l = STORE.resolveLeader && STORE.resolveLeader(pj.leadId || pj.lead); return l ? l.displayName : (pj.lead || ''); };
+    const q = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+    // ---- the Excel side ----
+    const sumifs = (crit) => {
+      const col = crit.weighted ? 'Weighted amount' : 'Amount';
+      const parts = [rng(col)];
+      if (crit.line) parts.push(rng('Line'), q(crit.line));
+      if (!crit.weighted && !crit.allRatings) parts.push(rng('Rating'), '"<="&' + CEIL);
+      if (crit.rating != null) parts.push(rng('Rating'), crit.rating);
+      if (crit.year != null) parts.push(rng('Year'), crit.year);
+      if (crit.key != null) { const [y, m] = crit.key.split('-').map(Number); parts.push(rng('Year'), y, rng('Month #'), m); }
+      if (crit.client != null) parts.push(rng('Client'), q(crit.client));
+      if (crit.leader != null) parts.push(rng('Revenue leader'), q(crit.leader));
+      if (crit.broker != null) parts.push(rng('Broker'), q(crit.broker));
+      return 'SUMIFS(' + parts.join(',') + ')';
+    };
+    const put = (r, c, crit, style) => {
+      const cell = ws.getCell(r, c);
+      cell.value = { formula: sumifs(crit), result: val(crit) };
+      cell.numFmt = '#,##0;[Red]-#,##0;"·"';
+      cell.alignment = { horizontal: 'right' };
+      Object.assign(cell, style || {});
+      return cell;
+    };
+    const head = (r, labels, fill) => labels.forEach((t, i) => {
+      const cell = ws.getCell(r, i + 1);
+      cell.value = t; cell.font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill || NAVY } };
+      cell.alignment = { horizontal: i ? 'right' : 'left' };
+    });
+    const section = (r, title, note) => {
+      ws.getCell(r, 1).value = title; ws.getCell(r, 1).font = { name: 'Calibri', bold: true, size: 13, color: { argb: NAVY } };
+      if (note) { ws.getCell(r, 2).value = note; ws.getCell(r, 2).font = { name: 'Calibri', italic: true, size: 9, color: { argb: STEEL } }; ws.getCell(r, 2).alignment = { horizontal: 'left' }; }
+      ws.getRow(r).height = 20;
+    };
+
+    ws.getCell('A1').value = o.title || 'Dashboard';
+    ws.getCell('A1').font = { name: 'Calibri', bold: true, size: 18, color: { argb: NAVY } };
+    ws.getCell('A2').value = 'Every figure here is a SUMIFS over the Data sheet — filter or correct a row there and these tables follow. Pivot the Data sheet for anything not shown.';
+    ws.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: STEEL } };
+    ws.getCell('A4').value = 'Count ratings up to'; ws.getCell('A4').font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
+    ws.getCell('B4').value = '(1 = booked … 4 = pipeline; 7 = everything)'; ws.getCell('B4').font = { name: 'Calibri', italic: true, size: 9, color: { argb: STEEL } };
+    ws.getCell('C4').value = ceiling; ws.getCell('C4').font = { name: 'Calibri', bold: true, size: 12, color: { argb: NAVY } };
+    ws.getCell('C4').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } }; ws.getCell('C4').alignment = { horizontal: 'center' };
+    ws.getCell('C4').dataValidation = { type: 'whole', operator: 'between', formulae: [1, 7], showErrorMessage: true, errorTitle: 'Rating', error: 'A rating from 1 to 7.' };
+
+    const years = V.years.map(y => y.y);
+    // ---- 1. bridge by year ----
+    let r = 6;
+    section(r, 'Savills revenue bridge', 'what the client is billed, less what flows out'); r++;
+    head(r, ['', ...years, 'Total']); r++;
+    const bridgeRows = {};
+    bridge.forEach((b, bi) => {
+      ws.getCell(r, 1).value = b.label;
+      ws.getCell(r, 1).font = { name: 'Calibri', bold: !!b.bold, color: { argb: NAVY } };
+      const cols = years.length + 1;
+      for (let i = 0; i < cols; i++) {
+        const c = 2 + i, year = i < years.length ? years[i] : null;
+        const style = { font: { name: 'Calibri', bold: !!b.bold, color: { argb: NAVY } } };
+        if (b.fill) style.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: b.fill } };
+        if (b.sum) {
+          const cell = ws.getCell(r, c);
+          const refs = b.sum.map(j => ws.getCell(bridgeRows[j], c));
+          cell.value = { formula: refs.map(x => x.address).join('+'), result: Math.round(refs.reduce((t, x) => t + ((x.value && x.value.result) || 0), 0) * 100) / 100 };
+          cell.numFmt = '#,##0;[Red]-#,##0;"·"'; cell.alignment = { horizontal: 'right' }; Object.assign(cell, style);
+          cell.border = { top: { style: 'thin', color: { argb: NAVY } } };
+        } else {
+          const crit = b.weighted ? { weighted: true } : { line: b.line };
+          if (year != null) crit.year = year;
+          put(r, c, crit, style);
+        }
+      }
+      bridgeRows[bi] = r; r++;
+    });
+    r += 2;
+
+    // ---- shared bridge-table writer for a dimension ----
+    const COLS = ['Fee billed', 'Pass-through billed', 'Total billed', 'Broker fee share', 'Pass-through cost', 'Savills revenue', 'Weighted revenue'];
+    const table = (title, note, items, critOf) => {
+      section(r, title, note); r++;
+      head(r, [title.replace(/^By /, ''), ...COLS], NAVY); r++;
+      const r0 = r;
+      items.forEach(it => {
+        ws.getCell(r, 1).value = it.label; ws.getCell(r, 1).font = { name: 'Calibri', color: { argb: NAVY } };
+        const base = critOf(it);
+        put(r, 2, Object.assign({ line: 'Fee billed' }, base));
+        put(r, 3, Object.assign({ line: 'Pass-through billed' }, base));
+        ws.getCell(r, 4).value = { formula: `B${r}+C${r}`, result: Math.round((val(Object.assign({ line: 'Fee billed' }, base)) + val(Object.assign({ line: 'Pass-through billed' }, base))) * 100) / 100 };
+        put(r, 5, Object.assign({ line: 'Broker fee share' }, base));
+        put(r, 6, Object.assign({ line: 'Pass-through cost' }, base));
+        ws.getCell(r, 7).value = { formula: `D${r}+E${r}+F${r}`, result: val(base) };
+        put(r, 8, Object.assign({ weighted: true }, base));
+        [4, 7].forEach(c => { const cell = ws.getCell(r, c); cell.numFmt = '#,##0;[Red]-#,##0;"·"'; cell.alignment = { horizontal: 'right' }; cell.font = { name: 'Calibri', bold: true, color: { argb: NAVY } }; });
+        r++;
+      });
+      // totals
+      ws.getCell(r, 1).value = 'Total'; ws.getCell(r, 1).font = { name: 'Calibri', bold: true, color: { argb: WHITE } };
+      ws.getCell(r, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+      for (let c = 2; c <= 8; c++) {
+        const L = String.fromCharCode(64 + c);
+        const cell = ws.getCell(r, c);
+        let tot = 0; for (let rr = r0; rr < r; rr++) { const v = ws.getCell(rr, c).value; tot += (v && v.result) || 0; }
+        cell.value = { formula: `SUM(${L}${r0}:${L}${r - 1})`, result: Math.round(tot * 100) / 100 };
+        cell.numFmt = '#,##0;[Red]-#,##0;"·"'; cell.alignment = { horizontal: 'right' };
+        cell.font = { name: 'Calibri', bold: true, color: { argb: c === 7 ? YEL : WHITE } }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+      }
+      r += 3;
+    };
+    const uniq = (arr) => [...new Set(arr)].filter(Boolean).sort((a, b) => a.localeCompare(b));
+    table('By month', 'every month of the reporting years', V.cols.map(c => ({ label: MONTHS[c.m - 1] + ' ' + c.y, key: c.key })), it => ({ key: it.key }));
+    table('By revenue leader', 'the lead on the project', uniq(rowsIn.map(leaderOf)).map(l => ({ label: l, leader: l })), it => ({ leader: it.leader }));
+    table('By client', '', uniq(rowsIn.map(rw => rw.client || '')).map(cl => ({ label: cl, client: cl })), it => ({ client: it.client }));
+    const brokers = uniq(rowsIn.map(brokerOf));
+    if (brokers.length) table('By broker', 'who receives the fee share', brokers.map(b => ({ label: b, broker: b })), it => ({ broker: it.broker }));
+    table('By rating', 'ignores the ceiling — every rating on its own row', [1, 2, 3, 4, 5, 6, 7].map(n => ({ label: n + ' · ' + ((STORE.ratingMeta(n) || {}).label || ''), rating: n })), it => ({ rating: it.rating, allRatings: true }));
+    if (wb.calcProperties) wb.calcProperties.fullCalcOnLoad = true; else wb.calcProperties = { fullCalcOnLoad: true };
     return ws;
   }
 
@@ -302,5 +511,5 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
 
-  window.UFC_ProjectionsXlsx = { bookRows, viewFor, writeProjectionsSheet, writeDataSheet, download, MONTHS };
+  window.UFC_ProjectionsXlsx = { bookRows, viewFor, writeProjectionsSheet, writeDataSheet, writeDashboardSheet, linesFor, brokerOf, download, MONTHS, DATA_HEADERS };
 })();
