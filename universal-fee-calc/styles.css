@@ -1885,3 +1885,8 @@ table.fm-tbl tr.is-pinned input.fm-in { border-color: var(--sav-yellow); }
 .recon-flags ul { margin: 0; padding-left: 18px; font-family: var(--font-body); font-size: 13px; line-height: 1.55; }
 .recon-flags li + li { margin-top: 4px; }
 .recon-flags li.locked b { color: inherit; }
+
+/* Pass-through line: fee-share tick */
+.pt-table th.pt-c-fs, .pt-table td.pt-c-fs { width: 92px; white-space: nowrap; }
+.pt-fs-lbl { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-display); font-weight: 700; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--sav-red); cursor: pointer; }
+.pt-fs-lbl input { width: 14px; height: 14px; accent-color: var(--sav-red); margin: 0; }

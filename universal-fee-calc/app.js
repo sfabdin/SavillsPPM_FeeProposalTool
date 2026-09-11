@@ -2032,11 +2032,11 @@
     if (!flags.length) { host.hidden = true; host.innerHTML = ''; return; }
     const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const yml = (s) => { const [y, m] = String(s).split('-').map(Number); return MN[m - 1] + ' ' + y; };
-    const line = (id) => ({ fee: 'fee', pass: 'pass-through', share: 'fee share' }[id] || id);
+    const line = (id, f) => f && f.label ? f.label : ({ fee: 'fee', pass: 'pass-through', share: 'fee share' }[id] || id);
     const items = flags.map(f => {
-      if (f.kind === 'billed-diff') return `<li><b>${yml(f.ym)} · ${line(f.line)}</b> — Finance billed <b>${fmtMoney(f.billed)}</b>, this project says <b>${fmtMoney(f.expected)}</b>. Update the project so the two agree.${f.note ? ` <i>“${escapeHtml(f.note)}”</i>` : ''}</li>`;
-      if (f.kind === 'slipped') return `<li><b>${yml(f.ym)} · ${line(f.line)}</b> — the work did not happen this month${f.earnedIn ? `; Finance expects it in <b>${yml(f.earnedIn)}</b>` : ''}. Move the staffing so ${yml(f.ym)} no longer earns <b>${fmtMoney(f.expected)}</b>.${f.note ? ` <i>“${escapeHtml(f.note)}”</i>` : ''}</li>`;
-      return `<li class="locked"><b>${yml(f.ym)} is LOCKED · ${line(f.line)}</b> — locked at <b>${fmtMoney(f.was)}</b>, this project now says <b>${fmtMoney(f.now)}</b>. The locked flash stands until Finance reopens the month.</li>`;
+      if (f.kind === 'billed-diff') return `<li><b>${yml(f.ym)} · ${line(f.line, f)}</b> — Finance billed <b>${fmtMoney(f.billed)}</b>, this project says <b>${fmtMoney(f.expected)}</b>. Update the project so the two agree.${f.note ? ` <i>“${escapeHtml(f.note)}”</i>` : ''}</li>`;
+      if (f.kind === 'slipped') return `<li><b>${yml(f.ym)} · ${line(f.line, f)}</b> — the work did not happen this month${f.earnedIn ? `; Finance expects it in <b>${yml(f.earnedIn)}</b>` : ''}. Move the staffing so ${yml(f.ym)} no longer earns <b>${fmtMoney(f.expected)}</b>.${f.note ? ` <i>“${escapeHtml(f.note)}”</i>` : ''}</li>`;
+      return `<li class="locked"><b>${yml(f.ym)} is LOCKED · ${line(f.line, f)}</b> — locked at <b>${fmtMoney(f.was)}</b>, this project now says <b>${fmtMoney(f.now)}</b>. The locked flash stands until Finance reopens the month.</li>`;
     });
     const hasLocked = flags.some(f => f.kind === 'locked');
     host.innerHTML = `<div class="rf-mark">⚑</div><div class="rf-body"><div class="rf-title">${hasLocked ? 'This project changed a locked month' : 'Finance flagged this project'}</div><ul>${items.join('')}</ul></div>`;
@@ -2183,7 +2183,7 @@
     const tb = $('#pt-lines');
     if (tb) {
       if (!pt.lines.length) {
-        tb.innerHTML = `<tr class="pt-empty"><td colspan="6">No lines yet — add a vendor / pass-through cost below.</td></tr>`;
+        tb.innerHTML = `<tr class="pt-empty"><td colspan="8">No lines yet — add a vendor / pass-through cost below.</td></tr>`;
       } else {
         tb.innerHTML = pt.lines.map(l => {
           const cost = parseFloat(l.cost) || 0;
@@ -2198,6 +2198,7 @@
             <td class="pt-c-num"><input type="text" inputmode="decimal" class="pt-mk" data-id="${l.id}" value="${l.markupPct != null && l.markupPct !== '' ? l.markupPct : ''}" placeholder="0"><span class="pt-pct">%</span></td>
             <td class="pt-c-num pt-ro pt-fee" data-id="${l.id}">${fmtMoney(mkAmt)}</td>
             <td class="pt-c-num pt-ro pt-client" data-id="${l.id}">${fmtMoney(clientBilled)}</td>
+            <td class="pt-c-fs"><label class="pt-fs-lbl" title="Tick when this line is a fee share to another party — a co-PM, another office, a broker — rather than a vendor cost. It then reports in red as a fee share, not in teal as a pass-through."><input type="checkbox" class="pt-fs" data-id="${l.id}" ${l.feeShare ? 'checked' : ''}> <span>fee share</span></label></td>
             <td class="pt-c-x"><button type="button" class="icon-btn pt-rm" data-id="${l.id}" title="Remove line">×</button></td>
           </tr>` + ptMonthsRow(l);
         }).join('');
@@ -2217,6 +2218,7 @@
     $$('.pt-cost').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.cost = e.target.value; refreshPtMonthsRow(l); refreshPtLive(); } }));
     $$('.pt-mk').forEach(i => i.addEventListener('input', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.markupPct = e.target.value; refreshPtLive(); } }));
     $$('.pt-mode').forEach(s => s.addEventListener('change', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { l.mode = e.target.value; refreshPtLive(); } }));
+    $$('.pt-fs').forEach(c => c.addEventListener('change', e => { const l = ptLines().find(x => x.id === e.target.dataset.id); if (l) { if (e.target.checked) l.feeShare = true; else delete l.feeShare; markDirty(); } }));
     $$('.pt-rm').forEach(b => b.addEventListener('click', e => { const id = e.target.dataset.id; ptState().lines = ptLines().filter(x => x.id !== id); onPtChange(); }));
     wirePtMonths();
   }

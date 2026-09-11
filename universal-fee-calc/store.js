@@ -1569,24 +1569,57 @@
   function invalidateRevenueCache() { /* nothing derived is cached any more */ }
 
   const reconYmOf = (y, m) => y + '-' + String(m).padStart(2, '0');
-  /** A project's three lines by month (padded 'YYYY-MM'), from the same
-      series Revenue Projections draws. fee = invoice less vendor cost (the
-      fee on a pass-through stays here); pass = −vendor cost (what goes out
-      to the vendor); share = −broker. */
+  /** A project's lines by month (padded 'YYYY-MM'), from the same series
+      Revenue Projections draws:
+        fee            invoice less every vendor cost — the fee, the fee on
+                       any pass-through, and any fee share billed on top
+        share          the % broker share, a minus, named to the broker
+        pt:<lineId>    one line per pass-through line on the calculator, a
+                       minus, named as the leader typed it; kind 'share' when
+                       the leader ticked "fee share", else 'pass'
+      Returns { fee: {ym: amt}, out: [line…], all: [feeLine, …out] } where a
+      line is { id, kind, label, byMonth }. */
   function reconLinesFor(p, catalog) {
-    const out = { fee: {}, pass: {}, share: {} };
+    const cat = catalog || (typeof window !== 'undefined' && window.RATES_CATALOG);
+    const out = { fee: {}, out: [], all: [] };
     if (!p) return out;
-    let series = [];
-    try { series = billingSeries(p, catalog || (typeof window !== 'undefined' && window.RATES_CATALOG)) || []; } catch (e) { series = []; }
     const r2 = (n) => Math.round(n * 100) / 100;
+    let series = [];
+    try { series = billingSeries(p, cat) || []; } catch (e) { series = []; }
+    let ptm = null; try { ptm = passThroughMonths(p); } catch (e) { ptm = null; }
+    // Only VENDOR lines leave the fee. A line ticked "fee share" is billed as
+    // fee and then goes out as a share, so the fee keeps it and the share line
+    // takes it away — billed to client stays whole, revenue still foots.
+    const vendorBy = {};
+    ((ptm && ptm.lines) || []).forEach(L => { if (L.feeShare) return; Object.keys(L.costByMonth || {}).forEach(ym => { vendorBy[ym] = (vendorBy[ym] || 0) + L.costByMonth[ym]; }); });
+    const shareBy = {};
     series.forEach(s => {
       const k = s.ym || reconYmOf(s.year, s.month);
-      const fee = r2((s.invoice || 0) - (s.passCost || 0)), pass = r2(-(s.passCost || 0)), share = r2(-(s.broker || 0));
-      if (fee) out.fee[k] = (out.fee[k] || 0) + fee;
-      if (pass) out.pass[k] = (out.pass[k] || 0) + pass;
-      if (share) out.share[k] = (out.share[k] || 0) + share;
+      const fee = r2((s.invoice || 0) - (vendorBy[k] || 0)), share = r2(-(s.broker || 0));
+      if (fee) out.fee[k] = r2((out.fee[k] || 0) + fee);
+      if (share) shareBy[k] = r2((shareBy[k] || 0) + share);
     });
+    const fs = (p.assumptions && p.assumptions.feeShare) || {};
+    if (Object.keys(shareBy).length) {
+      const who = String(fs.broker || '').trim();
+      out.out.push({ id: 'share', kind: 'share', label: 'Fee share · ' + (who || 'broker') + (fs.pct ? ' · ' + fs.pct + '%' : ''), byMonth: shareBy });
+    }
+    ((ptm && ptm.lines) || []).forEach((L, i) => {
+      const byMonth = {};
+      Object.keys(L.costByMonth || {}).forEach(ym => { const c = L.costByMonth[ym]; if (Math.abs(c) > 0.005) byMonth[ym] = r2(-c); });
+      if (!Object.keys(byMonth).length) return;
+      const kind = L.feeShare ? 'share' : 'pass';
+      out.out.push({ id: 'pt:' + L.id, kind, label: (kind === 'share' ? 'Fee share' : 'Pass-through') + ' · ' + (L.label || ('line ' + (i + 1))), byMonth });
+    });
+    out.all = [{ id: 'fee', kind: 'fee', label: 'Fee', byMonth: out.fee }].concat(out.out);
     return out;
+  }
+  /** Look one line up by id on a project (label + kind), for flags and old cells. */
+  function reconLineInfo(lines, id) {
+    const L = (lines && lines.all || []).find(x => x.id === id);
+    if (L) return L;
+    const kind = id === 'fee' ? 'fee' : id === 'share' ? 'share' : id.indexOf('pt:') === 0 ? 'pass' : 'fee';
+    return { id, kind, label: kind === 'fee' ? 'Fee' : kind === 'share' ? 'Fee share' : 'Pass-through', byMonth: {} };
   }
   function reconYears() { return readRevenue().recon || {}; }
   function reconYear(year) { const y = (readRevenue().recon || {})[String(year)]; return y ? { months: y.months || {}, cells: y.cells || {} } : { months: {}, cells: {} }; }
@@ -1698,22 +1731,25 @@
   function reconProjectFlags(p, catalog) {
     if (!p || !p.id) return [];
     const out = []; const live = reconLinesFor(p, catalog);
+    const amt = (id, ym) => { const L = (live.all || []).find(x => x.id === id); return L ? ((L.byMonth || {})[ym] || 0) : 0; };
     const recon = reconYears();
     Object.keys(recon).forEach(yk => {
       const y = recon[yk] || {};
       Object.keys(y.cells || {}).forEach(k => {
         const [pid, line, ym] = k.split('|'); if (pid !== p.id) return;
         const c = y.cells[k]; if (!c) return;
-        const now = (live[line] || {})[ym] || 0;
-        if (c.status === 'billed-diff' && c.amount != null && Math.abs(now - c.amount) > 0.5) out.push({ kind: 'billed-diff', ym, line, expected: now, billed: c.amount, note: c.note || '', at: c.at, byName: c.byName });
-        if (c.status === 'slipped' && Math.abs(now) > 0.5) out.push({ kind: 'slipped', ym, line, expected: now, earnedIn: c.earnedIn || '', note: c.note || '', at: c.at, byName: c.byName });
+        const now = amt(line, ym); const info = reconLineInfo(live, line);
+        if (c.status === 'billed-diff' && c.amount != null && Math.abs(now - c.amount) > 0.5) out.push({ kind: 'billed-diff', ym, line, label: info.label, expected: now, billed: c.amount, note: c.note || '', at: c.at, byName: c.byName });
+        if (c.status === 'slipped' && Math.abs(now) > 0.5) out.push({ kind: 'slipped', ym, line, label: info.label, expected: now, earnedIn: c.earnedIn || '', note: c.note || '', at: c.at, byName: c.byName });
       });
       Object.keys(y.months || {}).forEach(mk => {
         const m = y.months[mk]; if (!m || !m.lockedAt) return;
         const ym = reconYmOf(+yk, +mk);
-        RECON_LINES.forEach(L => {
-          const was = (m.snapshot || {})[p.id + '|' + L.id] || 0, now = (live[L.id] || {})[ym] || 0;
-          if (Math.abs(was - now) > 0.5) out.push({ kind: 'locked', ym, line: L.id, was, now, lockedAt: m.lockedAt, lockedByName: m.lockedByName });
+        const ids = new Set((live.all || []).map(L => L.id));
+        Object.keys(m.snapshot || {}).forEach(sk => { if (sk.indexOf(p.id + '|') === 0) ids.add(sk.slice(p.id.length + 1)); });
+        ids.forEach(id => {
+          const was = (m.snapshot || {})[p.id + '|' + id] || 0, now = amt(id, ym);
+          if (Math.abs(was - now) > 0.5) out.push({ kind: 'locked', ym, line: id, label: reconLineInfo(live, id).label, was, now, lockedAt: m.lockedAt, lockedByName: m.lockedByName });
         });
       });
     });
@@ -1939,7 +1975,7 @@
       const d = ptLineDistribution(line, months);
       // Per-line client / cost by month ride along so reports can name the
       // party on each pass-through line (a vendor, a co-PM, a fee share).
-      const L = Object.assign({ id: line.id, managed, label: String(line.label || '').trim(), mode: line.mode || 'billed', clientByMonth: {}, costByMonth: {} }, d);
+      const L = Object.assign({ id: line.id, managed, feeShare: !!line.feeShare, label: String(line.label || '').trim(), mode: line.mode || 'billed', clientByMonth: {}, costByMonth: {} }, d);
       res.lines.push(L);
       Object.keys(d.byMonth).forEach(ym => {
         const c = d.byMonth[ym];
@@ -1979,7 +2015,12 @@
     out.broker = round2(fee * pct / 100);
     const ptm = passThroughMonths(p);
     out.pass = round2(ptm.clientTotal || 0);
-    out.passCost = round2(ptm.costTotal || 0);
+    // A pass-through line the leader ticked "fee share" is a share going out, not a vendor cost.
+    let vendor = 0, shareOut = 0;
+    (ptm.lines || []).forEach(L => { const c = Object.values(L.costByMonth || {}).reduce((a, b) => a + b, 0); if (L.feeShare) shareOut += c; else vendor += c; });
+    out.passCost = round2(vendor);
+    out.shareOut = round2(shareOut);
+    out.broker = round2(out.broker + shareOut);
     out.fee = round2(fee);
     out.total = round2(fee + (out.brokerOnTop ? out.broker : 0) + out.pass);
     return out;
@@ -1997,7 +2038,7 @@
       const unpad = (ym) => { const [y, m] = ym.split('-').map(Number); return y + '-' + m; };
       Object.keys(L.clientByMonth || {}).forEach(ym => { const k = unpad(ym); client[k] = (client[k] || 0) + L.clientByMonth[ym]; });
       Object.keys(L.costByMonth || {}).forEach(ym => { const k = unpad(ym); cost[k] = (cost[k] || 0) + L.costByMonth[ym]; });
-      return { id: L.id, label: L.label || ('line ' + (i + 1)), mode: L.mode, managed: !!L.managed, client, cost,
+      return { id: L.id, label: L.label || ('line ' + (i + 1)), mode: L.mode, managed: !!L.managed, feeShare: !!L.feeShare, client, cost,
                clientTotal: Object.values(client).reduce((a, b) => a + b, 0), costTotal: Object.values(cost).reduce((a, b) => a + b, 0) };
     });
   }
@@ -3694,7 +3735,7 @@
     proposalHealth,
     exportDb, importDb, downloadJson,
     FLASH_LABELS, captureSnapshot, getSnapshots, 
-    RECON_LINES, RECON_STATUSES, reconLinesFor, reconYears, reconYear, reconMonth, isReconLocked, reconCell,
+    RECON_LINES, RECON_STATUSES, reconLinesFor, reconLineInfo, reconYears, reconYear, reconMonth, isReconLocked, reconCell,
     setReconStatus, settleReconAccrual, setReconNote, lockReconMonth, reopenReconMonth, reconProjectFlags, invalidateRevenueCache,
     projectFinancials, getTierRateFromCatalog, monthlySeries,
     computeFinancials, restampFinancials, passThroughMonths, passThroughLines, ptLineDistribution, ptActive, clientBillOf,
