@@ -161,7 +161,7 @@
   const ACTION_LABEL = {
     create: 'Created', edit: 'Edited', status: 'Status', book: 'Booked',
     delete: 'Deleted', restore: 'Restored', purge: 'Purged',
-    'co-create': 'Change order', 'co-approve': 'CO approved',
+    'co-create': 'Change order', 'co-approve': 'CO approved', 'co-detach': 'CO → project',
     'reconcile-commit': 'Reconciled to actuals',
     'plan-adjust': 'Plan adjusted', 'schedule-shift': 'Schedule shifted',
     slip: 'Slipped', 'slip-remove': 'Slip removed',
@@ -328,6 +328,7 @@
     if (a === 'status') return 'Status <b>' + esc(statusLabel(m.from)) + '</b> → <b>' + esc(statusLabel(m.to)) + '</b>';
     if (a === 'co-create') return 'Raised a change order against this contract';
     if (a === 'co-approve') return 'Approved the change order — it now counts in the revised contract';
+    if (a === 'co-detach') return 'Made the change order a separate project' + (m.parent ? ' — amends <b>' + esc(m.parent) + '</b>' : '');
     if (a === 'reconcile-commit') return 'Committed the staffing to match imported actuals';
     if (a === 'confirm-book') return 'Confirmed into <b>' + esc(cycleName(m.cycle, m)) + '</b> — <b>' + (m.projects || 0) + ' project' + (m.projects === 1 ? '' : 's') + '</b>'
       + (m.fee ? ', ' + money(m.fee) : '') + (m.afterLock ? ' · <b>after the book was locked</b>' + (m.reason ? ' — “' + esc(m.reason) + '”' : '') : m.late ? ' · after the deadline' : '');

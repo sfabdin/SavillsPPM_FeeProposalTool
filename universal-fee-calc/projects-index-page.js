@@ -455,9 +455,11 @@
            <div class="pfee-sub">${fmtMoneyFull(rc.baselineNet)} ${coSign} ${rc.coCount} CO${rc.coCount === 1 ? '' : 's'}</div>${notes ? `<div class="pfee-sub pfee-notes">${notes}</div>` : ''}`
         : `<div class="pfee">${fmtMoneyFull(fin.net)}</div>
            <div class="pfee-sub">${notes ? `<span class="pfee-notes">${notes}</span>` : `${fin.fteMonths.toFixed(1)} fte-mo`}</div>`;
+      const amends = pj.amendsId ? STORE.getProject(pj.amendsId) : null;
+      const amendsTxt = amends ? ` · amends ${esc((amends.project && amends.project.name) || '')}` : '';
       const nameSub = hasCOs
-        ? `<span class="pname-sub">${esc(pj.industry || '—')} · revised contract</span>`
-        : `<span class="pname-sub">${esc(pj.industry || '—')}</span>`;
+        ? `<span class="pname-sub">${esc(pj.industry || '—')} · revised contract${amendsTxt}</span>`
+        : `<span class="pname-sub">${esc(pj.industry || '—')}${amendsTxt}</span>`;
       return `<tr data-id="${p.id}">
         ${quickEdit ? `
         <td>
