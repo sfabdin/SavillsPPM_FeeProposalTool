@@ -784,7 +784,7 @@
     ['assumptionsText', 'Assumptions'], ['exclusions', 'Exclusions'], ['notes', 'Notes'],
   ];
   const ASSUMPTION_FIELDS = [
-    ['hrsPerMo', 'Hours per month'], ['escalation', 'Escalation %'],
+    ['hrsPerMo', 'Hours per month'], ['allocUnit', 'Allocation entry unit'], ['escalation', 'Escalation %'],
     ['industryAdj', 'Industry adjustment %'], ['discount', 'Client discount %'],
     ['rateLock', 'Rate lock'], ['billingMode', 'Fee basis'],
     ['catalogBaseYear', 'Rate grid year'], ['nteCeiling', 'NTE ceiling'],
@@ -1097,6 +1097,7 @@
         a[k] = v;
         if (v < ranges[k][0] || v > ranges[k][1]) problems.push(k + ' ' + v + ' is outside ' + ranges[k][0] + '–' + ranges[k][1] + '.');
       });
+      if (a.allocUnit != null && a.allocUnit !== 'hours' && a.allocUnit !== 'percent') delete a.allocUnit;
       if (a.feeShare && a.feeShare.pct != null && a.feeShare.pct !== '') {
         const v = Number(a.feeShare.pct);
         if (!isFinite(v) || v < 0 || v > 100) problems.push('Fee share % "' + a.feeShare.pct + '" must be 0–100.'); else a.feeShare.pct = v;
