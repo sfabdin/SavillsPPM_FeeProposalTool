@@ -2457,14 +2457,15 @@
     state.phases.forEach(p => {
       if (expandedPhases.has(p.id)) {
         const months = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
-        hdr += `<th class="ph-grouphead" colspan="${months.length}"><span class="ph-toggle" data-toggle="${p.id}" title="Collapse to phase">▾</span> ${escapeHtml(p.name)} <span class="months">${p.length} mo · by month</span></th>`;
+        hdr += `<th class="ph-grouphead ph-head" data-toggle="${p.id}" colspan="${months.length}" title="Click to collapse back to the phase"><span class="ph-toggle">▾</span> ${escapeHtml(p.name)} <span class="months">${p.length} mo · by month</span></th>`;
       } else {
         const slice = getMonthsByPhase().find(x => x.phase.id === p.id)?.months || [];
         const range = slice.length ? `${slice[0].label}${slice.length > 1 ? ' – ' + slice[slice.length-1].label : ''}` : '—';
         const wk = (p.weeks != null) ? `${p.weeks} wk · ` : '';
         const tgt = (p.targetFee != null) ? `<span class="ph-target" title="Stated fee from the proposal — reference only">target ${fmtMoneySmall(p.targetFee)}</span>` : '';
-        const canExpand = p.length > 1 ? `<span class="ph-toggle" data-toggle="${p.id}" title="Expand into months">▸</span>` : '';
-        hdr += `<th>${canExpand} ${escapeHtml(p.name)}<span class="sub">${range}</span><span class="months">${wk}${p.length} mo</span>${tgt}</th>`;
+        // The whole header cell toggles — the little arrow alone was too easy to miss.
+        const canExpand = p.length > 1;
+        hdr += `<th${canExpand ? ` class="ph-head" data-toggle="${p.id}" title="Click to expand ${escapeHtml(p.name)} into its ${p.length} months"` : ''}>${canExpand ? '<span class="ph-toggle">▸</span> ' : ''}${escapeHtml(p.name)}<span class="sub">${range}</span><span class="months">${wk}${p.length} mo${canExpand ? ' · click to expand' : ''}</span>${tgt}</th>`;
       }
     });
     hdr += `<th class="fee-col">Role total</th></tr>`;
@@ -2587,8 +2588,8 @@
       i.addEventListener('focus', e => e.target.select());
     });
     // Expand / collapse phase columns
-    $$('#matrix-thead .ph-toggle').forEach(t => t.addEventListener('click', e => {
-      const pid = e.target.dataset.toggle;
+    $$('#matrix-thead th.ph-head[data-toggle]').forEach(t => t.addEventListener('click', e => {
+      const pid = e.currentTarget.dataset.toggle;
       if (expandedPhases.has(pid)) expandedPhases.delete(pid); else expandedPhases.add(pid);
       renderMatrix();
     }));

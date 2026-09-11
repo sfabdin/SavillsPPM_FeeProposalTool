@@ -1172,7 +1172,9 @@ html, body {
   margin-top: 3px;
 }
 .ph-toggle { cursor: pointer; display: inline-block; font-size: 11px; color: var(--sav-yellow); padding: 0 3px; user-select: none; }
-.ph-toggle:hover { color: #fff; }
+.matrix-table thead th.ph-head { cursor: pointer; user-select: none; transition: background .12s; }
+.matrix-table thead th.ph-head:hover { background: #3a3c52; box-shadow: inset 0 -3px 0 0 var(--sav-yellow); }
+.matrix-table thead th.ph-head:hover .ph-toggle { color: #fff; }
 .matrix-table thead th.ph-grouphead { background: #1a1c2c; border-left: 2px solid var(--sav-yellow); }
 .matrix-table thead tr.month-subhead th { background: #34364a; font-weight: 600; font-size: 10px; padding: 4px 6px; }
 .matrix-table thead tr.month-subhead th.mcol { color: var(--sav-yellow); }
