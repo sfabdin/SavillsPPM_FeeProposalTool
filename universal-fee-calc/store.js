@@ -809,9 +809,9 @@
       }
     });
     // Broker fee share
-    const fs = (o) => { const f = (o || {}).feeShare || {}; return [!!f.enabled, f.pct || 0, f.mode || ''].join('/'); };
+    const fs = (o) => { const f = (o || {}).feeShare || {}; return [!!f.enabled, f.pct || 0, f.mode || '', String(f.broker || '').trim()].join('/'); };
     if (fs(aa) !== fs(bb)) {
-      const f = (o) => { const x = (o || {}).feeShare || {}; return x.enabled ? (x.pct || 0) + '% ' + (x.mode || '') : 'off'; };
+      const f = (o) => { const x = (o || {}).feeShare || {}; return x.enabled ? (x.pct || 0) + '% ' + (x.mode || '') + (String(x.broker || '').trim() ? ' · ' + String(x.broker).trim() : '') : 'off'; };
       out.push({ field: 'Broker fee share', from: f(aa), to: f(bb) });
     }
     // Pass-through

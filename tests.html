@@ -2571,6 +2571,25 @@
              sq(Math.round(V.grandTot), Math.round(sum(a.map)), 'grand total') && sq(Math.round(V.colWt['2026-3']), Math.round((a.map['2026-3'] || 0) + (b2.map['2026-3'] || 0) * w5), 'weighted takes every rating') &&
              sq(Math.round(V.booked), Math.round(sum(a.map, 2026)), 'booked KPI is the first year') && sq(sum(a.map) > 0, true, 'the fixture prices');
     });
+    test('Projections writer', 'the Data lines are a signed bridge: fee + pass-through billed − broker − vendor cost = Savills revenue, named to the broker', () => {
+      if (!X) return 'UFC_ProjectionsXlsx not present';
+      const p = base({ id: 'x_bridge', project: { name: 'Bridge', client: 'Acme', status: 'active', rating: 1, leadId: 'esobel' },
+        assumptions: { feeShare: { enabled: true, pct: 10, mode: 'ontop', broker: 'CBRE · J. Doe' } },
+        passthrough: { enabled: true, lines: [{ id: 'a', label: 'Movers', cost: 4000, markupPct: 10, mode: 'billed' }] } });
+      const fin = S.computeFinancials(p, C);
+      const rows = X.bookRows([p], {}, C);
+      const row = rows[0];
+      const m = fin.byMonth.find(x => x.ym === '2026-02');
+      const lines = X.linesFor(row, '2026-2');
+      const by = {}; lines.forEach(L => { by[L.line] = L.amount; });
+      const r2 = (n) => Math.round(n * 100) / 100;
+      const sum = r2(lines.reduce((t, L) => t + L.amount, 0));
+      return sq(lines.length, 4, 'four lines in a month with fee, broker and pass-through') &&
+             sq(r2(by['Fee billed']), r2(m.feeInvoice), 'fee billed = fee incl. broker on top') && sq(r2(by['Pass-through billed']), r2(m.passClient), 'pass-through billed') &&
+             sq(r2(by['Broker fee share']), r2(-m.broker), 'broker is a minus') && sq(r2(by['Pass-through cost']), r2(-m.passCost), 'vendor cost is a minus') &&
+             sq(sum, r2(m.revenue), 'the lines add to Savills revenue') && sq(r2(by['Fee billed'] + by['Pass-through billed']), r2(m.invoice), 'billed lines add to the invoice') &&
+             sq(X.brokerOf(row), 'CBRE · J. Doe', 'the broker name rides along') && sq(X.DATA_HEADERS.indexOf('Broker') > 0, true, 'and has its own column');
+    });
   })();
 
   /* ============ PASS-THROUGH BY MONTH + THE IMPORT RULE ============

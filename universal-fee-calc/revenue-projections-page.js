@@ -71,7 +71,7 @@
     const projects = STORE.visibleProjects(parents);
     const coIndex = STORE.approvedChangeOrdersIndex ? STORE.approvedChangeOrdersIndex() : null;
     ALL = projects.map(p => {
-      const map = {}, brokerMap = {}, passMap = {};
+      const map = {}, brokerMap = {}, passMap = {}, netMap = {}, passClientMap = {};
       let total = 0;
       // Prefer the materialized billing series on the record (booked = frozen contract,
       // pursuit = live-refreshed on save). map = client INVOICE per month (incl. pass-through);
@@ -85,8 +85,10 @@
       (STORE.billingSeries(p, CATALOG) || []).forEach(s => {
         const k = s.year + '-' + s.month;
         map[k] = (map[k] || 0) + s.invoice;
+        netMap[k] = (netMap[k] || 0) + (s.net || 0);
         brokerMap[k] = (brokerMap[k] || 0) + (s.broker || 0);
         passMap[k] = (passMap[k] || 0) + (s.passCost || 0);
+        passClientMap[k] = (passClientMap[k] || 0) + (s.passClient || 0);
         total += s.invoice;
         if (s.slipOut || s.slipIn || s.adjusted) {
           const e = slipMap[k] = slipMap[k] || { out: 0, in: 0, adj: 0 };
@@ -99,7 +101,7 @@
         STORE.changeOrderDelta(co).byMonth.forEach(x => {
           const [y, m] = x.ym.split('-').map(Number);
           const k = y + '-' + m;
-          map[k] = (map[k] || 0) + x.net; total += x.net;
+          map[k] = (map[k] || 0) + x.net; netMap[k] = (netMap[k] || 0) + x.net; total += x.net;
         });
       });
       const pj = p.project || {};
@@ -111,7 +113,7 @@
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
       const feeSharePct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
       const ptCost = (p.financials && p.financials.passThroughCost) || 0;
-      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, total, ov: p.monthlyOverrides || null, slipMap,
+      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, netMap, passClientMap, total, ov: p.monthlyOverrides || null, slipMap,
                coCount: cos.length, feeSharePct, ptCost, status: (pj.status || '').trim(),
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim(), projectType: (pj.projectType || '').trim() };
     });
@@ -440,7 +442,8 @@
        project and month — for a pivot table. Shared writer (projections-xlsx.js),
        so the Monthly Confirmed Book download reads the same way. */
     X.writeProjectionsSheet(wb, V, { title: 'Revenue Projections', subtitle, groupByRating: SORT.key === 'rating' });
-    X.writeDataSheet(wb, V);
+    const data = X.writeDataSheet(wb, V);
+    X.writeDashboardSheet(wb, V, { title: 'Revenue Projections · dashboard', dataRows: data.__lastRow });
     await X.download(wb, `Revenue Projections ${new Date().toISOString().slice(0,10)}.xlsx`);
   }
 

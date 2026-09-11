@@ -344,10 +344,11 @@
       title: 'Revenue Projections · ' + title + ' (confirmed book)',
       subtitle: V.rows.length + ' projects · ' + (period && period !== title ? 'period ' + period + ' · ' : '') + years.join(' and ') + ' · ' + state + (sum.carried.length ? ' · ' + sum.carried.length + ' leader' + (sum.carried.length === 1 ? '' : 's') + ' carried in unconfirmed' : ''),
     });
-    X.writeDataSheet(wb, V, {
+    const data = X.writeDataSheet(wb, V, {
       extraHeaders: ['Confirmed by', 'Confirmed at', 'Carried in (not confirmed)'],
       extra: (row) => [row.p._carried ? '' : C.leaderName(row.p._confirmedBy), row.p._confirmedAt ? C.fmtStamp(row.p._confirmedAt) : '', row.p._carried ? 'Yes' : ''],
     });
+    X.writeDashboardSheet(wb, V, { title: title + ' · dashboard', dataRows: data.__lastRow });
     // About: the cycle and who confirmed when.
     const ab = wb.addWorksheet('About');
     ab.getColumn(1).width = 26; ab.getColumn(2).width = 22; ab.getColumn(3).width = 12; ab.getColumn(4).width = 16; ab.getColumn(5).width = 16; ab.getColumn(6).width = 40;
