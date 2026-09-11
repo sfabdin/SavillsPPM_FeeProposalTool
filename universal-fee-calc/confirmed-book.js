@@ -97,7 +97,7 @@
          holds the book for the rest of this page (readDb serves it), the push
          to Box still goes out, and the sync pill says why. */
       _cache = db; _raw = null; _memOnly = true;
-      console.error('confirmed-book: local cache write failed (storage full?) — holding the book in memory and pushing to Box');
+      console.warn('confirmed-book: local cache write failed (storage full?) — holding the book in memory and pushing to Box');
       try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error', at: Date.now(),
         message: 'Browser storage is full — the confirmed book is held in memory on this page and still saves to Box. Clear old site data or contact the maintainer.' } })); } catch (e) {}
     }

@@ -313,7 +313,8 @@
     const months = getMonthsByPhase().find(x => x.phase.id === phase.id)?.months || [];
     if (!months.length) return;
     const sum = months.reduce((s, m) => s + effectiveFte(role, m, phase.id), 0);
-    role.fte[phase.id] = Math.round((sum / months.length) * 10) / 10;
+    // Four decimals, not one: at 0.1 % a phase entered as 3 h read back as 2.9 h.
+    role.fte[phase.id] = Math.round((sum / months.length) * 1e6) / 1e6;
   }
 
   /** Published (list) monthly fee — ALWAYS at the full escalated rate, never the
@@ -431,7 +432,7 @@
     const months = getMonthsByPhase().find(x => x.phase.id === phaseId)?.months || [];
     if (!months.length) return 0;
     const sum = months.reduce((s, m) => s + effectiveFte(role, m, phaseId), 0);
-    return Math.round((sum / months.length) * 10) / 10;
+    return Math.round((sum / months.length) * 1e6) / 1e6;
   }
   /** Keep every role's fte[phaseId] mirror in sync with its months (display only). */
   function syncPhaseRollups() {
@@ -1856,6 +1857,7 @@
     $('#a-disc').value = trimPct(a.discount);
     $('#a-lock').checked = a.rateLock;
     $('#a-catbase').textContent = a.catalogBaseYear;
+    renderHrsHint();
     // Fee basis (Fixed / NTE)
     const fb = (a.feeBasis === 'nte') ? 'nte' : 'fixed';
     const fbSel = $('#a-feebasis'); if (fbSel) fbSel.value = fb;
@@ -2410,24 +2412,53 @@
   /* ----- Matrix ----- */
   let expandedPhases = new Set();
 
-  /* Allocation entry unit — a DISPLAY-ONLY preference. The stored data is always
-     % FTE; hours are just a converted view (hours = % × hrsPerMo / 100). Persisted
-     per-browser, never written into the project record, so engines/exports/snapshots
-     are untouched. Calculator page only. */
-  let matrixUnit = 'percent';
-  try { const u = localStorage.getItem('ufc_matrix_unit'); if (u === 'hours' || u === 'percent') matrixUnit = u; } catch (e) {}
+  /* Allocation entry unit. The stored data is always % FTE — every engine,
+     export and snapshot reads that — and hours are the converted view
+     (hours = % × hrsPerMo / 100). The unit itself is SAVED WITH THE PROJECT
+     (assumptions.allocUnit), so a book entered in hours opens in hours for
+     everyone; a project from before that carries none and follows this
+     browser's last choice.
+
+     Two things make hours behave like hours rather than a disguised percent:
+       • the conversion keeps six decimals of a percent, so 3 h reads back as
+         3.0 h — at 0.1 % it read back as 2.9 h, and 41 h as 41.1 h;
+       • changing "Hours per FTE / month" while entering hours RESCALES the
+         stored percents so every hour, and so every fee, stays exactly what
+         was typed (fee = hours × rate; that number never depended on the
+         hours-per-month figure, only the stored percent did). In percent mode
+         the field keeps its old meaning: more hours in a month is more fee. */
+  let matrixUnitPref = 'percent';
+  try { const u = localStorage.getItem('ufc_matrix_unit'); if (u === 'hours' || u === 'percent') matrixUnitPref = u; } catch (e) {}
+  const matrixUnit = () => { const u = state.assumptions && state.assumptions.allocUnit; return (u === 'hours' || u === 'percent') ? u : matrixUnitPref; };
   const hrsPerMo = () => state.assumptions.hrsPerMo || STORE.PRICING_HOURS_PER_MONTH;
-  /** % → displayed cell value (rounded to 0.1) in the current unit. */
-  const pctToUnit = (pct) => matrixUnit === 'hours' ? Math.round((pct / 100) * hrsPerMo() * 10) / 10 : pct;
-  /** entered cell value (current unit) → stored % (rounded to 0.1). */
+  /** % → displayed cell value in the current unit: 0.1 h, or 0.01 %. */
+  const pctToUnit = (pct) => matrixUnit() === 'hours' ? Math.round((pct / 100) * hrsPerMo() * 10) / 10 : Math.round(pct * 100) / 100;
+  /** entered cell value (current unit) → stored % (six decimals from hours, so the fee never drifts). */
   const unitToPct = (val) => {
-    if (matrixUnit !== 'hours') return val;
+    if (matrixUnit() !== 'hours') return val;
     const h = hrsPerMo() || STORE.PRICING_HOURS_PER_MONTH;
-    return Math.round((val / h) * 100 * 10) / 10;
+    return Math.round((val / h) * 100 * 1e6) / 1e6;
   };
-  const unitSuffix = () => matrixUnit === 'hours' ? 'h' : '%';
-  const unitStep = () => matrixUnit === 'hours' ? 5 : 5;
-  const unitMax = () => matrixUnit === 'hours' ? Math.round(hrsPerMo() * 2) : 200;
+  const unitSuffix = () => matrixUnit() === 'hours' ? 'h' : '%';
+  const unitStep = () => matrixUnit() === 'hours' ? 5 : 5;
+  const unitMax = () => matrixUnit() === 'hours' ? Math.round(hrsPerMo() * 2) : 200;
+  /** Hours per month moved while entering hours: keep the hours. Every stored
+      percent scales by old ÷ new, per-month values and phase values alike. */
+  function rescaleAllocations(ratio) {
+    if (!(ratio > 0) || ratio === 1) return;
+    const r4 = (v) => Math.round(v * ratio * 1e6) / 1e6;
+    state.roles.forEach(role => {
+      Object.keys(role.fteMonthly || {}).forEach(k => { if (role.fteMonthly[k] != null) role.fteMonthly[k] = r4(role.fteMonthly[k]); });
+      Object.keys(role.fte || {}).forEach(pid => { if (role.fte[pid] != null) role.fte[pid] = r4(role.fte[pid]); });
+    });
+  }
+  /** The hint under "Hours per FTE / month" says what the field does in this unit. */
+  function renderHrsHint() {
+    const el = $('#a-hrs-hint'); if (!el) return;
+    el.textContent = matrixUnit() === 'hours'
+      ? 'You are entering hours, so fees are hours × rate. This only defines what 100% of an FTE means — changing it keeps every hour you typed.'
+      : 'Standard 2,080 ÷ 12 = 173.33. Fees are % FTE × this × rate.';
+  }
 
   /** Flat list of matrix columns: a phase, or (if expanded) its months. */
   function matrixColumns() {
@@ -2604,15 +2635,17 @@
     const wrap = $('#unit-toggle');
     if (!wrap) return;
     $$('.unit-opt', wrap).forEach(btn => {
-      btn.classList.toggle('is-active', btn.dataset.unit === matrixUnit);
+      btn.classList.toggle('is-active', btn.dataset.unit === matrixUnit());
       btn.addEventListener('click', () => {
-        if (matrixUnit === btn.dataset.unit) return;
-        matrixUnit = btn.dataset.unit;
-        try { localStorage.setItem('ufc_matrix_unit', matrixUnit); } catch (e) {}
-        $$('.unit-opt', wrap).forEach(b => b.classList.toggle('is-active', b.dataset.unit === matrixUnit));
-        renderMatrix();
+        if (matrixUnit() === btn.dataset.unit) return;
+        matrixUnitPref = btn.dataset.unit;
+        state.assumptions.allocUnit = btn.dataset.unit;      // saved with the project
+        try { localStorage.setItem('ufc_matrix_unit', matrixUnitPref); } catch (e) {}
+        $$('.unit-opt', wrap).forEach(b => b.classList.toggle('is-active', b.dataset.unit === matrixUnit()));
+        renderHrsHint(); renderMatrix(); markDirty();
       });
     });
+    renderHrsHint();
   }
 
   /** Recompute the editable matrix's derived cells (role totals + all
@@ -3252,7 +3285,17 @@
        (the expensive part) waits until typing pauses. */
     const debounceUI = (window.UFC_UI && window.UFC_UI.debounce) || ((fn) => fn);
     const assumptionsChanged = debounceUI(() => { renderCatalog(); renderSelectedRoles(); renderSummary(); renderMatrix(); renderMonthly(); renderFloorCheck(); markDirty(); }, 150);
-    $('#a-hrs').addEventListener('input',  e => { state.assumptions.hrsPerMo = parseFloat(e.target.value) || 0; assumptionsChanged(); });
+    let lastHrs = null;   // the last positive hours-per-month, across a transient "" or 0 while typing
+    $('#a-hrs').addEventListener('input',  e => {
+      const v = parseFloat(e.target.value) || 0;
+      const prev = state.assumptions.hrsPerMo > 0 ? state.assumptions.hrsPerMo : lastHrs;
+      state.assumptions.hrsPerMo = v;
+      if (v > 0) {
+        if (matrixUnit() === 'hours' && prev > 0 && prev !== v) rescaleAllocations(prev / v);
+        lastHrs = v;
+      }
+      assumptionsChanged();
+    });
     $('#a-esc').addEventListener('input',  e => { state.assumptions.escalation = parseFloat(e.target.value) || 0; assumptionsChanged(); });
     $('#a-ind').addEventListener('input',  e => { state.assumptions.industryAdj = parseFloat(e.target.value) || 0; assumptionsChanged(); });
     $('#a-disc').addEventListener('input', e => { state.assumptions.discount = parseFloat(e.target.value) || 0; assumptionsChanged(); });
