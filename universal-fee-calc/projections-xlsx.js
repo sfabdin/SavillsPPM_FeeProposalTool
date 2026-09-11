@@ -305,12 +305,15 @@
      What the client is billed, and what comes out of it, as SIGNED
      stand-alone lines so a pivot on Amount reads as a bridge:
 
-         Fee billed              +   the fee invoiced (broker on top included)
-         Pass-through billed     +   vendor cost + fee, invoiced through Savills
+         Fee billed              +   the fee invoiced (broker on top included,
+                                     and the fee earned on any pass-through)
+         Pass-through billed     +   the vendor cost invoiced through Savills
        = Total billed to client
          Broker fee share        −   the referral cut (either mode)
-         Pass-through cost       −   the vendor cost that flows straight out
+         Pass-through cost       −   the same vendor cost, flowing out to the vendor
        = Savills revenue
+     The fee on a pass-through is OURS, so it sits in Fee billed; only the
+     amount that goes somewhere else appears as a pass-through line.
 
      Rows built by the Revenue Projections page carry the same maps as
      bookRows; a row without them (an older caller) falls back to the invoice
@@ -328,12 +331,11 @@
   }
   function linesFor(row, key) {
     const inv = (row.map && row.map[key]) || 0;
-    const passClient = (row.passClientMap && row.passClientMap[key]) || 0;
     const broker = (row.brokerMap && row.brokerMap[key]) || 0;
     const passCost = (row.passMap && row.passMap[key]) || 0;
     const out = [];
     const push = (i, v, party) => { if (Math.abs(v) > 0.005) out.push({ line: LINES[i].line, group: LINES[i].group, amount: LINES[i].sign * v, party: party || '' }); };
-    push(0, inv - passClient, '');
+    push(0, inv - passCost, '');
     // Pass-through: one line per line on the calculator, named as typed there —
     // "Pass-through · Unity Electric", "Pass-through · Dallas PM fee share" —
     // so the party is visible whether it is a vendor or a fee share.
@@ -341,11 +343,12 @@
     if (lines.length) {
       lines.forEach(L => {
         const party = 'Pass-through · ' + (L.label || 'line');
-        push(1, (L.client && L.client[key]) || 0, party);
-        push(3, (L.cost && L.cost[key]) || 0, party);
+        const c = (L.cost && L.cost[key]) || 0;
+        push(1, c, party);
+        push(3, c, party);
       });
     } else {
-      push(1, passClient, 'Pass-through');
+      push(1, passCost, 'Pass-through');
       push(3, passCost, 'Pass-through');
     }
     push(2, broker, brokerOf(row) || 'Broker');

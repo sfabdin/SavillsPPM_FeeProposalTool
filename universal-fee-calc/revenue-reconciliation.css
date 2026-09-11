@@ -45,3 +45,11 @@
 .rc-year tr.lane-billed td { font-weight: 700; }
 .rc-year tr.lane-accrued td.neg { color: var(--sav-red); }
 @media (max-width: 900px) { .rc-mo { flex-basis: 52px; } .rc-filt input { min-width: 160px; } }
+
+/* Money out: pass-through teal, fee share red */
+.rc-table tr.ln-pass td.money, .rc-table tr.ln-pass td:nth-child(4) { color: var(--sav-teal, #238291); font-weight: 700; }
+.rc-table tr.ln-share td.money, .rc-table tr.ln-share td:nth-child(4) { color: var(--sav-red); font-weight: 700; }
+.rc-kpis .kpi .v .teal { color: var(--sav-teal, #238291); }
+.rc-kpis .kpi .v .red { color: var(--sav-red); }
+.rc-year tr.lane-pass td.money { color: var(--sav-teal, #238291); }
+.rc-year tr.lane-share td.money { color: var(--sav-red); }

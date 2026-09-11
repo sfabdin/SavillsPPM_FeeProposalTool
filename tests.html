@@ -980,7 +980,8 @@
       const p = setup();
       const L = S.reconLinesFor(p, C); const fin = S.computeFinancials(p, C); const m = fin.byMonth.find(x => x.ym === '2026-02');
       const r2 = (n) => Math.round(n * 100) / 100;
-      return sq(r2(L.fee['2026-02']), r2(m.invoice - m.passCost), 'fee') && sq(r2(L.pass['2026-02']), r2(m.passCost), 'pass-through cost') && sq(r2(L.share['2026-02']), r2(-m.broker), 'fee share is a minus');
+      return sq(r2(L.fee['2026-02']), r2(m.invoice - m.passCost), 'fee keeps the fee on the pass-through') && sq(r2(L.pass['2026-02']), r2(-m.passCost), 'pass-through is the vendor cost going out — a minus') && sq(r2(L.share['2026-02']), r2(-m.broker), 'fee share is a minus') &&
+             sq(r2(L.fee['2026-02'] + L.share['2026-02']), r2(m.revenue), 'fee + fee share is Savills revenue — the pass-through is a wash');
     });
     test('Recon · status', 'statuses are set per line-month by an admin, a different amount and a slip flag the project, and a lock freezes the month', () => {
       const p = setup(); const L = S.reconLinesFor(p, C); const feb = L.fee['2026-02'];
@@ -1911,7 +1912,7 @@
       const r2 = (n) => Math.round(n * 100) / 100;
       const sum = r2(lines.reduce((t, L) => t + L.amount, 0));
       return sq(lines.length, 4, 'four lines in a month with fee, broker and pass-through') &&
-             sq(r2(by['Fee billed']), r2(m.feeInvoice), 'fee billed = fee incl. broker on top') && sq(r2(by['Pass-through billed']), r2(m.passClient), 'pass-through billed') &&
+             sq(r2(by['Fee billed']), r2(m.feeInvoice + m.passMarkup), 'fee billed = fee incl. broker on top and the fee on the pass-through') && sq(r2(by['Pass-through billed']), r2(m.passCost), 'pass-through billed = the vendor cost only') &&
              sq(r2(by['Broker fee share']), r2(-m.broker), 'broker is a minus') && sq(r2(by['Pass-through cost']), r2(-m.passCost), 'vendor cost is a minus') &&
              sq(sum, r2(m.revenue), 'the lines add to Savills revenue') && sq(r2(by['Fee billed'] + by['Pass-through billed']), r2(m.invoice), 'billed lines add to the invoice') &&
              sq(X.brokerOf(row), 'CBRE · J. Doe', 'the broker name rides along') && sq(X.DATA_HEADERS.indexOf('Party') > 0, true, 'and the party has its own column') &&
@@ -1930,7 +1931,7 @@
       return sq(pl.length, 2, 'two lines') && sq(pl.map(l => l.label).join('|'), 'Unity Electric|Dallas PM fee share', 'labels as typed') &&
              sq(Math.round(pl[1].costTotal), 8000, 'fixed share cost') &&
              sq(costs.join(','), 'Pass-through · Unity Electric=-1000,Pass-through · Dallas PM fee share=-2000', 'each line its own minus, a quarter of the cost per month') &&
-             sq(Math.round(billed), 1100 + 2000, 'billed lines add to the pass-through billed to the client');
+             sq(Math.round(billed), 1000 + 2000, 'pass-through billed lines are the vendor costs; the fee on them sits in Fee billed');
     });
   })();
 

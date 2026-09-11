@@ -6,7 +6,7 @@
    The unit is one project × one component × one month:
      Fee          what the client is billed for the fee (incl. the fee
                   on any pass-through)
-     Pass-through the vendor cost billed through Savills
+     Pass-through the vendor cost billed through Savills and passed out, a minus
      Fee share    the broker / co-party cut, a minus
 
    Every month, an admin gives each line a STATUS — billed as planned,
@@ -108,8 +108,8 @@
         const key = ym(y, m);
         LINES.forEach(L => {
           const v = (lines[L.id] || {})[key] || 0; if (!v) return;
-          earned[m] += L.id === 'pass' ? 0 : v;
-          if (L.id === 'share') share[m] += v; if (L.id === 'pass') pass[m] += v;
+          if (L.id !== 'pass') earned[m] += v;                      // ours: fee (incl. the fee on pass-through) + fee share (a minus)
+          if (L.id === 'share') share[m] += v; if (L.id === 'pass') { pass[m] += v; return; }   // the pass-through is a wash — not billed/accrued revenue
           const c = STORE.reconCell(y, p.id, L.id, key);
           const st = c && c.status;
           if (!st || st === 'billed') billed[m] += v;
@@ -179,12 +179,15 @@
     // ---- KPIs ----
     const own = rows.filter(r => r.kind === 'earned');
     const tot = (line) => own.filter(r => r.line === line).reduce((t, r) => t + r.earned, 0);
+    const billedToClient = tot('fee') - tot('pass');          // pass is negative: the vendor cost the client was invoiced
+    const ours = tot('fee') + tot('share');                   // the pass-through is a wash; the fee on it is already in fee
     const billedNow = own.reduce((t, r) => { const st = r.cell && r.cell.status; if (!st || st === 'billed') return t + r.earned; if (st === 'billed-diff') return t + (r.cell.amount != null ? r.cell.amount : r.earned); return t; }, 0)
       + rows.filter(r => r.kind === 'carry' && r.settledHere).reduce((t, r) => t + (r.cell.billedAmount != null ? r.cell.billedAmount : r.carry), 0);
     const accruedNow = own.filter(r => r.cell && r.cell.status === 'accrued').reduce((t, r) => t + (r.cell.amount != null ? r.cell.amount : r.earned), 0);
     const carryOpen = rows.filter(r => r.kind === 'carry' && !r.settledHere).reduce((t, r) => t + r.carry, 0);
     h += '<div class="kpis rc-kpis">' +
-      kpi(money(tot('fee')), 'fee earned · ' + MONTHS[M - 1]) + kpi(money(tot('pass')), 'pass-through billed through') + kpi(money(tot('share')), 'fee share out') +
+      kpi(money(billedToClient), 'billed to client · ' + MONTHS[M - 1]) + kpi('<span class="teal">' + money(tot('pass')) + '</span>', 'pass-through out · to vendors') + kpi('<span class="red">' + money(tot('share')) + '</span>', 'fee share out · to brokers') +
+      kpi('<b>' + money(ours) + '</b>', 'Savills revenue · fee incl. the fee on pass-through, less fee share') +
       kpi(money(billedNow), 'billed this month · incl. accruals settling') + kpi(money(accruedNow), 'accrued this month') + kpi(money(carryOpen), 'earlier accruals still open') +
       kpi(String(unruled(rows)), 'lines without a status') + '</div>';
     // ---- filters ----
@@ -200,7 +203,7 @@
       const id = r.p.id;
       if (r.kind === 'carry') {
         const amt = r.cell.billedAmount != null ? r.cell.billedAmount : r.carry;
-        h += '<tr class="rc-carry' + (r.settledHere ? ' settled' : '') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a><div class="sub">accrued in <b>' + esc(ymLabel(r.fromYm)) + '</b>' + (r.cell.billsIn ? ' · expected ' + esc(ymLabel(r.cell.billsIn)) : '') + '</div></td><td>' + esc(r.leader) + '</td><td>' + esc(lineLabel(r.line)) + ' <span class="pill y"><i></i>carry-in</span></td>' +
+        h += '<tr class="rc-carry ln-' + r.line + (r.settledHere ? ' settled' : '') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a><div class="sub">accrued in <b>' + esc(ymLabel(r.fromYm)) + '</b>' + (r.cell.billsIn ? ' · expected ' + esc(ymLabel(r.cell.billsIn)) : '') + '</div></td><td>' + esc(r.leader) + '</td><td>' + esc(lineLabel(r.line)) + ' <span class="pill y"><i></i>carry-in</span></td>' +
           '<td class="money"><span class="sub">' + money(r.carry) + ' accrued</span></td>' +
           '<td><select class="rc-settle" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" data-from="' + esc(r.fromYm) + '"' + dis + '><option value=""' + (r.settledHere ? '' : ' selected') + '>Still accrued</option><option value="billed"' + (r.settledHere ? ' selected' : '') + '>Billed in ' + MONTHS[M - 1] + '</option></select></td>' +
           '<td class="money"><input class="rc-amt" type="number" step="1" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" data-from="' + esc(r.fromYm) + '" data-settle="1" value="' + (r.settledHere ? Math.round(amt) : '') + '"' + (r.settledHere && !locked ? '' : ' disabled') + ' placeholder="' + Math.round(r.carry) + '"></td>' +
@@ -209,7 +212,7 @@
       }
       const needsAmt = st === 'billed-diff', needsMonth = st === 'accrued' || st === 'slipped';
       const target = st === 'accrued' ? (c.billsIn || '') : st === 'slipped' ? (c.earnedIn || '') : '';
-      h += '<tr class="' + (st ? 'st-' + st : 'st-none') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a>' + (c.flagged ? '<div class="sub red">flag on the project</div>' : '') + '</td><td>' + esc(r.leader) + '</td><td>' + esc(lineLabel(r.line)) + '</td>' +
+      h += '<tr class="' + (st ? 'st-' + st : 'st-none') + ' ln-' + r.line + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a>' + (c.flagged ? '<div class="sub red">flag on the project</div>' : '') + '</td><td>' + esc(r.leader) + '</td><td>' + esc(lineLabel(r.line)) + '</td>' +
         '<td class="money' + (r.earned < 0 ? ' neg' : '') + '">' + money(r.earned) + '</td>' +
         '<td><select class="rc-status" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '"' + dis + '><option value="">— status —</option>' + STATUSES.map(s => '<option value="' + s.id + '"' + (st === s.id ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select></td>' +
         '<td class="money"><input class="rc-amt" type="number" step="1" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" value="' + (needsAmt && c.amount != null ? Math.round(c.amount) : '') + '"' + (needsAmt && !locked ? '' : ' disabled') + ' placeholder="' + Math.round(r.earned) + '"></td>' +
@@ -220,9 +223,9 @@
     // ---- year lanes ----
     const L = lanes(YEAR);
     const laneRow = (label, lane, cls) => '<tr class="' + (cls || '') + '"><td><b>' + label + '</b></td>' + MONTHS.map((_, i) => { const v = lane[i + 1] || 0; const meta = STORE.reconMonth(YEAR, i + 1); return '<td class="money' + (v < 0 ? ' neg' : '') + (meta && meta.lockedAt ? ' lk' : '') + '">' + (Math.abs(v) > 0.5 ? money(v) : '·') + '</td>'; }).join('') + '<td class="money"><b>' + money(Object.values(lane).reduce((a, b) => a + b, 0)) + '</b></td></tr>';
-    h += '<div class="panel"><div class="ph"><h3>' + YEAR + ' · billed and accrued by month</h3><span class="sub">Billed carries earlier accruals settling; Accrued shows this month\'s own accruals less any settling (the minus). Locked months are shaded.</span></div>' +
+    h += '<div class="panel"><div class="ph"><h3>' + YEAR + ' · billed and accrued by month</h3><span class="sub">Billed carries earlier accruals settling; Accrued shows this month\'s own accruals less any settling (the minus). Pass-through and fee share are money out. Locked months are shaded.</span></div>' +
       '<div class="tw"><table class="cb-table rc-year"><thead><tr><th></th>' + MONTHS.map((mn, i) => { const meta = STORE.reconMonth(YEAR, i + 1); return '<th class="money' + (meta && meta.lockedAt ? ' lk' : '') + '">' + mn + (meta && meta.lockedAt ? ' 🔒' : '') + '</th>'; }).join('') + '<th class="money">Year</th></tr></thead><tbody>' +
-      laneRow('Earned · fee less fee share', L.earned) + laneRow('Billed', L.billed, 'lane-billed') + laneRow('Accrued (net)', L.accrued, 'lane-accrued') + laneRow('Fee share', L.share) + laneRow('Pass-through billed through', L.pass) +
+      laneRow('Savills revenue · fee less fee share', L.earned) + laneRow('Billed', L.billed, 'lane-billed') + laneRow('Accrued (net)', L.accrued, 'lane-accrued') + laneRow('Fee share out', L.share, 'lane-share') + laneRow('Pass-through out · to vendors', L.pass, 'lane-pass') +
       '</tbody></table></div></div>';
     host.innerHTML = h;
     wire(host, locked);
@@ -313,40 +316,42 @@
     const head = (ws, labels) => { const r = ws.addRow(labels); r.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; }); return r; };
     // ---- Sheet 1: the month ----
     const ws = wb.addWorksheet(MONTHS[M - 1] + ' ' + YEAR + ' Flash', { views: [{ state: 'frozen', ySplit: 4 }] });
-    ws.mergeCells('A1:L1'); ws.getCell('A1').value = 'Savills PPM — Revenue Flash · ' + MONTHS_LONG[M - 1] + ' ' + YEAR; ws.getCell('A1').font = { name: 'Calibri', bold: true, size: 16, color: { argb: NAVY } };
-    ws.mergeCells('A2:L2'); ws.getCell('A2').value = (mm && mm.lockedAt ? 'LOCKED ' + fmtStamp(mm.lockedAt) + (mm.lockedByName ? ' by ' + mm.lockedByName : '') : 'Working copy — not locked') + ' · exported ' + new Date().toLocaleString() + (LEADER ? ' · leader: ' + LEADER : ''); ws.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: mm && mm.lockedAt ? NAVY : RED } };
+    ws.mergeCells('A1:M1'); ws.getCell('A1').value = 'Savills PPM — Revenue Flash · ' + MONTHS_LONG[M - 1] + ' ' + YEAR; ws.getCell('A1').font = { name: 'Calibri', bold: true, size: 16, color: { argb: NAVY } };
+    ws.mergeCells('A2:M2'); ws.getCell('A2').value = (mm && mm.lockedAt ? 'LOCKED ' + fmtStamp(mm.lockedAt) + (mm.lockedByName ? ' by ' + mm.lockedByName : '') : 'Working copy — not locked') + ' · exported ' + new Date().toLocaleString() + (LEADER ? ' · leader: ' + LEADER : ''); ws.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: mm && mm.lockedAt ? NAVY : RED } };
     ws.addRow([]);
-    head(ws, ['Client', 'Project', 'Revenue leader', 'Line', 'Kind', 'Earned', 'Status', 'Billed', 'Accrued', 'Fee share', 'Bill / earn month', 'Note']);
+    head(ws, ['Client', 'Project', 'Revenue leader', 'Line', 'Kind', 'Earned', 'Status', 'Billed', 'Accrued', 'Pass-through out', 'Fee share out', 'Bill / earn month', 'Note']);
     const r0 = 5;
     rows.forEach(r => {
       const c = r.cell || {}; const st = c.status || '';
-      let billed = 0, accrued = 0, share = 0, target = '';
+      let billed = 0, accrued = 0, share = 0, pass = 0, target = '';
       if (r.kind === 'carry') { billed = r.settledHere ? (c.billedAmount != null ? c.billedAmount : r.carry) : 0; accrued = r.settledHere ? -r.carry : 0; target = c.billsIn ? ymLabel(c.billsIn) : ''; }
       else if (r.line === 'share') { share = r.earned; }
+      else if (r.line === 'pass') { pass = r.earned; }
       else if (!st || st === 'billed') billed = r.earned;
       else if (st === 'billed-diff') billed = c.amount != null ? c.amount : r.earned;
       else if (st === 'accrued') { accrued = c.amount != null ? c.amount : r.earned; target = c.billsIn ? ymLabel(c.billsIn) : ''; }
       else if (st === 'slipped') target = c.earnedIn ? ymLabel(c.earnedIn) : '';
       const x = ws.addRow([r.pj.client || '', r.pj.name || 'Untitled', r.leader, lineLabel(r.line), r.kind === 'carry' ? 'Carry-in · accrued ' + ymLabel(r.fromYm) : 'Earned this month',
-        r.kind === 'carry' ? null : r.earned, r.kind === 'carry' ? (r.settledHere ? 'Billed here' : 'Still accrued') : (statusLabel(st) || 'no status'), billed || null, accrued || null, share || null, target, c.note || '']);
-      [6, 8, 9, 10].forEach(i => { x.getCell(i).numFmt = fmt; x.getCell(i).alignment = { horizontal: 'right' }; });
-      if (!st && r.kind === 'earned' && r.line !== 'share') x.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF0D8' } };
+        r.kind === 'carry' ? null : r.earned, r.kind === 'carry' ? (r.settledHere ? 'Billed here' : 'Still accrued') : (statusLabel(st) || 'no status'), billed || null, accrued || null, pass || null, share || null, target, c.note || '']);
+      [6, 8, 9, 10, 11].forEach(i => { x.getCell(i).numFmt = fmt; x.getCell(i).alignment = { horizontal: 'right' }; });
+      if (!st && r.kind === 'earned') x.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF0D8' } };
       if (r.line === 'share') x.eachCell(cell => { cell.font = { name: 'Calibri', color: { argb: RED } }; });
+      if (r.line === 'pass') x.eachCell(cell => { cell.font = { name: 'Calibri', color: { argb: 'FF0E7C7B' } }; });
     });
     const r1 = r0 + rows.length - 1;
-    const tot = ws.addRow(['TOTAL', '', '', '', '', null, '', null, null, null, '', '']);
-    [6, 8, 9, 10].forEach(i => { const L = String.fromCharCode(64 + i); tot.getCell(i).value = rows.length ? { formula: `SUM(${L}${r0}:${L}${r1})` } : 0; tot.getCell(i).numFmt = fmt; });
+    const tot = ws.addRow(['TOTAL', '', '', '', '', null, '', null, null, null, null, '', '']);
+    [6, 8, 9, 10, 11].forEach(i => { const L = String.fromCharCode(64 + i); tot.getCell(i).value = rows.length ? { formula: `SUM(${L}${r0}:${L}${r1})` } : 0; tot.getCell(i).numFmt = fmt; });
     tot.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
     tot.getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } }; tot.getCell(8).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
-    ws.columns = [{ width: 24 }, { width: 40 }, { width: 20 }, { width: 13 }, { width: 24 }, { width: 14 }, { width: 28 }, { width: 14 }, { width: 14 }, { width: 13 }, { width: 14 }, { width: 50 }];
-    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(r1, r0), column: 12 } };
+    ws.columns = [{ width: 24 }, { width: 40 }, { width: 20 }, { width: 16 }, { width: 24 }, { width: 14 }, { width: 28 }, { width: 14 }, { width: 14 }, { width: 15 }, { width: 13 }, { width: 14 }, { width: 50 }];
+    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(r1, r0), column: 13 } };
     // by-client summary via SUMIFS
     const sr = tot.number + 2;
     ws.getCell(sr, 1).value = 'By client'; ws.getCell(sr, 1).font = { name: 'Calibri', bold: true, size: 12, color: { argb: NAVY } };
-    head(ws, ['Client', '', '', '', '', 'Earned', '', 'Billed', 'Accrued', 'Fee share']);
+    head(ws, ['Client', '', '', '', '', 'Earned', '', 'Billed', 'Accrued', 'Pass-through out', 'Fee share out']);
     [...new Set(rows.map(r => r.pj.client || ''))].sort().forEach(cl => {
       const x = ws.addRow([cl]);
-      [6, 8, 9, 10].forEach(i => { const L = String.fromCharCode(64 + i); x.getCell(i).value = { formula: `SUMIFS(${L}${r0}:${L}${r1},$A$${r0}:$A$${r1},A${x.number})` }; x.getCell(i).numFmt = fmt; });
+      [6, 8, 9, 10, 11].forEach(i => { const L = String.fromCharCode(64 + i); x.getCell(i).value = { formula: `SUMIFS(${L}${r0}:${L}${r1},$A$${r0}:$A$${r1},A${x.number})` }; x.getCell(i).numFmt = fmt; });
     });
     // ---- Sheet 2: the year, billed and accrued lanes ----
     const L = lanes(YEAR);
@@ -357,7 +362,7 @@
     const lockRow = ys.addRow(['Month status', ...MONTHS.map((_, i) => { const meta = STORE.reconMonth(YEAR, i + 1); return meta && meta.lockedAt ? 'LOCKED' : 'open'; }), '']);
     lockRow.eachCell((c, i) => { if (i > 1 && c.value === 'LOCKED') { c.font = { name: 'Calibri', bold: true, color: { argb: NAVY } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CREAM } }; } });
     const lane = (label, o) => { const r = ys.addRow([label, ...MONTHS.map((_, i) => o[i + 1] || null), null]); for (let c = 2; c <= 13; c++) r.getCell(c).numFmt = fmt; r.getCell(14).value = { formula: `SUM(B${r.number}:M${r.number})` }; r.getCell(14).numFmt = fmt; r.getCell(1).font = { name: 'Calibri', bold: true, color: { argb: NAVY } }; return r; };
-    lane('Earned · fee less fee share', L.earned); lane('Billed', L.billed); lane('Accrued (net)', L.accrued); lane('Fee share', L.share); lane('Pass-through billed through', L.pass);
+    lane('Savills revenue · fee less fee share', L.earned); lane('Billed', L.billed); lane('Accrued (net)', L.accrued); lane('Fee share out', L.share); lane('Pass-through out · to vendors', L.pass);
     ys.columns = [{ width: 30 }, ...MONTHS.map(() => ({ width: 12 })), { width: 14 }];
     // ---- Sheet 3: flags ----
     const flags = lockFlags(YEAR);
