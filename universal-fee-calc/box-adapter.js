@@ -956,32 +956,27 @@
      admins working different projects in 2026 would erase each other. Rows
      carry their own updatedAt, so each project's line survives on its merits;
      a year present on only one side is kept whole. */
+  /* Two copies of the revenue book: per cell the newer stamp wins; per month
+     the newer lock/reopen wins (a lock and a reopen on the same month from two
+     browsers resolve to whichever happened last). Nothing is dropped. */
   function mergeRevenueDb(remote, local) {
     const out = Store.defaultRevenue();
-    const years = new Set([...Object.keys((remote && remote.ledger) || {}), ...Object.keys((local && local.ledger) || {})]);
-    years.forEach(yk => {
-      const ry = ((remote && remote.ledger) || {})[yk];
-      const ly = ((local && local.ledger) || {})[yk];
-      if (!ry) { out.ledger[yk] = ly; return; }
-      if (!ly) { out.ledger[yk] = ry; return; }
-      const rows = { ...(ry.rows || {}) };
-      Object.entries(ly.rows || {}).forEach(([k, lr]) => {
-        const rr = rows[k];
-        if (!rr || ((lr && lr.updatedAt) || '') >= ((rr && rr.updatedAt) || '')) rows[k] = lr;
+    const R = (remote && remote.recon) || {}, L = (local && local.recon) || {};
+    new Set([...Object.keys(R), ...Object.keys(L)]).forEach(yk => {
+      const ry = R[yk] || { months: {}, cells: {} }, ly = L[yk] || { months: {}, cells: {} };
+      const cells = { ...(ry.cells || {}) };
+      Object.entries(ly.cells || {}).forEach(([k, lc]) => {
+        const rc = cells[k];
+        const lt = Math.max(Date.parse((lc && lc.at) || 0) || 0, Date.parse((lc && lc.settledAt) || 0) || 0);
+        const rt = Math.max(Date.parse((rc && rc.at) || 0) || 0, Date.parse((rc && rc.settledAt) || 0) || 0);
+        if (!rc || lt >= rt) cells[k] = lc;
       });
-      // Import history is append-only per close month — union it, newest wins
-      // on a month both sides posted.
-      const imps = {};
-      [...(ry.imports || []), ...(ly.imports || [])].forEach(i => {
-        const cur = imps[i.closeMonth];
-        if (!cur || (i.at || '') >= (cur.at || '')) imps[i.closeMonth] = i;
+      const months = { ...(ry.months || {}) };
+      Object.entries(ly.months || {}).forEach(([k, lm]) => {
+        const rm = months[k];
+        if (!rm || ((lm && lm.updatedAt) || '') >= ((rm && rm.updatedAt) || '')) months[k] = lm;
       });
-      out.ledger[yk] = {
-        updatedAt: ((ly.updatedAt || '') >= (ry.updatedAt || '') ? ly.updatedAt : ry.updatedAt),
-        updatedBy: ((ly.updatedAt || '') >= (ry.updatedAt || '') ? ly.updatedBy : ry.updatedBy),
-        imports: Object.values(imps).sort((a, b) => a.closeMonth - b.closeMonth),
-        rows,
-      };
+      out.recon[yk] = { months, cells };
     });
     return out;
   }
@@ -1023,6 +1018,8 @@
     try { await uploadRevenue(r); } catch (e) { _revPending = r; console.warn('revenue push failed', e); }
   }
   Box.pullRevenue = pullRevenue;
+  /** Push the revenue book now — a lock or a status should reach Box before the tab closes. */
+  Box.flushRevenue = async function () { clearTimeout(_revTimer); await revenuePushNow(); };
   /** Pull-if-changed + row-level merge + hydrate — so a tab left open all day
       picks up a teammate's reconciliation instead of overwriting it. */
   Box.refreshRevenueIfChanged = async function () {

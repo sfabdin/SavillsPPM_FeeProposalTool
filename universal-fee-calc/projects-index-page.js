@@ -81,13 +81,13 @@
     // The row is what the CLIENT is billed: fee (imported or staffed) + broker
     // on top + pass-through billed through Savills — the calculator's headline.
     const b = STORE.clientBillOf(p, CATALOG);
-    return { net: b.total, fee: b.fee, pass: b.pass, broker: b.broker, brokerOnTop: b.brokerOnTop, fteMonths: b.fteMonths || 0 };
+    return { net: b.total, fee: b.fee, pass: b.pass, passCost: b.passCost, broker: b.broker, brokerOnTop: b.brokerOnTop, fteMonths: b.fteMonths || 0 };
   }
   /* The tiny note under the total: what of it is pass-through (teal) and what
      goes to the broker (red). Empty when neither applies. */
   function feeNotes(fin) {
     const bits = [];
-    if (fin.pass) bits.push(`<span class="pfee-pt" title="Pass-through billed through Savills — vendor cost plus fee; the cost flows out to the vendor">− ${fmtMoneyFull(fin.pass)} pass-through</span>`);
+    if (fin.passCost) bits.push(`<span class="pfee-pt" title="Pass-through: the vendor cost billed through Savills and flowing out. The fee on it stays in the total as fee.">− ${fmtMoneyFull(fin.passCost)} pass-through</span>`);
     if (fin.broker) bits.push(`<span class="pfee-bk" title="Broker fee share${fin.brokerOnTop ? ' — billed on top of the fee' : ' — comes out of the fee'}">− ${fmtMoneyFull(fin.broker)} broker</span>`);
     return bits.join('');
   }
@@ -709,7 +709,7 @@
     const cols = [
       ['Client', 24], ['Project', 34], ['Location', 18], ['Status', 14],
       ['Industry', 18], ['Project type', 22], ['Lead PE', 18],
-      ['Period', 18], ['Total fee', 14], ['of which pass-through', 16], ['Broker', 12], ['FTE-months', 12], ['Last updated', 14],
+      ['Period', 18], ['Total fee', 14], ['Pass-through cost', 16], ['Broker', 12], ['FTE-months', 12], ['Last updated', 14],
     ];
     cols.forEach((c, i) => { ws.getColumn(i + 1).width = c[1]; });
     const head = ws.getRow(4);
@@ -729,14 +729,14 @@
       // A project with approved change orders is worth its REVISED contract —
       // the same figure the on-screen row shows, not the original baseline.
       const rowNet = rowTotal(fin, rc);
-      net += rowNet || 0; fte += fin.fteMonths || 0; pass += fin.pass || 0; broker += fin.broker || 0;
+      net += rowNet || 0; fte += fin.fteMonths || 0; pass += fin.passCost || 0; broker += fin.broker || 0;
       const r = ws.addRow([
         pj.client || '',
         (pj.name || 'Untitled') + (rc.coCount ? '  (incl. ' + rc.coCount + ' CO' + (rc.coCount === 1 ? '' : 's') + ')' : ''),
         pj.location || '',
         STORE.STATUS_LABELS[pj.status] || pj.status || '',
         pj.industry || '', pj.projectType || '', pj.lead || '',
-        fmtPeriod(p), rowNet || 0, fin.pass || 0, fin.broker || 0, +(fin.fteMonths || 0).toFixed(1),
+        fmtPeriod(p), rowNet || 0, fin.passCost || 0, fin.broker || 0, +(fin.fteMonths || 0).toFixed(1),
         p.updatedAt ? new Date(p.updatedAt).toLocaleDateString() : '',
       ]);
       [9, 10, 11].forEach((i) => { r.getCell(i).numFmt = '"$"#,##0'; });

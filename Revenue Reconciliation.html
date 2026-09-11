@@ -9,249 +9,48 @@
 <link rel="stylesheet" href="design-system/colors_and_type.css">
 <link rel="preload" href="design-system/fonts/gotham/Gotham-Book.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="design-system/fonts/gotham/Gotham-Bold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<link rel="stylesheet" href="universal-fee-calc/confirmed-book.css">
 <link rel="stylesheet" href="universal-fee-calc/revenue-reconciliation.css">
 </head>
-<body class="sav-doc">
+<body>
 <div class="wrap">
+
   <header class="head">
     <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
-    <div>
-      <div class="lbl"><a href="Fee Generator.html">Home</a> &nbsp;·&nbsp;
-        <a href="Revenue Projections.html">Revenue Projections</a> &nbsp;·&nbsp; Revenue Reconciliation
-        <span class="adm">admin only</span></div>
-      <h1>Revenue reconciliation.</h1>
+    <div class="title-block">
+      <h1><a href="Fee Generator.html">Revenue Reconciliation</a></h1>
+      <p class="tagline">Finance's monthly book, built from the fee tool. Give every line a status, download the flash, lock the month. A locked month never changes — and a project edit that moves one shows up red here until you reopen it.</p>
     </div>
   </header>
 
-  <div class="period-bar">
-    <span class="pb-t">Year</span>
-    <select id="year-pick" aria-label="Year"></select>
-    <label class="pb-lab" for="focus-top">Month</label>
-    <select id="focus-top" aria-label="Month focus"></select>
-    <span class="p-status none" id="year-status">No actuals</span>
-    <span class="pb-meta" id="year-meta"></span>
-    <span class="pb-right">
-      <button class="btn danger" id="remove-year" hidden>Remove year</button>
-    </span>
-  </div>
-
-  <div class="coverage" id="coverage" hidden></div>
-
-  <div class="glossary" id="glossary">
-    <button type="button" class="gl" data-mode="earned"><b>Earned</b> what the fee tool says the month is worth — the staffing grid is tied to this month</button>
-    <button type="button" class="gl" data-mode="accrued"><b>Accrued</b> earned but not yet invoiced — an accounting term for <em>when</em> revenue is realized</button>
-    <button type="button" class="gl" data-mode="billed"><b>Billed</b> the invoice went out — it can carry earlier accruals finally settling</button>
-    <span class="gl def"><b>Allocation</b> every earned month gets an accrual month, a billed month and a realized
-      month — <b>with the year</b>, because December's work bills in January — at one amount, spent once</span>
-    <button type="button" class="gl strong" data-mode="realized"><b>Realized</b> the month it lands in the finance team's report — this is the view that has to agree with them</button>
-    <span class="gl eg">Jan earns 45K and accrues it, due March · Feb the same · March earns 45K and 135K is invoiced.
-      March is <b>not</b> worth 135K — it is 90K of Jan and Feb going out plus 45K of its own. <b>Realized 45K.</b>
-      <span class="gl-hint">Click a term above to read the grid on that calendar. EARNED comes from the fee tool;
-        the other three come from how each earned month has been allocated.</span></span>
-  </div>
-
-  <div class="kpis" id="kpis"></div>
-
-  <section class="card map-ws" id="map-card" hidden>
-    <h2>Map every line to the fee tool <span class="owner">Do this first — nothing else on the page is true until it is done</span></h2>
-    <div class="cbody">
-      <p class="intro">
-        Every figure on this page is arithmetic on top of one assumption: that the line Finance billed and the project
-        the fee tool prices are <b>the same job</b>. A line with no project has no <b>EARNED</b> figure to reconcile
-        against, so it reads as revenue nobody forecast; a line pointed at the <b>wrong</b> project is worse, because it
-        moves real money onto someone else's forecast and makes two projects wrong instead of one.
-        There are only three answers: <b>this project</b>, <b>a project we do not have yet</b>, or
-        <b>not a project at all</b> — and the third is a decision worth recording, not a gap.
-        A mapping is kept in its own book, so it carries into every future close instead of being made again each January.
-      </p>
-      <div id="map-summary"></div>
-      <div class="frow map-ctl">
-        <button class="btn btn-primary" id="map-auto">Auto-map the confident matches</button>
-        <button class="btn sm" id="map-seed" title="Write matches already on this year's rows into the mapping book">Carry existing matches into the book</button>
-        <label class="ctl-toggle"><input type="checkbox" id="map-only-open" checked> Only lines still to answer</label>
-        <input type="search" id="map-search-q" placeholder="Search lines and projects" aria-label="Search lines">
-      </div>
-      <div id="map-list"></div>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>Import the year-to-date actuals <span class="owner">Finance owns this — the only way actuals enter the system</span></h2>
-    <div class="cbody">
-      <p class="intro">
-        Upload <b>Revenue by Month by Client</b> and pick the <b>YTD &lt;Month&gt; &lt;Year&gt;</b> tab. One upload lands
-        <b>every month that tab carries</b> — the July tab brings in January through July in a single go. Next month,
-        upload the August tab and it refreshes in place, keeping every billing status you have already set.
-        Columns are found by their header text, not their position, and every row is footed against the sheet's own
-        Reported Revenue column before anything lands. The <b>accrual figure is a single lump</b> with no month behind
-        it — it lands beside the Accrued lane as a target for you to spread across months. Prior-year reversals are
-        not imported.
-      </p>
-      <div class="frow">
-        <label for="close-file">Workbook</label>
-        <input type="file" id="close-file" accept=".xlsx,.xlsm,.xls">
-      </div>
-      <div class="frow" id="sheet-row" hidden>
-        <label for="sheet-pick">Sheet</label>
-        <select id="sheet-pick"></select>
-        <button class="btn btn-primary" id="post-year" disabled>Post actuals</button>
-      </div>
-      <div id="import-msg"></div>
-    </div>
-  </section>
-
-  <div class="ws-head">
-    <h2>Recognised revenue, by project and month</h2>
-    <span class="mode-label" id="mode-label"></span>
-    <select id="leader-pick" aria-label="Revenue leader"></select>
-    <label class="ctl-toggle"><input type="checkbox" id="only-unassigned"> Only unassigned</label>
-    <label class="ctl-toggle"><input type="checkbox" id="show-zero"> No activity</label>
-    <button class="btn sm" id="year-export">⤓ Export the year</button>
-    <div class="legend">
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-unruled)"></span>No status yet</span>
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-reclass)"></span>Reclass</span>
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-billed)"></span>Billed</span>
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-accrued)"></span>Accrued</span>
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-slip)"></span>Slipped</span>
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-early)"></span>Billed early</span>
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-trueup)"></span>True-up</span>
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-wo)"></span>Written off</span>
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-new)"></span>Unforecast</span>
-      <span class="lg"><span class="sw" style="border-bottom-color:var(--st-fee)"></span>Fee share</span>
-      <span class="hint">Closed months carry a settlement stripe · click a project to open its timing lanes · click a figure to set its status · in an open lane, Enter or Tab commits and walks across the months</span>
+  <div class="identity-bar">
+    <div class="id-who">
+      <span class="id-label">Viewing as</span>
+      <select id="id-user"></select>
+      <span class="id-role" id="id-role"></span>
+      <span class="id-note" id="id-note"></span>
     </div>
   </div>
 
-  <div class="empty" id="empty" hidden>No actuals for this year yet. Upload the year-to-date tab above.</div>
-  <div class="ws-scroll"><table class="ws" id="grid"></table></div>
-
-  <section class="card lead" id="leader-card" hidden>
-    <h2>What changed on your projects <span class="owner">Revenue leader view — the same reconciliation, in plain language</span></h2>
-    <div class="cbody">
-      <p class="intro">
-        No accounting vocabulary — just what moved, where it went, and what is now expected of the person who owns
-        the client. Ordered by how far each month landed from its plan.
-      </p>
-      <div class="impact" id="leader-list"></div>
-    </div>
-  </section>
-
-  <section class="card" id="flash-card" hidden>
-    <h2 id="flash-title">Month view</h2>
-    <div class="cbody">
-      <p class="intro">
-        One month, project by project: what the <b>fee tool</b> projected, what was <b>recognised</b>, and the
-        <b>billed</b> and <b>accrued</b> figures that make up the difference. The three columns the ledger added are
-        highlighted. Pick the month below; it also drives the highlighted column in the year grid above.
-        Both views export: <b>this month</b> as a flash, or <b>the year</b> with all four lanes written out per project.
-      </p>
-      <p class="intro comp" id="flash-comp"></p>
-      <div class="frow">
-        <label for="focus-pick">Month</label>
-        <select id="focus-pick" aria-label="Month focus"></select>
-        <button class="btn btn-primary" id="flash-export">⤓ Export this month</button>
-      </div>
-      <div class="ws-scroll" style="max-height:52vh; margin-top:12px;"><table class="ws" id="flash-table"></table></div>
-    </div>
-  </section>
+  <section id="recon" class="cb-pane"></section>
 
   <div class="foot">
-    <h3>Three lanes, one question per cell</h3>
-    <p>
-      <strong>Tool</strong> is what the fee record says should bill, straight from the project — read-only, because it
-      is the plan being reconciled against. <strong>Billed</strong> is what the sheet says was invoiced; type over it
-      when the sheet is wrong, and clear the cell to put the sheet's figure back. <strong>Accrued</strong> is earned
-      but not invoiced, and you fill it in — the file cannot tell you.
-      <strong>Recognised = billed + fee share + accrued.</strong>
-    </p>
-    <h3>Why the accrual has to be spread by hand</h3>
-    <p>
-      The close file states <strong>one accrual figure per project</strong>, with no month behind it. P009355 carries
-      $680,000 against no billings at all — which is really $170,000 earned in each of April through July, and nothing
-      in the file says so. No arithmetic can recover that, so the tool does not pretend to: the imported lump sits in
-      the <strong>Accrual</strong> column as a target, the row shows how much is still unplaced, and
-      <strong>Spread…</strong> fills an even run in one action. A row is right when the column reads
-      <em>allocated ✓</em>.
-    </p>
-    <h3>One year at a time</h3>
-    <p>
-      The ledger starts in <strong>2026</strong> and only looks forward. The close file's prior-year accrual reversal
-      is read at import — purely to prove the sheet parsed correctly against its own totals — and then discarded: it is
-      a whole-year opening adjustment about last year's work. So this ledger's total <strong>deliberately differs</strong>
-      from the file's "YTD Reported Revenue" by exactly that reversal. Prior years stay in Finance's own files.
-    </p>
-    <h3>Why fee shares sit below billed, not inside it</h3>
-    <p>
-      The invoice really did go out gross — the client was billed the full amount, and the co-broker's cut comes off
-      Savills' revenue afterwards. Netting it into the billed figure would destroy the number Finance reconciles
-      against, so every fee share stays its own line, indented under the project it comes out of. A fee share is
-      <strong>signed</strong>: a reversal of a prior-period share shows as a positive month.
-    </p>
-    <h3>Where this is stored</h3>
-    <p>
-      Actuals live in their own Box file, <strong>revenue.json</strong> — never inside
-      <code>projects.json</code>, which holds project records and nothing else. Re-posting a close would otherwise
-      churn the file every other page reads. The file configures itself: the first admin to open this page creates it
-      in the shared folder, and everyone lands on the same one. Edits merge <strong>per project row</strong>, so two
-      people reconciling different projects at the same time both keep their work.
-    </p>
-    <h3>Who does what</h3>
-    <ul>
-      <li><strong>Finance</strong> uploads the tab and rules on each figure. Only two things are pre-filled — fee
-          shares, and billings that land on plan — and both can be changed.</li>
-      <li><strong>Revenue leaders</strong> never touch this page. They see the result in Revenue Projections.</li>
-      <li>A <strong>slipped</strong> figure <strong>moves the money on the project</strong>. Pick the month it should
-          bill instead and the fee comes off the month that missed and lands on the one you chose — the project's total
-          is unchanged. The project is flagged, and both months show <strong>in red on Revenue Projections</strong>
-          until someone marks the slip reconciled. It is the one thing on this page that edits a revenue leader's
-          forecast, so it is deliberately loud. A line that isn't mapped to a project can't slip — there is no
-          forecast to move.</li>
-    </ul>
+    <strong>How this works.</strong> &nbsp; Each project has up to three lines a month — <b>Fee</b> (what the client is billed for the fee, including the fee on any pass-through), <b>Pass-through</b> (vendor cost billed through Savills) and <b>Fee share</b> (the broker or co-party cut, a minus). Leaders own <em>earned</em>: the month the work happened, in their project. Finance owns the <em>billing layer</em> here: billed as planned, billed a different amount, accrued to a later month, slipped to a later month, or written off. An accrual carries into every following month until it is billed; the month it bills shows the amount billed and a minus against accruals. A different amount or a slip puts a flag on the project for its leader to fix — nothing here rewrites their figures. <b>Lock</b> freezes the month: nothing changes here afterwards, and any project edit that moves a locked figure is flagged in red at the top until an admin reopens the month.
   </div>
+
 </div>
 
+<script>window.UFC_NEEDS = ['revenue'];</script>
 <script src="universal-fee-calc/vendor-lazy.js"></script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/confirmed-book.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
-<!-- The actuals ledger. This is the only page that reads or writes it, so it
-     is the only page that loads it. Awaited before render — this page SAVES
-     to revenue.json, and saving before the pull landed could overwrite a
-     teammate's close. -->
-<script>window.UFC_NEEDS = ['revenue'];</script>
 <script src="universal-fee-calc/boot.js"></script>
-  <script src="universal-fee-calc/ui.js"></script>
+<script src="universal-fee-calc/ui.js"></script>
 <script src="universal-fee-calc/sync-status.js"></script>
-<script>
-  // ---- Access gate (fail-closed) ----------------------------------------
-  // The nav hides this page from non-admins, but hiding a link is not access
-  // control. This tool posts the numbers the whole business reports on, so the
-  // page itself checks — same allowlist pattern as Ingestion Studio.
-  (window.ufcReady && window.ufcReady.then ? window.ufcReady
-    : new Promise(r => { if (document.readyState !== 'loading') r(); else document.addEventListener('DOMContentLoaded', r); })
-  ).then(() => {
-    const S = window.UFC_Store;
-    const u = S && S.getCurrentUser ? S.getCurrentUser() : null;
-    if (S && S.isAdmin && S.isAdmin(u)) {
-      const s = document.createElement('script');
-      s.src = 'universal-fee-calc/revenue-reconcile.js';
-      document.body.appendChild(s);
-      return;
-    }
-    document.querySelector('.wrap').innerHTML = `
-      <header class="head">
-        <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
-        <div><h1>Revenue reconciliation.</h1></div>
-        <div></div>
-      </header>
-      <div style="padding:70px 40px;text-align:center">
-        <div style="font-family:var(--font-display);font-weight:800;font-size:20px;color:var(--sav-navy);margin-bottom:10px">This tool is admin-only.</div>
-        <div style="max-width:520px;margin:0 auto;line-height:1.6;color:var(--sav-steel)">You're signed in as <strong>${(u && u.username ? String(u.username) : '(no identity)').replace(/[&<>"]/g, '')}</strong>, which isn't on the admin list. Revenue reconciliation posts the actuals the whole business reports on — if a month looks wrong on your projects, contact Sarah Abdin.</div>
-        <div style="margin-top:22px"><a href="Revenue Projections.html" class="btn" style="text-decoration:none">Revenue Projections</a></div>
-      </div>`;
-  });
-</script>
+<script src="universal-fee-calc/revenue-recon-page.js"></script>
 <script src="universal-fee-calc/guide.js"></script>
 <script src="universal-fee-calc/confirm-widget.js"></script>
 <script src="universal-fee-calc/nav.js"></script>

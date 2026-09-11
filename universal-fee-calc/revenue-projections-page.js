@@ -258,10 +258,12 @@
     html += sortTh('total', 'Total', 'totcol', ' rowspan="2"') + '</tr>';
     html += '<tr>';
     const _now = new Date(); const _ck = _now.getFullYear() + '-' + (_now.getMonth() + 1);
+    const isLocked = (c) => { try { return !!(STORE.reconMonth && STORE.reconMonth(c.y, c.m) && STORE.reconMonth(c.y, c.m).lockedAt); } catch (e) { return false; } };
     cols.forEach((c, i) => {
       const sep = (i + 1 < cols.length && cols[i + 1].y !== c.y) ? ' year-sep' : '';
       const today = c.key === _ck ? ' today' : '';
-      html += `<th class="sortable ${(sep + today).trim()}${SORT.key === 'm:' + c.key ? ' sorted' : ''}" data-sort="m:${c.key}" title="Sort by ${MONTHS[c.m - 1]} ${c.y}">${c.key === _ck ? '<span class="today-tag">CURRENT</span>' : ''}${MONTHS[c.m - 1]}${sortInd('m:' + c.key)}</th>`;
+      const lk = isLocked(c);
+      html += `<th class="sortable ${(sep + today).trim()}${SORT.key === 'm:' + c.key ? ' sorted' : ''}${lk ? ' locked' : ''}" data-sort="m:${c.key}" title="${lk ? 'Locked by Finance in Revenue Reconciliation — a change here is flagged there. ' : ''}Sort by ${MONTHS[c.m - 1]} ${c.y}">${c.key === _ck ? '<span class="today-tag">CURRENT</span>' : ''}${lk ? '<span class="lock-tag" aria-label="locked">🔒</span>' : ''}${MONTHS[c.m - 1]}${sortInd('m:' + c.key)}</th>`;
     });
     html += '</tr></thead><tbody>';
 
@@ -501,6 +503,7 @@
         const orig = td.dataset.orig != null ? td.dataset.orig : raw;
         // Unchanged → do nothing. No write, no save, no red flag.
         if (raw === orig) return;
+        try { const [ly, lm] = key.split('-').map(Number); const meta = STORE.reconMonth && STORE.reconMonth(ly, lm); if (meta && meta.lockedAt) UFC_UI.toast(MONTHS[lm - 1] + ' ' + ly + ' is locked by Finance — this change will be flagged in red on Revenue Reconciliation.'); } catch (e) {}
         rec.monthlyOverrides = rec.monthlyOverrides || {};
         if (raw === '') { delete rec.monthlyOverrides[key]; }   // cleared = revert to computed
         else { const n = parseFloat(raw); if (!isNaN(n)) rec.monthlyOverrides[key] = n; else return; }
