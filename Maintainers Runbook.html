@@ -437,8 +437,9 @@
   <h3>Path B · no hours stated → mock up logical staffing</h3>
   <p>If the proposal named people but stated no hours (blank matrix), <em>Fit to target</em> builds a logical staffing shape: only named people are staffed; everyone gets some allocation shaped by seniority (delivery roles carry the load, principals light-touch); the shape is scaled with 100% caps to bridge to the fee. If the target exceeds the team's capacity it maxes at 100% and reports the shortfall; if nothing can be priced it leaves allocations blank. The seniority weights are the <em>only</em> assumed numbers in the system, used only when no hours are stated.</p>
 
-  <h2><span class="n">11</span> Change orders</h2>
-  <p class="lead">A change order (CO) amends a booked contract. The model: <strong>original contract + &Sigma; approved change orders = revised contract.</strong></p>
+  <h2><span class="n">11</span> Change orders <span class="c">(retired September 2026)</span></h2>
+  <div class="box"><strong>Retired.</strong> Linked change orders are no longer created: every amendment, CO, ASR or work authorisation is a <strong>separate project</strong>, priced as just the added scope and named in the team's convention — <code>{Project} - CO 01</code>. The optional <strong>Amends</strong> field on the calculator (<code>project.amendsId</code>) keeps the family together on the index; the dollars stay separate and every projection is a plain sum of projects. The five linked records that existed at retirement carry a <strong>Make this a separate project</strong> button on their banner (<code>detachChangeOrder</code>: drops the link, sets <code>amendsId</code>, renames to the convention, logs <code>co-detach</code>). An <em>approved</em> one is priced as the whole revised scope and must be re-priced to the added scope after conversion, or its parent is counted twice. The read side below (<code>revisedContract</code>, the projections' CO folding) stays until the last linked record is converted, then goes.</div>
+  <p class="lead">What the retired model was: a change order (CO) amends a booked contract. <strong>original contract + &Sigma; approved change orders = revised contract.</strong></p>
   <ul>
     <li><strong>Forked, linked record.</strong> "Process as change order" on a booked project creates a new record — a full, month-canonical copy of the running revised scope — named <code>{Project} — CHANGE ORDER n (Mon YYYY)</code>, sharing the <strong>parent's Salesforce ID</strong> (no new SF project).</li>
     <li><strong>Incremental scope.</strong> A CO's value is the difference between its priced net and the contract it forked from. The baseline curve is never reset; the delta naturally starts where the months diverge. COs can be negative (de-scope).</li>
@@ -448,7 +449,7 @@
   </ul>
   <div class="box">
     <span class="tag">Stale-contract flag</span>
-    If a booked project's inputs drift from its frozen snapshot, the calculator shows a red banner — "Contract changed since it was booked" — with two actions: <strong>Restamp contract</strong> (<code>restampFinancials</code> refreshes the frozen figures to current scope) or <strong>Process as change order</strong> (capture the difference as a signed amendment).
+    If a booked project's inputs drift from its frozen snapshot, the calculator shows a red banner — "Contract changed since it was booked" — with one action: <strong>Restamp contract</strong> (<code>restampFinancials</code> refreshes the frozen figures to current scope). Added scope that is billed separately is its own project (see the retirement note above).
   </div>
 
   <div class="foot"><span>Savills PPM — Fee &amp; Revenue System</span><span>Maintainer's Runbook · 5 / 7</span></div>
@@ -488,7 +489,7 @@
   <p>Draft / negotiation records have <strong>no</strong> snapshot — their numbers are working estimates and recompute live in the projection views. Reporting either ignores them or treats them clearly as "live estimate," never as committed revenue.</p>
 
   <h3>Keeping a snapshot honest</h3>
-  <p>A snapshot would drift if someone edits a booked project afterward. The app does <strong>not</strong> silently overwrite it: editing a booked record sets <code>financials.stale = true</code> on autosave and the calculator shows the stale-contract banner (&sect;11) as soon as that save lands — no reload needed. The figures only refresh on an explicit <strong>restamp</strong> or are superseded by an approved <strong>change order</strong>. A booked number never changes by accident.</p>
+  <p>A snapshot would drift if someone edits a booked project afterward. The app does <strong>not</strong> silently overwrite it: editing a booked record sets <code>financials.stale = true</code> on autosave and the calculator shows the stale-contract banner (&sect;11) as soon as that save lands — no reload needed. The figures only refresh on an explicit <strong>restamp</strong>. A booked number never changes by accident.</p>
 
   <div class="box">
     <span class="tag">Status · implemented</span>
@@ -583,7 +584,7 @@
     <li><strong>Client-side access limit</strong> (&sect;6) — Box folder permission is the true boundary.</li>
     <li><strong>rates.json must exist in Box</strong> with its id set, or every page gates closed.</li>
     <li><strong>Box logins must match the allowlist emails exactly</strong> (<code>firstinitiallastname@savills.us</code>). A mismatch makes an admin look like a member.</li>
-    <li><strong>Editing a booked project flags it stale</strong> — by design (&sect;11). Restamp or process a change order. NTE projects restamp automatically.</li>
+    <li><strong>Editing a booked project flags it stale</strong> — by design (&sect;12). Restamp it; added scope billed separately is its own project. NTE projects restamp automatically.</li>
     <li><strong>Run <code>tests.html</code> before every deploy</strong> — 24 regression assertions on the pricing engine and data layer; all must be green.</li>
     <li><strong>Clockify mapping hygiene</strong> — an unmapped Clockify project shows as unattributed burn on Profitability. Fix the fee-link once and it holds for the whole team (&sect;12).</li>
     <li><strong>Staffing data looks wrong (duplicates, 200%+ loads, ghost rows)?</strong> Open <strong>Data Repair</strong> first — it previews every known damage signature before touching anything, and its deletions use tombstones so a stale tab can't merge them back. Anything it lists under "needs human review" is a judgment call it will not auto-fix.</li>

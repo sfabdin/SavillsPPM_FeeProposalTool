@@ -1421,6 +1421,7 @@
     $('#pm-firstProposal').value = f.firstProposalDate || '';
     $('#pm-signed').value = f.signedContractDate || '';
     const sfidEl = $('#pm-sfid'); if (sfidEl) sfidEl.value = f.salesforceId || '';
+    populateAmends();
     $('#pm-clientContact').value = f.clientContact || '';
     const relSel = $('#pm-clientRel');
     if (relSel && relSel.tagName === 'SELECT') {
@@ -1980,14 +1981,13 @@
       detailEl.innerHTML = `Incremental value <span class="${cls}"><strong>${sign}${fmtMoney(Math.abs(delta.net))}</strong></span>`
         + (delta.effectiveYM ? ` from <strong>${delta.effectiveYM}</strong>` : '')
         + ` · shares Salesforce ID <strong>${escapeHtml(state.project.salesforceId || '—')}</strong> with the parent.`
-        + (approved ? ' <strong>Approved</strong> — rolled into the revised contract.' : ' Edit the staffing, then approve to roll it into the revised contract.')
+        + (approved ? ' <strong>Approved</strong> — rolled into the parent\'s revised contract.' : ' Not approved — counted nowhere yet.')
         + renderCoDiff();
-      actionsEl.innerHTML = approved
-        ? `<a class="co-btn secondary" href="?id=${encodeURIComponent(state.changeOrder.parentId)}">View parent →</a>`
-        : `<button class="co-btn" id="co-approve" type="button">Approve change order</button>`
-          + `<a class="co-btn secondary" href="?id=${encodeURIComponent(state.changeOrder.parentId)}">View parent →</a>`;
-      const ap = $('#co-approve');
-      if (ap) ap.addEventListener('click', onApproveChangeOrder);
+      actionsEl.innerHTML = `<button class="co-btn" id="co-detach" type="button">Make this a separate project</button>`
+        + `<a class="co-btn secondary" href="?id=${encodeURIComponent(state.changeOrder.parentId)}">View parent →</a>`;
+      detailEl.innerHTML += `<div class="co-retired">Change orders are retired — extra scope is its own project now. Convert this one${approved ? ', then re-price it to just the added scope so the parent is not counted twice' : ' and price just the added scope'}.</div>`;
+      const dt = $('#co-detach');
+      if (dt) dt.addEventListener('click', onDetachChangeOrder);
       banner.hidden = false;
       return;
     }
@@ -1999,11 +1999,9 @@
       markEl.textContent = stale ? '⚠' : '⇄';
       banner.classList.toggle('co-stale', !!stale);
       if (stale) {
-        titleEl.textContent = 'Contract changed since it was booked — restamp or process a change order.';
-        detailEl.innerHTML = `The staffing or assumptions no longer match the <strong>frozen contract</strong> (${fmtMoney(state.financials.net)}). Either <strong>restamp</strong> the booked figures to the current scope, or <strong>process a change order</strong> to capture the difference as a signed amendment.`;
-        actionsEl.innerHTML = `<button class="co-btn" id="co-create" type="button">Process as change order →</button>`
-          + `<button class="co-btn secondary" id="co-restamp" type="button">Restamp contract</button>`;
-        const cb = $('#co-create'); if (cb) cb.addEventListener('click', onCreateChangeOrder);
+        titleEl.textContent = 'Contract changed since it was booked.';
+        detailEl.innerHTML = `The staffing or assumptions no longer match the <strong>frozen contract</strong> (${fmtMoney(state.financials.net)}). <strong>Restamp</strong> to make the current scope the booked figures. Added scope that is billed separately belongs in its own project — name it <strong>${escapeHtml((state.project.name || 'Project') + ' - CO 01')}</strong>.`;
+        actionsEl.innerHTML = `<button class="co-btn" id="co-restamp" type="button">Restamp contract</button>`;
         const rs = $('#co-restamp'); if (rs) rs.addEventListener('click', onRestampContract);
         banner.hidden = false;
         return;
@@ -2012,11 +2010,9 @@
         ? `Revised contract · ${fmtMoney(rc.revisedNet)}`
         : `Booked contract · ${fmtMoney(rc.baselineNet)}`;
       detailEl.innerHTML = rc.coCount
-        ? `Original <strong>${fmtMoney(rc.baselineNet)}</strong> ${rc.coNetSum >= 0 ? '+' : '−'} ${rc.coCount} change order${rc.coCount === 1 ? '' : 's'} <strong>${fmtMoney(Math.abs(rc.coNetSum))}</strong> = <strong>${fmtMoney(rc.revisedNet)}</strong>. A change order amends this contract without touching the frozen original.`
-        : `This contract is frozen for reporting. To revise scope, process a <strong>change order</strong> — it forks an editable copy, prices only the incremental change, and shares this project's Salesforce ID.`;
-      actionsEl.innerHTML = `<button class="co-btn" id="co-create" type="button">Process as change order →</button>`;
-      const cb = $('#co-create');
-      if (cb) cb.addEventListener('click', onCreateChangeOrder);
+        ? `Original <strong>${fmtMoney(rc.baselineNet)}</strong> ${rc.coNetSum >= 0 ? '+' : '−'} ${rc.coCount} linked change order${rc.coCount === 1 ? '' : 's'} <strong>${fmtMoney(Math.abs(rc.coNetSum))}</strong> = <strong>${fmtMoney(rc.revisedNet)}</strong>. Change orders are retired — open each one and make it a separate project.`
+        : `This contract is frozen for reporting. Added scope is its own project: create one named <strong>${escapeHtml((state.project.name || 'Project') + ' - CO 01')}</strong> and price just the added scope.`;
+      actionsEl.innerHTML = '';
       banner.hidden = false;
       return;
     }
@@ -2027,19 +2023,15 @@
   /** Shape current editor state as a record for STORE helpers. */
   function stateAsRecord() { return JSON.parse(JSON.stringify(state)); }
 
-  function onCreateChangeOrder() {
-    // Save the parent first so the contract baseline is current, then fork.
+  function onDetachChangeOrder() {
+    const approved = STORE.isApprovedChangeOrder && STORE.isApprovedChangeOrder(stateAsRecord());
+    const msg = approved
+      ? 'Make this a separate project?\n\nIt is priced as the WHOLE revised scope. Once it stands alone, re-price it to just the added scope — otherwise the parent is counted twice in every projection.'
+      : 'Make this a separate project?\n\nIt keeps its staffing and history and drops the link to the parent. Price it as just the added scope.';
+    if (!confirm(msg)) return;
     saveToStore({ silent: true });
-    const res = STORE.createChangeOrder(state.id);
-    if (!res || res.error) { UFC_UI.toast(res && res.error || 'Could not create change order.'); return; }
-    window.location.search = '?id=' + encodeURIComponent(res.co.id);
-  }
-
-  function onApproveChangeOrder() {
-    if (!confirm('Approve this change order? Its figures freeze and roll into the revised contract.')) return;
-    saveToStore({ silent: true });
-    const res = STORE.approveChangeOrder(state.id);
-    if (!res || res.error) { UFC_UI.toast(res && res.error || 'Could not approve.'); return; }
+    const res = STORE.detachChangeOrder(state.id);
+    if (!res || res.error) { UFC_UI.toast(res && res.error || 'Could not convert.'); return; }
     window.location.reload();
   }
 
@@ -2089,12 +2081,32 @@
       if (mark) mark.textContent = '⚑';
       if (drifted && sent) {
         if (title) title.textContent = 'Fee or schedule changed — re-submit the Salesforce intake.';
-        if (detail) detail.innerHTML = 'Something changed since the last intake. Press <strong>⚠ Re-submit Intake →</strong> in the top bar, re-send the email, then re-confirm below — or process it as a change order.';
+        if (detail) detail.innerHTML = 'Something changed since the last intake. Press <strong>⚠ Re-submit Intake →</strong> in the top bar, re-send the email, then re-confirm below.';
       } else {
         if (title) title.textContent = 'This project is booked — submit the Salesforce intake.';
         if (detail) detail.innerHTML = 'Press <strong>Salesforce Intake →</strong> in the top bar to generate the intake email, send it from your mailbox, then confirm below. Paste the <strong>Salesforce ID</strong> into the project record once the opportunity exists.';
       }
     }
+  }
+
+  /** "Amends" — the optional link from a follow-on project (a CO, an ASR, a
+      work authorisation) to the contract it extends. Display and grouping
+      only; the dollars stay separate. Lists the client's other projects
+      first, then everything else, so the parent is one pick away. */
+  function populateAmends() {
+    const sel = $('#pm-amends'); if (!sel) return;
+    const cur = state.project.amendsId || '';
+    const client = String(state.project.client || '').trim().toLowerCase();
+    const all = (STORE.listProjects() || []).filter(p => p.id !== state.id && !STORE.isChangeOrder(p));
+    const label = p => `${(p.project && p.project.client) || '—'} · ${(p.project && p.project.name) || 'Untitled'}`;
+    const same = all.filter(p => client && String((p.project && p.project.client) || '').trim().toLowerCase() === client).sort((a, b) => label(a).localeCompare(label(b)));
+    const rest = all.filter(p => !same.includes(p)).sort((a, b) => label(a).localeCompare(label(b)));
+    const opt = p => `<option value="${escapeHtml(p.id)}"${p.id === cur ? ' selected' : ''}>${escapeHtml(label(p))}</option>`;
+    sel.innerHTML = `<option value="">— none —</option>`
+      + (same.length ? `<optgroup label="Same client">${same.map(opt).join('')}</optgroup>` : '')
+      + `<optgroup label="${same.length ? 'Other projects' : 'All projects'}">${rest.map(opt).join('')}</optgroup>`;
+    if (cur && !all.some(p => p.id === cur)) sel.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(cur)}" selected>(project not found)</option>`);
+    sel.value = cur;
   }
 
   /** Show the placeholder tick only where it can mean something.
@@ -3164,6 +3176,8 @@
     $('#pm-signed').addEventListener('input', e => { state.project.signedContractDate = e.target.value; markDirty(); });
     const sfidInput = $('#pm-sfid');
     if (sfidInput) sfidInput.addEventListener('input', e => { state.project.salesforceId = e.target.value; markDirty(); });
+    const amendsSel = $('#pm-amends');
+    if (amendsSel) amendsSel.addEventListener('change', e => { state.project.amendsId = e.target.value || ''; markDirty(); });
     const intakeSentInput = $('#pm-intake-sent');
     if (intakeSentInput) intakeSentInput.addEventListener('change', e => { state.project.intakeSent = e.target.checked; updateIntakeCallout(); markDirty(); });
     $('#pm-clientContact').addEventListener('input', e => { state.project.clientContact = e.target.value; markDirty(); });

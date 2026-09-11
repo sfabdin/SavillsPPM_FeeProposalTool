@@ -3530,6 +3530,36 @@
     return { ok: true, co };
   }
 
+  /** Change orders are retired: extra scope is a separate project. This turns
+      a linked change-order record into one — the record keeps everything
+      (staffing, timeline, frozen figures, history) and only loses the link,
+      remembering the parent as `project.amendsId` so the family still reads
+      together. The auto name "{Parent} — CHANGE ORDER n (Mon YYYY)" becomes
+      the team's own convention, "{Parent} - CO 0n". An APPROVED change order
+      is priced as the whole revised scope, so the caller warns that it must
+      be re-priced to just the added scope or the parent counts twice. */
+  function detachChangeOrder(id) {
+    const db = readDb();
+    const co = db.projects[id];
+    if (!co || !isChangeOrder(co)) return { error: 'Not a change order.' };
+    const parentId = co.changeOrder.parentId;
+    const parent = db.projects[parentId];
+    const wasApproved = isApprovedChangeOrder(co);
+    const n = co.changeOrder.coNumber;
+    co.project = co.project || {};
+    const m = /^(.*) — CHANGE ORDER (\d+) \(.*\)$/.exec(co.project.name || '');
+    if (m) co.project.name = m[1] + ' - CO ' + String(m[2]).padStart(2, '0');
+    co.project.amendsId = parentId;
+    delete co.changeOrder;
+    co.updatedAt = new Date().toISOString();
+    writeDb(db);
+    logActivity('co-detach', co.id, {
+      name: co.project.name || '', client: co.project.client || '',
+      parent: (parent && parent.project && parent.project.name) || parentId, coNumber: n, wasApproved,
+    });
+    return { ok: true, record: co, parentId, wasApproved };
+  }
+
   /** Roll up projects by client: contract + revised + CO count. Parents only
       (COs fold into their parent's revised total). */
   function clientRollup(projects, feeOf) {
@@ -4779,7 +4809,7 @@
     reconcileImport,
     projectSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries,
-    approveChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
+    approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,

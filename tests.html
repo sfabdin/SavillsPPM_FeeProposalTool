@@ -2633,6 +2633,19 @@
       return sq(a.map(x => x.ym + ':' + r2(x.invoice)).join(','), '2026-04:3173.77,2026-05:0', 'imported April shows even though the timeline is May') &&
              sq(b.map(x => x.ym + ':' + r2(x.invoice)).join(','), '2026-05:1100', 'once a line exists, the line is the number');
     });
+    test('Change orders · retired', 'a linked change order becomes a separate project: link dropped, parent remembered as amends, name in the team convention', () => {
+      const parent = sw({ id: 'co_parent', project: { name: 'MTSI-Huntsville', client: 'MTSI', status: 'active' } });
+      const co = sw({ id: 'co_child', project: { name: 'MTSI-Huntsville — CHANGE ORDER 2 (Aug 2026)', client: 'MTSI', status: 'active' }, changeOrder: { parentId: 'co_parent', coNumber: 2, baselineNet: 1000, baselineByMonth: {} } });
+      S.saveProject(parent, { force: true }); S.saveProject(co, { force: true });
+      const before = S.isChangeOrder(S.getProject('co_child'));
+      const res = S.detachChangeOrder('co_child');
+      const after = S.getProject('co_child');
+      const again = S.detachChangeOrder('co_child');
+      return sq(before, true, 'linked to start with') && sq(!!res.ok, true, 'converted') && sq(res.parentId, 'co_parent', 'says which parent') &&
+             sq(S.isChangeOrder(after), false, 'no longer a change order') && sq(after.project.amendsId, 'co_parent', 'parent remembered as amends') &&
+             sq(after.project.name, 'MTSI-Huntsville - CO 02', 'renamed to the team convention') && sq(!!again.error, true, 'a plain project cannot be converted') &&
+             sq(S.revisedContract('co_parent').coCount, 0, 'the parent no longer rolls it up');
+    });
     test('Projects Index · total fee', 'a pass-through-only closed-out record shows what the client is billed, not $0 (Mitchell & Ness CO 01)', () => {
       const p = sw({ timeline: { startMonth: 1, startYear: 2026, endMonth: 1, endYear: 2026 },
         passthrough: pt([{ id: 'a', label: 'Savills Relocation', cost: 52400, markupPct: 19.084, mode: 'billed' }]),
