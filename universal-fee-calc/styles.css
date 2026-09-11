@@ -1877,6 +1877,7 @@ table.fm-tbl tr.is-pinned input.fm-in { border-color: var(--sav-yellow); }
 
 /* Finance's flags on a project (from the revenue book) */
 .recon-flags { display: flex; gap: 14px; align-items: flex-start; margin: 0 0 14px; padding: 14px 18px; border: 2px solid var(--sav-red); background: #fff5f5; color: var(--sav-navy); }
+.recon-flags[hidden] { display: none; }
 .recon-flags.rf-locked { background: var(--sav-red); color: #fff; border-color: #A6131A; }
 .recon-flags .rf-mark { font-size: 22px; line-height: 1; color: var(--sav-red); }
 .recon-flags.rf-locked .rf-mark { color: var(--sav-yellow); }
