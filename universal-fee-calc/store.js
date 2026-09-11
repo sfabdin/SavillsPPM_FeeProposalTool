@@ -244,6 +244,31 @@
       });
       return { projects: out, lines };
     },
+    /* The old "Seed demo data" button (gone since August) planted four sample
+       projects on 2026-06-26. Two are still counted — Pfizer at $859k booked
+       and Citi as a dead pursuit. Tombstone them the way a delete would, so
+       the trail shows it and they can be restored if anyone objects. The
+       names are checked too: a real project that happened to reuse an id
+       would be left alone. */
+    'demo-rows-2026-09': (db) => {
+      const DEMO = [
+        { id: 'proj_2bcv5yx5h', name: 'Hudson Yards Build-out', client: 'Pfizer' },
+        { id: 'proj_1fr0atzcn', name: 'Park Avenue HQ Refit', client: 'Citi' },
+      ];
+      const out = [];
+      const now = new Date().toISOString();
+      const who = (getCurrentUser() && getCurrentUser().username) || null;
+      DEMO.forEach(d => {
+        const p = db.projects[d.id];
+        if (!p || p._deleted) return;
+        const pj = p.project || {};
+        if ((pj.name || '').trim() !== d.name || (pj.client || '').trim() !== d.client) return;
+        db.projects[d.id] = { id: d.id, _deleted: true, deletedAt: now, updatedAt: now, deletedBy: who,
+                              project: { name: pj.name || '', client: pj.client || '' } };
+        out.push({ id: d.id, name: pj.name || d.id });
+      });
+      return { projects: out, lines: 0 };
+    },
   };
   function runDataCleanups() {
     if (!seesAllProjects(getCurrentUser())) return [];
@@ -264,6 +289,7 @@
     writeDb(db);
     ran.forEach(({ key, res }) => {
       if (key === 'pt-splits-2026-09') logSystem('pt-months-cleanup', { lines: res.lines, projects: res.projects.map(x => x.name) });
+      if (key === 'demo-rows-2026-09') res.projects.forEach(x => logActivity('delete', x.id, { name: x.name, demo: true }));
     });
     return ran;
   }
