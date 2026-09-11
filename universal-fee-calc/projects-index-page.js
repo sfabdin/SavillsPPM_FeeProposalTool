@@ -81,14 +81,14 @@
     // The row is what the CLIENT is billed: fee (imported or staffed) + broker
     // on top + pass-through billed through Savills — the calculator's headline.
     const b = STORE.clientBillOf(p, CATALOG);
-    return { net: b.total, fee: b.fee, pass: b.pass, passCost: b.passCost, broker: b.broker, brokerOnTop: b.brokerOnTop, fteMonths: b.fteMonths || 0 };
+    return { net: b.total, fee: b.fee, pass: b.pass, passCost: b.passCost, broker: b.broker, shareOut: b.shareOut || 0, brokerOnTop: b.brokerOnTop, fteMonths: b.fteMonths || 0 };
   }
   /* The tiny note under the total: what of it is pass-through (teal) and what
      goes to the broker (red). Empty when neither applies. */
   function feeNotes(fin) {
     const bits = [];
     if (fin.passCost) bits.push(`<span class="pfee-pt" title="Pass-through: the vendor cost billed through Savills and flowing out. The fee on it stays in the total as fee.">− ${fmtMoneyFull(fin.passCost)} pass-through</span>`);
-    if (fin.broker) bits.push(`<span class="pfee-bk" title="Broker fee share${fin.brokerOnTop ? ' — billed on top of the fee' : ' — comes out of the fee'}">− ${fmtMoneyFull(fin.broker)} broker</span>`);
+    if (fin.broker) bits.push(`<span class="pfee-bk" title="Fee share out — the broker's % share${fin.brokerOnTop ? ' (billed on top of the fee)' : ' (comes out of the fee)'}${fin.shareOut ? ', plus pass-through lines ticked as fee share' : ''}">− ${fmtMoneyFull(fin.broker)} fee share</span>`);
     return bits.join('');
   }
   /* A parent with approved change orders is worth its REVISED contract; the
@@ -709,7 +709,7 @@
     const cols = [
       ['Client', 24], ['Project', 34], ['Location', 18], ['Status', 14],
       ['Industry', 18], ['Project type', 22], ['Lead PE', 18],
-      ['Period', 18], ['Total fee', 14], ['Pass-through cost', 16], ['Broker', 12], ['FTE-months', 12], ['Last updated', 14],
+      ['Period', 18], ['Total fee', 14], ['Pass-through cost', 16], ['Fee share', 12], ['FTE-months', 12], ['Last updated', 14],
     ];
     cols.forEach((c, i) => { ws.getColumn(i + 1).width = c[1]; });
     const head = ws.getRow(4);
