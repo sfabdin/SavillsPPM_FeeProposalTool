@@ -1782,6 +1782,50 @@
                sq(none.k, 'none', 'no projects → nothing to confirm');
       } finally { restore(); }
     });
+    test('Confirmed book', 'the tracker cell carries the date AND the time of the submission', () => {
+      try {
+        open(); const recs = book();
+        as('esobel@savills.us', 'Emily Sobel');
+        C.confirm(ID, 'esobel', { records: recs, now: '2026-09-10T12:00:00Z' });
+        const c1 = C.getCycle(ID);
+        const ok = C.statusFor(c1, 'esobel', recs, '2026-09-11T12:00:00');
+        recs[0].updatedAt = '2026-09-12T09:00:00Z';
+        const ch = C.statusFor(c1, 'esobel', recs, '2026-09-13T12:00:00');
+        const stamp = /^Sep 10 · \d{1,2}:\d\d (AM|PM)$/;
+        return sq(stamp.test(ok.text), true, 'confirmed text is day · time: ' + ok.text) &&
+               sq(/^Sep 10 · \d{1,2}:\d\d (AM|PM) · 1 edited since$/.test(ch.text), true, 'edited-since text keeps the time: ' + ch.text) &&
+               sq(C.fmtDayTime('2026-09-10T14:05:00'), 'Sep 10 · 2:05 PM', 'fmtDayTime');
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'the parsed book is cached between reads, and a write or an outside write refreshes it', () => {
+      try {
+        open();
+        const a = C.readDb(), b = C.readDb();
+        as('esobel@savills.us', 'Emily Sobel');
+        C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        const seen = !!C.getCycle(ID).confirmations.esobel;
+        // Something else writes the key behind our back (another tab, a merge).
+        const raw = JSON.parse(localStorage.getItem(C.KEY)); raw.cycles[ID].name = 'Renamed elsewhere';
+        localStorage.setItem(C.KEY, JSON.stringify(raw));
+        return sq(a === b, true, 'same object twice') && sq(seen, true, 'own write visible') &&
+               sq(C.getCycle(ID).name, 'Renamed elsewhere', 'an outside write is picked up');
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'storage full: the confirmation stays live on the page and is still pushed to Box', () => {
+      const setItem = localStorage.setItem; const pushed = [];
+      try {
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        C.attachRemote((dirty) => pushed.push(dirty.slice()));
+        localStorage.setItem = function (k, v) { if (k === C.KEY) throw new Error('QuotaExceededError'); return setItem.call(this, k, v); };
+        C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        const live = !!(C.getCycle(ID) && C.getCycle(ID).confirmations.esobel);
+        const dirty = C.dirtyCycles().indexOf(ID) >= 0;
+        const stored = JSON.parse(localStorage.getItem(C.KEY)).cycles[ID].confirmations.esobel;
+        return sq(live, true, 'the page still sees the confirmation') && sq(dirty, true, 'it is queued for Box') &&
+               sq(pushed.length >= 1 && pushed[pushed.length - 1].indexOf(ID) >= 0, true, 'the push went out') &&
+               sq(stored, undefined, 'and storage really was refused');
+      } finally { localStorage.setItem = setItem; C.attachRemote(null); C._resetCache(); restore(); }
+    });
     test('Confirmed book', 'lock carries the unconfirmed in, flagged, without touching a peer\'s confirmed copy', () => {
       try {
         open(); as('esobel@savills.us', 'Emily Sobel');

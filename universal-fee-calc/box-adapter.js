@@ -238,8 +238,10 @@
        rate grid too, which is precisely why they are all listed here rather
        than one being singled out. */
     ['savills-ppm-fee-db:v1', 'savills-ppm-staff-db:v1', 'savills-ppm-studio-db:v1',
-     'savills-ppm-revenue-db:v1', 'savills-ppm-history-db:v1', RATES_CACHE_KEY, 'ufc_box_etags_v1'
+     'savills-ppm-revenue-db:v1', 'savills-ppm-history-db:v1', RATES_CACHE_KEY, 'ufc_box_etags_v1',
+     'savills-ppm-confirmed-db:v1', CONF_ETAGS_KEY, CONF_IDS_KEY
     ].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+    _confEtags = {};
   }
 
   /* Exchange the ?code from the redirect for a token. Call this from
@@ -1422,8 +1424,20 @@
      the same moment both land. ---- */
   const CONF_PREFIX = 'confirmed-';
   const CONF_IDS_KEY = 'ufc_confirmed_file_ids';
+  const CONF_ETAGS_KEY = 'ufc_confirmed_etags_v1';
   const Confirm = () => window.UFC_Confirm;
-  const _confEtags = {};
+  /* The etag of each book as this browser last MERGED it. Persisted, because
+     an in-memory etag meant every page load — every page with the countdown
+     pill, and the book page itself — downloaded the whole open book again
+     (a megabyte once everyone has confirmed) and merged it, before the page
+     could draw. Written only after a successful merge or upload, so a match
+     always means the local copy is at least that version. */
+  let _confEtags = {};
+  try { _confEtags = JSON.parse(localStorage.getItem(CONF_ETAGS_KEY) || '{}') || {}; } catch (e) { _confEtags = {}; }
+  function persistConfEtags() { try { localStorage.setItem(CONF_ETAGS_KEY, JSON.stringify(_confEtags)); } catch (e) {} }
+  /* What the last folder listing said each book's etag is — one call for all
+     of them, so an unchanged book costs no metadata call and no download. */
+  const _listedEtags = {};
   function confIds() { try { return JSON.parse(localStorage.getItem(CONF_IDS_KEY) || '{}') || {}; } catch (e) { return {}; } }
   function rememberConfId(ym, id) { const m = confIds(); m[ym] = id; try { localStorage.setItem(CONF_IDS_KEY, JSON.stringify(m)); } catch (e) {} }
   function forgetConfId(ym) { const m = confIds(); delete m[ym]; try { localStorage.setItem(CONF_IDS_KEY, JSON.stringify(m)); } catch (e) {} }
@@ -1431,7 +1445,7 @@
 
   /** Which months exist in Box — one folder listing, no downloads. */
   Box.listConfirmCycles = async function () {
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name,etag&limit=1000');
     if (!res.ok) throw new Error('could not list the Box folder: ' + res.status);
     const j = await res.json(); const out = [];
     (j.entries || []).forEach(e => {
@@ -1439,6 +1453,7 @@
       const m = /^confirmed-([A-Za-z0-9._-]+)\.json$/.exec(e.name || '');
       if (!m) return;
       rememberConfId(m[1], e.id); out.push(m[1]);
+      if (e.etag) _listedEtags[m[1]] = e.etag;
     });
     out.sort();
     if (Confirm()) Confirm().rememberKnown(out);
@@ -1478,24 +1493,39 @@
   async function pullConfCycle(ym, opts) {
     const id = await resolveConfId(ym, false);
     if (!id) return null;
+    /* "Unchanged" only counts when this browser still HOLDS the book: the
+       cache can be shed or cleared while the etag survives. */
+    const C = Confirm();
+    const held = !!(C && C.getCycle(ym)) && !!_confEtags[ym];
+    if (opts && opts.ifChanged && held && _listedEtags[ym] && _listedEtags[ym] === _confEtags[ym]) return 'unchanged';
     const meta = await boxFetch('/files/' + id + '?fields=etag');
+    let tag = null;
     if (meta.ok) {
-      const m = await meta.json();
-      if (opts && opts.ifChanged && _confEtags[ym] && m.etag === _confEtags[ym]) return 'unchanged';
-      _confEtags[ym] = m.etag;
+      const m = await meta.json(); tag = m.etag || null;
+      if (opts && opts.ifChanged && held && tag && tag === _confEtags[ym]) return 'unchanged';
     }
     const res = await boxFetch('/files/' + id + '/content');
-    if (res.status === 404) { forgetConfId(ym); delete _confEtags[ym]; return null; }
+    if (res.status === 404) { forgetConfId(ym); delete _confEtags[ym]; delete _listedEtags[ym]; persistConfEtags(); return null; }
     if (!res.ok) throw new Error('confirmed-book pull failed for ' + ym + ': ' + res.status);
     const txt = await res.text();
     if (!txt || !txt.trim()) return null;
-    try { const p = JSON.parse(txt); return (p && (p.id || p.cycle)) ? p : null; } catch (e) { return null; }
+    try {
+      const p = JSON.parse(txt);
+      if (!(p && (p.id || p.cycle))) return null;
+      /* Carried on the body: the caller persists it once the merge has landed. */
+      try { Object.defineProperty(p, '__etag', { value: tag, enumerable: false }); } catch (e) {}
+      return p;
+    } catch (e) { return null; }
+  }
+  function confMerged(ym, remote) {
+    const tag = remote && remote.__etag;
+    if (tag) { _confEtags[ym] = tag; persistConfEtags(); }
   }
   async function uploadConfCycle(ym, depth) {
     const C = Confirm(); if (!C || !C.getCycle(ym)) return;
     if (!_confEtags[ym]) {                                   // never seen Box's copy — merge first
       const remote = await pullConfCycle(ym);
-      if (remote) C.hydrateCycle(ym, remote);
+      if (remote) { C.hydrateCycle(ym, remote); confMerged(ym, remote); }
     }
     const id = await resolveConfId(ym, true);
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
@@ -1512,11 +1542,11 @@
       if ((depth || 0) >= 4) throw new Error('confirmed-book push failed: repeated conflicts on ' + ym);
       await conflictPause(depth);
       const remote = await pullConfCycle(ym);
-      if (remote) C.hydrateCycle(ym, remote);
+      if (remote) { C.hydrateCycle(ym, remote); confMerged(ym, remote); }
       return uploadConfCycle(ym, (depth || 0) + 1);
     }
     if (!res.ok) throw new Error('confirmed-book push failed for ' + ym + ': ' + res.status);
-    try { const j = await res.json(); if (j.entries && j.entries[0]) _confEtags[ym] = j.entries[0].etag; } catch (e) {}
+    try { const j = await res.json(); if (j.entries && j.entries[0] && j.entries[0].etag) { _confEtags[ym] = j.entries[0].etag; _listedEtags[ym] = j.entries[0].etag; persistConfEtags(); } } catch (e) {}
     C.markCycleClean(ym);
   }
   let _confTimer = null, _confPushing = null;
@@ -1549,14 +1579,14 @@
     if (!id) return false;
     const res = await boxFetch('/files/' + id, { method: 'DELETE' });
     if (!res.ok && res.status !== 404) throw new Error('could not delete ' + confName(ym) + ': HTTP ' + res.status);
-    forgetConfId(ym); delete _confEtags[ym];
+    forgetConfId(ym); delete _confEtags[ym]; delete _listedEtags[ym]; persistConfEtags();
     return true;
   };
   /** Pull one month into the local store. Returns the merged cycle or null. */
   Box.pullConfirmCycle = async function (ym, opts) {
     const C = Confirm(); if (!C) return null;
     const remote = await pullConfCycle(ym, opts);
-    if (remote && remote !== 'unchanged') C.hydrateCycle(ym, remote);
+    if (remote && remote !== 'unchanged') { C.hydrateCycle(ym, remote); confMerged(ym, remote); }
     return C.getCycle(ym);
   };
   /** What every page needs: the list of months, then the open month(s) and
