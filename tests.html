@@ -1001,6 +1001,32 @@
              sq(!!S.reconMonth(2026, 2).lockedAt, true, 'locked') && sq(refused, true, 'a locked month refuses a status') &&
              sq(settled.billedIn, '2026-03', 'an accrual from a locked month still settles in an open month') && sq(leaderRefused, true, 'a leader cannot set statuses');
     });
+    test('Recon · overrides', 'a number a leader types on Revenue Projections is what the book, the lock and the confirmed copy carry', () => {
+      const p = setup();
+      const before = S.reconLinesFor(p, C).fee['2026-03'];
+      const rec = S.getProject('rc_a'); rec.monthlyOverrides = { '2026-3': 12345 }; S.saveProject(rec, { force: true });
+      const live = S.getProject('rc_a');
+      const series = S.billingSeries(live, C).find(x => x.ym === '2026-03');
+      const lines = S.reconLinesFor(live, C);
+      const X = window.UFC_ProjectionsXlsx; const row = X.bookRows([live], {}, C)[0];
+      // lock March with the live snapshot the page would take
+      S.lockReconMonth(2026, 3, { 'rc_a|fee': lines.fee['2026-03'], 'rc_a|pass': lines.pass['2026-03'], 'rc_a|share': lines.share['2026-03'] });
+      const snap = S.reconMonth(2026, 3).snapshot['rc_a|fee'];
+      // a confirmed-book copy keeps the override too
+      const Cb = window.UFC_Confirm; const cyc = Cb.createCycle({ name: 'Override test', period: '2026-03', deadline: '2026-03-31' });
+      live.project.leadId = 'esobel'; S.saveProject(live, { force: true });
+      S.setRealIdentity({ username: 'esobel@savills.us', name: 'Emily Sobel' });
+      Cb.confirm(cyc.id, 'esobel', { records: [S.getProject('rc_a')] });
+      asAdmin();
+      const copy = Cb.bookRecords(cyc.id).find(r => r.id === 'rc_a');
+      const copyRow = X.bookRows([copy], {}, C)[0];
+      const r2 = (n) => Math.round(n * 100) / 100;
+      return sq(before !== 12345 - series.passCost, true, 'the override changed the month') && sq(!!series.overridden, true, 'the series knows it is an override') &&
+             sq(r2(series.invoice), r2(12345 + series.passCost), 'invoice = typed fee + pass-through billed through') &&
+             sq(r2(lines.fee['2026-03']), 12345, 'the reconciliation fee line is the typed number') && sq(r2(row.map['2026-3']), r2(series.invoice), 'the projections export carries it') &&
+             sq(r2(snap), 12345, 'the lock snapshot froze the typed number') && sq(!!(copy.monthlyOverrides && copy.monthlyOverrides['2026-3']), true, 'the confirmed copy keeps the override') &&
+             sq(r2(copyRow.map['2026-3']), r2(series.invoice), 'and its book export shows it');
+    });
     test('Recon · lock flags', 'a project edit that moves a locked month shows as a locked-month flag; reopening clears the lock', () => {
       const p = setup(); const L = S.reconLinesFor(p, C);
       S.lockReconMonth(2026, 3, { 'rc_a|fee': L.fee['2026-03'], 'rc_a|pass': L.pass['2026-03'], 'rc_a|share': L.share['2026-03'] });
