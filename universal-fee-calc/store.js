@@ -100,6 +100,20 @@
     return STATUS_DEFAULT_RATING[(p && p.project && p.project.status) || 'draft'] || 5;
   }
   function ratingMeta(n) { return RATINGS.find(r => r.n === n) || RATINGS[RATINGS.length - 1]; }
+  /* DEAD PURSUITS. Rated 7 (Dead Pursuit, 0%) or status lost: the record
+     stays in the book — the Projects Index, Proposal Analytics and the
+     calculator still show what was priced, for history and win/loss — but it
+     bills NOTHING. Every revenue view reads revenueSeries(), not
+     billingSeries(), so a dead pursuit is zero in Revenue Projections, the
+     confirmed book, Executive Reporting, Revenue Reconciliation, the staffing
+     revenue bridge and every export. Lost wins over a stale rating; 7 wins
+     over a live status. */
+  function isDeadPursuit(p) {
+    const pj = (p && p.project) || {};
+    return pj.status === 'lost' || ratingFor(p) === 7;
+  }
+  /** billingSeries() for revenue reporting: empty for a dead pursuit. */
+  function revenueSeries(p, catalog) { return isDeadPursuit(p) ? [] : billingSeries(p, catalog); }
   /** 1–7 from a number, numeric text, or a rating label/short label; null if none match. */
   function resolveRating(raw) {
     if (raw == null || raw === '') return null;
@@ -1583,7 +1597,7 @@
   function reconLinesFor(p, catalog) {
     const cat = catalog || (typeof window !== 'undefined' && window.RATES_CATALOG);
     const out = { fee: {}, out: [], all: [] };
-    if (!p) return out;
+    if (!p || isDeadPursuit(p)) return out;      // nothing to bill, nothing to reconcile
     const r2 = (n) => Math.round(n * 100) / 100;
     let series = [];
     try { series = billingSeries(p, cat) || []; } catch (e) { series = []; }
@@ -3089,8 +3103,8 @@
         total += amt;
       };
       try {
-        (billingSeries(p, catalog) || []).forEach(s => add(s.ym, s.invoice));
-        (cosByParent[p.id] || []).filter(co =>
+        (revenueSeries(p, catalog) || []).forEach(s => add(s.ym, s.invoice));
+        (isDeadPursuit(p) ? [] : (cosByParent[p.id] || [])).filter(co =>
           BOOKED_STATUSES.has(co.project && co.project.status) && co.financials && !co.financials.stale
         ).forEach(co => {
           (changeOrderDelta(co).byMonth || []).forEach(x => add(padYM(x.ym), x.net));
@@ -3743,7 +3757,7 @@
     isChangeOrder, isApprovedChangeOrder, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
     reconcileImport,
     projectSlips, recordSlip, removeSlip, reconcileSlip, allOpenSlips,
-    recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries,
+    recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries, revenueSeries, isDeadPursuit,
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
