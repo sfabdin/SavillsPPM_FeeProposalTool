@@ -46,6 +46,16 @@ await page.waitForTimeout(500);
 const dl = page.waitForEvent('download', { timeout: 20000 });
 await page.click('#xlsx-btn');
 const file = await dl; const tmp = path.join(os.tmpdir(), 'ufc-export-check.xlsx'); await file.saveAs(tmp);
+
+// The Revenue Projections export (shared writer with the Books tab): the
+// seeded project is in the page's book, so the matrix has a row to write.
+page.on('dialog', (d) => { errs.push('dialog: ' + d.message()); d.dismiss().catch(() => {}); });
+await page.goto(`http://127.0.0.1:${port}/Revenue%20Projections.html`);
+await page.waitForSelector('#xlsx-export', { timeout: 20000 });
+await page.waitForTimeout(800);
+const dl2 = page.waitForEvent('download', { timeout: 30000 });
+await page.click('#xlsx-export');
+const tmp2 = path.join(os.tmpdir(), 'ufc-export-check-rp.xlsx'); await (await dl2).saveAs(tmp2);
 await browser.close(); srv.close();
 
 // unzip and read the XML — no evaluation, just wiring
@@ -71,5 +81,36 @@ ck('contracted roles escalate from project_start_year (row 8 factors)', formulas
 ck('grid roles still escalate from catalog_base_year (row 7 factors)', formulas.some((f) => /POWER\(1\+escalation_pct\/100, \d{4} - catalog_base_year\)/.test(f)));
 const shared = fs.existsSync(path.join(dir, 'xl', 'sharedStrings.xml')) ? fs.readFileSync(path.join(dir, 'xl', 'sharedStrings.xml'), 'utf8') : '';
 ck('no cost floor or rack rate in the client workbook', !/Cost floor|Rack \$/.test(shared + sheets.join('')));
+
+/* ---- Excel-strict checks on the raw XML, both workbooks ----
+   ExcelJS reads back anything it writes and LibreOffice forgives element
+   order, so neither would ever see what Excel rejects. Excel validates the
+   worksheet part against the schema and "repairs" a failing sheet away —
+   which is how the Revenue Projections matrix came up blank while the Data
+   and Dashboard sheets survived (<outlinePr> written after <pageSetUpPr>). */
+const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ufc-xlsx-')); execFileSync('unzip', ['-q', '-o', tmp2, '-d', dir2]);
+const sheetsOf = (d) => fs.readdirSync(path.join(d, 'xl', 'worksheets')).filter((f) => f.endsWith('.xml')).map((f) => ({ name: f, xml: fs.readFileSync(path.join(d, 'xl', 'worksheets', f), 'utf8') }));
+const strict = (label, list) => {
+  const ORDER = ['tabColor', 'outlinePr', 'pageSetUpPr'];
+  const badOrder = list.filter(({ xml }) => {
+    const m = /<sheetPr>(.*?)<\/sheetPr>/.exec(xml); if (!m) return false;
+    const kids = [...m[1].matchAll(/<(\w+)/g)].map((k) => k[1]).map((k) => ORDER.indexOf(k));
+    return kids.some((k, i) => k < 0 || (i && k <= kids[i - 1]));
+  }).map((x) => x.name);
+  ck(label + ': sheet properties in schema order (tabColor, outlinePr, pageSetUpPr)', badOrder.length === 0, badOrder.join(','));
+  const badVals = list.flatMap(({ name, xml }) => [...xml.matchAll(/<c r="([A-Z]+\d+)"([^>]*)>(?:<f>[^<]*<\/f>)?<v>([^<]*)<\/v>/g)]
+    .filter((m) => !/t="(s|str|b|e|inlineStr)"/.test(m[2]) && !/^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(m[3])).map((m) => name + ' ' + m[1] + '=' + m[3]));
+  ck(label + ': every numeric cell value is a number (no NaN, undefined, Infinity)', badVals.length === 0, badVals.slice(0, 3).join(' | '));
+  const badOutline = list.filter(({ xml }) => {
+    const lv = Math.max(0, ...[...xml.matchAll(/<col [^>]*outlineLevel="(\d+)"/g)].map((m) => +m[1]));
+    const fp = /<sheetFormatPr[^>]*outlineLevelCol="(\d+)"/.exec(xml);
+    return lv > 0 && (!fp || +fp[1] < lv);
+  }).map((x) => x.name);
+  ck(label + ': grouped columns declare outlineLevelCol on the sheet', badOutline.length === 0, badOutline.join(','));
+};
+ck('Revenue Projections workbook built and downloaded', fs.statSync(tmp2).size > 5000, fs.statSync(tmp2).size + ' bytes');
+strict('Revenue Projections', sheetsOf(dir2));
+strict('Calculator', sheetsOf(dir));
+ck('no page errors or dialogs during either export', errs.length === 0, errs.join(' | '));
 console.log('\n' + (checks - fails) + '/' + checks + ' export checks passed');
 process.exit(fails ? 1 : 0);

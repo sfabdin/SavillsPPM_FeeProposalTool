@@ -288,7 +288,16 @@
       const inWindow = (c) => { const d = cur - idxOf(c); return d >= 0 && d <= 2; };
       if (V.cols.some(inWindow)) {
         V.cols.forEach((c, i) => { if (!inWindow(c)) { const col = ws.getColumn(M0 + i); col.outlineLevel = 1; col.hidden = true; } });
-        ws.properties.outlineProperties = { summaryRight: false, summaryBelow: false };
+        /* Tells Excel the sheet has one level of column grouping, so the +
+           button appears above the columns. And NOTHING ELSE goes on the sheet
+           properties: ExcelJS writes <outlinePr> after <pageSetUpPr>, the
+           schema wants them the other way round, and Excel answers a sheet
+           that has both (fit-to-page plus summaryRight/summaryBelow) with
+           "we found a problem with some content" and repairs the whole sheet
+           away — the Data and Dashboard sheets survive, the matrix comes up
+           blank. LibreOffice does not care about the order, which is why the
+           export checks never saw it. check-export.mjs now reads the raw XML. */
+        ws.properties.outlineLevelCol = 1;
         const open = V.cols.filter(inWindow).map(c => MONTHS[c.m - 1] + ' ' + c.y);
         const sub = ws.getCell('A2');
         sub.value = (sub.value || '') + '  ·  showing ' + open[0] + ' – ' + open[open.length - 1] + '; other months are collapsed — click the + above the columns to expand';
