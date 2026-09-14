@@ -80,7 +80,10 @@
     const recs = records(); const open = C.openCycles(); const me = C.myLeaderId(); const lead = C.isLeadership();
     const w = C.widgetState();
     let html = '';
-    if (w.kind === 'missed') html += missedBanner(w.cycle, me, recs);
+    // Locked without them: the banner asks for a reason, and the book they
+    // are confirming late is listed right under it — every project as it
+    // stands, the carried copies flagged — so they know what they are signing.
+    if (w.kind === 'missed') { html += missedBanner(w.cycle, me, recs); html += leaderBook(w.cycle, me, recs); }
     if (!open.length) {
       html += '<div class="empty"><b>No book is open for confirmation.</b><br>' + (lead ? 'Create one from the Books tab.' : 'An admin creates each book; the countdown appears on every page once one is open.') + '</div>';
     } else if (!me && !lead) {
@@ -125,8 +128,10 @@
     const shared = mine.filter(r => C.leadersOf(r, byId).length > 1).length;
     const d = C.daysUntil(cycle.deadline); const over = C.pastDeadline(cycle.deadline);
     const who = leaderId === C.UNASSIGNED ? 'the unassigned projects' : 'your book';
-    const eyebrow = (period && period !== title ? period + ' · ' : '') + 'open · confirm by ' + fmtDate(cycle.deadline) + ' · ' +
-      (over ? 'OVERDUE · ' + plural(-d, 'day') + ' late' : d === 0 ? 'due today' : plural(d, 'day') + ' left');
+    const locked = !!cycle.lockedAt;
+    const eyebrow = (period && period !== title ? period + ' · ' : '') + (locked
+      ? 'locked ' + esc(C.fmtDay(cycle.lockedAt)) + (cycle.lockedByName ? ' by ' + cycle.lockedByName : '') + ' · was due ' + fmtDate(cycle.deadline)
+      : 'open · confirm by ' + fmtDate(cycle.deadline) + ' · ' + (over ? 'OVERDUE · ' + plural(-d, 'day') + ' late' : d === 0 ? 'due today' : plural(d, 'day') + ' left'));
     const pillCls = st.k === 'overdue' ? 'rr' : st.tone;
     const pillTxt = { confirmed: 'Confirmed', changed: 'Confirmed · edited since', due: 'Not confirmed', overdue: 'Overdue', missed: 'Not confirmed', none: 'Nothing to confirm' }[st.k];
     let stamp, btn;
@@ -135,6 +140,12 @@
         (st.k === 'changed' ? ' <b>' + plural(st.changed, 'project') + ' edited since</b> — noted on the tracker; the changes carry into the next book.' : ' One confirmation per book; changes from here carry into the next book.') +
         (k.afterLock ? '<div class="sub">Confirmed after the book was locked — reason: “' + esc(k.reason || '') + '”' + (k.reviewedAt ? ' · reviewed by ' + esc(k.reviewedBy) : ' · awaiting admin review') + '</div>' : '');
       btn = '<button class="btn btn-primary" disabled>Confirmed</button>';
+    } else if (locked) {
+      // Carried in at lock. The confirm-with-reason button lives in the red
+      // banner above this book; here is what it covers.
+      stamp = '<b>“' + esc(title) + '” was locked without your confirmation.</b> These ' + plural(mine.length, 'project') + ' were carried into the book as they stood and flagged “not confirmed”. ' +
+        'Check the list, then confirm them late with a reason in the red box above.';
+      btn = '';
     } else {
       stamp = (over ? '<b>The deadline was ' + esc(fmtDate(cycle.deadline)) + '. “' + esc(title) + '” is not confirmed.</b> ' : '<b>Not yet confirmed into “' + esc(title) + '”.</b> ') +
         'Confirming stamps ' + plural(mine.length, 'project') + ' with your name and the current time. One confirmation per book — check the list first.';
@@ -162,7 +173,7 @@
         '<td>' + inBook + '</td></tr>';
     }).join('');
     return '<div class="cb-head"><div><div class="eyebrow' + (over && !k ? ' late' : '') + '">' + esc(eyebrow) + '</div>' +
-      '<h2>' + (k ? esc(title) + ' · confirmed' : 'Confirm ' + (leaderId === C.UNASSIGNED ? 'the unassigned projects' : 'your book') + ' into “' + esc(title) + '”') + '</h2>' +
+      '<h2>' + (k ? esc(title) + ' · confirmed' : (locked ? 'Your book in “' + esc(title) + '” · not confirmed' : 'Confirm ' + (leaderId === C.UNASSIGNED ? 'the unassigned projects' : 'your book') + ' into “' + esc(title) + '”')) + '</h2>' +
       '<p>Every project ' + (leaderId === C.UNASSIGNED ? 'with no revenue leader' : 'you lead') + ', as it stands right now. Confirming copies these records into the confirmed book “' + esc(title) + '”.</p></div>' +
       '<div><span class="pill ' + pillCls + '"><i></i>' + esc(pillTxt) + '</span></div></div>' +
       '<div class="panel"><div class="kpis">' +
