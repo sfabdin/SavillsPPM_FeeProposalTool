@@ -1301,8 +1301,9 @@
         // One canonical series (store.billingSeries) — the frozen snapshot was
         // being read raw here too, so a slipped or adjusted month showed its
         // old figure against the moved effort.
-        (S2.billingSeries(p, cat) || []).forEach(m => add(m.ym, m.invoice));
-        (coIndex ? (coIndex[p.id] || []) : (S2.approvedChangeOrders ? S2.approvedChangeOrders(p.id) : [])).forEach(co => {
+        const dead = !!(S2.isDeadPursuit && S2.isDeadPursuit(p));
+        ((dead ? [] : S2.billingSeries(p, cat)) || []).forEach(m => add(m.ym, m.invoice));
+        (dead ? [] : (coIndex ? (coIndex[p.id] || []) : (S2.approvedChangeOrders ? S2.approvedChangeOrders(p.id) : []))).forEach(co => {
           try { S2.changeOrderDelta(co).byMonth.forEach(x => add(x.ym, x.net)); } catch (e) {}
         });
       } catch (e) {}

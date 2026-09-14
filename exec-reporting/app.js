@@ -188,9 +188,10 @@
         if (!rec || rec._deleted) return;
         if (S.isChangeOrder && S.isChangeOrder(rec)) { rec.resolvedByMonth = {}; return; }
         const by = {};
+        const dead = !!(S.isDeadPursuit && S.isDeadPursuit(rec));   // rated 7 or lost: zero revenue, kept in the book
         try {
-          (S.billingSeries(rec, cat) || []).forEach((r) => { by[r.year + '-' + r.month] = (by[r.year + '-' + r.month] || 0) + (r.net || 0); });
-          (coIndex ? (coIndex[rec.id] || []) : (S.approvedChangeOrders ? S.approvedChangeOrders(rec.id) : [])).forEach((co) => {
+          ((dead ? [] : S.billingSeries(rec, cat)) || []).forEach((r) => { by[r.year + '-' + r.month] = (by[r.year + '-' + r.month] || 0) + (r.net || 0); });
+          (dead ? [] : (coIndex ? (coIndex[rec.id] || []) : (S.approvedChangeOrders ? S.approvedChangeOrders(rec.id) : []))).forEach((co) => {
             (S.changeOrderDelta(co).byMonth || []).forEach((x) => {
               const [y, mth] = String(x.ym).split('-').map(Number);
               const k = y + '-' + mth; by[k] = (by[k] || 0) + (x.net || 0);

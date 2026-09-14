@@ -976,6 +976,24 @@
       return S.saveProject(base({ id: 'rc_a', project: { name: 'Recon A', client: 'Acme', status: 'active', rating: 1 },
         assumptions: { feeShare: { enabled: true, pct: 10, mode: 'offtop', broker: 'CBRE' } },
         passthrough: { enabled: true, lines: [{ id: 'v', label: 'Movers', cost: 4000, markupPct: 10, mode: 'billed' }] } }), { force: true }); };
+    test('Dead pursuits', 'rated 7 or lost bills nothing anywhere revenue is read, while the book still holds what was priced', () => {
+      const live = setup();
+      const pricedTotal = S.clientBillOf(live, C).total;
+      const rows0 = S.reconLinesFor(live, C).all.length;
+      const dead7 = S.saveProject(Object.assign(S.getProject('rc_a'), { project: Object.assign({}, live.project, { rating: 7 }) }), { force: true });
+      const X = window.UFC_ProjectionsXlsx; const Cb = window.UFC_Confirm;
+      const row7 = X.bookRows([dead7], {}, C)[0];
+      const lost = S.saveProject(Object.assign(S.getProject('rc_a'), { project: Object.assign({}, live.project, { rating: 2, status: 'lost' }) }), { force: true });
+      const longshot = S.saveProject(Object.assign(S.getProject('rc_a'), { project: Object.assign({}, live.project, { rating: 6, status: 'submitted' }) }), { force: true });
+      return sq(pricedTotal > 0, true, 'fixture is priced') && sq(rows0 > 0, true, 'fixture has recon lines') &&
+             sq(S.isDeadPursuit(dead7), true, 'rated 7 is dead') && sq(S.revenueSeries(dead7, C).length, 0, 'no revenue series') &&
+             sq(S.reconLinesFor(dead7, C).all.length, 0, 'no reconciliation lines') &&
+             sq(Object.keys(row7.map).length + row7.ptLines.length + row7.total, 0, 'zero in the export rows') &&
+             sq(Cb.feeInYear([dead7], 2026), 0, 'zero in the confirmed book') &&
+             sq(S.clientBillOf(dead7, C).total, pricedTotal, 'the priced fee is still on the record for history') &&
+             sq(S.isDeadPursuit(lost), true, 'lost wins over a live rating') && sq(S.revenueSeries(lost, C).length, 0, 'lost bills nothing') &&
+             sq(S.isDeadPursuit(longshot), false, 'a long shot (6) is not dead') && sq(S.revenueSeries(longshot, C).length > 0, true, 'and still projects');
+    });
     test('Recon · lines', 'a project-month is fee (invoice less vendor cost), pass-through (vendor cost) and fee share (a minus)', () => {
       const p = setup();
       const L = S.reconLinesFor(p, C); const fin = S.computeFinancials(p, C); const m = fin.byMonth.find(x => x.ym === '2026-02');

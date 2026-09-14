@@ -237,7 +237,7 @@
   function feeInYear(records, year) {
     const st = S(); const cat = window.RATES_CATALOG; let t = 0;
     (records || []).forEach(r => {
-      try { (st.billingSeries(r, cat) || []).forEach(s => { if (s.year === year) t += (s.invoice || 0); }); } catch (e) { /* unpriced */ }
+      try { ((st.revenueSeries || st.billingSeries)(r, cat) || []).forEach(s => { if (s.year === year) t += (s.invoice || 0); }); } catch (e) { /* unpriced */ }
     });
     return Math.round(t);
   }

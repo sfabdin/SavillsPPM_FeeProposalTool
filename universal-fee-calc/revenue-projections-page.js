@@ -82,7 +82,8 @@
          always show. Reading the frozen byMonth raw (what this did) meant a
          monthly edit was saved, flagged red, and then drawn at its old value. */
       const slipMap = {};
-      (STORE.billingSeries(p, CATALOG) || []).forEach(s => {
+      const dead = !!(STORE.isDeadPursuit && STORE.isDeadPursuit(p));   // rated 7 or lost: zero here, kept in the book
+      ((dead ? [] : STORE.billingSeries(p, CATALOG)) || []).forEach(s => {
         const k = s.year + '-' + s.month;
         map[k] = (map[k] || 0) + s.invoice;
         netMap[k] = (netMap[k] || 0) + (s.net || 0);
@@ -96,7 +97,7 @@
         }
       });
       // Add each approved change order's incremental curve on top of the baseline.
-      const cos = coIndex ? (coIndex[p.id] || []) : (STORE.approvedChangeOrders ? STORE.approvedChangeOrders(p.id) : []);
+      const cos = dead ? [] : (coIndex ? (coIndex[p.id] || []) : (STORE.approvedChangeOrders ? STORE.approvedChangeOrders(p.id) : []));
       cos.forEach(co => {
         STORE.changeOrderDelta(co).byMonth.forEach(x => {
           const [y, m] = x.ym.split('-').map(Number);
@@ -111,10 +112,10 @@
         .map(x => (STORE.leaderDisplay ? STORE.leaderDisplay(x) : (x || '')).trim()).filter(Boolean))];
       const serviceLines = STORE.projectServiceLines(p);
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
-      const feeSharePct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
-      const ptCost = (p.financials && p.financials.passThroughCost) || 0;
-      let ptLines = []; try { ptLines = STORE.passThroughLines ? STORE.passThroughLines(p) : []; } catch (e) { ptLines = []; }
-      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, netMap, passClientMap, ptLines, total, ov: p.monthlyOverrides || null, slipMap,
+      const feeSharePct = (fs.enabled && !dead) ? (parseFloat(fs.pct) || 0) : 0;
+      const ptCost = dead ? 0 : ((p.financials && p.financials.passThroughCost) || 0);
+      let ptLines = []; try { ptLines = (STORE.passThroughLines && !dead) ? STORE.passThroughLines(p) : []; } catch (e) { ptLines = []; }
+      return { p, pj, rating: STORE.ratingFor(p), dead, map, brokerMap, passMap, netMap, passClientMap, ptLines, total, ov: p.monthlyOverrides || null, slipMap,
                coCount: cos.length, feeSharePct, ptCost, status: (pj.status || '').trim(),
                client: (pj.client || '').trim(), leaders, serviceLines, industry: (pj.industry || '').trim(), projectType: (pj.projectType || '').trim() };
     });
@@ -152,6 +153,18 @@
     if (!qsel.options.length) qsel.innerHTML = `<option value="">All quarters</option>` + Object.keys(QUARTERS).map(q => `<option value="${q}">${q}</option>`).join('');
     const msel = $('#f-month');
     if (!msel.options.length) msel.innerHTML = `<option value="">All months</option>` + MONTHS.map((m, i) => `<option value="${i + 1}">${m}</option>`).join('');
+    restoreFilters();
+  }
+  /* The filters survive leaving for the calculator and coming back (and a
+     reload) — this tab's session only, so a fresh visit starts clean. */
+  const FILTERS_KEY = 'ufc_rp_filters_v1';
+  let filtersRestored = false;
+  function saveFilters() { try { sessionStorage.setItem(FILTERS_KEY, JSON.stringify(currentFilters())); } catch (e) {} }
+  function restoreFilters() {
+    if (filtersRestored) return; filtersRestored = true;
+    let saved = null; try { saved = JSON.parse(sessionStorage.getItem(FILTERS_KEY) || 'null'); } catch (e) { saved = null; }
+    if (!saved) return;
+    Object.keys(saved).forEach(k => { const el = $('#f-' + k); if (el && saved[k]) el.value = saved[k]; });
   }
 
   function currentFilters() {
@@ -312,7 +325,7 @@
         lastRating = r.rating;
         const gExcl = r.rating > 4 ? ' excluded' : '';
         const colspan = cols.length + 4;
-        html += `<tr class="group-row${gExcl}"><td colspan="${colspan}">${r.rating} · ${meta.label}${r.rating > 4 ? ' — excluded from totals' : ''}</td></tr>`;
+        html += `<tr class="group-row${gExcl}"><td colspan="${colspan}">${r.rating} · ${meta.label}${r.rating === 7 ? ' — dead or lost · zeroed here, kept in the book for history' : r.rating > 4 ? ' — excluded from totals' : ''}</td></tr>`;
       }
 
       const pj = r.p.project || {};
@@ -327,7 +340,7 @@
       const phBadge = STORE.isPlaceholder(r.p)
         ? '<span class="ph-badge" title="The dollars on this row were assumed to hold the space, not priced from scope. It still counts toward the forecast at its rating weight — but treat the amount as an estimate.">estimate</span>' : '';
       html += `<td class="proj-cell c-rating">${ratingCell}</td><td class="proj-cell c-client" title="${esc(pj.client || '')}">${esc(pj.client || '—')}</td>`;
-      html += `<td class="proj-cell c-project"><a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" title="Open in the fee calculator">${esc(pj.name || 'Untitled')}</a>${phBadge}<div class="pmeta">${STORE.STATUS_LABELS[pj.status] || ''}${coMeta}${dupIds.has(r.p.id) ? '<span class="dup-badge" title="This row\u2019s monthly figure equals the sum of this client\u2019s other rows — it may be a roll-up counted on top of its own parts. Check before trusting the total.">⚠ possible double count</span>' : ''}<span class="open-link"> · open →</span></div></td>`;
+      html += `<td class="proj-cell c-project"><a class="pname" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.p.id)}" target="_blank" rel="noopener" title="Opens in a new tab — this view keeps its filters; it refreshes when you come back">${esc(pj.name || 'Untitled')}</a>${phBadge}<div class="pmeta">${STORE.STATUS_LABELS[pj.status] || ''}${coMeta}${dupIds.has(r.p.id) ? '<span class="dup-badge" title="This row\u2019s monthly figure equals the sum of this client\u2019s other rows — it may be a roll-up counted on top of its own parts. Check before trusting the total.">⚠ possible double count</span>' : ''}<span class="open-link"> · open →</span></div></td>`;
       let rvt = 0;
       cols.forEach((c, i) => {
         const v = r.map[c.key] || 0;
@@ -678,10 +691,11 @@
   $('#show-pass')?.addEventListener('change', e => { showPass = e.target.checked; build(); });
   $('#xlsx-export')?.addEventListener('click', exportProjections);
   ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month','f-has'].forEach(id => {
-    $('#' + id)?.addEventListener('change', () => { $('#empty').innerHTML = 'No projects yet. <a href="Universal Fee Calculator.html">Build one in the calculator →</a> or <a href="Ingestion Studio.html">ingest a proposal →</a>'; build(); });
+    $('#' + id)?.addEventListener('change', () => { $('#empty').innerHTML = 'No projects yet. <a href="Universal Fee Calculator.html">Build one in the calculator →</a> or <a href="Ingestion Studio.html">ingest a proposal →</a>'; saveFilters(); build(); });
   });
   $('#clear-filters')?.addEventListener('click', () => {
     ['f-client','f-leader','f-service','f-industry','f-ptype','f-year','f-quarter','f-month','f-has'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
+    saveFilters();
     $('#empty').innerHTML = 'No projects yet. <a href="Universal Fee Calculator.html">Build one in the calculator →</a> or <a href="Ingestion Studio.html">ingest a proposal →</a>';
     build();
   });

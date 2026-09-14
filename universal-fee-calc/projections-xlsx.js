@@ -33,8 +33,9 @@
     return list.map(p => {
       const map = {}, brokerMap = {}, passMap = {}, netMap = {}, passClientMap = {};
       let total = 0;
+      const dead = !!(STORE.isDeadPursuit && STORE.isDeadPursuit(p));   // rated 7 or lost: zero, kept for history
       try {
-        (STORE.billingSeries(p, catalog) || []).forEach(s => {
+        ((dead ? [] : STORE.billingSeries(p, catalog)) || []).forEach(s => {
           const k = s.year + '-' + s.month;
           map[k] = (map[k] || 0) + s.invoice;
           netMap[k] = (netMap[k] || 0) + (s.net || 0);
@@ -44,7 +45,7 @@
           total += s.invoice;
         });
       } catch (e) { /* an unpriced record has no series */ }
-      const cos = coIndex ? (coIndex[p.id] || []) : [];
+      const cos = (!dead && coIndex) ? (coIndex[p.id] || []) : [];
       cos.forEach(co => {
         try {
           STORE.changeOrderDelta(co).byMonth.forEach(x => {
@@ -58,8 +59,8 @@
       const leaders = [...new Set([pj.leadId || pj.lead, pj.clientRelOwner]
         .map(x => (STORE.leaderDisplay ? STORE.leaderDisplay(x) : (x || '')).trim()).filter(Boolean))];
       const fs = (p.assumptions && p.assumptions.feeShare) || {};
-      let ptLines = []; try { ptLines = STORE.passThroughLines ? STORE.passThroughLines(p) : []; } catch (e) { ptLines = []; }
-      return { p, pj, rating: STORE.ratingFor(p), map, brokerMap, passMap, netMap, passClientMap, ptLines, total, ov: p.monthlyOverrides || null,
+      let ptLines = []; try { ptLines = (STORE.passThroughLines && !dead) ? STORE.passThroughLines(p) : []; } catch (e) { ptLines = []; }
+      return { p, pj, rating: STORE.ratingFor(p), dead, map, brokerMap, passMap, netMap, passClientMap, ptLines, total, ov: p.monthlyOverrides || null,
                coCount: cos.length, feeSharePct: fs.enabled ? (parseFloat(fs.pct) || 0) : 0,
                ptCost: (p.financials && p.financials.passThroughCost) || 0,
                status: (pj.status || '').trim(), client: (pj.client || '').trim(), leaders,
