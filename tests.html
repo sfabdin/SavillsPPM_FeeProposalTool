@@ -64,6 +64,7 @@
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/vendor-lazy.js"></script>
 <script src="universal-fee-calc/bulk-excel.js"></script>
+<script src="universal-fee-calc/staffing-roundtrip.js"></script>
 <!-- Pulled in for its workbook parser only; it renders nothing without the
      reconciliation page's markup. -->
 <script src="exec-reporting/core.js"></script>
@@ -1446,6 +1447,72 @@
       return (out.futureField && out.futureField.keep === 'me') || 'an unknown top-level key was dropped';
     });
 
+    test('Staffing · round trip', 'export → put back unedited is zero changes; ADD, an edit and REMOVE each land once, in one write and one trail entry', () => {
+      const RT = window.UFC_StaffRoundTrip; if (!RT) return 'UFC_StaffRoundTrip not present';
+      const snap = JSON.parse(JSON.stringify(ST.readDb()));
+      try {
+      freshTrail();
+      ST.saveAllocation({ id: 'rt_1', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Alpha', client: 'Acme', status: 'Active', type: 'Awarded', start: '2026-03', end: '2026-06', pct: 60, note: 'lead' });
+      ST.saveAllocation({ id: 'rt_2', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Beta', client: 'Acme', status: 'Pursuit', type: 'Opportunity', start: '2026-07', end: '', pct: 25 });
+      ST.saveAllocation({ id: 'rt_3', personId: 'stp_bob', personName: 'Bob Builder', project: 'Tower Alpha', client: 'Acme', status: 'Active', type: 'Awarded', start: '2026-01', end: '2026-12', pct: 100 });
+      const ex = RT.exportRows();
+      // the workbook comes back through the same header mapping the reader uses
+      const grid = [RT.COLS.map(c => c[1])].concat(ex.pending.concat(ex.existing).map(r => RT.COLS.map(c => r[c[0]])));
+      const rows = RT.rowsFromGrid(grid);
+      const zero = RT.buildPlan(rows);
+      if (zero.adds.length || zero.updates.length || zero.removes.length || zero.errors.length) return 'unedited round trip is not zero: ' + JSON.stringify({ a: zero.adds.length, u: zero.updates.length, r: zero.removes.length, e: zero.errors });
+      // edits: Jane's Alpha % to 80 and end as a label; Bob removed; a brand-new person added via a yellow-style row
+      const edited = rows.map(r => Object.assign({}, r));
+      const jane = edited.find(r => r.id === 'rt_1'); jane.pct = '80%'; jane.end = 'Jul-26';
+      edited.find(r => r.id === 'rt_3').action = 'REMOVE';
+      edited.push({ row: 99, id: '', action: 'ADD', person: 'Zed Newman', title: 'Project Manager', client: 'Acme', project: 'Tower Alpha', status: 'active', type: '', start: new Date(Date.UTC(2026, 8, 1)), end: '2026-12', pct: 50, note: 'from the sweep', contractRole: '', contractResource: 'Zachary Newmanski' });
+      edited.push({ row: 100, id: '', action: '', person: 'Nobody Pending', title: '', client: 'Acme', project: 'Tower Beta', status: '', type: '', start: '2026-10', end: '2026-11', pct: 40, note: '', contractRole: '', contractResource: '' });
+      const plan = RT.buildPlan(edited);
+      if (plan.errors.length) return 'errors: ' + plan.errors.join(' | ');
+      if (plan.adds.length !== 1 || plan.updates.length !== 1 || plan.removes.length !== 1 || plan.skipped !== 1 || plan.unchanged !== 1) return 'plan counts: ' + JSON.stringify({ a: plan.adds.length, u: plan.updates.length, r: plan.removes.length, s: plan.skipped, un: plan.unchanged });
+      if (plan.updates[0].next.pct !== 80 || plan.updates[0].next.end !== '2026-07') return 'update parsed wrong: ' + JSON.stringify(plan.updates[0].next);
+      if (plan.adds[0].next.start !== '2026-09' || !plan.adds[0].newPerson || plan.adds[0].next.status !== 'Active' || plan.adds[0].next.type !== 'Awarded') return 'add parsed wrong: ' + JSON.stringify(plan.adds[0]);
+      const before = trail().length;
+      const out = ST.applyRoundTrip(plan);
+      const all = ST.listAllocations();
+      const j = all.find(a => a.id === 'rt_1'); const z = all.find(a => a.personName === 'Zed Newman');
+      const zp = z && ST.getPerson(z.personId);
+      const entries = trail('staff-roundtrip');
+      if (!(j && j.pct === 80 && j.end === '2026-07')) return 'edit did not land: ' + JSON.stringify(j);
+      if (all.find(a => a.id === 'rt_3')) return 'REMOVE did not land';
+      if (!(z && z.pct === 50 && z.start === '2026-09' && z.contractResource === 'Zachary Newmanski')) return 'ADD did not land: ' + JSON.stringify(z);
+      if (!(zp && zp.title === 'Project Manager')) return 'new person did not get the title: ' + JSON.stringify(zp);
+      if (all.length !== 3) return 'expected 3 allocations, have ' + all.length;
+      if (!(entries.length === 1 && trail().length === before + 1 && entries[0].meta.added === 1 && entries[0].meta.changed === 1 && entries[0].meta.removed === 1)) return 'trail: ' + JSON.stringify(entries.map(e => e.meta));
+      if (!(((ST.readDb().mappings || {}).personAliases || {})['zachary newmanski'] === z.personId)) return 'contract-name alias not remembered';
+      // a second unedited round trip is again zero
+      const ex2 = RT.exportRows(); const grid2 = [RT.COLS.map(c => c[1])].concat(ex2.existing.map(r => RT.COLS.map(c => r[c[0]])));
+      const zero2 = RT.buildPlan(RT.rowsFromGrid(grid2));
+      return (!zero2.adds.length && !zero2.updates.length && !zero2.removes.length && zero2.unchanged === 3) || 'second round trip not zero: ' + JSON.stringify(zero2);
+      } finally { ST.hydrateFromRemote(snap); }
+    });
+    test('Staffing · round trip', 'month and percent cells read every way Excel writes them; bad rows are refused with the row number, not applied', () => {
+      const RT = window.UFC_StaffRoundTrip; if (!RT) return 'UFC_StaffRoundTrip not present';
+      const ym = (v, want) => RT.parseYm(v) === want ? true : 'parseYm(' + JSON.stringify(v) + ') = ' + RT.parseYm(v) + ' ≠ ' + want;
+      const chk = [ym('2026-09', '2026-09'), ym('2026-9', '2026-09'), ym('2026-09-15', '2026-09'), ym('Sep-26', '2026-09'), ym('Sep 2026', '2026-09'), ym('September 2026', '2026-09'), ym('9/2026', '2026-09'),
+        ym(new Date(Date.UTC(2026, 8, 1)), '2026-09'), ym(46266, '2026-09'), ym('soon', null), ym('', null),
+        RT.parsePct('60%') === 60 || 'pct 60%', RT.parsePct(0.6) === 60 || 'pct 0.6', RT.parsePct(60) === 60 || 'pct 60', RT.parsePct('abc') === null || 'pct abc'].filter(x => x !== true);
+      if (chk.length) return chk.join(' | ');
+      const snap = JSON.parse(JSON.stringify(ST.readDb()));
+      try {
+      freshTrail();
+      ST.saveAllocation({ id: 'rt_9', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Alpha', client: 'Acme', start: '2026-03', end: '2026-06', pct: 60 });
+      ST.saveAllocation({ id: 'rt_10', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Alpha', client: 'Acme', start: '2026-07', end: '2026-09', pct: 40 });
+      const plan = RT.buildPlan([
+        { row: 2, id: 'rt_9', action: '', person: 'Jane Tester', client: 'Acme', project: 'Tower Alpha', status: 'Active', type: 'Awarded', start: 'whenever', end: '', pct: 60, note: '' },
+        { row: 3, id: 'rt_10', action: '', person: 'Jane Tester', client: 'Acme', project: 'Tower Alpha', status: 'Active', type: 'Awarded', start: '2026-03', end: '2026-02', pct: 60, note: '' },
+        { row: 4, id: 'al_gone', action: '', person: 'Jane Tester', client: 'Acme', project: 'Tower Alpha', status: 'Active', type: 'Awarded', start: '2026-03', end: '', pct: 60, note: '' },
+        { row: 5, id: '', action: 'ADD', person: '', client: 'Acme', project: 'Tower Alpha', status: '', type: '', start: '2026-03', end: '', pct: 60, note: '', contractRole: 'Project Manager' },
+      ]);
+      const msgs = plan.errors.join(' | ');
+      return (plan.errors.length === 4 && /Row 2: Start/.test(msgs) && /Row 3: ends/.test(msgs) && /Row 4: no allocation with ID al_gone/.test(msgs) && /Row 5: .*open role needs a name/.test(msgs) && !plan.adds.length && !plan.updates.length) || msgs;
+      } finally { ST.hydrateFromRemote(snap); }
+    });
     test('Staffing', 'capacity honors the part-time percentage', () => {
       ST.setMonthHours(172);
       const p = ST.savePerson({ id: 'stp_jane', name: 'Jane Tester', title: 'Project Manager', capacityPct: 50, active: true });

@@ -182,7 +182,7 @@
     'cycle-lock': 'Book locked', 'cycle-reopen': 'Book reopened', 'cycle-review': 'Late confirmation reviewed', 'cycle-delete': 'Book deleted', 'report-years': 'Reporting years', 'pt-months-cleanup': 'Pass-through months cleaned up',
     'staff-alloc-add': 'Staffed', 'staff-alloc': 'Staffing changed', 'staff-alloc-remove': 'Unstaffed',
     'staff-person-add': 'Person added', 'staff-person': 'Roster changed', 'staff-hours': 'Month hours',
-    'staff-import': 'Matrix imported', 'staff-reseed': 'Matrix re-seeded', 'staff-reset': 'Matrix reset',
+    'staff-import': 'Matrix imported', 'staff-roundtrip': 'Allocations round trip', 'staff-reseed': 'Matrix re-seeded', 'staff-reset': 'Matrix reset',
     'staff-actuals': 'Hours imported', 'staff-actuals-clear': 'Hours cleared',
     'staff-titles': 'Titles filled', 'staff-rename': 'Projects renamed',
     'staff-map': 'Mapping', 'staff-gap-dismiss': 'Gap dismissed', 'staff-gap-restore': 'Gap restored',
@@ -394,6 +394,9 @@
     if (a === 'staff-alloc') return 'Staffing for <b>' + esc(m.person || '') + '</b> on <b>' + esc(m.project || '') + '</b> changed';
     if (a === 'staff-alloc-remove') return '<b>' + esc(m.person || '') + '</b> taken off <b>' + esc(m.project || '') + '</b>'
       + (m.pct != null ? ' (was ' + m.pct + '%)' : '') + span(m);
+    if (a === 'staff-roundtrip') return 'Allocations put back from Excel — <b>' + (m.added || 0) + '</b> added, <b>' + (m.changed || 0) + '</b> changed, <b>' + (m.removed || 0) + '</b> removed'
+      + (m.skipped ? ' · ' + m.skipped + ' pending left out' : '') + (m.errors ? ' · ' + m.errors + ' row' + (m.errors === 1 ? '' : 's') + ' unreadable' : '')
+      + ((m.rows || []).length ? '<div class="sub">' + m.rows.slice(0, 12).map(esc).join('<br>') + ((m.rows || []).length > 12 ? '<br>…' : '') + '</div>' : '');
     if (a === 'staff-person-add') return 'Added <b>' + esc(m.person || '') + '</b> to the roster';
     if (a === 'staff-person') return 'Roster entry for <b>' + esc(m.person || '') + '</b> changed';
     if (a === 'staff-hours') return 'Hours in a month <b>' + esc(String(m.from)) + '</b> → <b>' + esc(String(m.to))

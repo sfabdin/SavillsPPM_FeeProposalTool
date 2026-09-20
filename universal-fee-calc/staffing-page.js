@@ -458,7 +458,7 @@
       <select id="al-status"><option value="">All statuses</option><option ${state.allocStatus === 'Active' ? 'selected' : ''}>Active</option><option ${state.allocStatus === 'Pursuit' ? 'selected' : ''}>Pursuit</option></select>
       <select id="al-project">${projOpts}</select>
       <span class="grow"></span>
-      <span class="note-txt">Sheet re-import &amp; name sync live in <a href="#" data-goto-tab="sources" style="font-weight:700">Data Sources</a></span>
+      <span class="note-txt">Excel round trip, sheet re-import &amp; name sync live in <a href="#" data-goto-tab="sources" style="font-weight:700">Data Sources</a></span>
       <button class="btn btn-primary" id="al-add">+ Add allocation</button>
     </div>`;
 
@@ -1951,10 +1951,12 @@
         dot(aDot) + (aAge == null ? 'missing' : aAge <= 7 ? 'fresh' : aAge <= 21 ? 'aging' : 'stale'),
         '<a href="#import-anchor" style="font-weight:700">Import card below ↓</a>')}
       ${row('① Allocations <span class="vmini">(maintained in this tool)</span>',
-        'The plan side of Compare, By Project, By Person, and the contract bridge. Edit rows on the <b>Allocations</b> tab — the sheet import is only for starting over.',
+        'The plan side of Compare, By Project, By Person, and the contract bridge. Edit rows on the <b>Allocations</b> tab, or take the whole matrix out to Excel with the <b>round trip</b> (pending contract adds come out as ready-made yellow rows), clean it up and put it back. The sheet re-import is only for starting over.',
         `${meta.updatedAt ? `Last edit ${esc(agoTxt(meta.updatedAt))}${meta.updatedBy ? ` by <b>${esc(meta.updatedBy)}</b>` : ''}` : '—'}<div class="vmini">${meta.matrixImportedAt ? `Seeded from ${esc(meta.matrixSource || 'JS sheet')} · ${new Date(meta.matrixImportedAt).toLocaleDateString()}` : 'No sheet import on record'}</div>`,
         dot('ok') + 'live',
-        `<button class="btn btn-ghost" id="src-reimport" title="Replace ALL allocations from a fresh export of the staffing sheet (Data tab or CSV). Actuals and roster edits are kept.">⇪ Re-import sheet</button>
+        `<button class="btn btn-primary" id="rt-export" title="Every allocation plus every pending contract add (yellow rows — put ADD in Action to accept) in one editable workbook. Edit, then Put it back.">⇩ Excel round trip</button>
+         <button class="btn btn-ghost" id="rt-import" title="Import the round-trip workbook you edited. You see every add, change and remove before anything is written.">⇪ Put it back</button><input type="file" id="rt-file" accept=".xlsx" hidden>
+         <button class="btn btn-ghost" id="src-reimport" title="Replace ALL allocations from a fresh export of the staffing sheet (Data tab or CSV). Actuals and roster edits are kept.">⇪ Re-import sheet</button>
          <button class="btn btn-ghost" id="canon-sync" title="Pull Clockify's project list and rename matrix projects to the canonical names — one-time mapping, remembered for future sheet imports">⇄ Sync names</button>`)}
       ${row('② Fee-tool contract lines',
         'The priced roles behind &ldquo;② Contract&rdquo; in Compare and the contract-vs-staffing checks.',
@@ -1987,9 +1989,39 @@
     wireImport();
     wireGoto('#p-sources');
     const mr = $('#src-reimport'); if (mr) mr.onclick = () => $('#matrix-file').click();
+    wireRoundTrip();
     const cs2 = $('#canon-sync'); if (cs2) cs2.onclick = startCanonSync;
     if (state.canonProposals) renderCanonReview();
     wireLateness();
+  }
+
+  /* ---------- Excel round trip: export → edit → put it back (staffing-roundtrip.js) ---------- */
+  function wireRoundTrip() {
+    const RT = window.UFC_StaffRoundTrip; if (!RT) return;
+    const ex = $('#rt-export'), im = $('#rt-import'), fi = $('#rt-file');
+    if (ex) ex.onclick = async () => {
+      ex.disabled = true;
+      try { const r = await RT.exportRoundTrip(); toast(`Exported ${r.existing.length} allocations` + (r.pending.length ? ` and ${r.pending.length} pending add${r.pending.length === 1 ? '' : 's'} (yellow rows — put ADD in Action to accept)` : '') + '.'); }
+      catch (e) { toast('Export failed — ' + (e.message || e)); }
+      finally { ex.disabled = false; }
+    };
+    if (im && fi) {
+      im.onclick = () => fi.click();
+      fi.onchange = async () => {
+        const f = fi.files[0]; fi.value = ''; if (!f) return;
+        let plan;
+        try { plan = RT.buildPlan(await RT.parseWorkbook(f)); }
+        catch (e) { toast('Import failed — ' + (e.message || e)); return; }
+        const n = plan.adds.length + plan.updates.length + plan.removes.length;
+        const msg = `Put back “${f.name}”?\n\n` + RT.describePlan(plan);
+        if (!n) { alert(msg + '\n\nNothing to write.'); return; }
+        if (!confirm(msg + '\n\nWrite these ' + n + ' change' + (n === 1 ? '' : 's') + '? The trail records the sweep under your name.')) return;
+        const out = S.applyRoundTrip(plan);
+        state._gapsKey = null; state._seedBump = (state._seedBump || 0) + 1;
+        renderAll();
+        toast(`Round trip applied — ${out.added} added, ${out.changed} changed, ${out.removed} removed.`);
+      };
+    }
   }
 
   /* ---------- freshness strip — the age of every feed, on every tab ---------- */
