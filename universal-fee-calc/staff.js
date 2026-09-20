@@ -2407,6 +2407,52 @@
     return { people: Object.keys(fresh.people).length, allocations: fresh.allocations.length, skipped };
   }
 
+  /* ---------- the Excel round trip (staffing-roundtrip.js builds the plan) ----------
+     Applied in ONE write, ONE trail entry: a sweep of 300 rows is one event
+     ("Allocations round trip · 12 added, 40 changed, 3 removed"), with the
+     rows listed in its meta, not 300 anonymous saves. */
+  function applyRoundTrip(plan) {
+    const db = readDb(); const now = new Date().toISOString();
+    let by = ''; try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u && u.username) by = u.username; } catch (e) {}
+    db.deleted = db.deleted || {}; db.mappings = db.mappings || { users: {}, projects: {} };
+    const byId = {}; db.allocations.forEach(a => { byId[a.id] = a; });
+    const ensurePerson = (a, title) => {
+      if (!a.personId) return;
+      if (!db.people[a.personId]) db.people[a.personId] = { id: a.personId, name: a.personName || a.personId, isNewHire: isNewHireName(a.personName), isPool: /\bpool/i.test(a.personName || ''), title: title || '', homeTeam: '', capacityPct: 100, active: true, updatedAt: now };
+      else if (title && !(db.people[a.personId].title || '').trim()) { db.people[a.personId].title = title; db.people[a.personId].updatedAt = now; }
+    };
+    const rows = [];
+    (plan.removes || []).forEach(r => {
+      const a = byId[r.id]; if (!a) return;
+      db.allocations = db.allocations.filter(x => x.id !== r.id); db.deleted[r.id] = now;
+      rows.push('− ' + ((db.people[a.personId] || {}).name || a.personName || a.personId) + ' · ' + (a.project || ''));
+    });
+    (plan.updates || []).forEach(u => {
+      const a = byId[u.id]; if (!a) return;
+      Object.assign(a, u.next); a.pct = clampPct(a.pct); a.updatedAt = now; if (by) a.updatedBy = by;
+      ensurePerson(a, u.title);
+      rows.push('~ ' + (u.person || '') + ' · ' + (a.project || '') + ': ' + (u.summary || ''));
+    });
+    (plan.adds || []).forEach(r => {
+      const a = Object.assign({ id: 'al_' + Math.random().toString(36).slice(2, 9) }, r.next, { updatedAt: now });
+      if (by) a.updatedBy = by;
+      a.pct = clampPct(a.pct);
+      ensurePerson(a, r.title);
+      db.allocations.push(a);
+      // Contract name ≠ roster name (nickname, spelling drift)? Remember it, as the bridge does.
+      if (a.contractResource && a.personName && !namesMatch(a.personName, a.contractResource)) {
+        db.mappings.personAliases = db.mappings.personAliases || {};
+        db.mappings.personAliases[nkey(cleanName(a.contractResource))] = a.personId;
+      }
+      rows.push('+ ' + (a.personName || a.personId) + ' · ' + (a.project || '') + ' · ' + a.start + (a.end ? '–' + a.end : '') + ' · ' + a.pct + '%');
+    });
+    db.meta = db.meta || {}; db.meta.roundTripAt = now;
+    writeDb(db);
+    const out = { added: (plan.adds || []).length, changed: (plan.updates || []).length, removed: (plan.removes || []).length };
+    logStaff('staff-roundtrip', Object.assign({}, out, { unchanged: plan.unchanged || 0, skipped: plan.skipped || 0, errors: (plan.errors || []).length, rows: rows.slice(0, 60) }));
+    return out;
+  }
+
   // ---------- export ----------
   function exportJson() { return JSON.stringify(readDb(), null, 2); }
 
@@ -2417,7 +2463,7 @@
     // store
     readDb, reseedMatrix, resetAll, exportJson, attachRemote, hydrateFromRemote,
     mergeStaffDb, mergeFromRemote,
-    parseMatrixFile, importMatrix,
+    parseMatrixFile, importMatrix, applyRoundTrip,
     // roster
     listPeople, getPerson, savePerson, monthHours, setMonthHours, capacityHours,
     // allocations
