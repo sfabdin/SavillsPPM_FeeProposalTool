@@ -3738,7 +3738,7 @@
     dirtyActivityShards, markActivityShardClean,
     accessGrantList, parseAccessEmails,
     RATINGS, ratingFor, ratingMeta, resolveRating, STATUS_DEFAULT_RATING, isPlaceholder,
-    SERVICE_LINES, serviceLineOfGroup, projectServiceLines, inferServiceLine,
+    SERVICE_LINES, serviceLineOfGroup, serviceLinesOfGroup, projectServiceLines, inferServiceLine,
     listProjects, getProject, saveProject, deleteProject, migrateLeadIds,
     allProjectsRaw, restoreDeleted, purgeTombstones, logActivity, listActivity, describeChanges,
     // Revenue Diff — book snapshots and their own store

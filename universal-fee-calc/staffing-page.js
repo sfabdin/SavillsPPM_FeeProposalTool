@@ -83,6 +83,7 @@
   const state = {
     tab: 'actuals',
     winStart: null, winLen: 12, incPursuit: true,
+    group: '',                                              // practice group in view ('' = all) — see UFC_Staff.setViewGroup
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
     pplSearch: '', expandedRoster: new Set(), pplExpandInit: false,
@@ -96,6 +97,24 @@
     compView: 'summary',                                    // 'summary' (grouped + sparklines) | 'grid' (month detail)
     bridgeOpen: false,                                      // "contract staffing" card starts rolled up — it can dwarf the page
   };
+
+  /* Practice-group picker. The short names are what people say out loud;
+     the stored value is the fee tool's controlled service-line string. */
+  const GROUP_SHORT = { 'Program & Project Management': 'PPM', 'Other Savills Group': 'Other' };
+  const groupShort = (g) => GROUP_SHORT[g] || g;
+  const GROUP_PREF = 'savills-ppm-staff-group-view';
+  function applyGroup(g) {
+    state.group = S.groupList().includes(g) ? g : '';
+    S.setViewGroup(state.group || null);
+    try { localStorage.setItem(GROUP_PREF, state.group); } catch (e) {}
+  }
+  function buildGroupOptions() {
+    const sel = $('#grp-view'); if (!sel) return;
+    let saved = ''; try { saved = localStorage.getItem(GROUP_PREF) || ''; } catch (e) {}
+    applyGroup(saved);
+    sel.innerHTML = '<option value="">All groups</option>' + S.groupList().map(g => `<option value="${esc(g)}" ${state.group === g ? 'selected' : ''}>${esc(groupShort(g))}</option>`).join('');
+    sel.onchange = (e) => { applyGroup(e.target.value); renderAll(); };
+  }
 
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
   function uCls(v) { if (!v) return 'u0'; if (v <= 85) return 'u1'; if (v <= 100) return 'u2'; if (v <= 120) return 'u3'; if (v <= 150) return 'u4'; return 'u5'; }
@@ -164,7 +183,7 @@
     // Key on meta.updatedAt (stamped by every writeDb) — object identity is
     // useless here because writeDb caches the same mutated object.
     const db = S.readDb();
-    const key = (db.meta && db.meta.updatedAt) || '';
+    const key = ((db.meta && db.meta.updatedAt) || '') + '|' + state.group;   // the group scopes which contract roles count
     if (state._gapsKey !== key) { state._bridgeGaps = S.contractStaffingGaps(); state._gapsKey = key; }
     return state._bridgeGaps || [];
   }
@@ -445,7 +464,7 @@
   }
 
   function renderAllocations() {
-    let list = S.listAllocations();
+    let list = S.listAllocations().filter(a => S.inView(a.personId));
     const q = state.allocSearch.toLowerCase();
     if (q) list = list.filter(a => (a.project + ' ' + a.client + ' ' + (S.getPerson(a.personId) || {}).name + ' ' + a.note).toLowerCase().includes(q));
     if (state.allocStatus) list = list.filter(a => a.status === state.allocStatus);
@@ -624,7 +643,9 @@
       const lvTag = lv ? `<span class="nh-tag" style="background:${lv.returningSoon ? '#fdf3d7' : '#efe6f7'};color:${lv.returningSoon ? '#8a6d00' : '#6b3fa0'}" title="${lv.status === 'out' ? `On leave — back ${esc(S.ymLabel(S.ymAdd(lv.end, 1)))}${lv.returningSoon ? ' (soon — plan their staffing)' : ''}` : `Leave starts ${esc(S.ymLabel(lv.start))}`}">🌴 ${lv.status === 'out' ? `until ${esc(S.ymLabel(lv.end))}` : `from ${esc(S.ymLabel(lv.start))}`}</span>` : '';
       const empTag = r.person.nonBillable ? '<span class="nh-tag" style="background:#e7eef0;color:#4a5560" title="Internal / overhead">INT</span>'
         : ((r.person.capacityPct != null && r.person.capacityPct < 100) ? `<span class="nh-tag" style="background:#e3ecf7;color:#2f5d8f" title="Part time — measured against ${r.person.capacityPct}% of a full month (≈${Math.round(S.monthHours() * r.person.capacityPct / 100)} h/mo)">PT · ${r.person.capacityPct}%</span>` : '');
-      const meta = [r.person.isNewHire ? '<span class="nh-tag">New hire</span>' : '', r.person.isPool ? '<span class="nh-tag" style="background:#dff0ee;color:#0E7C7B" title="Shared contract pool — several people can bill toward this line">POOL</span>' : '', empTag, lvTag, r.person.title ? esc(r.person.title) : ''].filter(Boolean).join(' ');
+      const grp = S.personGroup(r.person);
+      const grpTag = (!state.group && grp !== S.DEFAULT_GROUP) ? `<span class="nh-tag" style="background:#e7f0ee;color:#0E7C7B" title="Practice group — set on the Mapping tab">${esc(groupShort(grp))}</span>` : '';
+      const meta = [grpTag, r.person.isNewHire ? '<span class="nh-tag">New hire</span>' : '', r.person.isPool ? '<span class="nh-tag" style="background:#dff0ee;color:#0E7C7B" title="Shared contract pool — several people can bill toward this line">POOL</span>' : '', empTag, lvTag, r.person.title ? esc(r.person.title) : ''].filter(Boolean).join(' ');
       body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.person.id)}">${esc(r.person.name)}</div>${meta ? `<div class="who-meta">${meta}</div>` : ''}</td>`;
       ms.forEach(m => {
         const v = Math.round(r.byMonth[m] || 0);
@@ -752,7 +773,7 @@
       const totExp = rows.reduce((s, r) => s + r.expected, 0), totAct = rows.reduce((s, r) => s + r.actual, 0);
 
       const projOpts = ['<option value="">All projects</option>'].concat(S.distinctProjects().map(p => `<option ${projFilter === p ? 'selected' : ''}>${esc(p)}</option>`)).join('');
-      const pplOpts = ['<option value="">All people</option>'].concat(S.listPeople().map(p => `<option value="${esc(p.id)}" ${state.varPerson === p.id ? 'selected' : ''}>${esc(p.name)}</option>`)).join('');
+      const pplOpts = ['<option value="">All people</option>'].concat(S.listPeople().filter(S.inView).map(p => `<option value="${esc(p.id)}" ${state.varPerson === p.id ? 'selected' : ''}>${esc(p.name)}</option>`)).join('');
       // Contract only applies when grouped by project (the contract has no names)
       let totContract = 0; const contractByProj = {};
       (byPerson ? [...new Set(rows.map(r => r.project))] : projNames).forEach(pn => { const cl = (rows.find(r => r.project === pn) || {}).client || ''; const cp = S.contractPlan(pn, ms, cl); if (cp) { contractByProj[pn] = cp; totContract += cpTot(cp); } });
@@ -1270,7 +1291,11 @@
           <option value="part" ${empType === 'part' ? 'selected' : ''}>Part Time</option>
           <option value="internal" ${empType === 'internal' ? 'selected' : ''}>Internal</option>
         </select>${empType === 'part' ? `<div style="margin-top:4px;white-space:nowrap"><input type="number" data-emp-cap="${esc(p.id)}" value="${capPct}" min="5" max="100" step="5" style="width:54px"> % <span class="vmini">≈ ${Math.round(S.monthHours() * capPct / 100)} h/mo bar</span></div>` : ''}`;
-      pplRows += `<tr><td class="pname">${esc(p.name)}${typeTag}<div class="vmini">${esc(p.title || '')}</div></td><td>${cell}<br><input list="map-ckuser-dl" data-map-ckuser="${esc(p.id)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${hits.length ? 'type to add another…' : 'type Clockify user…'}"></td><td>${empCell}</td><td>${leftCell}</td></tr>`;
+      const grp = S.personGroup(p);
+      const grpCell = `<select data-grp="${esc(p.id)}" class="fee-link-sel" style="width:auto" title="Practice group — the group picker at the top of the page shows only this group's people, and only the contract roles tagged to it in the fee tool">
+          ${S.groupList().map(g => `<option value="${esc(g)}" ${g === grp ? 'selected' : ''}>${esc(groupShort(g))}${!p.serviceLine && g === S.DEFAULT_GROUP ? ' (default)' : ''}</option>`).join('')}
+        </select>`;
+      pplRows += `<tr><td class="pname">${esc(p.name)}${typeTag}<div class="vmini">${esc(p.title || '')}</div></td><td>${cell}<br><input list="map-ckuser-dl" data-map-ckuser="${esc(p.id)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${hits.length ? 'type to add another…' : 'type Clockify user…'}"></td><td>${grpCell}</td><td>${empCell}</td><td>${leftCell}</td></tr>`;
     });
     /* Clockify users with no roster person at all — new hires the JS sheet
        does not know yet. Their hours are dropped at import until they exist. */
@@ -1286,8 +1311,8 @@
         <b>${orphans.length} Clockify user${orphans.length === 1 ? ' is' : 's are'} not on the roster</b> — their hours are dropped at import until they are. Add them here (they land on the next pull), or ignore non-delivery staff.
         <table class="dt" style="margin-top:8px"><tbody>${orphans.map(u => `<tr><td class="pname">${esc(u.name)}<div class="vmini">${esc(u.title || '')}${u.title && u.email ? ' · ' : ''}${esc(u.email || '')}</div></td>
           <td style="white-space:nowrap"><button class="btn sm" data-add-ck="${esc(u.name)}" data-add-ck-title="${esc(u.title || '')}">＋ Add to roster</button> <button class="btn sm ghost" data-ignore-ck="${esc(u.name)}" title="Not delivery staff — never import their hours">Ignore</button></td></tr>`).join('')}</tbody></table></div>` : '';
-    const pplSection = orphanSection + `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">People — roster ↔ Clockify <span class="note-txt" style="font-weight:400">(${pplProblems} unmatched · unmatched people's hours are skipped at import — map, then re-pull actuals to backfill · set the Employment type so everyone is measured against the right bar: part-timers against their %, internal staff not flagged at all)</span></h3>
-      <table class="dt"><thead><tr><th style="width:28%">Roster person (JS sheet)</th><th>③ Clockify user(s)</th><th style="width:170px">Employment</th><th style="width:190px" title="Joiners and leavers: first and last month with the firm">Joined / left</th></tr></thead><tbody>${pplRows || '<tr><td colspan="4"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
+    const pplSection = orphanSection + `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">People — roster ↔ Clockify <span class="note-txt" style="font-weight:400">(${pplProblems} unmatched · unmatched people's hours are skipped at import — map, then re-pull actuals to backfill · set the Employment type so everyone is measured against the right bar: part-timers against their %, internal staff not flagged at all · set the Group so the group picker at the top scopes every tab to that practice — anyone left unset counts as PPM${state.group ? ' · this list always shows everyone, whatever group is picked above' : ''})</span></h3>
+      <table class="dt"><thead><tr><th style="width:24%">Roster person (JS sheet)</th><th>③ Clockify user(s)</th><th style="width:170px">Group</th><th style="width:170px">Employment</th><th style="width:190px" title="Joiners and leavers: first and last month with the firm">Joined / left</th></tr></thead><tbody>${pplRows || '<tr><td colspan="5"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
       <datalist id="map-ckuser-dl">${ckUsers.map(u => `<option value="${esc(u.name)}"${u.email ? ` label="${esc(u.email)}"` : ''}></option>`).join('')}</datalist>`;
     // ---- job titles ↔ rate grid: every distinct roster title, its resolved
     // rate family + cost rate, and a picker to pin the ones that don't match ----
@@ -1375,6 +1400,11 @@
       toast(ym ? `${person.name || 'Person'} marked as left in ${S.ymLabel(ym)} — nothing is expected of them after that month.`
                : `${person.name || 'Person'} is active again.`, 'ok');
       renderMapping(); try { renderCompliance(); } catch (e) {}
+    });
+    $$('#p-mapping [data-grp]').forEach(sel => sel.onchange = () => {
+      const person = S.setPersonGroup(sel.dataset.grp, sel.value);
+      toast(`${(person && person.name) || 'Person'} is in ${groupShort(sel.value)} — the group picker at the top now counts them there.`, 'ok');
+      renderCounts(); renderMapping();
     });
     $$('#p-mapping [data-emp]').forEach(sel => sel.onchange = () => {
       const pid = sel.dataset.emp, type = sel.value;
@@ -1589,6 +1619,7 @@
     const lastTimeFor = (r) => S.lastTimeEntered(r, ms);
     lateRows.forEach(r => {
       const person = S.listPeople().find(p => S.namesMatch(p.name, r.user));
+      if (state.group && !(person && S.inView(person))) return;   // team lag is the viewed group's lag
       const pid = person ? person.id : 'x:' + r.user;
       const a = latePP[pid] || (latePP[pid] = { name: person ? person.name : r.user, entries: 0, lagW: 0, maxLag: 0, w3: 0, w7: 0 });
       a.entries += r.entries; a.lagW += r.avgLag * r.entries; a.maxLag = Math.max(a.maxLag, r.maxLag);
@@ -2057,9 +2088,10 @@
   }
 
   function renderCounts() {
-    $('#cnt-alloc').textContent = '(' + S.listAllocations().length + ')';
-    $('#cnt-proj').textContent = '(' + S.distinctProjects().length + ')';
-    $('#cnt-ppl').textContent = '(' + S.listPeople().length + ')';
+    const allocs = S.listAllocations().filter(a => S.inView(a.personId));
+    $('#cnt-alloc').textContent = '(' + allocs.length + ')';
+    $('#cnt-proj').textContent = '(' + (state.group ? new Set(allocs.map(a => a.project).filter(Boolean)).size : S.distinctProjects().length) + ')';
+    $('#cnt-ppl').textContent = '(' + S.listPeople().filter(S.inView).length + ')';
   }
   function renderActive() {
     const panel = $('#p-' + state.tab);
@@ -2132,6 +2164,7 @@
     wireMatrixImport();
     wireStaffSync().then(() => {
       buildWindowOptions();
+      buildGroupOptions();
     $('#month-hrs').value = S.monthHours();
     const gh = $('#gloss-hrs'); if (gh) gh.textContent = S.monthHours();
     $('#win-start').onchange = (e) => { state.winStart = e.target.value; renderActive(); };
