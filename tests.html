@@ -1637,6 +1637,88 @@
       S.clearStaffingShift(feeP.id);
       return r;
     });
+    /* PRACTICE GROUPS — PPM / Change Management / Workplace. A person's group
+       lives on the roster; the page's group picker scopes the READ side only.
+       Every test resets the view so a failure cannot leak a scope into the
+       tests after it. */
+    const inGroup = (fn) => { try { return fn(); } finally { ST.setViewGroup(null); } };
+    const seedGroups = () => {
+      cleanStaff();
+      ST.savePerson({ id: 'grp_pm', name: 'Pat Manager', title: 'Project Manager' });
+      ST.savePerson({ id: 'grp_cm', name: 'Chris Change', title: 'Change Lead' });
+      ST.setPersonGroup('grp_cm', 'Change Management');
+      ST.saveAllocation({ id: 'ga_pm', personId: 'grp_pm', project: 'Split Tower', client: 'Acme', start: '2026-04', end: '2026-05', pct: 50 });
+      ST.saveAllocation({ id: 'ga_cm', personId: 'grp_cm', project: 'Split Tower', client: 'Acme', start: '2026-04', end: '2026-05', pct: 100 });
+      ST.saveAllocation({ id: 'ga_cm2', personId: 'grp_cm', project: 'Change Only', client: 'Acme', start: '2026-04', end: '2026-05', pct: 20 });
+      ST.commitClockify({ ok: true, months: ['2026-04'], agg: { 'grp_pm|Split Tower|2026-04': 60, 'grp_cm|Split Tower|2026-04': 150 }, titles: {} }, 'merge');
+    };
+
+    test('Staffing · groups', 'nobody tagged reads as PPM; a pick sticks; a bad value clears it', () => {
+      seedGroups();
+      if (ST.personGroup(ST.getPerson('grp_pm')) !== 'Program & Project Management') return 'unset person is ' + ST.personGroup(ST.getPerson('grp_pm'));
+      if (ST.personGroup(ST.getPerson('grp_cm')) !== 'Change Management') return 'pick did not stick';
+      ST.setPersonGroup('grp_cm', 'Not A Group');
+      if (ST.personGroup(ST.getPerson('grp_cm')) !== 'Program & Project Management') return 'a bad value was stored';
+      return true;
+    });
+
+    test('Staffing · groups', 'a group survives a sheet re-import', () => {
+      seedGroups();
+      ST.importMatrix([{ person: 'Chris Change', proj: 'Split Tower', client: 'Acme', start: '2026-04', end: '2026-05', pct: 100 }], 'test sheet');
+      const p = ST.listPeople().find(x => x.name === 'Chris Change');
+      return (p && ST.personGroup(p) === 'Change Management') || 'group lost on import: ' + JSON.stringify(p);
+    });
+
+    test('Staffing · groups', 'viewing one group scopes load, projects, plan vs actual and compliance', () => inGroup(() => {
+      seedGroups();
+      ST.setViewGroup('Change Management');
+      const bw = ST.bandwidthGrid(['2026-04']).map(r => r.person.id);
+      if (bw.join() !== 'grp_cm') return 'bandwidth rows: ' + bw.join();
+      const split = ST.projectRollup(['2026-04']).find(r => r.project === 'Split Tower');
+      if (!split || split.headcount !== 1 || Math.abs(split.byMonth['2026-04'] - 1) > 1e-9) return 'project rollup: ' + JSON.stringify(split && { h: split.headcount, fte: split.byMonth });
+      const vm = ST.varianceMatrix(['2026-04'], {});
+      if (vm.some(r => r.person.id !== 'grp_cm')) return 'variance leaked another group';
+      if (vm.reduce((t, r) => t + r.actual, 0) !== 150) return 'actuals in view: ' + vm.reduce((t, r) => t + r.actual, 0);
+      const comp = ST.complianceRows(['2026-04'], { now: '2026-06-15' });
+      if (comp.rows.concat(comp.untracked).some(r => r.person.id !== 'grp_cm')) return 'compliance leaked another group';
+      ST.setViewGroup('Program & Project Management');
+      const pp = ST.projectRollup(['2026-04']).map(r => r.project);
+      return (pp.join() === 'Split Tower') || 'PPM view projects: ' + pp.join();
+    }));
+
+    test('Staffing · groups', 'a scoped view never drops anyone else\'s data', () => inGroup(() => {
+      seedGroups();
+      ST.setViewGroup('Change Management');
+      if (ST.listAllocations().length !== 3 || ST.listPeople().length !== 2) return 'raw lists were scoped';
+      ST.saveAllocation({ id: 'ga_new', personId: 'grp_cm', project: 'Change Only', client: 'Acme', start: '2026-06', end: '2026-07', pct: 10 });
+      ST.setViewGroup(null);
+      const db = ST.readDb();
+      if (!db.allocations.some(a => a.id === 'ga_pm')) return 'a write under the CM view deleted the PPM row';
+      return eq(Object.keys(db.actuals).length, 2, 'both actuals kept');
+    }));
+
+    // A fee project split across two groups — the contract side of the same pick.
+    S.saveProject(base({
+      project: { name: 'Split Tower', client: 'Acme', status: 'active' },
+      groups: [{ id: 'g_pm', name: 'Core', serviceLine: 'Program & Project Management' }, { id: 'g_cm', name: 'Change', serviceLine: 'Change Management' }],
+      roles: [
+        { id: 'r_pm', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'g_pm', fte: {}, fteMonthly: { '2026-4': 100 } },
+        { id: 'r_cm', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'g_cm', fte: {}, fteMonthly: { '2026-4': 50 } },
+      ],
+    }));
+    document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+
+    test('Staffing · groups', 'the contract plan counts only the viewed group\'s roles', () => inGroup(() => {
+      const all = ST.contractPlan('Split Tower', ['2026-04'], 'Acme');
+      if (!all) return 'no plan resolved — fee link failed';
+      const r1 = eq(all.byMonth['2026-04'], 1.5 * 160, 'all groups: 150% FTE'); if (r1 !== true) return r1;
+      ST.setViewGroup('Change Management');
+      const cm = ST.contractPlan('Split Tower', ['2026-04'], 'Acme');
+      const r2 = eq(cm && cm.byMonth['2026-04'], 0.5 * 160, 'CM view: its 50% role only'); if (r2 !== true) return r2;
+      ST.setViewGroup('Workplace');
+      return ST.contractPlan('Split Tower', ['2026-04'], 'Acme') === null || 'Workplace view still shows contract hours';
+    }));
+
   })();
 
   /* ============ PLACEHOLDER ESTIMATE ============

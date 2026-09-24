@@ -250,6 +250,7 @@
   const PERSON_FIELDS = [
     ['name', 'Name'], ['title', 'Title'], ['homeTeam', 'Home team'],
     ['capacityPct', 'Capacity %'], ['nonBillable', 'Non-billable'], ['active', 'Active'], ['leftYm', 'Left'], ['joinedYm', 'Joined'],
+    ['serviceLine', 'Group'],
   ];
   /** Field-level changes in the shape the Change Log already renders, so a
       staffing edit reads the same way a fee edit does with no extra code. */
@@ -270,7 +271,7 @@
   function reseedMatrix() {
     const db = readDb();
     const keepActuals = db.actuals || {};
-    const keepCaps = {}; Object.values(db.people).forEach(p => { keepCaps[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam, nonBillable: p.nonBillable }; });
+    const keepCaps = {}; Object.values(db.people).forEach(p => { keepCaps[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam, nonBillable: p.nonBillable, serviceLine: p.serviceLine }; });
     const fresh = seedFromMatrix(defaultDb());
     fresh.actuals = keepActuals;
     Object.values(fresh.people).forEach(p => { if (keepCaps[p.id]) Object.assign(p, keepCaps[p.id]); });
@@ -381,6 +382,54 @@
     if (was !== db.meta.monthHours) logStaff('staff-hours', { from: was, to: db.meta.monthHours });
   }
   function monthHours() { return readDb().meta.monthHours || DEFAULT_MONTH_HOURS; }
+
+  /* ===== Practice group — PPM / Change Management / Workplace / … =========
+     Fees already split by group: every fee-tool role sits in a project group
+     tagged with the service line its revenue is attributed to. People had no
+     such tag, so the staffing views could only ever show the whole team.
+     person.serviceLine (set on the Mapping tab) is the person's home group,
+     from the SAME controlled list the fee tool uses, so one pick scopes
+     both sides: their plan, their Clockify hours, and the contract roles
+     of that group. Unset reads as PPM — the home practice — so the PPM view
+     is right from day one and only the other groups need tagging.
+
+     The page picks a VIEW group (setViewGroup). Only the read-side roll-ups
+     consult it — bandwidth, project roll-up, plan vs actual, compliance,
+     leaves, macro time, contract plan and gaps. Writes, merges, the raw
+     lists (listPeople / listAllocations) and the round trip never do, so a
+     scoped view can never drop anyone's data. */
+  const DEFAULT_GROUP = 'Program & Project Management';
+  function groupList() {
+    const S2 = typeof window !== 'undefined' && window.UFC_Store;
+    return (S2 && S2.SERVICE_LINES) || [DEFAULT_GROUP, 'Change Management', 'Workplace', 'Relocation', 'Other Savills Group'];
+  }
+  function personGroup(person) {
+    const g = person && person.serviceLine;
+    return (g && groupList().includes(g)) ? g : DEFAULT_GROUP;
+  }
+  function setPersonGroup(personId, line) {
+    if (!getPerson(personId)) return null;
+    return savePerson({ id: personId, serviceLine: groupList().includes(line) ? line : null });
+  }
+  let _viewGroup = null;
+  function setViewGroup(line) { _viewGroup = groupList().includes(line) ? line : null; }
+  function viewGroup() { return _viewGroup; }
+  /** Is this person (record or id) in the group being viewed? Hours under an
+      id with no roster record (unmatched Clockify names) belong to no group. */
+  function inView(p) {
+    if (!_viewGroup) return true;
+    const person = (p && typeof p === 'object') ? p : readDb().people[p];
+    return !!person && personGroup(person) === _viewGroup;
+  }
+  /** Is this fee-tool role in the viewed group — by the service line of the
+      project group it sits in, the same rule Revenue Projections filters on. */
+  function feeRoleInView(p, r) {
+    if (!_viewGroup) return true;
+    const S2 = window.UFC_Store;
+    const g = ((p && p.groups) || []).find(x => x.id === (r && r.groupId));
+    const lines = S2.serviceLinesOfGroup ? S2.serviceLinesOfGroup(g) : [S2.serviceLineOfGroup(g)];
+    return lines.includes(_viewGroup);
+  }
 
   // ---------- allocations ----------
   function listAllocations() { return readDb().allocations.slice(); }
@@ -675,6 +724,7 @@
       if (String(e.pid).startsWith('unmatched:')) return;    // case (1) — reported by the importer
       const person = db.people[e.pid];
       if (!person) return;
+      if (!inView(person)) return;
       if (person.nonBillable) return;                         // overhead staff need no allocation
       const winEnd = inWin.size ? [...inWin].sort().pop() : null;
       const covers = (db.allocations || []).some(a => a.personId === e.pid && a.start &&
@@ -707,6 +757,7 @@
     (db.allocations || []).forEach(a => {
       if (!a || !a.personId || !a.project) return;
       if (isLeaveProject(a.project)) return;            // leave rows legitimately repeat
+      if (!inView(a.personId)) return;
       (groups[a.personId + '|' + canon(a.project)] = groups[a.personId + '|' + canon(a.project)] || []).push(a);
     });
     const overlaps = (x, y) => {
@@ -761,7 +812,7 @@
       = array of YYYY-MM. Returns [{person, byMonth:{ym:pct}, peak, avg}]. */
   function bandwidthGrid(months, opts) {
     const db = readDb();
-    const rows = Object.values(db.people).map(person => {
+    const rows = Object.values(db.people).filter(inView).map(person => {
       const byMonth = {}; let peak = 0, sum = 0, n = 0;
       months.forEach(ym => {
         const v = personLoad(person.id, ym, opts);
@@ -781,6 +832,7 @@
     const byProj = {};
     db.allocations.forEach(a => {
       if (!includePursuit && (a.status === 'Pursuit' || a.type === 'Opportunity')) return;
+      if (!inView(a.personId)) return;
       const key = a.project || '—';
       const b = byProj[key] || (byProj[key] = { project: key, client: a.client || '', people: new Set(), status: a.status, type: a.type, byMonth: {}, allocs: [] });
       b.people.add(a.personId); b.allocs.push(a);
@@ -971,6 +1023,7 @@
     db.allocations.forEach(a => {
       if (wantProject && a.project !== wantProject) return;
       if (wantPerson && a.personId !== wantPerson) return;
+      if (!inView(a.personId)) return;
       if (!months.some(m => allocActiveIn(a, m))) return;
       pairs[a.personId + '|' + a.project] = { personId: a.personId, project: a.project, client: a.client };
     });
@@ -979,6 +1032,7 @@
       if (!months.includes(ym)) return;
       if (wantProject && project !== wantProject) return;
       if (wantPerson && personId !== wantPerson) return;
+      if (!inView(personId)) return;
       const pk = personId + '|' + project;
       if (!pairs[pk]) pairs[pk] = { personId, project, client: '' };
     });
@@ -1035,6 +1089,7 @@
         if (!inWin.has(ym)) return;
         const mk = m.year + '-' + m.month;              // fee tool keys are non-padded
         p.roles.forEach(r => {
+          if (!feeRoleInView(p, r)) return;
           const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : ((r.fte && r.fte[phaseOf[mk]]) || 0)) / 100;
           if (!fte) return;
           const h = fte * hrs;
@@ -1048,7 +1103,7 @@
       // billed fee $ by month (net of discounts/locks) — powers the dollars view
       if (cat && cat.hydrated) {
         try {
-          const series = S2.monthlySeries(p, cat) || [];
+          const series = S2.monthlySeries(p, cat, _viewGroup ? { serviceLine: _viewGroup } : undefined) || [];
           if (series.length) { feeByMonth = feeByMonth || {}; series.forEach(m => { const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (inWin.has(ym)) { feeByMonth[ym] = (feeByMonth[ym] || 0) + m.amount; feeTotal += m.amount; anyFee = true; } }); }
         } catch (e) {}
       }
@@ -1405,6 +1460,7 @@
 
     const rows = [], untracked = [];
     listPeople().forEach(person => {
+      if (!inView(person)) return;
       const logged = perPM[person.id] || {};
       if (person.isNewHire && !Object.keys(logged).length) return;   // a placeholder with no hours yet; one with hours has started
       // A start month set by hand wins; otherwise the first month with hours.
@@ -1603,6 +1659,7 @@
         (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
         const pMonths = S2.enumerateMonths(p.timeline);
         p.roles.forEach(r => {
+          if (!feeRoleInView(p, r)) return;
           // Blank, TBD and [NEW HIRE] resources aren't people — but the role
           // is still open demand: track it per role TITLE, to be named later.
           const nm = cleanName(r.resource || '');
@@ -2033,6 +2090,7 @@
     const out = [];
     db.allocations.forEach(a => {
       if (!isLeaveProject(a.project)) return;
+      if (!inView(a.personId)) return;
       const person = db.people[a.personId] || { id: a.personId, name: a.personId };
       const start = a.start || now, end = a.end || start;
       const status = now < start ? 'upcoming' : (now > end ? 'past' : 'out');
@@ -2052,6 +2110,7 @@
       const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
       const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
       if (!inWin.has(ym)) return;
+      if (!inView(pid)) return;
       const rec = per[pid] || (per[pid] = { person: db.people[pid] || { id: pid, name: pid.replace(/^unmatched:/, '') }, hours: 0, total: 0, ptoHours: 0, byProj: {} });
       rec.total += h;
       if (!isMacroProject(proj)) return;
@@ -2378,7 +2437,7 @@
     const renames = ((db.mappings || {}).renames) || {};
     rows.forEach(r => { const c = renames[nkey(r.proj)]; if (c) r.proj = c; });   // auto-canonicalize on the way in
     const keepActuals = db.actuals || {};
-    const keep = {}; Object.values(db.people).forEach(p => { keep[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam, nonBillable: p.nonBillable }; });
+    const keep = {}; Object.values(db.people).forEach(p => { keep[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam, nonBillable: p.nonBillable, serviceLine: p.serviceLine }; });
     const fresh = defaultDb();
     fresh.actuals = keepActuals; fresh.meta = db.meta || fresh.meta;
     /* A person's id is a slug of their name, so a sheet that spells a name
@@ -2466,6 +2525,8 @@
     parseMatrixFile, importMatrix, applyRoundTrip,
     // roster
     listPeople, getPerson, savePerson, monthHours, setMonthHours, capacityHours,
+    // practice group
+    DEFAULT_GROUP, groupList, personGroup, setPersonGroup, setViewGroup, viewGroup, inView,
     // allocations
     listAllocations, saveAllocation, deleteAllocation, personIdForName,
     distinctProjects, distinctClients, allocationWindow, defaultWindow,

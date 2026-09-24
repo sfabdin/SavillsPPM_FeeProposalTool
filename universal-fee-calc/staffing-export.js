@@ -101,6 +101,11 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
   const dateStr = now.toISOString().slice(0, 10);
   const curUser = STORE.getCurrentUser();
   const who = (curUser && curUser.username) || 'unknown';
+  /* The group picked on the page scopes the book the same way it scopes the
+     tabs — the engine roll-ups already follow it; the raw lists below filter. */
+  const grp = S.viewGroup ? S.viewGroup() : null;
+  const grpShort = grp ? ({ 'Program & Project Management': 'PPM', 'Other Savills Group': 'Other' }[grp] || grp) : '';
+  const grpTag = grp ? '_' + grpShort.replace(/[^A-Za-z0-9]+/g, '-') : '';
 
   /* ---------- full month range: union of allocation window + actuals coverage ---------- */
   const aw = S.allocationWindow();
@@ -116,7 +121,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
   {
     const cv = wb.addWorksheet('Cover', { views: [{ showGridLines: false }] });
     cv.columns = [{ width: 30 }, { width: 78 }];
-    let r = titleBlock(cv, 'Staffing & Bandwidth — full export', `Exported ${dateStr} by ${who} · window ${months.length ? S.ymLabel(months[0]) + ' – ' + S.ymLabel(months[months.length - 1]) : 'no data'} · static values, not live formulas`, 2);
+    let r = titleBlock(cv, 'Staffing & Bandwidth — full export', `${grp ? 'Group: ' + grpShort + ' only · ' : ''}Exported ${dateStr} by ${who} · window ${months.length ? S.ymLabel(months[0]) + ' – ' + S.ymLabel(months[months.length - 1]) : 'no data'} · static values, not live formulas`, 2);
     const idx = [
       ['Compare', 'Plan / Contract / Actual by project and month — the Compare tab, incl. a totals block that ties to the on-screen chart.'],
       ['By Project', 'One row per project: headcount, peak FTE, and monthly FTE load.'],
@@ -178,7 +183,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
   ];
   s1.getRow(1).eachCell(c => styleHeader(c));
   s1.getRow(1).height = 20;
-  const allocs = S.listAllocations().slice().sort((a, b) =>
+  const allocs = S.listAllocations().filter(a => S.inView(a.personId)).sort((a, b) =>
     (S.getPerson(a.personId) || {}).name > (S.getPerson(b.personId) || {}).name ? 1 : -1);
   allocs.forEach(a => {
     const p = S.getPerson(a.personId);
@@ -618,7 +623,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
 
     ws.mergeCells(`A${r}:E${r}`); styleSectionTitle(ws.getCell(`A${r}`));
     ws.getCell(`A${r}`).value = '  PEOPLE'; ws.getRow(r).height = 20; r++;
-    ['Person', 'Title', 'Employment', 'Capacity %', 'Pinned Clockify user(s)'].forEach((h, i) => {
+    ['Person', 'Title', 'Employment · group', 'Capacity %', 'Pinned Clockify user(s)'].forEach((h, i) => {
       const c = ws.getCell(`${colLetter(i + 1)}${r}`); c.value = h; styleHeader(c, { align: i === 3 ? 'right' : 'left' });
     });
     r++;
@@ -628,7 +633,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
       const emp = S.personEmploymentType(p);
       ws.getCell(`A${r}`).value = p.name;
       ws.getCell(`B${r}`).value = p.title || '';
-      ws.getCell(`C${r}`).value = emp === 'internal' ? 'Internal' : emp === 'part' ? 'Part time' : 'Full time';
+      ws.getCell(`C${r}`).value = (emp === 'internal' ? 'Internal' : emp === 'part' ? 'Part time' : 'Full time') + ' · ' + ({ 'Program & Project Management': 'PPM', 'Other Savills Group': 'Other' }[S.personGroup(p)] || S.personGroup(p));
       ws.getCell(`D${r}`).value = p.capacityPct != null ? p.capacityPct : 100;
       ws.getCell(`D${r}`).alignment = { horizontal: 'right' };
       ws.getCell(`E${r}`).value = pinned;
@@ -658,7 +663,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     });
   }
 
-  await download(wb, `Staffing-Full-Export_${dateStr}.xlsx`);
+  await download(wb, `Staffing-Full-Export${grpTag}_${dateStr}.xlsx`);
 };
 
 /* ============================================================
@@ -767,6 +772,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
     Object.entries(actuals).forEach(([k, h]) => {
       const [pid, proj, ym] = k.split('|');
       if (!ms.includes(ym) || !h) return;
+      if (S.inView && !S.inView(pid)) return;
       const pp = byPerson[pid] || (byPerson[pid] = {});
       const pr = pp[proj] || (pp[proj] = {});
       pr[ym] = (pr[ym] || 0) + h;
