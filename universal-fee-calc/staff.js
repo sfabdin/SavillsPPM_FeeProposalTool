@@ -1065,41 +1065,86 @@
       breakdown (contract knows titles + allocations, not names). Rate-free.
       A matrix project can be pinned to SEVERAL fee projects; their figures
       sum into one plan. { byMonth:{ym:hrs}, total, roles:[{title, fteMonths, hours}], feeProjects } */
+  /** One fee record's planned hours into an aggregate: roles × FTE × hrs/mo,
+      month by month, per title. Shared by contractPlan (a matrix project's
+      linked fee records) and feeProjectPlan (one fee project, for its leader). */
+  function addPlanOfRecord(p, inWin, agg) {
+    const S2 = window.UFC_Store;
+    const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    if (!p || !p.roles || !p.roles.length || !p.timeline) return false;
+    const hrs = (p.assumptions && p.assumptions.hrsPerMo) || S2.PRICING_HOURS_PER_MONTH;
+    const byPhase = S2.computeMonthsByPhase(p);
+    const phaseOf = {};
+    (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
+    const titleOf = (r) => {
+      const t = cat && cat.titles && cat.titles.find(x => x.id === r.titleId);
+      return (r.projectRole || '').trim() || (t && (t.name || t.label)) || r.titleId || 'Role';
+    };
+    let any = false;
+    S2.enumerateMonths(p.timeline).forEach(m => {
+      const ym = m.year + '-' + String(m.month).padStart(2, '0');
+      if (!inWin.has(ym)) return;
+      const mk = m.year + '-' + m.month;              // fee tool keys are non-padded
+      p.roles.forEach(r => {
+        if (!feeRoleInView(p, r)) return;            // the practice-group picker scopes contract roles too
+        const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : ((r.fte && r.fte[phaseOf[mk]]) || 0)) / 100;
+        if (!fte) return;
+        const h = fte * hrs;
+        agg.byMonth[ym] = (agg.byMonth[ym] || 0) + h;
+        const tl = titleOf(r);
+        const ra = agg.roleAgg[tl] || (agg.roleAgg[tl] = { title: tl, fteMonths: 0, hours: 0 });
+        ra.fteMonths += fte; ra.hours += h;
+        agg.total += h; any = true;
+      });
+    });
+    return any;
+  }
+  /** Planned hours of ONE fee project over a window — what its leader priced.
+      { byMonth, total, roles } or null when the roster is not priced. */
+  function feeProjectPlan(feeProjectId, months) {
+    const p = feeRecords().find(x => x.id === feeProjectId);
+    const agg = { byMonth: {}, roleAgg: {}, total: 0 };
+    if (!addPlanOfRecord(p, new Set(months), agg)) return null;
+    return { byMonth: agg.byMonth, total: Math.round(agg.total * 10) / 10,
+      roles: Object.values(agg.roleAgg).map(r => ({ title: r.title, fteMonths: Math.round(r.fteMonths * 100) / 100, hours: Math.round(r.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours) };
+  }
+  /** Matrix projects whose fee link resolves to this fee project (pinned or auto). */
+  function matrixProjectsForFee(feeProjectId) {
+    const db = readDb();
+    return distinctProjects().filter(pn => {
+      const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
+      return matchFeeProjects(pn, client).some(l => l.id === feeProjectId);
+    });
+  }
+  /** Allocated vs logged for ONE fee project, per person, over a window — the
+      leader's view of their own project. Rows come from every matrix project
+      linked to it; a person on two linked matrix names is one row.
+      { rows:[{person, byMonth:{ym:{e,a}}, expected, actual}], matrixNames } */
+  function feeProjectActuals(feeProjectId, months) {
+    const names = matrixProjectsForFee(feeProjectId);
+    const byPerson = {};
+    names.forEach(pn => {
+      varianceMatrix(months, { project: pn }).forEach(r => {
+        const e = byPerson[r.person.id] || (byPerson[r.person.id] = { person: r.person, byMonth: {}, expected: 0, actual: 0 });
+        months.forEach(ym => { const c = r.byMonth[ym] || { e: 0, a: 0 }; const d = e.byMonth[ym] || (e.byMonth[ym] = { e: 0, a: 0 }); d.e += c.e; d.a += c.a; });
+        e.expected += r.expected; e.actual += r.actual;
+      });
+    });
+    return { rows: Object.values(byPerson).sort((a, b) => b.actual - a.actual || a.person.name.localeCompare(b.person.name)), matrixNames: names };
+  }
+
   function contractPlan(projectName, months, client) {
     const links = matchFeeProjects(projectName, client);
     if (!links.length) return null;
     const S2 = window.UFC_Store;
     const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
     const inWin = new Set(months);
-    const byMonth = {}; const roleAgg = {}; let total = 0, any = false;
+    const agg = { byMonth: {}, roleAgg: {}, total: 0 }; let any = false;
     let feeByMonth = null, feeTotal = 0, anyFee = false;
     links.forEach(link => {
       const p = feeRecords().find(x => x.id === link.id);
-      if (!p || !p.roles || !p.roles.length || !p.timeline) return;
-      const hrs = (p.assumptions && p.assumptions.hrsPerMo) || S2.PRICING_HOURS_PER_MONTH;
-      const byPhase = S2.computeMonthsByPhase(p);
-      const phaseOf = {};
-      (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
-      const titleOf = (r) => {
-        const t = cat && cat.titles && cat.titles.find(x => x.id === r.titleId);
-        return (r.projectRole || '').trim() || (t && (t.name || t.label)) || r.titleId || 'Role';
-      };
-      S2.enumerateMonths(p.timeline).forEach(m => {
-        const ym = m.year + '-' + String(m.month).padStart(2, '0');
-        if (!inWin.has(ym)) return;
-        const mk = m.year + '-' + m.month;              // fee tool keys are non-padded
-        p.roles.forEach(r => {
-          if (!feeRoleInView(p, r)) return;
-          const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : ((r.fte && r.fte[phaseOf[mk]]) || 0)) / 100;
-          if (!fte) return;
-          const h = fte * hrs;
-          byMonth[ym] = (byMonth[ym] || 0) + h;
-          const tl = titleOf(r);
-          const ra = roleAgg[tl] || (roleAgg[tl] = { title: tl, fteMonths: 0, hours: 0 });
-          ra.fteMonths += fte; ra.hours += h;
-          total += h; any = true;
-        });
-      });
+      if (!addPlanOfRecord(p, inWin, agg)) return;
+      any = true;
       // billed fee $ by month (net of discounts/locks) — powers the dollars view
       if (cat && cat.hydrated) {
         try {
@@ -1109,8 +1154,8 @@
       }
     });
     if (!any) return null;
-    const roles = Object.values(roleAgg).map(r => ({ title: r.title, fteMonths: Math.round(r.fteMonths * 100) / 100, hours: Math.round(r.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours);
-    return { byMonth, total: Math.round(total * 10) / 10, roles, feeProjects: links, feeByMonth: anyFee ? feeByMonth : null, feeTotal: Math.round(feeTotal) };
+    const roles = Object.values(agg.roleAgg).map(r => ({ title: r.title, fteMonths: Math.round(r.fteMonths * 100) / 100, hours: Math.round(r.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours);
+    return { byMonth: agg.byMonth, total: Math.round(agg.total * 10) / 10, roles, feeProjects: links, feeByMonth: anyFee ? feeByMonth : null, feeTotal: Math.round(feeTotal) };
   }
 
   function actualsMeta() { const m = readDb().meta || {}; return { importedAt: m.clockifyImportedAt, rows: Object.keys(readDb().actuals).length, months: m.clockifyMonths || [] }; }
@@ -1875,87 +1920,6 @@
     } catch (e) { return []; }
   }
 
-  /** REVERSE bridge: fee projects with an EMPTY roster whose linked matrix
-      project already carries allocations — propose seeding the fee-tool
-      roster FROM the matrix. Booked (won/active) and pipeline statuses both
-      qualify ("if we have it"); only lost/closed are excluded. Proposed
-      roles are month-faithful (fteMonthly), clipped to the fee timeline,
-      and meant to be written at a $0 contracted rate so no project's
-      revenue moves until a leader prices the roster in reconciliation.
-      Read-only — the page previews and the leader confirms per project. */
-  function matrixSeedCandidates() {
-    const S2 = window.UFC_Store;
-    if (!S2 || !S2.enumerateMonths) return [];
-    const db = readDb();
-    // reverse index: fee project id → matrix project names linked to it
-    const revLinks = {};
-    const linkCount = {};   // matrix project → how many fee projects it links to
-    distinctProjects().forEach(pn => {
-      if (isLeaveProject(pn)) return;             // the leave bucket never seeds a fee roster
-      const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
-      const links = matchFeeProjects(pn, client);
-      linkCount[pn] = links.length;
-      links.forEach(l => { (revLinks[l.id] = revLinks[l.id] || []).push(pn); });
-    });
-    const out = [];
-    feeRecords().forEach(p => {
-      if (p.roles && p.roles.length) return;                 // never touch an existing roster
-      const st = (p.project && p.project.status) || '';
-      if (((window.UFC_Store && window.UFC_Store.ENDED_STATUSES) || new Set(['lost', 'closed'])).has(st)) return;
-      if (!p.timeline) return;
-      const matrixNames = revLinks[p.id] || [];
-      if (!matrixNames.length) return;
-      // A matrix project pinned to SEVERAL fee projects would seed the SAME
-      // allocations into each one, multiplying apparent contract demand.
-      // Skip — splitting that roster across contracts is a human decision.
-      if (matrixNames.some(n => (linkCount[n] || 0) > 1)) return;
-      const allocs = db.allocations.filter(a => matrixNames.includes(a.project));
-      if (!allocs.length) return;
-      let months;
-      try { months = S2.enumerateMonths(p.timeline).map(m => ({ ym: m.year + '-' + String(m.month).padStart(2, '0'), mk: m.year + '-' + m.month })); } catch (e) { return; }
-      if (!months.length) return;
-      const inWin = new Set(months.map(m => m.ym));
-      const byPerson = {};
-      allocs.forEach(a => {
-        const per = db.people[a.personId] || { id: a.personId, name: a.personId, title: '' };
-        const e = byPerson[per.id] || (byPerson[per.id] = { person: per, allocs: [], pursuit: false });
-        e.allocs.push(a);
-        if (a.status === 'Pursuit' || a.type === 'Opportunity') e.pursuit = true;
-      });
-      let clippedMonths = 0;
-      const roles = Object.values(byPerson).map(e => {
-        const fteMonthly = {};                               // fee-tool keys are non-padded
-        let tot = 0, activeMonths = 0;
-        months.forEach(({ ym, mk }) => {
-          const pct = e.allocs.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
-          // EXPLICIT zero for inactive months — a missing key falls back to
-          // the phase-average in the calculator, painting phantom % into
-          // months the person was never allocated.
-          fteMonthly[mk] = pct;
-          if (pct) { tot += pct; activeMonths++; }
-        });
-        e.allocs.forEach(a => { if (a.start && a.end) monthsBetween(a.start, a.end).forEach(ym => { if (!inWin.has(ym)) clippedMonths++; }); });
-        if (!activeMonths) return null;
-        const fam = titleFamily((e.person.title || '').trim());
-        return {
-          person: e.person, pursuit: e.pursuit,
-          fteMonthly, avgPct: Math.round(tot / activeMonths), activeMonths,
-          titleId: fam ? fam.titleId : '', tierId: fam ? fam.tierId : 'mid',
-          titleMapped: !!fam,
-        };
-      }).filter(Boolean);
-      if (!roles.length) return;
-      out.push({
-        feeId: p.id, name: (p.project && p.project.name) || '', client: (p.project && p.project.client) || '',
-        status: st, booked: st === 'won' || st === 'active',
-        updatedAt: p.updatedAt || '',
-        matrixNames, roles, clippedMonths,
-        totalFteMo: Math.round(roles.reduce((s, r) => s + Object.values(r.fteMonthly).reduce((x, v) => x + v, 0), 0)) / 100,
-        anyPursuit: roles.some(r => r.pursuit),
-      });
-    });
-    return out.sort((a, b) => (b.booked ? 1 : 0) - (a.booked ? 1 : 0) || b.totalFteMo - a.totalFteMo);
-  }
 
   /** Bandwidth freeing up over the next 3 months, per person — the biggest
       drop below the 100% line and when it lands. Always looks forward from
@@ -2248,6 +2212,69 @@
       to: (opts && opts.remove) ? 'unlinked' : 'linked' }, feeProjectId);
   }
 
+  /* ---------- the leader's mapping verbs: flag and claim ----------
+     A mapping is global and one-to-one, so a leader cannot move one that
+     belongs to another project. They can CONFIRM an auto-match (setFeeMapping
+     pins it), CLAIM a Clockify project nothing has claimed, or FLAG the rest
+     for an admin. Flags live in staff.json with who and why, and surface as
+     a queue at the top of the admin Mapping tab. */
+  function mappingFlags() { return ((readDb().mappings || {}).flags) || {}; }
+  function flagMapping(feeProjectId, note, feeName) {
+    if (!feeProjectId) return null;
+    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    db.mappings.flags = db.mappings.flags || {};
+    let by = '', byName = '';
+    try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u) { by = u.username || ''; byName = u.name || u.username || ''; } } catch (e) {}
+    db.mappings.flags[feeProjectId] = { at: new Date().toISOString(), by, byName, note: String(note || '').trim(), feeName: feeName || '' };
+    writeDb(db);
+    logStaff('staff-map', { kind: 'flag', key: feeName || feeProjectId, to: String(note || '').trim() || 'mapping looks wrong' }, feeProjectId);
+    return db.mappings.flags[feeProjectId];
+  }
+  function clearMappingFlag(feeProjectId) {
+    const db = readDb(); if (!db.mappings || !db.mappings.flags || !db.mappings.flags[feeProjectId]) return false;
+    const f = db.mappings.flags[feeProjectId]; delete db.mappings.flags[feeProjectId];
+    writeDb(db);
+    logStaff('staff-map', { kind: 'flag resolved', key: f.feeName || feeProjectId, to: null }, feeProjectId);
+    return true;
+  }
+  /** Clockify project names (from the list given, plus every project that
+      has logged hours) that no fee project claims: unmapped, or resolving to
+      a matrix project with no fee link. Safe for a leader to take. */
+  function unclaimedClockifyProjects(names) {
+    const db = readDb(); const maps = db.mappings || { projects: {} };
+    const seen = new Set(); const out = [];
+    const fromActuals = new Set(Object.keys(db.actuals || {}).map(k => k.split('|')[1]).filter(Boolean));
+    [...(names || []), ...fromActuals].forEach(raw => {
+      const k = nkey(raw); if (!k || seen.has(k)) return; seen.add(k);
+      if (isMacroProject(raw) || isTimeOffProject(raw) || isLeaveProject(raw)) return;
+      const mapped = (maps.projects || {})[k];
+      if (mapped === '__ignore__') return;
+      const res = mapped ? { name: mapped } : (resolveClockifyProject(raw) || null);
+      if (res && res.name) {
+        const client = (db.allocations.find(a => a.project === res.name) || {}).client || '';
+        if (matchFeeProjects(res.name, client).length) return;     // claimed by some fee project
+      }
+      out.push(raw);
+    });
+    return out.sort((a, b) => a.localeCompare(b));
+  }
+  /** Take an unclaimed Clockify project for a fee project: it lands on the
+      matrix project already linked to that fee project, or — when none is —
+      on a matrix project named after the fee project, pinned to it. Hours
+      already imported under the Clockify name move at once. */
+  function claimClockifyForFee(clockifyName, feeProjectId) {
+    const p = feeRecords().find(x => x.id === feeProjectId);
+    if (!p) throw new Error('No such fee project.');
+    if (!unclaimedClockifyProjects([clockifyName]).some(n => nkey(n) === nkey(clockifyName))) throw new Error('That Clockify project is already claimed by another fee project — flag it for an admin instead.');
+    let matrixName = matrixProjectsForFee(feeProjectId)[0];
+    if (!matrixName) {
+      matrixName = (p.project && p.project.name) || clockifyName;
+      setFeeMapping(matrixName, feeProjectId);
+    }
+    setProjectMapping(clockifyName, matrixName);
+    return matrixName;
+  }
+
   /** Persistent contract-name → roster-person link, shared via staff.json.
       Covers nicknames and spelling drift ("Anastasia Long" ↔ "Tasia Long"):
       once a leader maps a contract name onto an existing person, every
@@ -2532,8 +2559,9 @@
     distinctProjects, distinctClients, allocationWindow, defaultWindow,
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
-    expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, matrixSeedCandidates, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, addPersonFromClockify, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
+    expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan, feeProjectPlan, matrixProjectsForFee, feeProjectActuals,
+    mappingFlags, flagMapping, clearMappingFlag, unclaimedClockifyProjects, claimClockifyForFee,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, addPersonFromClockify, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,

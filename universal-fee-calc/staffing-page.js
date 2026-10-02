@@ -117,6 +117,66 @@
   }
 
   function months() { const out = []; let c = state.winStart; for (let i = 0; i < state.winLen; i++) { out.push(c); c = S.ymAdd(c, 1); } return out; }
+
+  /* ============================================================
+     TWO VIEWS, ONE PAGE. The module as built is the LEADERSHIP view and
+     stays admin-only. A revenue leader who opens the page gets the LEADER
+     view (staffing-leader.js): their own projects through the same wall
+     as everywhere else — time vs plan, their allocations, their mapping.
+     Admins switch between the two at the top of the page and preview a
+     specific leader with "Viewing as". Nothing in either view writes a
+     fee project.
+     ============================================================ */
+  const VIEW_KEY = 'ufc_staff_view_v1';
+  let viewMode = 'lead';                      // 'lead' (the full module) | 'leader'
+  const LEADER = () => window.UFC_StaffLeader;
+  function leaderCapable(user) {
+    try {
+      const u = user || STORE.getCurrentUser();
+      if (STORE.resolveLeader && (STORE.resolveLeader(u.username) || STORE.resolveLeader(u.name))) return true;
+      const sc = LEADER() && LEADER().scope(u);
+      return !!(sc && sc.fee.length);
+    } catch (e) { return false; }
+  }
+  /** What this person may see: 'lead', 'leader' or null (denied). Admins keep
+      their chosen mode; an impersonated non-admin is shown as a leader. */
+  function resolveView() {
+    if (staffAccessOk()) {
+      let m = null; try { m = new URLSearchParams(location.search).get('view'); } catch (e) {}
+      if (m !== 'leader' && m !== 'lead') { try { m = localStorage.getItem(VIEW_KEY); } catch (e) { m = null; } }
+      viewMode = m === 'leader' ? 'leader' : 'lead';
+      return viewMode;
+    }
+    if (leaderCapable()) { viewMode = 'leader'; return 'leader'; }
+    return null;
+  }
+  function applyView() {
+    const leader = viewMode === 'leader';
+    document.body.classList.toggle('leader-view', leader);
+    const sw = $('#view-switch'); if (sw) { sw.hidden = !staffAccessOk(); $$('#view-switch [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === viewMode)); }
+    const tabs = $('#tabs'), ltabs = $('#leader-tabs');
+    if (tabs) tabs.hidden = leader; if (ltabs) ltabs.hidden = !leader;
+    $$('.panel').forEach(pn => pn.classList.toggle('active', leader ? pn.id === 'p-lead-' + (state.leaderTab || 'time') : pn.id === 'p-' + state.tab));
+  }
+  function setupViewSwitch() {
+    $$('#view-switch [data-view]').forEach(b => b.onclick = () => {
+      if (!staffAccessOk()) return;
+      viewMode = b.dataset.view === 'leader' ? 'leader' : 'lead';
+      try { localStorage.setItem(VIEW_KEY, viewMode); } catch (e) {}
+      applyView(); renderAll();
+    });
+    $$('#leader-tabs .tab').forEach(t => t.onclick = () => setLeaderTab(t.dataset.ltab));
+  }
+  function setLeaderTab(name) {
+    state.leaderTab = name || 'time';
+    $$('#leader-tabs .tab').forEach(x => x.classList.toggle('active', x.dataset.ltab === state.leaderTab));
+    $$('.panel').forEach(pn => pn.classList.toggle('active', pn.id === 'p-lead-' + state.leaderTab));
+    renderLeader();
+  }
+  function renderLeader() {
+    const Lm = LEADER(); if (!Lm) return;
+    try { Lm.render(state.leaderTab || 'time'); } catch (e) { console.error('leader view', e); const h = $('#p-lead-' + (state.leaderTab || 'time')); if (h) h.innerHTML = '<div class="empty">Could not draw this view — ' + esc(e.message || e) + '</div>'; }
+  }
   function uCls(v) { if (!v) return 'u0'; if (v <= 85) return 'u1'; if (v <= 100) return 'u2'; if (v <= 120) return 'u3'; if (v <= 150) return 'u4'; return 'u5'; }
   /** Datalist inputs need an exact match to commit, but browsers don't always
       auto-complete what someone typed even when it uniquely identifies one
@@ -159,7 +219,12 @@
       const roster = STORE.impersonationRoster(); const imp = STORE.getImpersonation();
       sel.innerHTML = ['<option value="__me__">Me — admin · all</option>'].concat(roster.map(r => `<option value="${esc(r.username)}">${esc(r.name)} · ${r.role}</option>`)).join('');
       sel.value = imp ? esc(imp) : '__me__'; if (sel.selectedIndex < 0) sel.value = '__me__';
-      sel.onchange = () => { const v = sel.value; if (v === '__me__') STORE.clearImpersonation(); else STORE.setImpersonation(v); if (!staffAccessOk()) { renderDenied(); return; } renderAll(); };
+      sel.onchange = () => {
+        const v = sel.value; if (v === '__me__') STORE.clearImpersonation(); else STORE.setImpersonation(v);
+        // Previewing a non-admin shows the page as they get it: the leader view, or the door.
+        const m = resolveView(); if (!m) { renderDenied(); return; }
+        applyView(); renderAll();
+      };
     }
     const roleEl = $('#id-role'), noteEl = $('#id-note');
     if (roleEl) { if (cur.role === 'admin') { roleEl.textContent = 'Admin · all teams'; roleEl.className = 'id-role admin'; } else { roleEl.textContent = 'Member'; roleEl.className = 'id-role member'; } }
@@ -1097,7 +1162,10 @@
     state.editingAlloc = a ? a.id : null;
     $('#am-title').textContent = a ? 'Edit allocation' : (preset && preset.title) || 'Add allocation';
     $('#am-people').innerHTML = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
-    $('#am-projects').innerHTML = S.distinctProjects().map(p => `<option value="${esc(p)}">`).join('');
+    const projChoices = viewMode === 'leader' && LEADER()
+      ? (() => { const sc = LEADER().scope(); return [...new Set([...sc.matrixNames, ...sc.fee.map(x => (x.project || {}).name).filter(Boolean)])].sort(); })()
+      : S.distinctProjects();
+    $('#am-projects').innerHTML = projChoices.map(p => `<option value="${esc(p)}">`).join('');
     $('#am-clients').innerHTML = S.distinctClients().map(c => `<option value="${esc(c)}">`).join('');
     const person = a ? (S.getPerson(a.personId) || {}) : {};
     $('#am-person').value = a ? (person.name || '') : '';
@@ -1122,6 +1190,11 @@
     const name = $('#am-person').value.trim();
     const project = $('#am-project').value.trim();
     if (!name || !project) { UFC_UI.toast('Person and project are required.'); return; }
+    if (viewMode === 'leader' && LEADER()) {
+      const sc = LEADER().scope();
+      if (!LEADER().allowedProject(sc, project)) { UFC_UI.toast('That is not one of your projects — pick one of yours from the list.'); return; }
+      if (state.editingAlloc) { const cur = S.listAllocations().find(x => x.id === state.editingAlloc); if (cur && !sc.matrixNames.has(cur.project)) { UFC_UI.toast('That allocation is on another leader\'s project.'); return; } }
+    }
     const rec = {
       id: state.editingAlloc || undefined,
       personId: S.personIdForName(name), personName: name,
@@ -1150,74 +1223,6 @@
       const n = S.applyClockifyTitles(state.clockifyUsers);
       if (n) toast(n + ' job title' + (n > 1 ? 's' : '') + ' pulled from Clockify onto the roster.');
     } catch (e) { state.clockifyUsers = []; }
-  }
-  /* ---------- REVERSE bridge: seed empty fee-tool rosters FROM the matrix.
-     Lives on Mapping (it's about the relationship between the two systems).
-     Roles are written at a $0 CONTRACTED rate — deliberately, so seeding can
-     never move any project's revenue; pricing happens in reconciliation. ---------- */
-  function seedCandidatesCached() {
-    const key = ((S.readDb().meta || {}).updatedAt || '') + '·' + (state._seedBump || 0);
-    if (state._seedKey !== key) { state._seedCands = S.matrixSeedCandidates(); state._seedKey = key; }
-    return state._seedCands || [];
-  }
-
-  function seedSectionHtml() {
-    const cands = seedCandidatesCached();
-    if (!cands.length) return '';
-    return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid var(--sav-teal);padding:12px 16px;margin:18px 0 4px">
-      <div style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy);margin-bottom:2px">⇄ Seed contract staffing from the matrix <span class="note-txt" style="font-weight:400">· ${cands.length} fee-tool project${cands.length === 1 ? ' has' : 's have'} an empty roster but real matrix allocations. Confirming writes those people into the fee project as month-faithful roles at a <b>$0 placeholder rate</b> — no project's revenue moves until the roster is priced during reconciliation.</span></div>
-      ${cands.map((c, i) => `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
-        <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
-          <b>${esc(c.name)}</b><span class="note-txt">${esc(c.client || '')}</span>
-          <span class="mv-chip" style="background:${c.booked ? '#e7f0ee' : '#fdf3d7'};color:${c.booked ? '#0E7C7B' : '#8a6d00'};font-weight:700">${c.booked ? 'booked' : 'pipeline · ' + esc(c.status || 'draft')}</span>
-          ${c.anyPursuit ? '<span class="mv-chip" style="background:#e7eef0">includes pursuit staffing</span>' : ''}
-          <span class="note-txt">· ${c.roles.length} ${c.roles.length === 1 ? 'person' : 'people'} · ${c.totalFteMo} FTE-mo from ${esc(c.matrixNames.join(' + '))}</span>
-        </summary>
-        <div style="padding:4px 4px 12px">
-          <table class="dt" style="max-width:640px"><thead><tr><th>Person</th><th>Title (matrix)</th><th>Rate-grid match</th><th class="num">Active months</th><th class="num">Avg alloc</th></tr></thead><tbody>
-            ${c.roles.map(r => `<tr><td class="pname">${esc(r.person.name)}${r.pursuit ? ' <span class="status-p">pursuit</span>' : ''}</td><td>${esc(r.person.title || '—')}</td><td>${r.titleMapped ? '<span style="color:#0E7C7B">✓ mapped</span>' : '<span style="color:#8a6d00">⚠ no match — role saved with title text only</span>'}</td><td class="num">${r.activeMonths}</td><td class="num">${r.avgPct}%</td></tr>`).join('')}
-          </tbody></table>
-          ${c.clippedMonths ? `<div class="note-txt" style="color:#8a6d00;margin-top:6px">⚠ ${c.clippedMonths} allocation month${c.clippedMonths === 1 ? '' : 's'} fall outside this fee project's timeline and won't be seeded — if the contract really runs longer, fix the project dates in the calculator first.</div>` : ''}
-          <button class="btn btn-primary" style="margin-top:10px;padding:8px 16px;font-size:12px" data-seed-apply="${i}">Confirm — seed ${c.roles.length} role${c.roles.length === 1 ? '' : 's'} at $0 rate</button>
-        </div>
-      </details>`).join('')}
-    </div>`;
-  }
-
-  function wireSeed() {
-    $$('#p-mapping [data-seed-apply]').forEach(b => b.onclick = () => {
-      const c = seedCandidatesCached()[+b.dataset.seedApply];
-      if (!c) return;
-      const rec = (STORE.listProjects() || []).find(x => x.id === c.feeId);
-      if (!rec) { toast('Could not load that fee project — refresh and try again.'); return; }
-      if (rec.roles && rec.roles.length) { state._seedBump = (state._seedBump || 0) + 1; toast('That project picked up a roster since this list was built — nothing overwritten.'); renderMapping(); return; }
-      if (!rec.groups || !rec.groups.length) rec.groups = [{ id: 'g1', name: 'Core team' }];
-      const gid = rec.groups[0].id;
-      rec.roles = c.roles.map(r => ({
-        id: 'r_' + Math.random().toString(36).slice(2, 9),
-        groupId: gid,
-        titleId: r.titleId, tierId: r.tierId,
-        projectRole: (r.person.title || '').trim() || 'Staff',
-        resource: r.person.name,
-        // $0 contracted rate — guaranteed no revenue impact regardless of the
-        // rate grid (an unknown tier id would silently price at MID).
-        rateSource: 'contracted', contractedRate: 0,
-        fte: {}, fteMonthly: r.fteMonthly,
-        seededFromMatrix: new Date().toISOString(),
-      }));
-      try {
-        STORE.saveProject(rec, { baseUpdatedAt: c.updatedAt });
-      } catch (e) {
-        toast(e && e.code === 'STALE_WRITE' ? 'Someone saved this project while you were looking — refresh and re-check.' : 'Save failed: ' + (e.message || e));
-        return;
-      }
-      // fee records changed → drop staff.js's fee caches + our own gap/seed caches
-      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
-      state._seedBump = (state._seedBump || 0) + 1;
-      state._gapsKey = null;
-      toast(`Seeded ${c.roles.length} role${c.roles.length === 1 ? '' : 's'} into ${c.name} at $0 — price them in the calculator when reconciling.`);
-      renderMapping();
-    });
   }
 
   function renderMapping() {
@@ -1340,7 +1345,11 @@
       <table class="dt"><thead><tr><th style="width:28%">Job title (from Clockify)</th><th>Rate-grid family · tier · cost rate</th></tr></thead><tbody>${titleRows || '<tr><td colspan="2"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
       <datalist id="map-title-dl">${rateOpts.map(o => `<option value="${esc(o.label)}" label="$${o.rate}/h cost"></option>`).join('')}</datalist>` : '';
     const banner = state.clockifyNamesError ? `<div class="note-txt" style="color:#8f2418;margin-bottom:10px">Couldn't pull the Clockify list (${esc(state.clockifyNamesError)}) — fee links still work; Clockify column limited to saved mappings.</div>` : '';
-    $('#p-mapping').innerHTML = `${banner}
+    const flags = S.mappingFlags ? S.mappingFlags() : {};
+    const flagIds = Object.keys(flags);
+    const flagQueue = flagIds.length ? `<div class="lv-queue"><div class="lv-queue-h">⚑ ${flagIds.length} mapping flag${flagIds.length === 1 ? '' : 's'} from revenue leaders <span class="note-txt" style="font-weight:400">— they could not fix these from their view: the Clockify project belongs to another fee project, or the link is wrong. Fix the mapping below, then resolve.</span></div>
+        <table class="dt"><thead><tr><th>Fee project</th><th>Flagged by</th><th>When</th><th>Note</th><th></th></tr></thead><tbody>${flagIds.map(id => { const f = flags[id]; const fp = feeList.find(x => x.id === id); return `<tr><td class="pname">${esc(fp ? fp.label : (f.feeName || id))}</td><td>${esc(f.byName || f.by || '')}</td><td>${esc(new Date(f.at).toLocaleString())}</td><td>${esc(f.note || '')}</td><td><button class="btn sm" data-flag-resolve="${esc(id)}">Resolved</button></td></tr>`; }).join('')}</tbody></table></div>` : '';
+    $('#p-mapping').innerHTML = `${banner}${flagQueue}
       <div class="toolbar">
         <input type="search" id="map-search" placeholder="Filter projects…" value="${esc(state.mapSearch)}">
         <label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" id="map-problems" ${state.mapOnlyProblems ? 'checked' : ''}> Only problems (${problems})</label>
@@ -1351,10 +1360,9 @@
       <table class="dt"><thead><tr><th style="width:28%">Matrix project (JS sheet)</th><th style="width:32%">② Fee tool</th><th>③ Clockify project(s) landing here</th></tr></thead><tbody>${rows || '<tr><td colspan="3"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
       <datalist id="map-fee-dl"><option value="— unlink —"></option>${feeList.map(p => `<option value="${esc(p.label)}"></option>`).join('')}</datalist>
       <datalist id="map-ck-dl">${ckList.map(c => `<option value="${esc(c.name)}"${c.client ? ` label="${esc(c.client)}"` : ''}></option>`).join('')}</datalist>
-      ${seedSectionHtml()}
       ${pplSection}
       ${titleSection}`;
-    wireSeed();
+    $$('#p-mapping [data-flag-resolve]').forEach(b => b.onclick = () => { S.clearMappingFlag(b.dataset.flagResolve); toast('Flag resolved.', 'ok'); renderMapping(); });
     $('#map-search').oninput = searchBox('#map-search', v => { state.mapSearch = v; renderMapping(); });
     $('#map-problems').onchange = (e) => { state.mapOnlyProblems = e.target.checked; renderMapping(); };
     $('#map-refresh').onclick = () => { state.clockifyNames = null; state.clockifyNamesError = null; renderMapping(); };
@@ -2048,7 +2056,7 @@
         if (!n) { alert(msg + '\n\nNothing to write.'); return; }
         if (!confirm(msg + '\n\nWrite these ' + n + ' change' + (n === 1 ? '' : 's') + '? The trail records the sweep under your name.')) return;
         const out = S.applyRoundTrip(plan);
-        state._gapsKey = null; state._seedBump = (state._seedBump || 0) + 1;
+        state._gapsKey = null;
         renderAll();
         toast(`Round trip applied — ${out.added} added, ${out.changed} changed, ${out.removed} removed.`);
       };
@@ -2109,7 +2117,11 @@
       if (panel) panel.innerHTML = `<div class="empty" style="color:#8f2418"><b>This view hit an error:</b> ${esc(e.message)}<br><span class="vmini">${esc((e.stack || '').split('\n')[1] || '')}</span></div>`;
     }
   }
-  function renderAll() { buildIdentityBar(); renderCounts(); renderFreshness(); renderShiftBanner(); renderActive(); }
+  function renderAll() {
+    buildIdentityBar();
+    if (viewMode === 'leader') { renderLeader(); return; }
+    renderCounts(); renderFreshness(); renderShiftBanner(); renderActive();
+  }
 
   /* ---- Pending schedule shifts — the people must follow the contract ----
      Reconciliation moved a project's schedule (and its contract staffing);
@@ -2160,11 +2172,13 @@
   }
 
   function init() {
-    if (!staffAccessOk()) { renderDenied(); return; }
+    if (!resolveView()) { renderDenied(); return; }
+    window.__UFC_STAFF_HOOKS__ = { months, openAllocModal, renderAll, setLeaderTab, state };
     wireMatrixImport();
     wireStaffSync().then(() => {
       buildWindowOptions();
       buildGroupOptions();
+      setupViewSwitch(); applyView();
     $('#month-hrs').value = S.monthHours();
     const gh = $('#gloss-hrs'); if (gh) gh.textContent = S.monthHours();
     $('#win-start').onchange = (e) => { state.winStart = e.target.value; renderActive(); };

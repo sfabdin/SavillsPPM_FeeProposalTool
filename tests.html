@@ -65,6 +65,7 @@
 <script src="universal-fee-calc/vendor-lazy.js"></script>
 <script src="universal-fee-calc/bulk-excel.js"></script>
 <script src="universal-fee-calc/staffing-roundtrip.js"></script>
+<script src="universal-fee-calc/staffing-leader.js"></script>
 <!-- Pulled in for its workbook parser only; it renders nothing without the
      reconciliation page's markup. -->
 <script src="exec-reporting/core.js"></script>
@@ -1512,6 +1513,55 @@
       const msgs = plan.errors.join(' | ');
       return (plan.errors.length === 4 && /Row 2: Start/.test(msgs) && /Row 3: ends/.test(msgs) && /Row 4: no allocation with ID al_gone/.test(msgs) && /Row 5: .*open role needs a name/.test(msgs) && !plan.adds.length && !plan.updates.length) || msgs;
       } finally { ST.hydrateFromRemote(snap); }
+    });
+    test('Staffing · leader view', 'a leader sees only their projects; plan comes from their proposal, logged hours through the mapping; confirm, claim and flag write only the staffing store', () => {
+      const LV = window.UFC_StaffLeader; if (!LV) return 'UFC_StaffLeader not present';
+      const snap = JSON.parse(JSON.stringify(ST.readDb())); const prevId = S.getRealIdentity();
+      try {
+        freshTrail(); freshDb(); asAdmin();
+        const mine = S.saveProject(base({ id: 'lv_mine', project: { name: 'Tower Alpha', client: 'Acme', status: 'active', rating: 1, leadId: 'esobel' },
+          timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 }, phases: [{ id: 'p1', name: 'Delivery', length: 12 }], groups: [{ id: 'g1', name: 'Core' }],
+          roles: [{ id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'g1', fte: { p1: 50 }, fteMonthly: {}, resource: 'Jane Tester', projectRole: 'Project Manager' }] }), { force: true });
+        S.saveProject(base({ id: 'lv_theirs', project: { name: 'Tower Beta', client: 'Acme', status: 'active', rating: 1, leadId: 'jsantoro' },
+          timeline: { startMonth: 1, startYear: 2026, endMonth: 12, endYear: 2026 }, phases: [{ id: 'p1', name: 'Delivery', length: 12 }], groups: [{ id: 'g1', name: 'Core' }],
+          roles: [{ id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'g1', fte: { p1: 100 }, fteMonthly: {} }] }), { force: true });
+        ST.saveAllocation({ id: 'lv_a1', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Alpha', client: 'Acme', status: 'Active', type: 'Awarded', start: '2026-01', end: '2026-12', pct: 40 });
+        ST.saveAllocation({ id: 'lv_a2', personId: 'stp_bob', personName: 'Bob Builder', project: 'Tower Beta', client: 'Acme', status: 'Active', type: 'Awarded', start: '2026-01', end: '2026-12', pct: 100 });
+        ST.commitClockify({ ok: true, months: ['2026-01', '2026-02'], agg: { 'stp_jane|Tower Alpha|2026-01': 60, 'stp_jane|Tower Alpha|2026-02': 70, 'stp_bob|Tower Beta|2026-01': 150 }, titles: {} }, 'merge');
+        // Emily is the leader of Tower Alpha and nothing else
+        S.setRealIdentity({ username: 'esobel@savills.us', name: 'Emily Sobel' });
+        const sc = LV.scope();
+        if (sc.fee.map(p => p.id).join() !== 'lv_mine') return 'scope: ' + sc.fee.map(p => p.id).join();
+        if (![...sc.matrixNames].includes('Tower Alpha') || sc.matrixNames.has('Tower Beta')) return 'matrix names: ' + [...sc.matrixNames].join();
+        const months = ['2026-01', '2026-02', '2026-03'];
+        const plan = ST.feeProjectPlan('lv_mine', months);
+        const hrs = ((S.getProject('lv_mine').assumptions || {}).hrsPerMo || 173.33) * 0.5;   // the fixture prices at its own hours-per-month
+        if (!plan || Math.abs(plan.byMonth['2026-01'] - hrs) > 0.1 || plan.roles[0].title !== 'Project Manager') return 'plan: ' + JSON.stringify(plan);
+        const act = ST.feeProjectActuals('lv_mine', months);
+        if (act.rows.length !== 1 || act.rows[0].actual !== 130 || Math.abs(act.rows[0].byMonth['2026-01'].e - 172 * 0.4) > 0.1) return 'actuals: ' + JSON.stringify(act.rows.map(r => [r.person.name, r.actual, r.byMonth['2026-01']]));
+        const rows = LV.timeRows(sc, months);
+        if (rows.length !== 1 || rows[0].logged !== 130) return 'time rows: ' + JSON.stringify(rows.map(r => [r.p.id, r.logged, r.text]));
+        // the allocation on Tower Beta is not theirs to touch
+        if (LV.allowedProject(sc, 'Tower Beta') || !LV.allowedProject(sc, 'Tower Alpha')) return 'allowedProject wrong';
+        // confirm pins the auto link; claim takes an unclaimed Clockify name; flag records who and why
+        ST.setFeeMapping('Tower Alpha', 'lv_mine');
+        const via = (ST.matchFeeProjects('Tower Alpha', 'Acme').find(l => l.id === 'lv_mine') || {}).via;
+        if (via !== 'mapped') return 'confirm did not pin: ' + via;
+        const unclaimed = ST.unclaimedClockifyProjects(['Acme Job 991', 'Tower Beta']);   // a name that resolves to a linked matrix project is already claimed
+        if (!unclaimed.includes('Acme Job 991') || unclaimed.includes('Tower Beta')) return 'unclaimed: ' + unclaimed.join(' | ');
+        const landed = ST.claimClockifyForFee('Acme Job 991', 'lv_mine');
+        if (landed !== 'Tower Alpha' || ST.getMappings().projects['acme job 991'] !== 'Tower Alpha') return 'claim: ' + landed;
+        let refused = false; try { ST.claimClockifyForFee('Tower Beta', 'lv_mine'); } catch (e) { refused = /already claimed/.test(e.message); }
+        if (!refused) return 'claiming another leader\'s Clockify project was not refused';
+        ST.flagMapping('lv_mine', 'hours are under the old name', 'Tower Alpha');
+        const f = ST.mappingFlags()['lv_mine'];
+        if (!f || f.by !== 'esobel@savills.us' || f.note !== 'hours are under the old name') return 'flag: ' + JSON.stringify(f);
+        ST.clearMappingFlag('lv_mine');
+        if (ST.mappingFlags()['lv_mine']) return 'flag not cleared';
+        // and the fee projects are untouched by all of it
+        const after = S.getProject('lv_mine');
+        return (after.roles.length === 1 && after.roles[0].fte.p1 === 50 && after.updatedAt === mine.updatedAt) || 'the fee project changed: ' + JSON.stringify([after.roles.length, after.updatedAt, mine.updatedAt]);
+      } finally { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); ST.hydrateFromRemote(snap); }
     });
     test('Staffing', 'capacity honors the part-time percentage', () => {
       ST.setMonthHours(172);
