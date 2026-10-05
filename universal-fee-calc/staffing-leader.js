@@ -46,7 +46,7 @@
   const clientOf = (p) => (p.project || {}).client || '';
   const statusLabel = (p) => (STORE().STATUS_LABELS || {})[(p.project || {}).status] || (p.project || {}).status || '';
   const calcLink = (p, text) => `<a href="Universal Fee Calculator.html?id=${encodeURIComponent(p.id)}" target="_blank" rel="noopener" style="color:inherit;font-weight:700" title="Open the proposal in the calculator (new tab)">${esc(text || nameOf(p))}</a>`;
-  const allowedProject = (sc, name) => sc.matrixNames.has(name) || sc.fee.some(p => nameOf(p) === name);
+  const allowedProject = (sc, name) => sc.matrixNames.has(name) || sc.fee.some(p => nameOf(p) === name || (clientOf(p) ? clientOf(p) + ' — ' : '') + nameOf(p) === name);
 
   /* ---------- Time vs Plan ---------- */
   function timeRows(sc, months) {

@@ -994,7 +994,14 @@
 
   /** Fee-tool projects for pickers: [{id, name, client, label}] — label is
       "Client — Project" because project names collide across clients. */
-  function listFeeProjects() { return feeIndex().map(p => ({ id: p.id, name: p.name, client: p.client, label: p.label })).sort((a, b) => a.label.localeCompare(b.label)); }
+  /** One entry per fee project. feeIndex() also carries a row per FORMER name
+      so an old Clockify job still matches a renamed project — those rows share
+      the current label and showed a renamed project twice in every picker. */
+  function listFeeProjects() {
+    const seen = new Set();
+    return feeIndex().filter(p => !p.viaPriorName && !seen.has(p.id) && seen.add(p.id))
+      .map(p => ({ id: p.id, name: p.name, client: p.client, label: p.label })).sort((a, b) => a.label.localeCompare(b.label));
+  }
 
   // ---------- ENGINE: expected vs actual ----------
   function capacityHours(person) { return monthHours() * ((person && person.capacityPct != null ? person.capacityPct : 100) / 100); }

@@ -1162,10 +1162,16 @@
     state.editingAlloc = a ? a.id : null;
     $('#am-title').textContent = a ? 'Edit allocation' : (preset && preset.title) || 'Add allocation';
     $('#am-people').innerHTML = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
-    const projChoices = viewMode === 'leader' && LEADER()
-      ? (() => { const sc = LEADER().scope(); return [...new Set([...sc.matrixNames, ...sc.fee.map(x => (x.project || {}).name).filter(Boolean)])].sort(); })()
-      : S.distinctProjects();
-    $('#am-projects').innerHTML = projChoices.map(p => `<option value="${esc(p)}">`).join('');
+    /* The project list is the FEE TOOL's projects — "Client — Project", the
+       names everyone knows — not the matrix's own designations. Picking one
+       fills the client and pins the fee link on save, so the new row lands on
+       the right project from the start. Matrix-only names (rows that exist
+       under a name no fee project carries) stay available, marked as such. */
+    const feeChoices = allocFeeChoices();
+    const feeNames = new Set(feeChoices.map(f => f.name));
+    const matrixOnly = (viewMode === 'leader' && LEADER() ? [...LEADER().scope().matrixNames] : S.distinctProjects()).filter(n => !feeNames.has(n)).sort();
+    $('#am-projects').innerHTML = feeChoices.map(f => `<option value="${esc(f.label)}" label="${esc(STORE.STATUS_LABELS[(f.p.project || {}).status] || '')}">`).join('')
+      + matrixOnly.map(p => `<option value="${esc(p)}" label="matrix project · no fee project with this name">`).join('');
     $('#am-clients').innerHTML = S.distinctClients().map(c => `<option value="${esc(c)}">`).join('');
     const person = a ? (S.getPerson(a.personId) || {}) : {};
     $('#am-person').value = a ? (person.name || '') : '';
@@ -1186,6 +1192,24 @@
     $('#alloc-modal').classList.add('open');
   }
   function closeAllocModal() { $('#alloc-modal').classList.remove('open'); state.editingAlloc = null; }
+  /** Fee projects a new allocation may be filed under: every live parent for
+      an admin, the leader's own in the leader view. Dead pursuits are left out. */
+  function allocFeeChoices() {
+    let list = STORE.listProjects().filter(p => !(STORE.isChangeOrder && STORE.isChangeOrder(p)) && !(STORE.isDeadPursuit && STORE.isDeadPursuit(p)) && (p.project || {}).name);
+    if (viewMode === 'leader' && LEADER()) { const ids = LEADER().scope().feeIds; list = list.filter(p => ids.has(p.id)); }
+    const out = list.map(p => ({ id: p.id, p, name: p.project.name, client: p.project.client || '', label: (p.project.client ? p.project.client + ' — ' : '') + p.project.name }));
+    // Two fee records with the same client and name (it happens): tell them
+    // apart in the list by project number or status, so a pick is unambiguous.
+    const count = {}; out.forEach(f => { count[f.label] = (count[f.label] || 0) + 1; });
+    out.forEach(f => { if (count[f.label] > 1) f.label += ' · ' + ((f.p.project || {}).projectNumber || STORE.STATUS_LABELS[(f.p.project || {}).status] || (f.p.project || {}).status || f.id.slice(-4)); });
+    return out.sort((a, b) => a.label.localeCompare(b.label));
+  }
+  /** What the person typed in the project box → the fee project it names, if any. */
+  function allocFeePick(typed) {
+    const v = String(typed || '').trim(); if (!v) return null;
+    const list = allocFeeChoices();
+    return list.find(f => f.label === v) || list.find(f => f.name === v) || resolveTyped(v, list, ['label', 'name']);
+  }
   function saveAllocModal() {
     const name = $('#am-person').value.trim();
     const project = $('#am-project').value.trim();
@@ -1195,16 +1219,22 @@
       if (!LEADER().allowedProject(sc, project)) { UFC_UI.toast('That is not one of your projects — pick one of yours from the list.'); return; }
       if (state.editingAlloc) { const cur = S.listAllocations().find(x => x.id === state.editingAlloc); if (cur && !sc.matrixNames.has(cur.project)) { UFC_UI.toast('That allocation is on another leader\'s project.'); return; } }
     }
+    // A fee project picked by its "Client — Project" label files the row under
+    // the project's name, with its client, and pins the fee link.
+    const fee = allocFeePick(project);
+    const projectName = fee ? fee.name : project;
     const rec = {
       id: state.editingAlloc || undefined,
       personId: S.personIdForName(name), personName: name,
-      project, client: $('#am-client').value.trim(),
+      project: projectName, client: $('#am-client').value.trim() || (fee ? fee.client : ''),
       status: $('#am-status').value, type: $('#am-type').value,
       start: $('#am-start').value || null, end: $('#am-end').value || null,
       pct: +$('#am-pct').value || 0, note: $('#am-note').value.trim(),
     };
-    S.saveAllocation(rec); closeAllocModal(); renderAll();
-    toast(state.editingAlloc ? 'Allocation updated.' : 'Allocation added.');
+    S.saveAllocation(rec);
+    if (fee && !S.matchFeeProjects(projectName, rec.client).some(l => l.id === fee.id)) S.setFeeMapping(projectName, fee.id);
+    closeAllocModal(); renderAll();
+    toast(state.editingAlloc ? 'Allocation updated.' : 'Allocation added' + (fee ? ' on ' + fee.label + '.' : '.'));
   }
 
   /* ---------- shell ---------- */
@@ -2198,6 +2228,7 @@
     };
     $$('#tabs .tab').forEach(t => t.onclick = () => setTab(t.dataset.tab));
     $('#am-close').onclick = closeAllocModal; $('#am-cancel').onclick = closeAllocModal; $('#am-save').onclick = saveAllocModal;
+    $('#am-project').addEventListener('change', () => { const fee = allocFeePick($('#am-project').value); if (fee && !$('#am-client').value.trim()) $('#am-client').value = fee.client; });
     $('#alloc-modal').onclick = (e) => { if (e.target.id === 'alloc-modal') closeAllocModal(); };
     renderAll();
     });

@@ -1563,6 +1563,17 @@
         return (after.roles.length === 1 && after.roles[0].fte.p1 === 50 && after.updatedAt === mine.updatedAt) || 'the fee project changed: ' + JSON.stringify([after.roles.length, after.updatedAt, mine.updatedAt]);
       } finally { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); ST.hydrateFromRemote(snap); }
     });
+    test('Staffing', 'a renamed fee project is listed once in the mapping pickers, while its old name still matches', () => {
+      const prev = { fee: localStorage.getItem('savills-ppm-fee-db:v1') };
+      try {
+        freshDb(); asAdmin();
+        S.saveProject(base({ id: 'rn_1', project: { name: 'JPMC - 383M FF&E Mgmt', client: 'JPMorgan Chase', status: 'active', rating: 1 }, source: { priorNames: ['383M FFE Mgmt', '383 Madison FFE'] } }), { force: true });
+        ST.hydrateFromRemote(JSON.parse(JSON.stringify(ST.readDb())));   // drop the staffing store's fee caches
+        const list = ST.listFeeProjects().filter(p => p.id === 'rn_1');
+        const old = ST.matchFeeProject('383M FFE Mgmt', 'JPMorgan Chase');
+        return (list.length === 1 && old && old.id === 'rn_1') || JSON.stringify({ listed: list.length, oldMatches: old && old.id });
+      } finally { if (prev.fee == null) localStorage.removeItem('savills-ppm-fee-db:v1'); else localStorage.setItem('savills-ppm-fee-db:v1', prev.fee); ST.hydrateFromRemote(JSON.parse(JSON.stringify(ST.readDb()))); }
+    });
     test('Staffing', 'capacity honors the part-time percentage', () => {
       ST.setMonthHours(172);
       const p = ST.savePerson({ id: 'stp_jane', name: 'Jane Tester', title: 'Project Manager', capacityPct: 50, active: true });
