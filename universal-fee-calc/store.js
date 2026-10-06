@@ -3601,6 +3601,9 @@
     return getCurrentUser();
   }
   function isAdmin(user) { return (user || getCurrentUser()).role === 'admin'; }
+  /** Leadership admins' logins — who the confirmed-book notices go to. Tool
+      admins run tools, not the book, so they are not on this list. */
+  function adminEmails() { return [...new Set([...ADMINS, ...vocabAdmins()])].map(e => String(e || '').toLowerCase()).filter(e => /@/.test(e)).sort(); }
 
   /* People the SUPERUSER can impersonate: every leader + every admin (deduped). */
   /* Display names for logins that are not in the leader directory. */
@@ -3774,7 +3777,7 @@
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries, revenueSeries, isDeadPursuit,
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, isAdmin, seesAllProjects, userOwnsProject, visibleProjects,
+    getCurrentUser, isAdmin, adminEmails, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,

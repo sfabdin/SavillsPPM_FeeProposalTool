@@ -83,6 +83,13 @@
   const rate = (role, p) => S.getTierRateFromCatalog(role, C, p);
   const EPS = 0.02;
 
+  // Never let a test fixture email anyone: the Box outbox is a spy here.
+  window.__notices = []; window.__notifyStatus = null;
+  if (window.UFC_Box) {
+    window.UFC_Box.notify = (m) => { window.__notices.push(m); return 'spy'; };
+    window.UFC_Box.writeNotifyStatus = (s) => { window.__notifyStatus = s; };
+  }
+
   // ---- assert framework ----
   const results = [];
   function test(group, name, fn) {
@@ -2122,6 +2129,36 @@
                sq(C.statusFor(c, 'jsantoro', recs).k, 'confirmed', 'tracker: confirmed') &&
                sq(w.kind, 'quiet', 'nothing left to nag about');
       } finally { restore(); }
+    });
+    test('Confirmed book', 'notices: opening a book mails the leaders, confirming mails the admins, locking mails whoever was carried in; the status file lists who still owes', () => {
+      try {
+        window.__notices = []; window.__notifyStatus = null;
+        open();
+        const opened = window.__notices.find(n => n.event === 'book-opened');
+        if (!opened) return 'no book-opened notice';
+        const e1 = sq(opened.to.slice().sort().join(','), 'esobel@savills.us,jsantoro@savills.us', 'to: every expected leader') ; if (e1 !== true) return e1;
+        const e2 = sq(opened.cc.indexOf('sabdin@savills.us') >= 0, true, 'cc: the admins'); if (e2 !== true) return e2;
+        if (!/Revenue Projections #12/.test(opened.subject) || !/Sep 15/.test(opened.subject)) return 'subject names the book and the date: ' + opened.subject;
+        const s0 = window.__notifyStatus;
+        if (!s0 || !s0.book || s0.book.id !== ID) return 'status names the open book';
+        const e3 = sq(s0.pending.map(p => p.id).join(','), 'esobel,jsantoro', 'status: both pending'); if (e3 !== true) return e3;
+        if (s0.book.remindFrom.slice(0, 10) !== '2026-09-12') return 'remind from three days before the deadline: ' + s0.book.remindFrom;
+        as('esobel@savills.us', 'Emily Sobel');
+        C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        const conf = window.__notices.find(n => n.event === 'book-confirmed');
+        if (!conf) return 'no book-confirmed notice';
+        const e4 = sq(conf.to.indexOf('sabdin@savills.us') >= 0, true, 'to the admins'); if (e4 !== true) return e4;
+        if (!/Emily Sobel confirmed/.test(conf.subject) || !/1 still to go/.test(conf.subject)) return 'subject: ' + conf.subject;
+        const e5 = sq(window.__notifyStatus.pending.map(p => p.id).join(','), 'jsantoro', 'status: Jeff still pending'); if (e5 !== true) return e5;
+        as('sabdin@savills.us', 'Sarah Abdin');
+        C.lockCycle(ID, { records: book(), now: '2026-09-18T15:00:00Z' });
+        const missed = window.__notices.find(n => n.event === 'book-locked-missed');
+        if (!missed) return 'no book-locked-missed notice';
+        const e6 = sq(missed.to.join(','), 'jsantoro@savills.us', 'the carried leader is told'); if (e6 !== true) return e6;
+        const locked = window.__notices.find(n => n.event === 'book-locked');
+        if (!locked || !/1 confirmed, 2 carried in/.test(locked.subject)) return 'admin lock summary: ' + (locked && locked.subject);
+        return true;
+      } finally { restore(); window.__notices = []; }
     });
     test('Confirmed book', 'once the next book opens, the missed one can only be acknowledged — and the new book waits for that', () => {
       try {

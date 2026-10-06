@@ -1612,6 +1612,125 @@
     return yms;
   };
 
+  /* ---- NOTIFICATIONS OUTBOX -----------------------------------------------
+     The app cannot send email, and nobody wants a mail server for it. So it
+     writes ONE SMALL JSON FILE PER MESSAGE into a "notifications" subfolder
+     of the shared Box folder, and a Power Automate flow on a Savills account
+     (Box trigger "When a file is created") reads each file and sends the
+     email — see the Maintainers Runbook, "Email notifications". A second
+     file, notify-status.json, always says where the open book stands, so a
+     daily flow can send reminders without the app being open anywhere.
+
+     Nothing waits on any of this. A message goes to a local outbox first and
+     is uploaded in the background; if the upload fails it stays queued and
+     goes on the next page load. The flow owns the files from there (it
+     deletes each one after sending), so the folder never grows. ---- */
+  const NOTIFY_FOLDER = 'notifications';
+  const NOTIFY_FOLDER_KEY = 'ufc_notify_folder_id';
+  const NOTIFY_OUTBOX_KEY = 'ufc_notify_outbox_v1';
+  const NOTIFY_STATUS = 'notify-status.json';
+  const NOTIFY_STATUS_KEY = 'ufc_notify_status_id';
+  let _notifyFolderId = null, _notifyFlushing = null, _statusTimer = null, _statusPending = null;
+  const readOutbox = () => { try { return JSON.parse(localStorage.getItem(NOTIFY_OUTBOX_KEY) || '[]') || []; } catch (e) { return []; } };
+  const writeOutbox = (q) => { try { localStorage.setItem(NOTIFY_OUTBOX_KEY, JSON.stringify(q.slice(-50))); } catch (e) {} };
+  const cleanEmails = (v) => [].concat(v || []).map(s => String(s || '').trim().toLowerCase()).filter(s => /^[^\s@]+@[^\s@]+$/.test(s));
+  async function resolveNotifyFolderId() {
+    if (_notifyFolderId) return _notifyFolderId;
+    try { const c = localStorage.getItem(NOTIFY_FOLDER_KEY); if (c) return (_notifyFolderId = c); } catch (e) {}
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name,type&limit=1000');
+    if (res.ok) {
+      const j = await res.json();
+      const hit = (j.entries || []).find(e => e.type === 'folder' && String(e.name || '').toLowerCase() === NOTIFY_FOLDER);
+      if (hit) { _notifyFolderId = hit.id; try { localStorage.setItem(NOTIFY_FOLDER_KEY, hit.id); } catch (e) {} return hit.id; }
+    }
+    const mk = await boxFetch('/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: NOTIFY_FOLDER, parent: { id: BOX_CONFIG.folderId } }) });
+    let id = null;
+    if (mk.status === 409) { try { const j = await mk.json(); const c = j.context_info && j.context_info.conflicts; id = c && ((Array.isArray(c) ? c[0] : c) || {}).id; } catch (e) {} }
+    else if (mk.ok) { try { const j = await mk.json(); id = j.id; } catch (e) {} }
+    if (!id) throw new Error('could not create the notifications folder: HTTP ' + mk.status);
+    _notifyFolderId = id; try { localStorage.setItem(NOTIFY_FOLDER_KEY, id); } catch (e) {}
+    return id;
+  }
+  async function uploadNewFile(folderId, name, body) {
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name, parent: { id: folderId } }));
+    form.append('file', new Blob([body], { type: 'application/json' }), name);
+    return fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+  }
+  async function overwriteFile(fileId, name, body) {
+    const token = await ensureToken(); if (!token) throw new Error('not authenticated');
+    const form = new FormData();
+    form.append('attributes', JSON.stringify({ name }));
+    form.append('file', new Blob([body], { type: 'application/json' }), name);
+    return fetch('https://upload.box.com/api/2.0/files/' + fileId + '/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+  }
+  const stampName = (iso) => String(iso).replace(/\.\d+Z$/, 'Z').replace(/[-:]/g, '').replace('T', '-');
+  /** Queue one message: { event, to: [emails], cc?: [emails], subject, html?, text?, data?, at? }.
+      Returns the message id, or null when there is nobody to send it to. */
+  Box.notify = function (msg) {
+    if (!BOX_CONFIG.enabled || !msg || !msg.event) return null;
+    const to = cleanEmails(msg.to); if (!to.length) return null;
+    const cc = cleanEmails(msg.cc).filter(e => to.indexOf(e) < 0);
+    const at = msg.at || new Date().toISOString();
+    let from = { login: '', name: '' };
+    try { const u = Store.getCurrentUser() || {}; from = { login: u.username || '', name: u.name || u.username || '' }; } catch (e) {}
+    const item = {
+      schemaVersion: 1, id: stampName(at) + '-' + String(msg.event).replace(/[^a-z0-9-]+/gi, '-') + '-' + Math.random().toString(36).slice(2, 6),
+      event: msg.event, at, from,
+      to: to.join(';'), toList: to, cc: cc.join(';'), ccList: cc,
+      subject: String(msg.subject || ''), text: String(msg.text || ''), html: String(msg.html || msg.text || ''),
+      data: msg.data || {}, app: location.origin,
+    };
+    const q = readOutbox(); q.push(item); writeOutbox(q);
+    flushNotifyOutbox().catch(() => {});
+    return item.id;
+  };
+  async function flushNotifyOutbox() {
+    if (_notifyFlushing) return _notifyFlushing;
+    if (!getToken()) return;
+    _notifyFlushing = (async () => {
+      let q = readOutbox(); if (!q.length) return;
+      const folder = await resolveNotifyFolderId();
+      for (const item of q.slice()) {
+        try {
+          const res = await uploadNewFile(folder, 'notify-' + item.id + '.json', JSON.stringify(item));
+          if (res.ok || res.status === 409) { q = q.filter(x => x.id !== item.id); writeOutbox(q); }   // 409 = already there
+          else if (res.status === 401 || res.status === 403) break;
+        } catch (e) { break; }
+      }
+    })().finally(() => { _notifyFlushing = null; });
+    return _notifyFlushing;
+  }
+  /** The standing status for the reminder flow — debounced, last writer wins. */
+  Box.writeNotifyStatus = function (status) {
+    if (!BOX_CONFIG.enabled || !status) return;
+    _statusPending = Object.assign({ schemaVersion: 1 }, status);
+    try { localStorage.setItem(NOTIFY_STATUS_KEY + ':pending', JSON.stringify(_statusPending)); } catch (e) {}
+    clearTimeout(_statusTimer); _statusTimer = setTimeout(() => { flushNotifyStatus().catch(() => {}); }, BOX_CONFIG.pushDebounceMs);
+  };
+  async function flushNotifyStatus() {
+    let s = _statusPending;
+    if (!s) { try { s = JSON.parse(localStorage.getItem(NOTIFY_STATUS_KEY + ':pending') || 'null'); } catch (e) { s = null; } }
+    if (!s || !getToken()) return;
+    const folder = await resolveNotifyFolderId();
+    let id = null; try { id = localStorage.getItem(NOTIFY_STATUS_KEY); } catch (e) {}
+    const body = JSON.stringify(s);
+    let res = null;
+    if (id) { res = await overwriteFile(id, NOTIFY_STATUS, body); if (res.status === 404) id = null; }
+    if (!id) {
+      res = await uploadNewFile(folder, NOTIFY_STATUS, body);
+      if (res.status === 409) {
+        try { const j = await res.json(); const c = j.context_info && j.context_info.conflicts; const cid = c && ((Array.isArray(c) ? c[0] : c) || {}).id; if (cid) { id = cid; res = await overwriteFile(cid, NOTIFY_STATUS, body); } } catch (e) {}
+      } else if (res.ok) { try { const j = await res.json(); id = j.entries && j.entries[0] && j.entries[0].id; } catch (e) {} }
+    }
+    if (res && res.ok) {
+      if (id) { try { localStorage.setItem(NOTIFY_STATUS_KEY, id); } catch (e) {} }
+      _statusPending = null; try { localStorage.removeItem(NOTIFY_STATUS_KEY + ':pending'); } catch (e) {}
+    }
+  }
+  Box.flushNotify = async function () { clearTimeout(_statusTimer); await flushNotifyOutbox(); await flushNotifyStatus(); };
+
   /* ---- OPT-IN STORES ------------------------------------------------------
      studio.json and revenue.json used to be pulled by every page in the app,
      on every load. Exactly one page reads each: Executive Reporting reads the
@@ -1785,6 +1904,8 @@
     try { me = await getIdentity(); Store.setRealIdentity({ username: me.login, name: me.name }); }
     catch (e) { console.warn('identity failed', e); }
     Perf.phase('identity');
+    // Anything the outbox still owes from an earlier page goes now, off the critical path.
+    setTimeout(() => { Box.flushNotify().catch(() => {}); }, 3000);
 
     const cachedRates = readRatesCache();
     if (cachedRates && localStorage.getItem(FEE_CACHE)) {
