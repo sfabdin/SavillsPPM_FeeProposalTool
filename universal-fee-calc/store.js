@@ -849,9 +849,9 @@
       }
     });
     // Broker fee share
-    const fs = (o) => { const f = (o || {}).feeShare || {}; return [!!f.enabled, f.pct || 0, f.mode || '', String(f.broker || '').trim()].join('/'); };
+    const fs = (o) => { const f = (o || {}).feeShare || {}; return [!!f.enabled, f.pct || 0, f.mode || '', String(f.broker || '').trim(), !!f.onPassThrough].join('/'); };
     if (fs(aa) !== fs(bb)) {
-      const f = (o) => { const x = (o || {}).feeShare || {}; return x.enabled ? (x.pct || 0) + '% ' + (x.mode || '') + (String(x.broker || '').trim() ? ' · ' + String(x.broker).trim() : '') : 'off'; };
+      const f = (o) => { const x = (o || {}).feeShare || {}; return x.enabled ? (x.pct || 0) + '% ' + (x.mode || '') + (x.onPassThrough ? ' · incl. pass-through' : '') + (String(x.broker || '').trim() ? ' · ' + String(x.broker).trim() : '') : 'off'; };
       out.push({ field: 'Broker fee share', from: f(aa), to: f(bb) });
     }
     // Pass-through
@@ -1980,7 +1980,10 @@
   /** Every active line folded together: client-billed, vendor cost out, and
       markup (Savills revenue) by month, plus the totals. */
   function passThroughMonths(p) {
-    const res = { client: {}, cost: {}, markup: {}, clientTotal: 0, costTotal: 0, markupTotal: 0, lines: [] };
+    // shareBase: the pass-through the broker's % is taken on — every line
+    // billed through Savills EXCEPT one the leader ticked "fee share", which
+    // is itself money going out and would otherwise be shared twice.
+    const res = { client: {}, cost: {}, markup: {}, shareBase: {}, clientTotal: 0, costTotal: 0, markupTotal: 0, shareBaseTotal: 0, lines: [] };
     if (!ptActive(p)) return res;
     const months = enumerateMonths(p.timeline);
     (p.passthrough.lines || []).forEach(line => {
@@ -2001,6 +2004,7 @@
         if (!managed) res.cost[ym] = (res.cost[ym] || 0) + c;
         res.clientTotal += client; res.markupTotal += markup;
         if (!managed) res.costTotal += c;
+        if (!line.feeShare) { res.shareBase[ym] = (res.shareBase[ym] || 0) + client; res.shareBaseTotal += client; }
         L.clientByMonth[ym] = client; L.costByMonth[ym] = managed ? 0 : c;
       });
     });
@@ -2027,9 +2031,9 @@
     const fs = (p.assumptions && p.assumptions.feeShare) || {};
     const pct = fs.enabled ? (parseFloat(fs.pct) || 0) : 0;
     out.brokerOnTop = fs.mode === 'ontop';
-    out.broker = round2(fee * pct / 100);
     const ptm = passThroughMonths(p);
     out.pass = round2(ptm.clientTotal || 0);
+    out.broker = round2((fee + (fs.onPassThrough ? (ptm.shareBaseTotal || 0) : 0)) * pct / 100);   // on pass-through too only when the project opts in
     // A pass-through line the leader ticked "fee share" is a share going out, not a vendor cost.
     let vendor = 0, shareOut = 0;
     (ptm.lines || []).forEach(L => { const c = Object.values(L.costByMonth || {}).reduce((a, b) => a + b, 0); if (L.feeShare) shareOut += c; else vendor += c; });
@@ -2064,7 +2068,7 @@
       t: p.timeline,
       ph: (p.phases || []).map(x => [x.id, x.length]),
       as: [a.hrsPerMo, a.escalation, a.industryAdj, a.discount, a.rateLock, a.billingMode, a.catalogBaseYear,
-           a.feeShare && a.feeShare.enabled, a.feeShare && a.feeShare.pct, a.feeShare && a.feeShare.mode],
+           a.feeShare && a.feeShare.enabled, a.feeShare && a.feeShare.pct, a.feeShare && a.feeShare.mode, a.feeShare && !!a.feeShare.onPassThrough],
       r: (p.roles || []).map(r => [r.titleId, r.tierId, r.rateSource, r.contractedRate, r.groupId,
            r.fte, r.fteMonthly]),
       pt: (p.passthrough && p.passthrough.enabled) ? (p.passthrough.lines || []).map(l =>
@@ -2154,6 +2158,7 @@
       ? (parseFloat(p.assumptions.feeShare.pct) || 0) : 0;
     const feeShareMode = (p.assumptions?.feeShare && p.assumptions.feeShare.mode === 'ontop') ? 'ontop' : 'offtop';
     const fsFrac = feeSharePct / 100;
+    const fsOnPT = !!(p.assumptions?.feeShare && p.assumptions.feeShare.enabled && p.assumptions.feeShare.onPassThrough);
 
     // ---- Pass-through / principal billing (vendor cost billed THROUGH Savills) ----
     // Not fee: the COST flows straight out to the vendor; only the MARKUP is Savills
@@ -2173,19 +2178,23 @@
     const ymUnion = Array.from(new Set([...Object.keys(monthNet), ...Object.keys(passClientM)])).sort();
     const byMonth = ymUnion.map(ym => {
       const n = round2(monthNet[ym] || 0);
-      const broker = round2(n * fsFrac);
-      const feeInvoice = round2(feeShareMode === 'ontop' ? n + broker : n);
       const passCost = round2(passCostM[ym] || 0);
       const passMarkup = round2(passMarkM[ym] || 0);
       const passClient = round2(passClientM[ym] || 0);
+      // The fee share is taken on the fee — and, when the project opts in
+      // (feeShare.onPassThrough), on the pass-through billed through Savills
+      // too. A line ticked "fee share" is never in the base: it goes out whole.
+      const brokerFee = round2(n * fsFrac);
+      const broker = round2(brokerFee + (fsOnPT ? round2(ptm.shareBase[ym] || 0) * fsFrac : 0));
+      const feeInvoice = round2(feeShareMode === 'ontop' ? n + broker : n);
       const invoice = round2(feeInvoice + passClient);
       // Savills revenue this month = fee revenue (mode-aware) + pass-through markup.
       const feeRev = feeShareMode === 'ontop' ? n : round2(n - broker);
       const revenue = round2(feeRev + passMarkup);
-      return { ym, net: n, broker, feeInvoice, passCost, passMarkup, passClient, invoice, revenue };
+      return { ym, net: n, broker, brokerFee, feeInvoice, passCost, passMarkup, passClient, invoice, revenue };
     });
 
-    const feeShare = round2(net * fsFrac);   // broker $ — same in both modes
+    const feeShare = round2((net + (fsOnPT ? round2(ptm.shareBaseTotal || 0) : 0)) * fsFrac);   // broker $ — same in both modes; on pass-through too only when the project opts in
     // off-top: broker comes OUT of the fee (Savills keeps net−broker; client pays net).
     // on-top:  broker is added ON (Savills keeps net; client is billed net+broker).
     const feeClientBill = round2(feeShareMode === 'ontop' ? net + feeShare : net);
@@ -2979,18 +2988,20 @@
     const fs = (p.assumptions && p.assumptions.feeShare) || {};
     const pct = fs.enabled ? (parseFloat(fs.pct) || 0) / 100 : 0;
     const onTop = fs.mode === 'ontop';
+    const onPT = !!fs.onPassThrough;                 // the share is taken on pass-through billing too
     const fin = p.financials;
     const base = {};
     if (fin && Array.isArray(fin.byMonth) && fin.byMonth.length) {
       fin.byMonth.forEach(s => {
         const [y, m] = s.ym.split('-').map(Number);
         base[y + '-' + m] = { year: y, month: m, net: s.net || 0,
-          broker: s.broker || 0, passCost: s.passCost || 0, passClient: s.passClient || 0 };
+          // older snapshots carry only `broker`, which was the fee part alone
+          brokerFee: s.brokerFee != null ? s.brokerFee : (s.broker || 0), passCost: s.passCost || 0, passClient: s.passClient || 0 };
       });
     } else {
       (monthlySeries(p, catalog, { raw: true }) || []).forEach(s => {
         base[s.year + '-' + s.month] = { year: s.year, month: s.month, net: s.amount,
-          broker: s.amount * pct, passCost: 0, passClient: 0 };
+          brokerFee: s.amount * pct, passCost: 0, passClient: 0 };
       });
     }
     /* Pass-through is never frozen. It is not priced off the rate grid, so
@@ -2999,8 +3010,8 @@
        drift, it does not re-price). Read it live from the lines, through the
        same rule the calculator uses, so the two can never disagree. */
     const ptm = passThroughMonths(p);
-    const ptFor = (k) => { const ym = padYM(k); return { passClient: ptm.client[ym] || 0, passCost: ptm.cost[ym] || 0 }; };
-    Object.keys(base).forEach(k => { const x = ptFor(k); base[k].passClient = x.passClient; base[k].passCost = x.passCost; });
+    const ptFor = (k) => { const ym = padYM(k); return { passClient: ptm.client[ym] || 0, passCost: ptm.cost[ym] || 0, shareBase: (ptm.shareBase || {})[ym] || 0 }; };
+    Object.keys(base).forEach(k => { const x = ptFor(k); base[k].passClient = x.passClient; base[k].passCost = x.passCost; base[k].shareBase = x.shareBase; });
     // The live series carries the same months with overrides + changes folded
     // in; use it as the authority on `net` and on the flags.
     const live = monthlySeries(p, catalog) || [];
@@ -3009,12 +3020,13 @@
     live.forEach(s => {
       const k = s.year + '-' + s.month;
       const x = ptFor(k);
-      const b = base[k] || { net: s.amount, broker: 0, passCost: x.passCost, passClient: x.passClient };
+      const b = base[k] || { net: s.amount, brokerFee: 0, passCost: x.passCost, passClient: x.passClient, shareBase: x.shareBase };
       const net = s.amount;
-      // Broker rides the ORIGINAL proportions — a monthly edit changes what
-      // we bill, not the deal behind it.
+      // The fee part of the broker rides the ORIGINAL proportions — a monthly
+      // edit changes what we bill, not the deal behind it. The pass-through
+      // part (only when the project opts in) is live, like pass-through itself.
       const ratio = b.net ? net / b.net : 1;
-      const broker = (b.broker || 0) * ratio;
+      const broker = (b.brokerFee || 0) * ratio + (onPT && pct ? (b.shareBase != null ? b.shareBase : x.shareBase) * pct : 0);
       out.push({
         ym: padYM(k), year: s.year, month: s.month, net,
         invoice: (onTop ? net + broker : net) + (b.passClient || 0),
@@ -3027,14 +3039,16 @@
     Object.entries(base).forEach(([k, b]) => {
       if (seen[k]) return;
       seen[k] = true;
-      out.push({ ym: padYM(k), year: b.year, month: b.month, net: b.net, invoice: (onTop ? b.net + b.broker : b.net) + (b.passClient || 0),
-                 broker: b.broker, passCost: b.passCost, passClient: b.passClient, overridden: false, slipOut: 0, slipIn: 0, adjusted: 0 });
+      const broker = (b.brokerFee || 0) + (onPT && pct ? (b.shareBase || 0) * pct : 0);
+      out.push({ ym: padYM(k), year: b.year, month: b.month, net: b.net, invoice: (onTop ? b.net + broker : b.net) + (b.passClient || 0),
+                 broker, passCost: b.passCost, passClient: b.passClient, overridden: false, slipOut: 0, slipIn: 0, adjusted: 0 });
     });
     // Pass-through months neither reaches (a split placed where no fee bills).
     Object.keys(ptm.client).forEach(ym => {
       const [y, m] = ym.split('-').map(Number); const k = y + '-' + m;
       if (seen[k] || !(ptm.client[ym] || ptm.cost[ym])) return;
-      out.push({ ym, year: y, month: m, net: 0, invoice: ptm.client[ym] || 0, broker: 0, passCost: ptm.cost[ym] || 0, passClient: ptm.client[ym] || 0,
+      const broker = (pct && onPT) ? ((ptm.shareBase || {})[ym] || 0) * pct : 0;
+      out.push({ ym, year: y, month: m, net: 0, invoice: (onTop ? broker : 0) + (ptm.client[ym] || 0), broker, passCost: ptm.cost[ym] || 0, passClient: ptm.client[ym] || 0,
                  overridden: false, slipOut: 0, slipIn: 0, adjusted: 0 });
     });
     return out.sort((a, b) => a.year - b.year || a.month - b.month);
