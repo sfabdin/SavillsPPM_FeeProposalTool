@@ -299,6 +299,19 @@
     markDirty(db, id);
     writeDb(db);
     st.logSystem('cycle-open', { cycle: id, name, period: db.cycles[id].period, deadline });
+    {
+      const c = db.cycles[id]; const title = bookTitle(c); const due = fmtDay(deadline + 'T12:00:00');
+      const to = expectedLeaders(o.records || st.listProjects()).filter(x => x !== UNASSIGNED).map(leaderEmail).filter(Boolean);
+      sendNotice({ event: 'book-opened', at: now, to, cc: adminEmails(), data: { cycle: id, deadline },
+        subject: '“' + title + '” is open — confirm your book by ' + due,
+        text: a.name + ' opened “' + title + '”. Confirm every project you lead by ' + due + ' in the Monthly Confirmed Book.',
+        html: noticeHtml('“' + title + '” is open', [
+          escH(a.name || 'An admin') + ' opened the book <b>“' + escH(title) + '”</b>' + (c.period ? ' for ' + escH(ymLong(c.period)) : '') + '.',
+          'Please confirm every project you lead by <b>' + escH(due) + '</b>. Confirming copies your projects, as they stand, into the book leadership reports on. One confirmation per book.',
+          'The countdown pill at the bottom-left of every page shows where you stand.'],
+          { href: pageUrl('Monthly Confirmed Book.html'), label: 'Open the Monthly Confirmed Book' }) });
+      publishStatus(o.records);
+    }
     return db.cycles[id];
   }
   function editHeader(id, what, apply) {
@@ -314,6 +327,7 @@
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(deadline || '')) || !deadlineEnd(deadline)) throw new Error('Pick a confirm-by date.');
     const c = editHeader(id, 'deadline', b => { b.deadline = deadline; });
     S().logSystem('cycle-deadline', { cycle: id, name: c.name, deadline });
+    publishStatus();
     return c;
   }
   function setName(id, name) {
@@ -329,6 +343,47 @@
     const c = editHeader(id, 'period', b => { b.period = p; });
     S().logSystem('cycle-period', { cycle: id, name: c.name, period: p });
     return c;
+  }
+
+  /* ---------- notices (email, through the Box outbox) ----------
+     The book is the one place people must act on time, so it is the one
+     place the app sends mail: book opened, confirmed, locked without you,
+     acknowledged. Each is a small JSON message the Box adapter files for a
+     Power Automate flow to send; nothing here waits on it or can fail on it. */
+  const escH = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function pageUrl(page) { try { return location.origin + location.pathname.replace(/[^/]*$/, '') + encodeURIComponent(page); } catch (e) { return page; } }
+  function leaderEmail(id) { const l = S().leaderById ? S().leaderById(id) : null; const u = l && String(l.username || '').toLowerCase(); return (u && /@/.test(u)) ? u : ''; }
+  function adminEmails() { try { return S().adminEmails ? S().adminEmails() : []; } catch (e) { return []; } }
+  function noticeHtml(title, paras, cta) {
+    const btn = cta ? '<p style="margin:18px 0"><a href="' + escH(cta.href) + '" style="background:#25273A;color:#fff;padding:10px 16px;text-decoration:none;font-weight:700">' + escH(cta.label) + '</a></p>' : '';
+    return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#25273A;line-height:1.5;max-width:640px">' +
+      '<p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#79828C;margin:0 0 6px">Savills PPM · Fee tool</p>' +
+      '<h2 style="margin:0 0 12px;font-size:18px">' + escH(title) + '</h2>' +
+      paras.map(p => '<p style="margin:0 0 10px">' + p + '</p>').join('') + btn +
+      '<p style="font-size:12px;color:#79828C;margin-top:20px">Sent automatically by the fee tool when the confirmed book changed.</p></div>';
+  }
+  function sendNotice(evt) { try { const B = window.UFC_Box; if (B && B.enabled && B.notify) return B.notify(evt); } catch (e) { /* mail is never on the critical path */ } return null; }
+  /** Where the open book stands, for the daily reminder flow: who still owes
+      a confirmation, and from when to remind them (three days out). */
+  function publishStatus(records) {
+    try {
+      const B = window.UFC_Box; if (!(B && B.enabled && B.writeNotifyStatus)) return null;
+      const st = S(); const recs = records || st.listProjects();
+      const cur = currentCycle();
+      const status = { updatedAt: new Date().toISOString(), app: (typeof location !== 'undefined' ? location.origin : ''), page: pageUrl('Monthly Confirmed Book.html'), admins: adminEmails(), book: null, pending: [], confirmed: [] };
+      if (cur) {
+        let remindFrom = ''; try { const d = new Date(String(cur.deadline) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 3); remindFrom = d.toISOString(); } catch (e) {}
+        status.book = { id: cur.id, title: bookTitle(cur), period: cur.period || '', deadline: cur.deadline, deadlineText: fmtDay(cur.deadline + 'T12:00:00'), remindFrom, lockedAt: cur.lockedAt || null, openedAt: cur.openedAt || null };
+        expectedLeaders(recs).forEach(id => {
+          if (id === UNASSIGNED) return;
+          const k = cur.confirmations[id];
+          const row = { id, name: leaderName(id), email: leaderEmail(id) };
+          if (k) status.confirmed.push(Object.assign(row, { at: k.at })); else status.pending.push(row);
+        });
+      }
+      B.writeNotifyStatus(status);
+      return status;
+    } catch (e) { return null; }
   }
 
   /** One deep copy of a live record, stamped for the book. */
@@ -376,6 +431,16 @@
       c.updatedAt = now;
       markDirty(db, ym); writeDb(db);
       st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: copies.length, fee, late: true, afterLock: true, stamped: true, reason });
+      const who = c.confirmations[leaderId].name, title = bookTitle(c);
+      sendNotice({ event: 'book-confirmed-late', at: now, to: adminEmails(), data: { cycle: ym, leaderId, reason },
+        subject: who + ' confirmed “' + title + '” late — reason to review',
+        text: who + ' confirmed “' + title + '” after it was locked. Reason: ' + reason + '. The locked figures did not change.',
+        html: noticeHtml(who + ' confirmed “' + title + '” late', [
+          '<b>' + escH(who) + '</b> confirmed after the book was locked, on ' + escH(fmtStamp(now)) + '. The locked figures did not change; the confirmation and reason are stamped on the ' + carried.length + ' carried project' + (carried.length === 1 ? '' : 's') + '.',
+          'Reason given: <i>“' + escH(reason) + '”</i>',
+          'It is waiting for review on the Tracker tab.'],
+          { href: pageUrl('Monthly Confirmed Book.html'), label: 'Review on the Tracker' }) });
+      publishStatus();
       return c.confirmations[leaderId];
     }
     const records = bookFor(leaderId, o.records || st.listProjects());
@@ -392,6 +457,18 @@
     c.updatedAt = now;
     markDirty(db, ym); writeDb(db);
     st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: records.length, fee, late: c.confirmations[leaderId].late, afterLock: false, reason: reason || undefined });
+    {
+      const k = c.confirmations[leaderId]; const title = bookTitle(c);
+      const left = expectedLeaders(o.records || st.listProjects()).filter(id => id !== UNASSIGNED && !c.confirmations[id]);
+      sendNotice({ event: 'book-confirmed', at: now, to: adminEmails(), data: { cycle: ym, leaderId, projects: k.projects, fee: k.fee, late: k.late },
+        subject: k.name + ' confirmed “' + title + '”' + (k.late ? ' (after the deadline)' : '') + ' · ' + left.length + ' still to go',
+        text: k.name + ' confirmed “' + title + '”: ' + k.projects + ' projects, ' + bookYear(c) + ' fee $' + Math.round(k.fee).toLocaleString() + '. ' + left.length + ' leader' + (left.length === 1 ? '' : 's') + ' still to confirm.',
+        html: noticeHtml(k.name + ' confirmed “' + title + '”', [
+          '<b>' + escH(k.name) + '</b> confirmed on ' + escH(fmtStamp(now)) + (k.late ? ' — <b>after the deadline</b>' : '') + ': ' + k.projects + ' project' + (k.projects === 1 ? '' : 's') + ', ' + bookYear(c) + ' fee <b>$' + Math.round(k.fee).toLocaleString() + '</b>.',
+          left.length ? 'Still to confirm: ' + escH(left.map(leaderName).join(', ')) + '.' : 'Everyone expected has now confirmed.'],
+          { href: pageUrl('Monthly Confirmed Book.html'), label: 'Open the Tracker' }) });
+      publishStatus(o.records);
+    }
     return c.confirmations[leaderId];
   }
 
@@ -421,6 +498,16 @@
     c.updatedAt = now;
     markDirty(db, ym); writeDb(db);
     st.logSystem('cycle-acknowledge', { cycle: ym, name: c.name, period: c.period, leaderId, projects: copies.length });
+    {
+      const who = c.acknowledgements[leaderId].name, title = bookTitle(c);
+      sendNotice({ event: 'book-acknowledged', at: now, to: adminEmails(), data: { cycle: ym, leaderId },
+        subject: who + ' acknowledged missing “' + title + '”',
+        text: who + ' acknowledged on ' + fmtStamp(now) + ' that they did not confirm “' + title + '” and that invoicing may be delayed.',
+        html: noticeHtml(who + ' acknowledged missing “' + title + '”', [
+          '<b>' + escH(who) + '</b> recorded on ' + escH(fmtStamp(now)) + ' that they did not confirm “' + escH(title) + '”, and that invoicing may be delayed for lack of reporting compliance. Their ' + copies.length + ' carried project' + (copies.length === 1 ? '' : 's') + ' stay in the book as locked.'],
+          { href: pageUrl('Monthly Confirmed Book.html'), label: 'Open the Tracker' }) });
+      publishStatus();
+    }
     return c.acknowledgements[leaderId];
   }
 
@@ -449,6 +536,28 @@
     c.carried = carried; c.metaUpdatedAt = now; c.updatedAt = now;
     markDirty(db, ym); writeDb(db);
     st.logSystem('cycle-lock', { cycle: ym, name: c.name, period: c.period, carried: carried.length, carriedProjects, confirmed: Object.keys(c.confirmations).length });
+    {
+      const title = bookTitle(c);
+      carried.filter(id => id !== UNASSIGNED).forEach(id => {
+        const email = leaderEmail(id); if (!email) return;
+        const n = bookFor(id, records).length;
+        sendNotice({ event: 'book-locked-missed', at: now, to: [email], cc: adminEmails(), data: { cycle: ym, leaderId: id },
+          subject: '“' + title + '” was locked without your confirmation',
+          text: a.name + ' locked “' + title + '” on ' + fmtDay(now) + ' without your confirmation. Your ' + n + ' projects were carried in flagged “not confirmed”. Confirm late with a reason in the Monthly Confirmed Book before the next book opens; after that you can only acknowledge the miss.',
+          html: noticeHtml('“' + title + '” was locked without your confirmation', [
+            escH(a.name || 'An admin') + ' locked <b>“' + escH(title) + '”</b> on ' + escH(fmtDay(now)) + '. Your ' + n + ' project' + (n === 1 ? '' : 's') + ' were carried into the book as they stood and flagged <b>“not confirmed”</b>.',
+            'Until the next book opens you can still confirm it late with a short reason — the locked figures stay as they are; your name, time and reason are stamped on them. Once the next book has opened you can only acknowledge the missed confirmation, and invoicing may be delayed for lack of reporting compliance.'],
+            { href: pageUrl('Monthly Confirmed Book.html'), label: 'Confirm late now' }) });
+      });
+      sendNotice({ event: 'book-locked', at: now, to: adminEmails(), data: { cycle: ym, carried: carried.length, carriedProjects },
+        subject: '“' + title + '” locked — ' + Object.keys(c.confirmations).length + ' confirmed, ' + carried.length + ' carried in',
+        text: a.name + ' locked “' + title + '”. ' + Object.keys(c.confirmations).length + ' confirmed; carried in unconfirmed: ' + (carried.map(leaderName).join(', ') || 'none') + '.',
+        html: noticeHtml('“' + title + '” is locked', [
+          escH(a.name || 'An admin') + ' locked the book on ' + escH(fmtStamp(now)) + '. <b>' + Object.keys(c.confirmations).length + '</b> confirmed.',
+          carried.length ? 'Carried in unconfirmed (' + carriedProjects + ' project' + (carriedProjects === 1 ? '' : 's') + '): <b>' + escH(carried.map(leaderName).join(', ')) + '</b>. Each has been emailed.' : 'Everyone expected had confirmed.'],
+          { href: pageUrl('Monthly Confirmed Book.html'), label: 'Open the book' }) });
+      publishStatus(records);
+    }
     return { carried, carriedProjects };
   }
   function reopenCycle(ym) {
@@ -461,6 +570,7 @@
     c.metaUpdatedAt = now; c.updatedAt = now;
     markDirty(db, ym); writeDb(db);
     S().logSystem('cycle-reopen', { cycle: ym, name: c.name });
+    publishStatus();
     return c;
   }
   /** Delete a book outright — a test, a mistake. Only while nobody has
@@ -674,7 +784,7 @@
     ymShort, ymLong, monthName, isYm, daysUntil, pastDeadline, defaultDeadline, nextYm, fmtDay, fmtDayTime, fmtStamp,
     bookTitle, periodLabel, bookYear, normalize,
     leadersOf, isActiveRecord, bookFor, expectedLeaders, leaderName, myLeaderId, feeInYear, isLeadership,
-    getCycle, listCycles, openCycles, currentCycle, latestLocked, supersededBy, createCycle, setDeadline, setName, setPeriod, confirm, acknowledgeMissed, lockCycle, reopenCycle, reviewLate,
+    getCycle, listCycles, openCycles, currentCycle, latestLocked, supersededBy, publishStatus, createCycle, setDeadline, setName, setPeriod, confirm, acknowledgeMissed, lockCycle, reopenCycle, reviewLate,
     statusFor, projectStatus, widgetState,
     asProjectsDb, bookRecords, changeOrderIndex, cycleSummary,
     mergeCycle, hydrateCycle, serialize, deleteCycle, pruneMissing,

@@ -1891,6 +1891,9 @@
         }, 1200);
       });
       setStoreNote('box');
+      // Mapping decisions shipped as code — applied once, here, after the merge
+      // and with the push hook attached, so they land in Box like any edit.
+      try { const n = S.applyMappingSeeds ? S.applyMappingSeeds() : []; if (n.length) { toast(n.length + ' mapping fix' + (n.length === 1 ? '' : 'es') + ' applied and saved.', 'ok'); } } catch (e) { console.warn('mapping seeds', e); }
       // Live refresh: when the tab regains focus (and every 3 min) check the file's
       // etag; if a teammate saved, hydrate + re-render — mappings flow to everyone.
       const refresh = async () => {

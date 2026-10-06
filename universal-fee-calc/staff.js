@@ -1118,7 +1118,12 @@
   /** Matrix projects whose fee link resolves to this fee project (pinned or auto). */
   function matrixProjectsForFee(feeProjectId) {
     const db = readDb();
-    return distinctProjects().filter(pn => {
+    // Planned names plus names that only have LOGGED time (a claimed Clockify
+    // project with no allocation yet) — the leader's view is time vs plan,
+    // and time with no plan is exactly what it should show.
+    const names = new Set(distinctProjects());
+    Object.keys(db.actuals || {}).forEach(k => { const n = k.split('|')[1]; if (n) names.add(n); });
+    return [...names].filter(pn => {
       const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
       return matchFeeProjects(pn, client).some(l => l.id === feeProjectId);
     });
@@ -2282,6 +2287,44 @@
     return matrixName;
   }
 
+  /* ---------- MAPPING SEEDS ----------
+     Mapping decisions made outside the app (a leader's pilot, a review of a
+     mis-link) shipped as code and applied ONCE per shared staff.json by the
+     first browser that loads them — recorded in meta.mappingSeeds — so they
+     still go through the normal claim/link verbs, the change log and the Box
+     merge instead of someone hand-editing the file. A seed that cannot apply
+     yet (its fee project is not loaded) is left for the next load. */
+  const MAPPING_SEEDS = [
+    // Tonya Williams' revenue-leader pilot (Oct 2026)
+    { id: '2026-10-tonya-murphy',  claim: 'Murphy Oil - Occupancy Planning', fee: 'proj_g4jcid84z' },
+    { id: '2026-10-tonya-ws2025',  claim: 'Workplace Strategy (2025)',       fee: 'proj_c7fi5fyh3' },
+    // Clockify "P008778 - ExxonMobil - Global Site Survey" IS Salesforce P008778,
+    // the active Global Site Survey — it had been pinned to two unrelated records.
+    { id: '2026-10-tonya-p008778', relink: 'P008778 - ExxonMobil - Global Site Survey', fee: ['proj_njzrnaq3j'] },
+  ];
+  function applyMappingSeeds() {
+    const applied = [];
+    MAPPING_SEEDS.forEach(seed => {
+      const db0 = readDb(); const done = (db0.meta || {}).mappingSeeds || {};
+      if (done[seed.id]) return;
+      const feeIds = seed.relink ? seed.fee : [seed.fee];
+      if (!feeIds.every(id => feeRecords().some(p => p.id === id))) return;    // not loaded yet — next time
+      try {
+        if (seed.claim) claimClockifyForFee(seed.claim, seed.fee);
+        else if (seed.relink) {
+          const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} }; db.mappings.fee = db.mappings.fee || {};
+          db.mappings.fee[nkey(seed.relink)] = seed.fee.slice();
+          writeDb(db);
+          logStaff('staff-map', { kind: 'fee link', key: seed.relink, to: 'relinked' }, seed.fee[0]);
+        }
+      } catch (e) { console.warn('mapping seed not applied', seed.id, e.message); return; }
+      const db = readDb(); db.meta = db.meta || {}; db.meta.mappingSeeds = Object.assign({}, db.meta.mappingSeeds, { [seed.id]: new Date().toISOString() });
+      writeDb(db);
+      applied.push(seed.id);
+    });
+    return applied;
+  }
+
   /** Persistent contract-name → roster-person link, shared via staff.json.
       Covers nicknames and spelling drift ("Anastasia Long" ↔ "Tasia Long"):
       once a leader maps a contract name onto an existing person, every
@@ -2567,7 +2610,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan, feeProjectPlan, matrixProjectsForFee, feeProjectActuals,
-    mappingFlags, flagMapping, clearMappingFlag, unclaimedClockifyProjects, claimClockifyForFee,
+    mappingFlags, flagMapping, clearMappingFlag, unclaimedClockifyProjects, claimClockifyForFee, applyMappingSeeds, MAPPING_SEEDS,
     unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, addPersonFromClockify, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
