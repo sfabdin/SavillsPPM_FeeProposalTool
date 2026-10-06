@@ -401,13 +401,13 @@
     const e5 = eq(series.reduce((t, s) => t + s.broker, 0), f.feeShare, 'the billing series agrees'); if (e5 !== true) return e5;
     const cb = S.clientBillOf(p, C);
     const e6 = eq(cb.broker, (cb.fee + cb.pass) * 0.10, 'the index headline agrees'); if (e6 !== true) return e6;
-    // A line ticked "fee share" already goes out whole — it is NOT in the broker's base.
+    // With the box ticked EVERY line billed through Savills is in the base — a line ticked "fee share" too.
     const q = base({ assumptions: { feeShare: { enabled: true, pct: 10, mode: 'offtop', onPassThrough: true } },
       passthrough: { enabled: true, lines: [{ id: 'v', label: 'Movers', cost: 20000, markupPct: 10, mode: 'billed' }, { id: 's', label: 'Dallas PM', cost: 5000, markupPct: 0, mode: 'billed', feeShare: true }] } });
     const g = fin(q);
-    const e7 = eq(g.feeShare, (g.net + 22000) * 0.10, 'ticked line left out of the share base'); if (e7 !== true) return e7;
+    const e7 = eq(g.feeShare, (g.net + 27000) * 0.10, 'the ticked line is in the share base too'); if (e7 !== true) return e7;
     const cq = S.clientBillOf(q, C);
-    return eq(cq.broker, (cq.fee + 22000) * 0.10 + 5000, 'index: share on fee + vendor pass-through, plus the ticked line going out whole');
+    return eq(cq.broker, (cq.fee + 27000) * 0.10 + 5000, 'index: share on fee + all pass-through, plus the ticked line going out whole');
   });
   test('Broker · off vs on', 'same broker $, opposite direction', () => {
     const off = fin(base({ assumptions: { feeShare: { enabled: true, pct: 10, mode: 'offtop' } } }));

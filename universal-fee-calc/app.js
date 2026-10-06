@@ -399,9 +399,9 @@
   function feeShareOn() { return !!(state.assumptions.feeShare && state.assumptions.feeShare.enabled); }
   function feeShareMode() { return (state.assumptions.feeShare && state.assumptions.feeShare.mode) || 'offtop'; }
   function feeSharePct() { return (state.assumptions.feeShare && parseFloat(state.assumptions.feeShare.pct)) || 0; }
-  // Broker $ — same in both modes — taken on the GROSS billed: the fee plus the
-  // pass-through billed through Savills, less any line ticked "fee share" (that
-  // one already goes out whole). The store's rule, so every page agrees.
+  // Broker $ — same in both modes — taken on the fee, plus (when the project
+  // ticks "incl. pass-through billing") everything billed through Savills as
+  // pass-through. The store's rule, so every page agrees.
   function ptShareBaseTotal() { return ptOn() ? (STORE.passThroughMonths(state).shareBaseTotal || 0) : 0; }
   function ptShareBaseMap() {
     const map = {}; if (!ptOn()) return map;
