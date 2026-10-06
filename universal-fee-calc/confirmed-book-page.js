@@ -83,7 +83,8 @@
     // Locked without them: the banner asks for a reason, and the book they
     // are confirming late is listed right under it — every project as it
     // stands, the carried copies flagged — so they know what they are signing.
-    if (w.kind === 'missed') { html += missedBanner(w.cycle, me, recs); html += leaderBook(w.cycle, me, recs); }
+    const gated = w.kind === 'missed' && w.mode === 'ack';   // the next book waits for the acknowledgement
+    if (w.kind === 'missed') { html += missedBanner(w, me, recs); html += leaderBook(w.cycle, me, recs); }
     if (!open.length) {
       html += '<div class="empty"><b>No book is open for confirmation.</b><br>' + (lead ? 'Create one from the Books tab.' : 'An admin creates each book; the countdown appears on every page once one is open.') + '</div>';
     } else if (!me && !lead) {
@@ -91,7 +92,7 @@
     }
     // Every open book, the one due first at the top. Usually one; can be more.
     open.sort((a, b) => String(a.deadline).localeCompare(String(b.deadline))).forEach(cur => {
-      if (me) html += leaderBook(cur, me, recs);
+      if (me) html += leaderBook(cur, me, recs, { gated: gated && cur.id !== w.cycle.id });
       if (lead) {
         const orphans = C.bookFor(C.UNASSIGNED, recs).filter(C.isActiveRecord);
         if (orphans.length) html += leaderBook(cur, C.UNASSIGNED, recs);
@@ -100,22 +101,43 @@
     return html;
   }
 
-  function missedBanner(cycle, me, recs) {
-    const mine = C.bookFor(me, recs);
+  /* Locked without them. Two cases:
+       stamp — no newer book has opened yet: they confirm late with a reason,
+               which is stamped on the carried copies; the locked figures stand.
+       ack   — a newer book has opened: the old one is closed to confirmations.
+               They acknowledge the miss (and the invoicing consequence) before
+               they can confirm the new book. */
+  function missedBanner(w, me, recs) {
+    const cycle = w.cycle, title = C.bookTitle(cycle);
+    const carried = C.bookFor(me, Object.values(cycle.projects || {})).filter(p => p._carried).length;
+    const lockedOn = esc(C.fmtDay(cycle.lockedAt)) + (cycle.lockedByName ? ' by ' + esc(cycle.lockedByName) : '');
+    if (w.mode === 'ack') {
+      const next = C.bookTitle(w.next);
+      return '<div class="banner red" id="missed">' +
+        '<b>“' + esc(title) + '” was locked on ' + lockedOn + ' without your confirmation, and “' + esc(next) + '” has since opened — “' + esc(title) + '” can no longer be confirmed.</b> ' +
+        'Your ' + plural(carried, 'project') + ' stay in that book as they were carried in, flagged “not confirmed”. Acknowledge this to continue; “' + esc(next) + '” cannot be confirmed before you do.' +
+        '<div class="reason"><label class="ack"><input type="checkbox" id="missed-ack"> I acknowledge that I did not confirm “' + esc(title) + '”, and that invoicing may be delayed due to lack of reporting compliance.</label>' +
+        '<div class="row"><button class="btn btn-primary" id="missed-ack-btn" data-ym="' + esc(cycle.id) + '" data-l="' + esc(me) + '" disabled>Record my acknowledgement</button>' +
+        '<span class="sub">Stamps the acknowledgement, with your name and the time, on the ' + plural(carried, 'carried project') + '. The figures do not change.</span></div></div></div>';
+    }
     return '<div class="banner red" id="missed">' +
-      '<b>“' + esc(C.bookTitle(cycle)) + '” was locked on ' + esc(C.fmtDay(cycle.lockedAt)) + (cycle.lockedByName ? ' by ' + esc(cycle.lockedByName) : '') + ' without your confirmation.</b> ' +
-      'Your ' + plural(mine.length, 'live project') + ' were carried into the confirmed book and flagged “not confirmed”. Confirm now with a short reason — an admin will review it.' +
+      '<b>“' + esc(title) + '” was locked on ' + lockedOn + ' without your confirmation.</b> ' +
+      'Your ' + plural(carried, 'project') + ' were carried into the confirmed book as they stood and flagged “not confirmed”. Confirm now with a short reason — an admin will review it. ' +
+      'The locked figures do not change: your confirmation and reason are stamped on the carried copies. Once the next book opens, this one can only be acknowledged.' +
       '<div class="reason"><textarea id="missed-reason" placeholder="Why the confirmation is late (a sentence is enough)"></textarea>' +
-      '<div class="row"><button class="btn btn-primary" id="missed-confirm" data-ym="' + esc(cycle.id) + '" data-l="' + esc(me) + '">Confirm “' + esc(C.bookTitle(cycle)) + '” with this reason</button>' +
-      '<span class="sub">Stamps ' + plural(mine.length, 'project') + ' with your name and the time, replacing the carried copies.</span></div></div></div>';
+      '<div class="row"><button class="btn btn-primary" id="missed-confirm" data-ym="' + esc(cycle.id) + '" data-l="' + esc(me) + '">Confirm “' + esc(title) + '” late with this reason</button>' +
+      '<span class="sub">Stamps your name, the time and the reason on the ' + plural(carried, 'carried project') + '.</span></div></div></div>';
   }
 
-  function leaderBook(cycle, leaderId, recs) {
+  function leaderBook(cycle, leaderId, recs, opts) {
+    const gated = !!(opts && opts.gated);
     const ym = cycle.id, year = C.bookYear(cycle), title = C.bookTitle(cycle), period = C.periodLabel(cycle);
     const byId = byIdOf(recs);
     const mine = C.bookFor(leaderId, recs).sort((a, b) => ((a.project || {}).client || '').localeCompare((b.project || {}).client || '') || ((a.project || {}).name || '').localeCompare((b.project || {}).name || ''));
     const st = C.statusFor(cycle, leaderId, recs);
     const k = cycle.confirmations[leaderId];
+    const ack = (cycle.acknowledgements || {})[leaderId];
+    const next = cycle.lockedAt ? C.supersededBy(cycle) : null;
     // Every reporting year, not just the book's: a leader confirms the whole
     // snapshot, and the reviewers read next year alongside this one.
     const years = S.getReportYears ? S.getReportYears() : [year];
@@ -133,23 +155,33 @@
       ? 'locked ' + esc(C.fmtDay(cycle.lockedAt)) + (cycle.lockedByName ? ' by ' + cycle.lockedByName : '') + ' · was due ' + fmtDate(cycle.deadline)
       : 'open · confirm by ' + fmtDate(cycle.deadline) + ' · ' + (over ? 'OVERDUE · ' + plural(-d, 'day') + ' late' : d === 0 ? 'due today' : plural(d, 'day') + ' left'));
     const pillCls = st.k === 'overdue' ? 'rr' : st.tone;
-    const pillTxt = { confirmed: 'Confirmed', changed: 'Confirmed · edited since', due: 'Not confirmed', overdue: 'Overdue', missed: 'Not confirmed', none: 'Nothing to confirm' }[st.k];
+    const pillTxt = { confirmed: k && k.stamped ? 'Confirmed late' : 'Confirmed', changed: 'Confirmed · edited since', due: 'Not confirmed', overdue: 'Overdue', missed: ack ? 'Not confirmed · acknowledged' : 'Not confirmed', none: 'Nothing to confirm' }[st.k];
     let stamp, btn;
-    if (k) {
+    if (k && k.stamped) {
+      stamp = '<b>Confirmed late ' + esc(C.fmtStamp(k.at)) + ' by ' + esc(k.name) + '.</b> “' + esc(title) + '” was already locked, so the carried figures stand; your confirmation is stamped on them.' +
+        '<div class="sub">Reason: “' + esc(k.reason || '') + '”' + (k.reviewedAt ? ' · reviewed by ' + esc(k.reviewedBy) : ' · awaiting admin review') + '</div>';
+      btn = '<button class="btn btn-primary" disabled>Confirmed late</button>';
+    } else if (k) {
       stamp = '<b>Confirmed ' + esc(C.fmtStamp(k.at)) + ' by ' + esc(k.name) + '.</b> Locked in to “' + esc(title) + '”.' +
-        (st.k === 'changed' ? ' <b>' + plural(st.changed, 'project') + ' edited since</b> — noted on the tracker; the changes carry into the next book.' : ' One confirmation per book; changes from here carry into the next book.') +
-        (k.afterLock ? '<div class="sub">Confirmed after the book was locked — reason: “' + esc(k.reason || '') + '”' + (k.reviewedAt ? ' · reviewed by ' + esc(k.reviewedBy) : ' · awaiting admin review') + '</div>' : '');
+        (st.k === 'changed' ? ' <b>' + plural(st.changed, 'project') + ' edited since</b> — noted on the tracker; the changes carry into the next book.' : ' One confirmation per book; changes from here carry into the next book.');
       btn = '<button class="btn btn-primary" disabled>Confirmed</button>';
+    } else if (locked && ack) {
+      stamp = '<b>“' + esc(title) + '” was locked without your confirmation.</b> You acknowledged this on ' + esc(C.fmtStamp(ack.at)) + '. These ' + plural(mine.length, 'project') + ' stay in the book as they were carried in, flagged “not confirmed”.';
+      btn = '';
+    } else if (locked && next) {
+      stamp = '<b>“' + esc(title) + '” was locked without your confirmation</b> and closed to confirmations when “' + esc(C.bookTitle(next)) + '” opened. These ' + plural(mine.length, 'project') + ' stay in the book as carried in. Acknowledge the missed book in the red box above.';
+      btn = '';
     } else if (locked) {
       // Carried in at lock. The confirm-with-reason button lives in the red
       // banner above this book; here is what it covers.
       stamp = '<b>“' + esc(title) + '” was locked without your confirmation.</b> These ' + plural(mine.length, 'project') + ' were carried into the book as they stood and flagged “not confirmed”. ' +
-        'Check the list, then confirm them late with a reason in the red box above.';
+        'Check the list, then confirm them late with a reason in the red box above — the figures stay as locked; your confirmation is stamped on them.';
       btn = '';
     } else {
       stamp = (over ? '<b>The deadline was ' + esc(fmtDate(cycle.deadline)) + '. “' + esc(title) + '” is not confirmed.</b> ' : '<b>Not yet confirmed into “' + esc(title) + '”.</b> ') +
-        'Confirming stamps ' + plural(mine.length, 'project') + ' with your name and the current time. One confirmation per book — check the list first.';
-      btn = '<button class="btn btn-primary" id="confirm-' + esc(leaderId) + '" data-ym="' + esc(ym) + '" data-l="' + esc(leaderId) + '"' + (mine.length ? '' : ' disabled') + '>' +
+        'Confirming stamps ' + plural(mine.length, 'project') + ' with your name and the current time. One confirmation per book — check the list first.' +
+        (gated ? ' <b>Acknowledge the missed book above first.</b>' : '');
+      btn = '<button class="btn btn-primary" id="confirm-' + esc(leaderId) + '" data-ym="' + esc(ym) + '" data-l="' + esc(leaderId) + '"' + (mine.length && !gated ? '' : ' disabled') + (gated ? ' title="Acknowledge the missed book first"' : '') + '>' +
         (leaderId === C.UNASSIGNED ? 'Confirm unassigned projects' : over ? 'Confirm my book now' : 'Confirm my book') + '</button>';
     }
     const rows = mine.map(r => {
@@ -158,7 +190,8 @@
       const others = ps.leaders.filter(l => l !== leaderId).map(C.leaderName);
       let inBook;
       if (!ps.copy) inBook = '<span class="pill r"><i></i>Not yet</span>';
-      else if (ps.copy._carried) inBook = '<span class="pill y"><i></i>Carried · not confirmed</span>';
+      else if (ps.copy._carried) inBook = '<span class="pill y"><i></i>Carried · not confirmed</span>' +
+        (ps.copy._lateConfirmedAt ? '<div class="sub">confirmed late ' + esc(C.fmtStamp(ps.copy._lateConfirmedAt)) + '</div>' : ps.copy._acknowledgedAt ? '<div class="sub">acknowledged ' + esc(C.fmtStamp(ps.copy._acknowledgedAt)) + '</div>' : '');
       else if (ps.copy._confirmedBy === leaderId) inBook = '<span class="pill g"><i></i>You · ' + esc(C.fmtStamp(ps.copy._confirmedAt)) + '</span>' +
         (ps.waiting.length ? '<div class="sub">awaiting ' + esc(ps.waiting.map(C.leaderName).join(', ')) + '</div>' : ps.leaders.length > 1 ? '<div class="sub">fully confirmed</div>' : '') +
         (ps.editedSince ? '<div class="sub">edited since · noted</div>' : '');
@@ -188,7 +221,21 @@
   }
 
   function wireBook(host) {
-    host.querySelectorAll('button[data-ym][data-l]').forEach(b => b.addEventListener('click', () => {
+    const ackBox = $('#missed-ack', host), ackBtn = $('#missed-ack-btn', host);
+    if (ackBox && ackBtn) {
+      ackBox.addEventListener('change', () => { ackBtn.disabled = !ackBox.checked; });
+      ackBtn.addEventListener('click', () => {
+        if (!ackBox.checked) return;
+        const ym = ackBtn.dataset.ym, l = ackBtn.dataset.l; const title = C.bookTitle(C.getCycle(ym));
+        try {
+          C.acknowledgeMissed(ym, l);
+          toast('Acknowledged — “' + title + '” stays as locked. You can confirm the open book now.', 'ok');
+          if (Box && Box.flushConfirm) Box.flushConfirm().catch(() => {});
+          announce(); render();
+        } catch (e) { toast(e.message || String(e)); }
+      });
+    }
+    host.querySelectorAll('button[data-ym][data-l]').forEach(b => { if (b.id === 'missed-ack-btn') return; b.addEventListener('click', () => {
       const ym = b.dataset.ym, l = b.dataset.l;
       const reasonEl = b.id === 'missed-confirm' ? $('#missed-reason', host) : null;
       const reason = reasonEl ? reasonEl.value : '';
@@ -196,12 +243,12 @@
       const title = C.bookTitle(C.getCycle(ym));
       if (!window.confirm('Confirm ' + plural(n, 'project') + ' into “' + title + '”? This is your one confirmation for this book — it cannot be redone.')) return;
       try {
-        C.confirm(ym, l, { reason });
-        toast('“' + title + '” confirmed — ' + plural(n, 'project') + ' stamped.', 'ok');
+        const k = C.confirm(ym, l, { reason });
+        toast(k && k.stamped ? '“' + title + '” confirmed late — your reason is stamped on ' + plural(k.carriedProjects || 0, 'carried project') + '; the locked figures stand.' : '“' + title + '” confirmed — ' + plural(n, 'project') + ' stamped.', 'ok');
         if (Box && Box.flushConfirm) Box.flushConfirm().catch(() => {});
         announce(); render();
       } catch (e) { toast(e.message || String(e)); }
-    }));
+    }); });
   }
 
   /* ================= TRACKER ================= */
@@ -257,10 +304,15 @@
     let reviews = '';
     if (lead) {
       const items = [];
-      cycles.forEach(c => { if (!c) return; Object.keys(c.confirmations).forEach(id => { const k = c.confirmations[id]; if (k.afterLock) items.push({ c, id, k }); }); });
-      if (items.length) reviews = '<div class="panel"><div class="ph"><h3>Late confirmations</h3><span class="sub">confirmed after the book was locked</span></div>' +
-        '<div class="tw"><table class="cb-table"><thead><tr><th>Book</th><th>Leader</th><th>Confirmed</th><th>Reason</th><th>Review</th></tr></thead><tbody>' +
-        items.map(x => '<tr><td>' + esc(C.bookTitle(x.c)) + '</td><td>' + esc(C.leaderName(x.id)) + '</td><td>' + esc(C.fmtStamp(x.k.at)) + '</td><td>' + esc(x.k.reason || '') + '</td>' +
+      cycles.forEach(c => { if (!c) return;
+        Object.keys(c.confirmations).forEach(id => { const k = c.confirmations[id]; if (k.afterLock) items.push({ c, id, k }); });
+        Object.keys(c.acknowledgements || {}).forEach(id => { items.push({ c, id, a: c.acknowledgements[id] }); });
+      });
+      if (items.length) reviews = '<div class="panel"><div class="ph"><h3>Late confirmations &amp; acknowledgements</h3><span class="sub">confirmed late after the lock (figures unchanged, reason stamped) · or acknowledged as not confirmed once the next book opened</span></div>' +
+        '<div class="tw"><table class="cb-table"><thead><tr><th>Book</th><th>Leader</th><th>When</th><th>What</th><th>Review</th></tr></thead><tbody>' +
+        items.map(x => x.a
+          ? '<tr><td>' + esc(C.bookTitle(x.c)) + '</td><td>' + esc(C.leaderName(x.id)) + '</td><td>' + esc(C.fmtStamp(x.a.at)) + '</td><td><span class="pill rr"><i></i>Not confirmed · acknowledged</span> <span class="sub">invoicing may be delayed · ' + plural(x.a.projects || 0, 'carried project') + '</span></td><td><span class="sub">—</span></td></tr>'
+          : '<tr><td>' + esc(C.bookTitle(x.c)) + '</td><td>' + esc(C.leaderName(x.id)) + '</td><td>' + esc(C.fmtStamp(x.k.at)) + '</td><td><span class="pill y"><i></i>Confirmed late</span> ' + esc(x.k.reason || '') + '</td>' +
           '<td>' + (x.k.reviewedAt ? '<span class="pill g"><i></i>Reviewed · ' + esc(x.k.reviewedBy) + '</span>' : '<button class="btn btn-ghost small" data-review="' + esc(x.c.id) + '" data-l="' + esc(x.id) + '">Mark reviewed</button>') + '</td></tr>').join('') +
         '</tbody></table></div></div>';
     }
@@ -279,9 +331,10 @@
       else {
         const k = c.confirmations[id]; const s = C.statusFor(c, id, recs); const title = C.bookTitle(c);
         if (s.k === 'none') detail = '<b>' + esc(nm) + '</b> had no active projects when “' + esc(title) + '” was open, so nothing was expected.';
-        else if (!k) detail = '<b>' + esc(nm) + '</b> has not confirmed “' + esc(title) + '”. ' + (c.lockedAt ? 'The book was locked on ' + esc(C.fmtDay(c.lockedAt)) + ' with their live projects carried in and flagged.' : 'Confirm by ' + esc(fmtDate(c.deadline)) + '.');
+        else if (!k) { const a = (c.acknowledgements || {})[id];
+          detail = '<b>' + esc(nm) + '</b> has not confirmed “' + esc(title) + '”. ' + (c.lockedAt ? 'The book was locked on ' + esc(C.fmtDay(c.lockedAt)) + ' with their live projects carried in and flagged.' + (a ? ' <span class="pill rr"><i></i>Acknowledged ' + esc(C.fmtStamp(a.at)) + '</span> — they recorded that they did not confirm and that invoicing may be delayed.' : '') : 'Confirm by ' + esc(fmtDate(c.deadline)) + '.'); }
         else detail = '<b>' + esc(nm) + '</b> confirmed “' + esc(title) + '” on <b>' + esc(C.fmtStamp(k.at)) + '</b> · ' + plural(k.projects, 'project') + ' · ' + money(k.fee) + ' ' + C.bookYear(c) + ' fee' +
-          (k.afterLock ? ' · <span class="pill y"><i></i>after lock</span>' : k.late ? ' · <span class="pill y"><i></i>after the deadline</span>' : '') +
+          (k.stamped ? ' · <span class="pill y"><i></i>confirmed late · figures as locked</span>' : k.afterLock ? ' · <span class="pill y"><i></i>after lock</span>' : k.late ? ' · <span class="pill y"><i></i>after the deadline</span>' : '') +
           (s.k === 'changed' ? ' · <span class="pill y"><i></i>' + plural(s.changed, 'project') + ' edited since</span>' : '');
       }
       $('#tr-detail', host).innerHTML = detail;
@@ -365,7 +418,8 @@
     });
     const data = X.writeDataSheet(wb, V, {
       extraHeaders: ['Confirmed by', 'Confirmed at', 'Carried in (not confirmed)'],
-      extra: (row) => [row.p._carried ? '' : C.leaderName(row.p._confirmedBy), row.p._confirmedAt ? C.fmtStamp(row.p._confirmedAt) : '', row.p._carried ? 'Yes' : ''],
+      extra: (row) => [row.p._carried ? '' : C.leaderName(row.p._confirmedBy), row.p._confirmedAt ? C.fmtStamp(row.p._confirmedAt) : '',
+        row.p._carried ? 'Yes' + (row.p._lateConfirmedAt ? ' · confirmed late ' + C.fmtStamp(row.p._lateConfirmedAt) : row.p._acknowledgedAt ? ' · acknowledged ' + C.fmtStamp(row.p._acknowledgedAt) : '') : ''],
     });
     X.writeDashboardSheet(wb, V, { title: title + ' · dashboard', dataRows: data.__lastRow });
     // About: the cycle and who confirmed when.
@@ -383,10 +437,10 @@
       const k = c.confirmations[id];
       ab.getCell(r, 1).value = C.leaderName(id); ab.getCell(r, 2).value = C.fmtStamp(k.at); ab.getCell(r, 3).value = k.projects;
       ab.getCell(r, 4).value = k.fee; ab.getCell(r, 4).numFmt = '#,##0';
-      ab.getCell(r, 5).value = k.afterLock ? 'After lock' : k.late ? 'After deadline' : 'On time'; ab.getCell(r, 6).value = k.reason || '';
+      ab.getCell(r, 5).value = k.stamped ? 'Confirmed late · figures as locked' : k.afterLock ? 'After lock' : k.late ? 'After deadline' : 'On time'; ab.getCell(r, 6).value = k.reason || '';
       r++;
     });
-    sum.carried.forEach(id => { ab.getCell(r, 1).value = C.leaderName(id); ab.getCell(r, 5).value = 'Not confirmed · carried in'; r++; });
+    sum.carried.forEach(id => { const a = (c.acknowledgements || {})[id]; ab.getCell(r, 1).value = C.leaderName(id); ab.getCell(r, 5).value = 'Not confirmed · carried in'; ab.getCell(r, 6).value = a ? 'Acknowledged ' + C.fmtStamp(a.at) + ' · invoicing may be delayed' : ''; r++; });
     await X.download(wb, 'Confirmed Book · ' + title.replace(/[\\/:*?"<>|]+/g, '-') + '.xlsx');
   }
   async function snapshotLocked(ym) {

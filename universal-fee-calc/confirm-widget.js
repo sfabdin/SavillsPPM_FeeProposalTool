@@ -58,7 +58,7 @@
     else if (w.kind === 'changed') { tone = 'y'; text = 'Confirmed ' + C.fmtDay(s.at) + ' · ' + s.changed + ' edited since'; }
     else if (w.kind === 'due') { tone = 'r'; text = (s.days === 0 ? 'Confirm today' : 'Confirm by ' + dl + ' · ' + s.days + ' day' + (s.days === 1 ? '' : 's') + ' left'); }
     else if (w.kind === 'overdue') { tone = 'rr'; text = 'Overdue · ' + s.days + ' day' + (s.days === 1 ? '' : 's') + ' late · confirm now'; }
-    else if (w.kind === 'missed') { tone = 'rr'; text = 'Locked without your confirmation · submit with a reason'; }
+    else if (w.kind === 'missed') { tone = 'rr'; text = w.mode === 'ack' ? 'Missed · acknowledge before confirming “' + C.bookTitle(w.next) + '”' : 'Locked without your confirmation · confirm late with a reason'; }
     else if (w.kind === 'admin') {
       tone = w.overdue ? 'rr' : 'r';
       text = w.done + ' of ' + w.expected + ' confirmed · ' + (w.overdue ? 'deadline passed' : (w.days === 0 ? 'due today' : 'due ' + dl + ' · ' + w.days + ' day' + (w.days === 1 ? '' : 's')));

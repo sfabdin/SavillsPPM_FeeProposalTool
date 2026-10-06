@@ -75,6 +75,7 @@
     if (!c.cycle) c.cycle = c.id;
     if (!c.period) c.period = isYm(c.cycle) ? c.cycle : (isYm(String(c.deadline || '').slice(0, 7)) ? String(c.deadline).slice(0, 7) : '');
     if (c.name == null) c.name = '';
+    if (!c.acknowledgements || typeof c.acknowledgements !== 'object') c.acknowledgements = {};
     return c;
   }
   const trySet = (raw) => { try { localStorage.setItem(KEY, raw); return true; } catch (e) { return false; } };
@@ -260,6 +261,15 @@
     const l = listCycles().filter(c => c.lockedAt).sort((a, b) => String(a.lockedAt).localeCompare(String(b.lockedAt)));
     return l.length ? l[l.length - 1] : null;
   }
+  /** The book that closed this one for confirmations: once a newer book has
+      opened after the lock, the old one can only be acknowledged, not
+      confirmed late. Null while nothing newer is open. */
+  function supersededBy(c) {
+    if (!c || !c.lockedAt) return null;
+    const later = listCycles().filter(o => o.id !== c.id && String(o.openedAt || '') > String(c.lockedAt || ''))
+      .sort((a, b) => String(a.openedAt || '').localeCompare(String(b.openedAt || '')));
+    return later[0] || null;
+  }
   const isLeadership = (user) => { const st = S(); return !!(st.seesAllProjects && st.seesAllProjects(user || st.getCurrentUser())); };
   const actorStamp = () => { const u = S().getCurrentUser() || {}; return { by: u.username || '', name: u.name || u.username || '' }; };
 
@@ -284,7 +294,7 @@
       openedAt: now, openedBy: a.by, openedByName: a.name,
       lockedAt: null, lockedBy: '', lockedByName: '', reopenedAt: null,
       metaUpdatedAt: now, updatedAt: now,
-      confirmations: {}, projects: {}, carried: [],
+      confirmations: {}, acknowledgements: {}, projects: {}, carried: [],
     };
     markDirty(db, id);
     writeDb(db);
@@ -341,24 +351,77 @@
     if (!allowed) throw new Error('You can only confirm your own book.');
     if (c.confirmations[leaderId]) throw new Error('“' + bookTitle(c) + '” is already confirmed and locked in. Changes since then are noted and carry into the next book.');
     const reason = String(o.reason || '').trim();
-    if (c.lockedAt && reason.length < 5) throw new Error('“' + bookTitle(c) + '” is locked. Add a short reason with your late confirmation — an admin will review it.');
+    const now = o.now || new Date().toISOString();
+    const a = actorStamp();
+    if (c.lockedAt) {
+      /* LATE, AFTER LOCK. The book's figures are closed: a late confirmation
+         is a SIGNATURE on the carried copies — name, time, reason — and the
+         numbers stay exactly as they were locked. And only until the next
+         book opens: after that the old book can only be acknowledged. */
+      const next = supersededBy(c);
+      if (next) throw new Error('“' + bookTitle(c) + '” closed for confirmations when “' + bookTitle(next) + '” opened. Acknowledge the missed confirmation instead, then confirm “' + bookTitle(next) + '”.');
+      if (reason.length < 5) throw new Error('“' + bookTitle(c) + '” is locked. Add a short reason with your late confirmation — an admin will review it.');
+      const copies = bookFor(leaderId, Object.values(c.projects));
+      const carried = copies.filter(p => p._carried);
+      if (!copies.length) throw new Error('There is nothing to confirm — none of your projects are in “' + bookTitle(c) + '”.');
+      carried.forEach(p => { p._lateConfirmedBy = leaderId; p._lateConfirmedAt = now; p._lateReason = reason; });
+      const fee = feeInYear(copies, bookYear(c));
+      c.confirmations[leaderId] = {
+        at: now, by: a.by, name: leaderId === UNASSIGNED ? a.name + ' (admin)' : leaderName(leaderId),
+        projects: copies.length, fee,
+        late: true, afterLock: true, stamped: true, carriedProjects: carried.length,
+        reason, reviewedAt: null, reviewedBy: '', updatedAt: now,
+      };
+      c.carried = (c.carried || []).filter(x => x !== leaderId);
+      c.updatedAt = now;
+      markDirty(db, ym); writeDb(db);
+      st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: copies.length, fee, late: true, afterLock: true, stamped: true, reason });
+      return c.confirmations[leaderId];
+    }
     const records = bookFor(leaderId, o.records || st.listProjects());
     if (!records.length) throw new Error('There is nothing to confirm — no projects are on your book.');
-    const now = o.now || new Date().toISOString();
     records.forEach(r => { c.projects[r.id] = stampCopy(r, leaderId, now, false); });
-    const a = actorStamp();
     const fee = feeInYear(records, bookYear(c));
     c.confirmations[leaderId] = {
       at: now, by: a.by, name: leaderId === UNASSIGNED ? a.name + ' (admin)' : leaderName(leaderId),
       projects: records.length, fee,
-      late: pastDeadline(c.deadline, now), afterLock: !!c.lockedAt,
+      late: pastDeadline(c.deadline, now), afterLock: false,
       reason: reason || '', reviewedAt: null, reviewedBy: '', updatedAt: now,
     };
     c.carried = (c.carried || []).filter(x => x !== leaderId);
     c.updatedAt = now;
     markDirty(db, ym); writeDb(db);
-    st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: records.length, fee, late: c.confirmations[leaderId].late, afterLock: !!c.lockedAt, reason: reason || undefined });
+    st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: records.length, fee, late: c.confirmations[leaderId].late, afterLock: false, reason: reason || undefined });
     return c.confirmations[leaderId];
+  }
+
+  /** A leader who missed a book that has since been closed by a newer one
+      cannot confirm it any more. They acknowledge it instead: that they did
+      not confirm, and that invoicing may be delayed for want of reporting
+      compliance. The carried copies are stamped with the acknowledgement;
+      the figures do not change. */
+  function acknowledgeMissed(ym, leaderId, opts) {
+    const st = S(); const o = opts || {};
+    const db = readDb(); const c = db.cycles[ym];
+    if (!c) throw new Error('No such book.');
+    const me = myLeaderId();
+    const allowed = leaderId === UNASSIGNED ? isLeadership() : (me && me === leaderId);
+    if (!allowed) throw new Error('You can only acknowledge your own book.');
+    if (!c.lockedAt) throw new Error('“' + bookTitle(c) + '” is still open — confirm it instead.');
+    if (c.confirmations[leaderId]) throw new Error('“' + bookTitle(c) + '” is already confirmed.');
+    c.acknowledgements = c.acknowledgements || {};
+    if (c.acknowledgements[leaderId]) return c.acknowledgements[leaderId];
+    const now = o.now || new Date().toISOString(); const a = actorStamp();
+    const copies = bookFor(leaderId, Object.values(c.projects)).filter(p => p._carried);
+    copies.forEach(p => { p._acknowledgedBy = leaderId; p._acknowledgedAt = now; });
+    c.acknowledgements[leaderId] = {
+      at: now, by: a.by, name: leaderId === UNASSIGNED ? a.name + ' (admin)' : leaderName(leaderId),
+      projects: copies.length, updatedAt: now,
+    };
+    c.updatedAt = now;
+    markDirty(db, ym); writeDb(db);
+    st.logSystem('cycle-acknowledge', { cycle: ym, name: c.name, period: c.period, leaderId, projects: copies.length });
+    return c.acknowledgements[leaderId];
   }
 
   /** Lock the book. Leaders who never confirmed are carried in from the live
@@ -463,9 +526,13 @@
       // locked they belong to the next book, so a locked book stays green.
       if (changed.length && !cycle.lockedAt) return { k: 'changed', tone: 'y', at: k.at, changed: changed.length,
         text: when + ' · ' + changed.length + ' edited since' };
-      return { k: 'confirmed', tone: 'g', at: k.at, text: when + (k.afterLock ? ' · after lock' : k.late ? ' · late' : '') };
+      return { k: 'confirmed', tone: 'g', at: k.at, text: when + (k.afterLock ? ' · late · after lock' : k.late ? ' · late' : '') };
     }
-    if (cycle.lockedAt) return { k: 'missed', tone: 'r', bold: true, text: 'not confirmed · carried in' };
+    if (cycle.lockedAt) {
+      const ack = (cycle.acknowledgements || {})[leaderId];
+      if (ack) return { k: 'missed', tone: 'r', bold: false, acknowledged: true, at: ack.at, text: 'not confirmed · acknowledged ' + fmtDayTime(ack.at) };
+      return { k: 'missed', tone: 'r', bold: true, text: 'not confirmed · carried in' };
+    }
     const d = daysUntil(cycle.deadline, t);
     if (pastDeadline(cycle.deadline, t)) return { k: 'overdue', tone: 'r', bold: true, days: -d, text: 'OVERDUE · ' + (-d) + ' day' + (d === -1 ? '' : 's') + ' late' };
     return { k: 'due', tone: 'r', days: d, text: d === 0 ? 'due today' : 'due in ' + d + ' day' + (d === 1 ? '' : 's') };
@@ -504,9 +571,11 @@
     const records = st.listProjects();
     const cur = currentCycle();
     // A locked book they never confirmed keeps nagging until they do.
-    const missed = me ? listCycles().filter(c => c.lockedAt && !c.confirmations[me] && (c.carried || []).indexOf(me) >= 0)
+    // Until they confirm late (while no newer book has opened) or acknowledge
+    // it (once one has) — the next book cannot be confirmed before that.
+    const missed = me ? listCycles().filter(c => c.lockedAt && !c.confirmations[me] && !(c.acknowledgements || {})[me] && (c.carried || []).indexOf(me) >= 0)
       .filter(c => (t - new Date(c.lockedAt)) < 60 * 86400000).pop() : null;
-    if (missed) return { kind: 'missed', cycle: missed, leaderId: me, status: statusFor(missed, me, records, t) };
+    if (missed) { const next = supersededBy(missed); return { kind: 'missed', mode: next ? 'ack' : 'stamp', next, cycle: missed, leaderId: me, status: statusFor(missed, me, records, t) }; }
     if (!cur) return { kind: 'quiet', cycle: null };
     if (me) {
       const s = statusFor(cur, me, records, t);
@@ -549,7 +618,7 @@
     return { cycle: ym, id: ym, name: c.name || '', period: c.period || '', title: bookTitle(c), label: periodLabel(c) || bookTitle(c),
       lockedAt: c.lockedAt, lockedByName: c.lockedByName, deadline: c.deadline,
       projects: ids.length, carriedProjects: ids.filter(id => c.projects[id]._carried).length,
-      confirmed: Object.keys(c.confirmations).length, carried: (c.carried || []).slice(),
+      confirmed: Object.keys(c.confirmations).length, carried: (c.carried || []).slice(), acknowledged: Object.keys(c.acknowledgements || {}),
       lateReviews: Object.keys(c.confirmations).filter(k => c.confirmations[k].afterLock && !c.confirmations[k].reviewedAt).length };
   }
 
@@ -565,17 +634,23 @@
       lockedAt: newerMeta.lockedAt, lockedBy: newerMeta.lockedBy, lockedByName: newerMeta.lockedByName,
       reopenedAt: newerMeta.reopenedAt, metaUpdatedAt: newerMeta.metaUpdatedAt,
       openedAt: remote.openedAt || local.openedAt, openedBy: remote.openedBy || local.openedBy, openedByName: remote.openedByName || local.openedByName,
-      confirmations: {}, projects: {}, carried: [],
+      confirmations: {}, acknowledgements: {}, projects: {}, carried: [],
     });
     const stamp = (k) => String((k && (k.updatedAt || k.at)) || '');
     [remote, local].forEach(s => Object.entries((s && s.confirmations) || {}).forEach(([id, k]) => {
       if (!out.confirmations[id] || stamp(k) > stamp(out.confirmations[id])) out.confirmations[id] = k;
+    }));
+    [remote, local].forEach(s => Object.entries((s && s.acknowledgements) || {}).forEach(([id, k]) => {
+      if (!out.acknowledgements[id] || stamp(k) > stamp(out.acknowledgements[id])) out.acknowledgements[id] = k;
     }));
     [remote, local].forEach(s => Object.entries((s && s.projects) || {}).forEach(([id, p]) => {
       const have = out.projects[id];
       if (!have) { out.projects[id] = p; return; }
       if (have._carried && !p._carried) { out.projects[id] = p; return; }
       if (!have._carried && p._carried) return;
+      // Two carried copies: the one that has since been signed or acknowledged wins.
+      const mark = (x) => String(x._lateConfirmedAt || x._acknowledgedAt || '');
+      if (mark(p) !== mark(have)) { if (mark(p) > mark(have)) out.projects[id] = p; return; }
       if (String(p._confirmedAt || '') > String(have._confirmedAt || '')) out.projects[id] = p;
     }));
     // Carried = expected leaders still without a confirmation, per the merged view.
@@ -599,7 +674,7 @@
     ymShort, ymLong, monthName, isYm, daysUntil, pastDeadline, defaultDeadline, nextYm, fmtDay, fmtDayTime, fmtStamp,
     bookTitle, periodLabel, bookYear, normalize,
     leadersOf, isActiveRecord, bookFor, expectedLeaders, leaderName, myLeaderId, feeInYear, isLeadership,
-    getCycle, listCycles, openCycles, currentCycle, latestLocked, createCycle, setDeadline, setName, setPeriod, confirm, lockCycle, reopenCycle, reviewLate,
+    getCycle, listCycles, openCycles, currentCycle, latestLocked, supersededBy, createCycle, setDeadline, setName, setPeriod, confirm, acknowledgeMissed, lockCycle, reopenCycle, reviewLate,
     statusFor, projectStatus, widgetState,
     asProjectsDb, bookRecords, changeOrderIndex, cycleSummary,
     mergeCycle, hydrateCycle, serialize, deleteCycle, pruneMissing,
