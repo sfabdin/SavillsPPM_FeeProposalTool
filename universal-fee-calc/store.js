@@ -1980,9 +1980,9 @@
   /** Every active line folded together: client-billed, vendor cost out, and
       markup (Savills revenue) by month, plus the totals. */
   function passThroughMonths(p) {
-    // shareBase: the pass-through the broker's % is taken on — every line
-    // billed through Savills EXCEPT one the leader ticked "fee share", which
-    // is itself money going out and would otherwise be shared twice.
+    // shareBase: the pass-through the broker's % is taken on when the project
+    // opts in (feeShare.onPassThrough) — everything billed through Savills,
+    // a line ticked "fee share" included. The checkbox decides; nothing else.
     const res = { client: {}, cost: {}, markup: {}, shareBase: {}, clientTotal: 0, costTotal: 0, markupTotal: 0, shareBaseTotal: 0, lines: [] };
     if (!ptActive(p)) return res;
     const months = enumerateMonths(p.timeline);
@@ -2004,7 +2004,7 @@
         if (!managed) res.cost[ym] = (res.cost[ym] || 0) + c;
         res.clientTotal += client; res.markupTotal += markup;
         if (!managed) res.costTotal += c;
-        if (!line.feeShare) { res.shareBase[ym] = (res.shareBase[ym] || 0) + client; res.shareBaseTotal += client; }
+        res.shareBase[ym] = (res.shareBase[ym] || 0) + client; res.shareBaseTotal += client;
         L.clientByMonth[ym] = client; L.costByMonth[ym] = managed ? 0 : c;
       });
     });
@@ -2182,8 +2182,8 @@
       const passMarkup = round2(passMarkM[ym] || 0);
       const passClient = round2(passClientM[ym] || 0);
       // The fee share is taken on the fee — and, when the project opts in
-      // (feeShare.onPassThrough), on the pass-through billed through Savills
-      // too. A line ticked "fee share" is never in the base: it goes out whole.
+      // (feeShare.onPassThrough), on the whole pass-through billed through
+      // Savills too — the checkbox decides.
       const brokerFee = round2(n * fsFrac);
       const broker = round2(brokerFee + (fsOnPT ? round2(ptm.shareBase[ym] || 0) * fsFrac : 0));
       const feeInvoice = round2(feeShareMode === 'ontop' ? n + broker : n);
