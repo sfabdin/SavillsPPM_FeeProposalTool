@@ -2098,20 +2098,55 @@
                sq(missed.k, 'missed', 'Jeff shows as missed') && sq(!!missed.bold, true, 'in bold');
       } finally { restore(); }
     });
-    test('Confirmed book', 'after lock a confirmation needs a reason, then replaces the carried copies', () => {
+    test('Confirmed book', 'after lock a confirmation needs a reason, then is STAMPED on the carried copies — the locked figures do not change', () => {
       try {
         open(); as('sabdin@savills.us', 'Sarah Abdin');
         C.lockCycle(ID, { records: book(), now: '2026-09-18T15:00:00Z' });
+        const before = JSON.stringify(Object.assign({}, C.getCycle(ID).projects.cb_c, { _lateConfirmedBy: 1, _lateConfirmedAt: 1, _lateReason: 1 }));
         as('jsantoro@savills.us', 'Jeff Santoro');
+        const w0 = C.widgetState({ username: 'jsantoro@savills.us', name: 'Jeff Santoro', role: 'member' }, '2026-09-19T09:00:00');
         try { C.confirm(ID, 'jsantoro', { records: book(), now: '2026-09-19T10:00:00Z' }); return 'late confirmation went through without a reason'; }
         catch (e) { if (!/reason/.test(e.message)) return e.message; }
-        const k = C.confirm(ID, 'jsantoro', { records: book(), now: '2026-09-19T10:00:00Z', reason: 'Was out on site all week' });
-        const c = C.getCycle(ID);
+        // Edit his live project after the lock: the late confirmation must NOT pull it in.
+        const recs = book(); recs[2].project.name = 'P cb_c RENAMED'; recs[2].updatedAt = '2026-09-19T09:30:00Z';
+        const k = C.confirm(ID, 'jsantoro', { records: recs, now: '2026-09-19T10:00:00Z', reason: 'Was out on site all week' });
+        const c = C.getCycle(ID); const copy = c.projects.cb_c;
+        const after = JSON.stringify(Object.assign({}, copy, { _lateConfirmedBy: 1, _lateConfirmedAt: 1, _lateReason: 1 }));
         const w = C.widgetState({ username: 'jsantoro@savills.us', name: 'Jeff Santoro', role: 'member' }, '2026-09-19T12:00:00');
-        return sq(!!k.afterLock, true, 'flagged after lock') && sq(!!k.late, true, 'and late') &&
-               sq(!!c.projects.cb_c._carried, false, 'carried copy replaced') && sq(c.projects.cb_c._confirmedBy, 'jsantoro', 'now his') &&
-               sq(c.carried.join(','), 'unassigned', 'no longer carried') && sq(C.cycleSummary(ID).lateReviews, 1, 'awaiting review') &&
+        return sq(w0.kind + '/' + w0.mode, 'missed/stamp', 'before: nagged to confirm late with a reason') &&
+               sq(!!k.afterLock, true, 'flagged after lock') && sq(!!k.stamped, true, 'a stamp, not a re-copy') &&
+               sq(!!copy._carried, true, 'the carried copy stays carried') && sq(copy.project.name, 'P cb_c', 'the locked figures/record did not change') &&
+               sq(after, before, 'nothing on the copy changed but the stamp') &&
+               sq(copy._lateConfirmedBy, 'jsantoro', 'stamped with his id') && sq(copy._lateReason, 'Was out on site all week', 'and his reason') &&
+               sq(c.carried.join(','), 'unassigned', 'no longer listed as carried') && sq(C.cycleSummary(ID).lateReviews, 1, 'awaiting review') &&
+               sq(C.statusFor(c, 'jsantoro', recs).k, 'confirmed', 'tracker: confirmed') &&
                sq(w.kind, 'quiet', 'nothing left to nag about');
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'once the next book opens, the missed one can only be acknowledged — and the new book waits for that', () => {
+      try {
+        open(); as('sabdin@savills.us', 'Sarah Abdin');
+        const oldId = ID;
+        C.lockCycle(oldId, { records: book(), now: '2026-09-18T15:00:00Z' });
+        const nxt = C.createCycle({ name: 'Revenue Projections #13', period: '2026-10', deadline: '2026-10-15', now: '2026-10-01T13:00:00Z' });
+        as('jsantoro@savills.us', 'Jeff Santoro');
+        const jeff = { username: 'jsantoro@savills.us', name: 'Jeff Santoro', role: 'member' };
+        const w0 = C.widgetState(jeff, '2026-10-02T09:00:00');
+        try { C.confirm(oldId, 'jsantoro', { records: book(), now: '2026-10-02T10:00:00Z', reason: 'Was out on site all week' }); return 'confirmed a book the next one had closed'; }
+        catch (e) { if (!/Acknowledge/.test(e.message)) return e.message; }
+        const a = C.acknowledgeMissed(oldId, 'jsantoro', { now: '2026-10-02T10:05:00Z' });
+        const c = C.getCycle(oldId); const copy = c.projects.cb_c;
+        const w1 = C.widgetState(jeff, '2026-10-02T11:00:00');
+        const st = C.statusFor(c, 'jsantoro', book());
+        const k = C.confirm(nxt.id, 'jsantoro', { records: book(), now: '2026-10-02T11:30:00Z' });
+        return sq(w0.kind + '/' + w0.mode, 'missed/ack', 'nag says acknowledge') && sq(w0.next && w0.next.id, nxt.id, 'and names the new book') &&
+               sq(!!a.at, true, 'acknowledgement recorded') && sq(!!c.confirmations.jsantoro, false, 'no confirmation on the old book') &&
+               sq(!!copy._carried, true, 'copy still carried') && sq(copy._acknowledgedBy, 'jsantoro', 'copy stamped with the acknowledgement') &&
+               sq(c.carried.indexOf('jsantoro') >= 0, true, 'still listed as carried in') &&
+               sq(st.k + '/' + !!st.acknowledged, 'missed/true', 'tracker: not confirmed, acknowledged') &&
+               sq(C.cycleSummary(oldId).acknowledged.join(','), 'jsantoro', 'summary lists it') &&
+               sq(w1.kind, 'due', 'then the widget moves on to the open book') && sq(w1.cycle.id, nxt.id, 'the new one') &&
+               sq(!!k.at && !k.afterLock, true, 'and the new book confirms normally');
       } finally { restore(); }
     });
     test('Confirmed book', 'merge is keyed: newest stamp per leader, a confirmed copy beats a carried one', () => {
