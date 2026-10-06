@@ -399,7 +399,18 @@
   function feeShareOn() { return !!(state.assumptions.feeShare && state.assumptions.feeShare.enabled); }
   function feeShareMode() { return (state.assumptions.feeShare && state.assumptions.feeShare.mode) || 'offtop'; }
   function feeSharePct() { return (state.assumptions.feeShare && parseFloat(state.assumptions.feeShare.pct)) || 0; }
-  function feeShareAmt() { return feeShareOn() ? netTotal() * (feeSharePct() / 100) : 0; }   // broker $ — same in both modes
+  // Broker $ — same in both modes — taken on the GROSS billed: the fee plus the
+  // pass-through billed through Savills, less any line ticked "fee share" (that
+  // one already goes out whole). The store's rule, so every page agrees.
+  function ptShareBaseTotal() { return ptOn() ? (STORE.passThroughMonths(state).shareBaseTotal || 0) : 0; }
+  function ptShareBaseMap() {
+    const map = {}; if (!ptOn()) return map;
+    const ptm = STORE.passThroughMonths(state);
+    Object.keys(ptm.shareBase || {}).forEach(ym => { const [y, m] = ym.split('-').map(Number); map[y + '-' + m] = ptm.shareBase[ym]; });
+    return map;
+  }
+  function feeShareOnPT() { return feeShareOn() && !!(state.assumptions.feeShare && state.assumptions.feeShare.onPassThrough); }
+  function feeShareAmt() { return feeShareOn() ? (netTotal() + (feeShareOnPT() ? ptShareBaseTotal() : 0)) * (feeSharePct() / 100) : 0; }
   function clientBillTotal() { return (feeShareOn() && feeShareMode() === 'ontop') ? netTotal() + feeShareAmt() : netTotal(); }
   function revenueTotal() { return (feeShareOn() && feeShareMode() === 'offtop') ? netTotal() - feeShareAmt() : netTotal(); }
   function effectiveBrokerPct() { const cb = clientBillTotal(); return cb > 0 ? (feeShareAmt() / cb) * 100 : 0; }
@@ -2773,6 +2784,9 @@
     const who = $('#fs-broker');
     if (who && document.activeElement !== who) who.value = fs.broker || '';
     if (who) who.disabled = !fs.enabled;
+    const onPT = $('#fs-onpt'), onPTWrap = $('#fs-onpt-wrap');
+    if (onPT) { onPT.checked = !!fs.onPassThrough; onPT.disabled = !fs.enabled; }
+    if (onPTWrap) onPTWrap.style.opacity = fs.enabled && ptOn() ? '' : '0.4';
     if (ctl) ctl.classList.toggle('is-on', !!fs.enabled);
     // Mode segmented buttons
     const mode = feeShareMode();
@@ -2799,12 +2813,15 @@
           column → PPM revenue.
         • bottom on-top (no invoice column): ADD the broker markup → client invoice.
         • off-top (either view): net the broker OUT of the billed column → revenue. */
-  function appendFeeShareRows(tbody, visibleGroups, baseNet, onTop, showInvoiceCol) {
+  function appendFeeShareRows(tbody, visibleGroups, baseNet, onTop, showInvoiceCol, ptColumnShown) {
     if (!feeShareOn()) return;
-    const N = visibleGroups.length;
-    const share = baseNet * (feeSharePct() / 100);
+    // One empty cell per group column, plus one for the pass-through column
+    // when it is drawn — without it these rows landed one column to the left.
+    const N = visibleGroups.length + (ptColumnShown ? 1 : 0);
+    const gross = baseNet + (feeShareOnPT() ? ptShareBaseTotal() : 0);
+    const share = gross * (feeSharePct() / 100);
     const who = String((state.assumptions.feeShare && state.assumptions.feeShare.broker) || '').trim();
-    const whoTxt = who ? ' · ' + escapeHtml(who) : '';
+    const whoTxt = (who ? ' · ' + escapeHtml(who) : '') + (feeShareOnPT() && ptOn() ? ' · incl. pass-through billing' : '');
     const fs = document.createElement('tr'); fs.className = 'credit-row fee-share-row';
     const rev = document.createElement('tr'); rev.className = 'total grand revenue-row';
     if (showInvoiceCol) {
@@ -2912,6 +2929,9 @@
     const pt = ptOn();
     const ptMap = pt ? ptBilledMap() : {};
     const ptBilledTotal = pt ? Object.values(ptMap).reduce((a, b) => a + b, 0) : 0;
+    // what the broker % is taken on, per month and in total (ticked fee-share lines left out)
+    const ptBase = (pt && feeShareOnPT()) ? ptShareBaseMap() : {};
+    const ptBaseTotal = (pt && feeShareOnPT()) ? ptShareBaseTotal() : 0;
     const nPt = pt ? 1 : 0;
     const ptCell = (m) => pt ? `<td class="pt-col">${fmtMoneySmall(ptMap[m.year + '-' + m.month] || 0)}</td>` : '';
     const ptGap = pt ? '<td class="pt-col"></td>' : '';
@@ -2980,7 +3000,7 @@
           const ptb = pt ? (ptMap[m.year + '-' + m.month] || 0) : 0;
           html += ptCell(m);
           html += `<td><strong>${fmtMoneySmall(flatMonthly + ptb)}</strong></td>`;
-          html += bkRow(flatMonthly);
+          html += bkRow(flatMonthly + (pt ? (ptBase[m.year + '-' + m.month] || 0) : 0));
           tr.innerHTML = html;
           tbody.appendChild(tr);
         });
@@ -2993,15 +3013,15 @@
       const ptAvg = pt ? ptBilledTotal / (monthCount || 1) : 0;
       if (pt) subHtml += `<td class="pt-col">${fmtMoneySmall(ptAvg)}</td>`;
       subHtml += `<td>${fmtMoney(flatMonthly + ptAvg)}</td>`;
-      subHtml += bkTot(flatMonthly);
+      subHtml += bkTot(flatMonthly + (months.length ? ptBaseTotal / months.length : 0));
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(net + (pt ? ptClientTotal() : 0))}</td>${bkTot(net)}`;
+      tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(net + (pt ? ptClientTotal() : 0))}</td>${bkTot(net + ptBaseTotal)}`;
       tbody.appendChild(tr);
-      appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol);
+      appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol, pt);
       appendPassThroughRows(tbody, visibleGroups, pt);
       return;
     }
@@ -3049,7 +3069,7 @@
         const ptb = pt ? (ptMap[m.year + '-' + m.month] || 0) : 0;
         html += ptCell(m);
         html += `<td><strong>${fmtMoneySmall(monthTotal + ptb)}</strong></td>`;
-        html += bkRow(monthNet);
+        html += bkRow(monthNet + (pt ? (ptBase[m.year + '-' + m.month] || 0) : 0));
         tr.innerHTML = html;
         tbody.appendChild(tr);
       });
@@ -3066,15 +3086,15 @@
       visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
       if (pt) subHtml += `<td class="pt-col">${fmtMoneySmall(ptBilledTotal)}</td>`;
       subHtml += `<td>${fmtMoney(grandNet + (pt ? ptBilledTotal : 0))}</td>`;
-      subHtml += bkTot(grandNetForBroker);
+      subHtml += bkTot(grandNetForBroker + ptBaseTotal);
       sub.innerHTML = subHtml;
       tbody.appendChild(sub);
 
       const tr = document.createElement('tr');
       tr.className = 'total grand';
-      tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(grandNet + (pt ? ptClientTotal() : 0))}</td>${bkTot(grandNet)}`;
+      tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(grandNet + (pt ? ptClientTotal() : 0))}</td>${bkTot(grandNet + ptBaseTotal)}`;
       tbody.appendChild(tr);
-      appendFeeShareRows(tbody, visibleGroups, grandNet, onTop, showInvoiceCol);
+      appendFeeShareRows(tbody, visibleGroups, grandNet, onTop, showInvoiceCol, pt);
       appendPassThroughRows(tbody, visibleGroups, pt);
       return;
     }
@@ -3087,7 +3107,7 @@
     visibleGroups.forEach(g => { subHtml += `<td>${fmtMoneySmall(totalsByGroup[g.id])}</td>`; });
     if (pt) subHtml += `<td class="pt-col">${fmtMoneySmall(ptBilledTotal)}</td>`;
     subHtml += `<td>${fmtMoney(grandGross + (pt ? ptBilledTotal : 0))}</td>`;
-    subHtml += bkTotNoInv(grandNetForBroker);
+    subHtml += bkTotNoInv(grandNetForBroker + ptBaseTotal);
     sub.innerHTML = subHtml;
     tbody.appendChild(sub);
 
@@ -3105,9 +3125,9 @@
     }
     const tr = document.createElement('tr');
     tr.className = 'total grand';
-    tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(net + (pt ? ptClientTotal() : 0))}</td>${bkTot(net)}`;
+    tr.innerHTML = `<td class="month-col">${pt ? 'Total client contract · incl. pass-through' : 'Total proposed fee'}</td><td colspan="${visibleGroups.length + nPt}"></td><td>${fmtMoney(net + (pt ? ptClientTotal() : 0))}</td>${bkTot(net + ptBaseTotal)}`;
     tbody.appendChild(tr);
-    appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol);
+    appendFeeShareRows(tbody, visibleGroups, net, onTop, showInvoiceCol, pt);
     appendPassThroughRows(tbody, visibleGroups, pt);
   }
 
@@ -3142,6 +3162,13 @@
       state.assumptions.feeShare = state.assumptions.feeShare || { enabled: false, pct: 10, mode: 'offtop' };
       state.assumptions.feeShare.pct = parseFloat(e.target.value) || 0;
       syncFeeShare(); renderMonthly(); renderSummary(); markDirty();
+    });
+    // Take the share on pass-through billing too — off by default; a per-deal choice
+    const fsOnPT = $('#fs-onpt');
+    if (fsOnPT) fsOnPT.addEventListener('change', e => {
+      state.assumptions.feeShare = state.assumptions.feeShare || { enabled: false, pct: 10, mode: 'offtop' };
+      state.assumptions.feeShare.onPassThrough = !!e.target.checked;
+      syncFeeShare(); renderMonthly(); renderSummary(); renderSelectedRoles(); markDirty();
     });
     // Who receives the fee share — a name for the export, never a pricing input
     const fsWho = $('#fs-broker');
