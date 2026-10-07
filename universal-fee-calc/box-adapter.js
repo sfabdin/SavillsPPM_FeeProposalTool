@@ -411,6 +411,59 @@
     return res;
   }
 
+  /* ---- FOLDER LAYOUT ------------------------------------------------------
+     The shared folder is organised into subfolders by what a file IS. Each
+     subfolder is found BY NAME under BOX_CONFIG.folderId and falls back to
+     the root when it does not exist, and a listing always includes files
+     still sitting in the root — so the app works before, during and after a
+     move, in either order. Files the app opens by id (projects.json,
+     rates.json, staff.json, studio.json) do not care where they sit. New
+     files are created in the subfolder when it exists. ---- */
+  const BOX_LAYOUT = {
+    main: 'Main Source',               // projects.json, rates.json, staff.json, studio.json, revenue.json, history.json
+    logs: 'Change Logs',               // activity-YYYY-MM.json
+    books: 'Monthly Confirmed Books',  // confirmed-<book id>.json
+    backups: 'BACKUPS',                // projects-backup-YYYY-MM-DD.json
+    notify: 'notifications',           // the Power Automate outbox — stays a direct child of the root
+  };
+  let _rootItems = null, _rootItemsAt = 0;
+  const _subIds = {};
+  /** Everything directly in the shared folder (one call, cached a minute). */
+  async function rootItems(fresh) {
+    if (!fresh && _rootItems && (Date.now() - _rootItemsAt) < 60000) return _rootItems;
+    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name,type,etag,size&limit=1000');
+    if (!res.ok) throw new Error('could not list the Box folder: ' + res.status);
+    const j = await res.json(); _rootItems = j.entries || []; _rootItemsAt = Date.now();
+    return _rootItems;
+  }
+  /** The folder a kind of file lives in: its subfolder when it exists, else the root. */
+  async function folderFor(kind) {
+    const want = String(BOX_LAYOUT[kind] || '').toLowerCase();
+    if (!want) return BOX_CONFIG.folderId;
+    if (_subIds[kind]) return _subIds[kind];
+    let items; try { items = await rootItems(); } catch (e) { return BOX_CONFIG.folderId; }
+    const hit = items.find(e => e.type === 'folder' && String(e.name || '').toLowerCase() === want);
+    if (hit) _subIds[kind] = hit.id;
+    return hit ? hit.id : BOX_CONFIG.folderId;
+  }
+  /** Every FILE of a kind: the subfolder's, plus whatever is still in the root.
+      A name present in both resolves to the subfolder's copy. */
+  async function listKind(kind, fresh) {
+    const root = await rootItems(fresh);
+    const sub = await folderFor(kind);
+    let entries = root.filter(e => e.type === 'file');
+    if (sub !== BOX_CONFIG.folderId) {
+      const res = await boxFetch('/folders/' + sub + '/items?fields=name,type,etag,size&limit=1000');
+      if (!res.ok) throw new Error('could not list ' + BOX_LAYOUT[kind] + ': ' + res.status);
+      const j = await res.json(); const inSub = (j.entries || []).filter(e => e.type === 'file');
+      const names = new Set(inSub.map(e => e.name));
+      entries = inSub.concat(entries.filter(e => !names.has(e.name)));
+    }
+    return entries;
+  }
+  async function findByName(kind, name) { try { return (await listKind(kind)).find(e => e.name === name) || null; } catch (e) { return null; } }
+  Box.layout = BOX_LAYOUT; Box.folderFor = folderFor; Box.listKind = listKind;
+
   async function getIdentity() {
     const res = await boxFetch('/users/me?fields=login,name');
     if (!res.ok) throw new Error('identity fetch failed');
@@ -724,16 +777,12 @@
     if (_staffId) return _staffId;
     try { const c = localStorage.getItem('ufc_staff_file_id'); if (c) return (_staffId = c); } catch (e) {}
     // 1) look it up by name in the shared folder
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
-    if (res.ok) {
-      const j = await res.json();
-      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === 'staff.json');
-      if (hit) { _staffId = hit.id; try { localStorage.setItem('ufc_staff_file_id', hit.id); } catch (e) {} return hit.id; }
-    }
+    { const hit = await findByName('main', 'staff.json');
+      if (hit) { _staffId = hit.id; try { localStorage.setItem('ufc_staff_file_id', hit.id); } catch (e) {} return hit.id; } }
     // 2) not there yet — first admin in creates it for everyone
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const form = new FormData();
-    form.append('attributes', JSON.stringify({ name: 'staff.json', parent: { id: BOX_CONFIG.folderId } }));
+    form.append('attributes', JSON.stringify({ name: 'staff.json', parent: { id: await folderFor('main') } }));
     form.append('file', new Blob(['{}'], { type: 'application/json' }), 'staff.json');
     const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
     if (up.status === 409) {                                     // raced another admin — use theirs
@@ -917,15 +966,11 @@
     if (cfg && !/PASTE/.test(cfg)) return cfg;
     if (_revId) return _revId;
     try { const c = localStorage.getItem('ufc_revenue_file_id'); if (c) return (_revId = c); } catch (e) {}
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
-    if (res.ok) {
-      const j = await res.json();
-      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === 'revenue.json');
-      if (hit) { _revId = hit.id; try { localStorage.setItem('ufc_revenue_file_id', hit.id); } catch (e) {} return hit.id; }
-    }
+    { const hit = await findByName('main', 'revenue.json');
+      if (hit) { _revId = hit.id; try { localStorage.setItem('ufc_revenue_file_id', hit.id); } catch (e) {} return hit.id; } }
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const form = new FormData();
-    form.append('attributes', JSON.stringify({ name: 'revenue.json', parent: { id: BOX_CONFIG.folderId } }));
+    form.append('attributes', JSON.stringify({ name: 'revenue.json', parent: { id: await folderFor('main') } }));
     form.append('file', new Blob([JSON.stringify(Store.defaultRevenue())], { type: 'application/json' }), 'revenue.json');
     const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
     if (up.status === 409) {                                     // raced another admin — use theirs
@@ -1053,15 +1098,11 @@
   async function resolveHistoryFileId() {
     if (_histId) return _histId;
     try { const c = localStorage.getItem('ufc_history_file_id'); if (c) return (_histId = c); } catch (e) {}
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
-    if (res.ok) {
-      const j = await res.json();
-      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === 'history.json');
-      if (hit) { _histId = hit.id; try { localStorage.setItem('ufc_history_file_id', hit.id); } catch (e) {} return hit.id; }
-    }
+    { const hit = await findByName('main', 'history.json');
+      if (hit) { _histId = hit.id; try { localStorage.setItem('ufc_history_file_id', hit.id); } catch (e) {} return hit.id; } }
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const form = new FormData();
-    form.append('attributes', JSON.stringify({ name: 'history.json', parent: { id: BOX_CONFIG.folderId } }));
+    form.append('attributes', JSON.stringify({ name: 'history.json', parent: { id: await folderFor('main') } }));
     form.append('file', new Blob([JSON.stringify({ schemaVersion: 1, snapshots: {} })], { type: 'application/json' }), 'history.json');
     const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
     if (up.status === 409) {
@@ -1144,10 +1185,8 @@
      record of what the forecast said before today. ---- */
   /** Dated backups, oldest first: [{ id, name, date }]. */
   Box.listBackups = async function () {
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name,size&limit=1000');
-    if (!res.ok) throw new Error('could not list the backup folder: ' + res.status);
-    const j = await res.json();
-    return (j.entries || [])
+    const entries = await listKind('backups', true);
+    return entries
       .filter(e => e.type === 'file' && e.name.indexOf(BACKUP_PREFIX) === 0 && /\.json$/.test(e.name))
       .map(e => ({ id: e.id, name: e.name, size: e.size || 0,
                    date: e.name.slice(BACKUP_PREFIX.length, BACKUP_PREFIX.length + 10) }))
@@ -1213,11 +1252,9 @@
   /** Which months exist in Box. One folder listing, no downloads — this is how
       the Change Log knows how far the trail reaches before fetching any of it. */
   Box.listActivityMonths = async function () {
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
-    if (!res.ok) return [];
-    const j = await res.json();
+    let entries; try { entries = await listKind('logs', true); } catch (e) { return []; }
     const out = [];
-    (j.entries || []).forEach(e => {
+    entries.forEach(e => {
       if (e.type !== 'file') return;
       const m = /^activity-(\d{4}-\d{2})\.json$/.exec(e.name || '');
       if (!m) return;
@@ -1232,17 +1269,13 @@
   async function resolveActShardId(month, create) {
     const cached = actIds()[month];
     if (cached) return cached;
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
-    if (res.ok) {
-      const j = await res.json();
-      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === actName(month));
-      if (hit) { rememberActId(month, hit.id); return hit.id; }
-    }
+    { const hit = await findByName('logs', actName(month));
+      if (hit) { rememberActId(month, hit.id); return hit.id; } }
     if (!create) return null;
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const seed = JSON.stringify({ schemaVersion: 1, month, updatedAt: null, entries: {} });
     const form = new FormData();
-    form.append('attributes', JSON.stringify({ name: actName(month), parent: { id: BOX_CONFIG.folderId } }));
+    form.append('attributes', JSON.stringify({ name: actName(month), parent: { id: await folderFor('logs') } }));
     form.append('file', new Blob([seed], { type: 'application/json' }), actName(month));
     const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
     if (up.status === 409) {                                   // raced a teammate — use theirs
@@ -1393,17 +1426,15 @@
       // of history before this would need paging — but it IS a ceiling, so if
       // the folder ever approaches it, page this call rather than losing the
       // oldest entries silently.
-      const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
-      if (!res.ok) return;
-      const j = await res.json();
-      const backups = (j.entries || []).filter(e => e.type === 'file' && e.name.indexOf(BACKUP_PREFIX) === 0)
+      const entries = await listKind('backups', true);
+      const backups = entries.filter(e => e.type === 'file' && e.name.indexOf(BACKUP_PREFIX) === 0)
         .sort((a, b) => a.name.localeCompare(b.name));
       const newest = backups.length ? backups[backups.length - 1].name.slice(BACKUP_PREFIX.length, BACKUP_PREFIX.length + 10) : '';
       if (newest && (Date.now() - new Date(newest).getTime()) < 7 * 86400000) return;   // fresh enough
       const today = new Date().toISOString().slice(0, 10);
       const cp = await boxFetch('/files/' + BOX_CONFIG.dataFileId + '/copy', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parent: { id: BOX_CONFIG.folderId }, name: BACKUP_PREFIX + today + '.json' }),
+        body: JSON.stringify({ parent: { id: await folderFor('backups') }, name: BACKUP_PREFIX + today + '.json' }),
       });
       if (!cp.ok && cp.status !== 409) return;                        // 409 = a teammate beat us to it
       if (BACKUP_KEEP > 0) {
@@ -1445,10 +1476,8 @@
 
   /** Which months exist in Box — one folder listing, no downloads. */
   Box.listConfirmCycles = async function () {
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name,etag&limit=1000');
-    if (!res.ok) throw new Error('could not list the Box folder: ' + res.status);
-    const j = await res.json(); const out = [];
-    (j.entries || []).forEach(e => {
+    const entries = await listKind('books', true); const out = [];
+    entries.forEach(e => {
       if (e.type !== 'file') return;
       const m = /^confirmed-([A-Za-z0-9._-]+)\.json$/.exec(e.name || '');
       if (!m) return;
@@ -1462,17 +1491,13 @@
   async function resolveConfId(ym, create) {
     const cached = confIds()[ym];
     if (cached) return cached;
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name&limit=1000');
-    if (res.ok) {
-      const j = await res.json();
-      const hit = (j.entries || []).find(e => e.type === 'file' && e.name === confName(ym));
-      if (hit) { rememberConfId(ym, hit.id); return hit.id; }
-    }
+    { const hit = await findByName('books', confName(ym));
+      if (hit) { rememberConfId(ym, hit.id); return hit.id; } }
     if (!create) return null;
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const seed = (Confirm() && Confirm().serialize(ym)) || JSON.stringify({ schemaVersion: 2, id: ym, cycle: ym, confirmations: {}, projects: {} });
     const form = new FormData();
-    form.append('attributes', JSON.stringify({ name: confName(ym), parent: { id: BOX_CONFIG.folderId } }));
+    form.append('attributes', JSON.stringify({ name: confName(ym), parent: { id: await folderFor('books') } }));
     form.append('file', new Blob([seed], { type: 'application/json' }), confName(ym));
     const up = await fetch('https://upload.box.com/api/2.0/files/content', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
     if (up.status === 409) {
@@ -1637,12 +1662,11 @@
   async function resolveNotifyFolderId() {
     if (_notifyFolderId) return _notifyFolderId;
     try { const c = localStorage.getItem(NOTIFY_FOLDER_KEY); if (c) return (_notifyFolderId = c); } catch (e) {}
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name,type&limit=1000');
-    if (res.ok) {
-      const j = await res.json();
-      const hit = (j.entries || []).find(e => e.type === 'folder' && String(e.name || '').toLowerCase() === NOTIFY_FOLDER);
+    try {
+      const items = await rootItems(true);
+      const hit = items.find(e => e.type === 'folder' && String(e.name || '').toLowerCase() === NOTIFY_FOLDER);
       if (hit) { _notifyFolderId = hit.id; try { localStorage.setItem(NOTIFY_FOLDER_KEY, hit.id); } catch (e) {} return hit.id; }
-    }
+    } catch (e) { /* fall through to create */ }
     const mk = await boxFetch('/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: NOTIFY_FOLDER, parent: { id: BOX_CONFIG.folderId } }) });
     let id = null;
     if (mk.status === 409) { try { const j = await mk.json(); const c = j.context_info && j.context_info.conflicts; id = c && ((Array.isArray(c) ? c[0] : c) || {}).id; } catch (e) {} }
