@@ -175,6 +175,18 @@
     /* The projects.json shape either way: the store's own serialiser for the
        live book, or the confirmed month's copies for a confirmed book. */
     DATA.projectsRaw = fromBook ? C.asProjectsDb(BOOK.ym) : JSON.parse(S.exportDb());
+    /* A location is a LABEL, not a figure. The book freezes the numbers a
+       leader confirmed; it has no business freezing where the building is.
+       Read it from the live record, so a location filled in today puts the
+       project on the map today, whichever book is being reported. */
+    if (fromBook && S.getProject) {
+      Object.values(DATA.projectsRaw.projects || {}).forEach((rec) => {
+        if (!rec || !rec.project) return;
+        const live = S.getProject(rec.id);
+        const loc = live && live.project && String(live.project.location || '').trim();
+        if (loc) rec.project.location = loc;
+      });
+    }
     /* Revenue is the ENGINE's answer, the same series Revenue Projections
        draws: billingSeries on each parent plus its approved change orders.
        The mapper reads it from rec.resolvedByMonth ahead of the imported
@@ -1402,7 +1414,20 @@
       if (moved) dots += '<line x1="' + l.cx + '" y1="' + (l.cy + l.r) + '" x2="' + l.x + '" y2="' + (l.y - 9) + '" stroke="#16636f" stroke-width=".8" stroke-dasharray="2 2"/>';
       dots += '<text x="' + l.x + '" y="' + l.y + '" text-anchor="middle" font-size="10" fill="#25273A" font-weight="700" style="paint-order:stroke;stroke:#f7f6f3;stroke-width:3px">' + esc(l.text) + '</text>';
     }
-    const mapSvg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Projects by city (simplified map)" style="background:#f7f6f3;border:1px solid var(--hairline)">' + dots + '</svg>';
+    /* A simplified outline of the lower 48 (plus Lake Michigan) under the
+       bubbles, from a hand-reduced coastline and border — enough to read the
+       geography, not a survey. Same projection as the pins. */
+    const toPts = (pairs) => pairs.map(([la, ln]) => lng2x(ln).toFixed(1) + ',' + lat2y(la).toFixed(1)).join(' ');
+    const US = [[48.4, -124.7], [46.2, -124.0], [42.0, -124.3], [40.4, -124.4], [38.0, -123.0], [36.6, -121.9], [34.4, -120.5], [33.7, -118.3], [32.5, -117.1],
+      [32.7, -114.7], [31.3, -111.0], [31.8, -106.5], [29.5, -104.4], [29.0, -102.9], [27.6, -99.5], [25.9, -97.4], [27.8, -97.4], [29.3, -94.8], [29.7, -93.3], [29.2, -90.0], [29.0, -89.3],
+      [30.4, -88.0], [30.4, -86.5], [29.9, -84.0], [28.9, -82.7], [27.8, -82.6], [26.0, -81.8], [25.1, -81.0], [25.0, -80.4], [26.7, -80.0], [28.5, -80.6], [30.4, -81.4], [32.0, -80.9], [32.8, -79.9],
+      [34.2, -77.9], [35.2, -75.5], [36.9, -76.0], [38.3, -75.1], [39.3, -74.4], [40.5, -74.0], [41.3, -72.0], [41.5, -71.0], [41.8, -69.9], [42.6, -70.6], [43.1, -70.7], [43.7, -70.2], [44.8, -67.0],
+      [47.4, -69.2], [45.3, -71.5], [45.0, -74.7], [44.1, -76.4], [43.3, -79.0], [42.9, -78.9], [41.7, -81.2], [41.9, -83.4], [42.3, -83.0], [43.0, -82.4], [45.0, -83.4], [45.8, -84.7], [46.5, -84.5],
+      [47.0, -88.5], [46.7, -92.1], [48.0, -89.6], [49.0, -95.2], [49.0, -123.0]];
+    const LAKE_MI = [[41.6, -87.5], [43.0, -87.9], [44.9, -87.2], [45.9, -85.5], [45.3, -85.1], [44.0, -86.5], [42.0, -86.6]];
+    const outline = '<polygon points="' + toPts(US) + '" fill="#ECEAE4" stroke="#C9C5BB" stroke-width="1" stroke-linejoin="round"/>' +
+      '<polygon points="' + toPts(LAKE_MI) + '" fill="#f7f6f3" stroke="#C9C5BB" stroke-width="1"/>';
+    const mapSvg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Projects by city (simplified map)" style="background:#f7f6f3;border:1px solid var(--hairline)">' + outline + dots + '</svg>';
 
     const sel = (id, label, opts, cur) =>
       '<label style="font-size:11px;color:var(--mut);display:flex;gap:6px;align-items:center">' + label +
@@ -1432,7 +1457,7 @@
       (unplaced.length ? '<b>' + unplaced.length + ' are not</b> (' + fm(unplacedValue) + ' of ' + DATA.overview.year + ' revenue): ' +
         (missing.length ? missing.length + ' have no location recorded' : '') + (missing.length && unmatched.length ? ' and ' : '') +
         (unmatched.length ? unmatched.length + ' have one the map cannot read' : '') + '. They are listed below the map, not guessed onto a city. ' : '') +
-      'Fill the location in on the Projects Index (filter “Missing location”, Quick edit) or in the calculator and the map follows.</div>';
+      'Fill the location in on the Projects Index (filter “Missing location”, Quick edit) or in the calculator and the map follows' + (BOOK.ym ? ' — locations are read from the live records even while a confirmed book is being reported, so a fix shows at once' : '') + '.</div>';
     const fixRow = (r) => '<tr><td><a href="Universal%20Fee%20Calculator.html?id=' + encodeURIComponent(r.id) + '" style="color:inherit;font-weight:600">' + esc(r.name) + '</a></td><td>' + esc(r.client) + '</td><td>' + esc(r.leader) + '</td><td>' + esc(r.status || '') + '</td><td class="num">' + fm(r.revenue) + '</td><td>' + (r.location ? esc(r.location) : '<span style="color:var(--mut)">—</span>') + '</td></tr>';
     const fixList = unplaced.length
       ? '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;color:var(--mut)">Not on the map: ' + unplaced.length + ' project' + (unplaced.length === 1 ? '' : 's') + ' to give a location (largest first)</summary>' +
