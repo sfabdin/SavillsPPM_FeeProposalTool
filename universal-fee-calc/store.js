@@ -228,7 +228,7 @@
   function readVocab() {
     const v = (readDb() || {}).vocab || {};
     return { industries: v.industries || [], projectTypes: v.projectTypes || [], lossReasons: v.lossReasons || [], leaders: v.leaders || [],
-             admins: v.admins || [], toolAdmins: v.toolAdmins || [], reportYears: v.reportYears || null, cleanups: v.cleanups || {} };
+             admins: v.admins || [], toolAdmins: v.toolAdmins || [], notifyMarketing: v.notifyMarketing || [], reportYears: v.reportYears || null, cleanups: v.cleanups || {} };
   }
   /* ---- One-time data cleanups ----
      Run in a leadership admin's browser after the book has been pulled from
@@ -390,6 +390,9 @@
     };
     (patch.admins || []).forEach(x => addEmail(v.admins, x, ADMINS));
     (patch.toolAdmins || []).forEach(x => addEmail(v.toolAdmins, x, TOOL_ADMINS));
+    // Who hears about a closed project (case-study candidates) — on top of MARKETING_TEAM.
+    v.notifyMarketing = v.notifyMarketing || [];
+    (patch.notifyMarketing || []).forEach(x => addEmail(v.notifyMarketing, x, new Set(MARKETING_TEAM)));
     if (added) {
       writeDb(db);
       logSystem('vocab', { added, industries: (patch.industries || []).length || undefined,
@@ -1196,6 +1199,7 @@
     maybeAutoVersion(record, prev);    // capture a version when status crosses a lifecycle milestone
     db.projects[record.id] = record;
     writeDb(db);
+    try { noticeProjectClosed(record, prev); } catch (e) { /* mail is never on the critical path */ }
     // Audit trail (never let logging failure break a save)
     try {
       const newStatus = record.project && record.project.status;
@@ -3605,6 +3609,69 @@
       admins run tools, not the book, so they are not on this list. */
   function adminEmails() { return [...new Set([...ADMINS, ...vocabAdmins()])].map(e => String(e || '').toLowerCase()).filter(e => /@/.test(e)).sort(); }
 
+  /* ------------------------------------------------------------
+     NOTICES OUT OF THE PROJECT BOOK
+     The confirmed book sends its own (confirmed-book.js); this is the one
+     notice the project book itself sends: a project that moves from ACTIVE
+     to CLOSED is a case-study candidate, and marketing hears about it the
+     moment it happens. Recipients: MARKETING_TEAM below plus anything added
+     to vocab.notifyMarketing; until either has an address the leadership
+     admins get it, so nothing is lost while the list is being set up.
+     ------------------------------------------------------------ */
+  const MARKETING_TEAM = [
+    // 'marketing@savills.us',
+  ].map(s => s.toLowerCase());
+  function marketingEmails() {
+    let extra = []; try { extra = readVocab().notifyMarketing || []; } catch (e) {}
+    const list = [...new Set([...MARKETING_TEAM, ...extra.map(e => String(e || '').toLowerCase())])].filter(e => /@/.test(e)).sort();
+    return list.length ? list : adminEmails();
+  }
+  const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  /** The house email shell every notice uses: eyebrow, title, paragraphs, one button. */
+  function noticeHtml(title, paras, cta, footer) {
+    const btn = cta ? '<p style="margin:18px 0"><a href="' + escHtml(cta.href) + '" style="background:#25273A;color:#fff;padding:10px 16px;text-decoration:none;font-weight:700">' + escHtml(cta.label) + '</a></p>' : '';
+    return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#25273A;line-height:1.5;max-width:640px">' +
+      '<p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#79828C;margin:0 0 6px">Savills PPM · Fee tool</p>' +
+      '<h2 style="margin:0 0 12px;font-size:18px">' + escHtml(title) + '</h2>' +
+      paras.map(p => '<p style="margin:0 0 10px">' + p + '</p>').join('') + btn +
+      '<p style="font-size:12px;color:#79828C;margin-top:20px">' + escHtml(footer || 'Sent automatically by the fee tool.') + '</p></div>';
+  }
+  function appPageUrl(page) { try { return location.origin + location.pathname.replace(/[^/]*$/, '') + encodeURIComponent(page); } catch (e) { return page; } }
+  /** Active → closed: tell marketing there may be a case study in it. */
+  function noticeProjectClosed(record, prev) {
+    const B = window.UFC_Box; if (!(B && B.enabled && B.notify)) return null;
+    const was = String(((prev || {}).project || {}).status || ''), now = String(((record || {}).project || {}).status || '');
+    if (!(was === 'active' && now === 'closed')) return null;
+    if (isChangeOrder && isChangeOrder(record)) return null;            // the parent project is the story
+    const pj = record.project || {};
+    const lead = resolveLeader(pj.leadId || pj.lead); const leadName = lead ? lead.displayName : (pj.lead || pj.leadId || '');
+    let bill = null; try { bill = clientBillOf(record, window.RATES_CATALOG); } catch (e) {}
+    const money = (n) => '$' + Math.round(n || 0).toLocaleString();
+    const tl = record.timeline || {}; const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const mon = (m, y) => (m && y) ? MN[m - 1] + ' ' + y : '';
+    const when = [mon(tl.startMonth, tl.startYear), mon(tl.endMonth, tl.endYear)].filter(Boolean).join(' – ');
+    const u = getCurrentUser() || {}; const by = u.name || u.username || 'someone';
+    const facts = [
+      ['Client', pj.client], ['Project', pj.name], ['Revenue leader', leadName], ['Industry', pj.industry], ['Project type', [pj.projectType, pj.projectSubtype || pj.subType].filter(Boolean).join(' · ')],
+      ['Location', pj.location], ['Timeline', when], ['Salesforce ID', pj.salesforceId], ['Project number', pj.projectNumber],
+      ['Total client contract', bill ? money(bill.total) : ''], ['Of which pass-through', bill && bill.pass ? money(bill.pass) : ''],
+    ].filter(f => f[1]);
+    const table = '<table style="border-collapse:collapse;font-size:13px">' + facts.map(f => '<tr><td style="padding:3px 14px 3px 0;color:#79828C;white-space:nowrap">' + escHtml(f[0]) + '</td><td style="padding:3px 0"><b>' + escHtml(f[1]) + '</b></td></tr>').join('') + '</table>';
+    const title = (pj.client ? pj.client + ' · ' : '') + (pj.name || 'Untitled');
+    const link = appPageUrl('Universal Fee Calculator.html') + '?id=' + encodeURIComponent(record.id);
+    return B.notify({
+      event: 'project-closed', to: marketingEmails(), cc: lead && lead.username ? [lead.username] : [],
+      data: { projectId: record.id, client: pj.client || '', name: pj.name || '', leadId: lead ? lead.id : '', salesforceId: pj.salesforceId || '', total: bill ? Math.round(bill.total) : null, closedBy: u.username || '' },
+      subject: 'Case study candidate: ' + title + ' just closed',
+      text: by + ' moved “' + title + '” from active to closed. Consider it for a case study. ' + link,
+      html: noticeHtml('Case study candidate: ' + title, [
+        '<b>' + escHtml(by) + '</b> moved this project from <b>active</b> to <b>closed</b> on ' + escHtml(new Date().toLocaleString()) + '. Please consider it for a case study — the revenue leader is in copy.',
+        table],
+        { href: link, label: 'Open the project record' },
+        'Sent automatically by the fee tool when a project closes. Who receives this is set in the tool (MARKETING_TEAM / notify list).'),
+    });
+  }
+
   /* People the SUPERUSER can impersonate: every leader + every admin (deduped). */
   /* Display names for logins that are not in the leader directory. */
   const LOGIN_NAMES = {
@@ -3777,7 +3844,7 @@
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries, revenueSeries, isDeadPursuit,
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, isAdmin, adminEmails, seesAllProjects, userOwnsProject, visibleProjects,
+    getCurrentUser, isAdmin, adminEmails, marketingEmails, noticeHtml, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,

@@ -439,6 +439,26 @@
 
   /* ============ DATA LAYER: tombstones ============ */
 
+  test('Notices · project closed', 'active → closed mails the case-study list (admins until marketing is set), with the lead in copy; any other change is silent', () => {
+    window.__notices = [];
+    const p = S.saveProject(base({ project: { name: 'Lobby Repositioning', client: 'Acme', status: 'active', leadId: 'esobel', salesforceId: 'P009999' } }));
+    const quiet1 = window.__notices.length;
+    p.project.status = 'hold'; S.saveProject(p);
+    p.project.status = 'closed'; S.saveProject(p);                  // hold → closed: not the transition asked for
+    const quiet2 = window.__notices.length;
+    p.project.status = 'active'; S.saveProject(p);
+    p.project.status = 'closed'; S.saveProject(p);                  // active → closed: this one
+    const n = window.__notices.find(x => x.event === 'project-closed');
+    S.deleteProject(p.id);
+    if (quiet1 !== 0 || quiet2 !== 0) return 'a notice went out for a change that was not active → closed';
+    if (!n) return 'no project-closed notice';
+    if (n.to.indexOf('sabdin@savills.us') < 0) return 'falls back to the admins while no marketing address is set: ' + n.to.join(',');
+    if (n.cc.indexOf('esobel@savills.us') < 0) return 'the revenue leader is in copy: ' + n.cc.join(',');
+    if (!/Case study candidate: Acme · Lobby Repositioning/.test(n.subject)) return 'subject: ' + n.subject;
+    if (!/P009999/.test(n.html) || !/Open the project record/.test(n.html)) return 'body carries the facts and the link';
+    return true;
+  });
+
   test('Data · tombstones', 'delete hides from listProjects but leaves tombstone', () => {
     const p = S.saveProject(base());
     const before = S.listProjects().some(x => x.id === p.id);
