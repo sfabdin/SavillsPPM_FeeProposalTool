@@ -1352,7 +1352,9 @@
   function tabLocations() {
     const rows = CORE.locationsData(DATA.mapped, DATA.overview.year);
     const leaders = [...new Set(rows.map((r) => r.leader))].sort();
+    const unplaced = rows.filter((r) => r.city == null);
     const filtered = rows.filter((r) => {
+      if (r.city == null) return false;
       if (LOCFILTER.rating === 'budget' && !(r.rating != null && r.rating <= 4)) return false;
       if (LOCFILTER.rating === 'long' && !(r.rating != null && r.rating >= 5)) return false;
       if (LOCFILTER.leader !== 'all' && r.leader !== LOCFILTER.leader) return false;
@@ -1371,17 +1373,34 @@
     const lng2x = (lng) => ((lng + 126) / (126 - 66)) * (W - 80) + 40;
     const maxV = Math.max.apply(null, [...byCity.values()].map((e) => Math.abs(e.value)).concat([1]));
     let dots = '';
+    const labels = [];
     for (const [ci, e] of [...byCity.entries()].sort((a, b) => b[1].value - a[1].value)) {
       const [city, lat, lng] = CORE.CITIES[ci];
       const x = lng2x(lng), y = lat2y(lat);
-      const r = 10 + Math.sqrt(Math.abs(e.value) / maxV) * 30;
-      const realHere = e.rows.filter((p) => p.placed === 'real').length;
-      const top = realHere + ' of ' + e.rows.length + ' really located · ' +
-        e.rows.slice().sort((a, b) => b.revenue - a.revenue).slice(0, 4).map((p) => p.name + ' (' + fm(p.revenue) + ')').join(' · ');
-      // (tooltip assembled below with middle dots throughout - no em dash)
+      const r = 9 + Math.sqrt(Math.abs(e.value) / maxV) * 24;
+      const top = e.rows.slice().sort((a, b) => b.revenue - a.revenue).slice(0, 4).map((p) => p.name + ' (' + fm(p.revenue) + ')').join(' · ');
       dots += '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="rgba(35,130,145,.55)" stroke="#16636f" stroke-width="1.5"><title>' + esc(city + ': ' + e.count + ' project' + (e.count > 1 ? 's' : '') + ' · ' + fm(e.value) + ' · ' + top) + '</title></circle>' +
-        '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">' + e.count + '</text>' +
-        '<text x="' + x + '" y="' + (y + r + 13) + '" text-anchor="middle" font-size="10" fill="#25273A" font-weight="700">' + esc(city) + ' · ' + fm(e.value) + '</text>';
+        '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">' + e.count + '</text>';
+      labels.push({ x, y: y + r + 12, cx: x, cy: y, r, text: city + ' · ' + fm(e.value) });
+    }
+    /* Labels: the Northeast cities sit a few pixels apart at this scale, so
+       their captions used to print over one another. Place them top-down and
+       push any caption that would land on an earlier one below it, with a
+       hairline back to its circle when it has had to move. */
+    const approxW = (t) => t.length * 5.6;
+    labels.sort((a, b) => a.y - b.y);
+    const placed = [];
+    for (const l of labels) {
+      let moved = false;
+      for (let guard = 0; guard < 12; guard++) {
+        const hit = placed.find((o) => Math.abs(o.x - l.x) < (approxW(o.text) + approxW(l.text)) / 2 + 6 && Math.abs(o.y - l.y) < 13);
+        if (!hit) break;
+        l.y = hit.y + 13; moved = true;
+      }
+      l.x = Math.min(W - approxW(l.text) / 2 - 4, Math.max(approxW(l.text) / 2 + 4, l.x));
+      placed.push(l);
+      if (moved) dots += '<line x1="' + l.cx + '" y1="' + (l.cy + l.r) + '" x2="' + l.x + '" y2="' + (l.y - 9) + '" stroke="#16636f" stroke-width=".8" stroke-dasharray="2 2"/>';
+      dots += '<text x="' + l.x + '" y="' + l.y + '" text-anchor="middle" font-size="10" fill="#25273A" font-weight="700" style="paint-order:stroke;stroke:#f7f6f3;stroke-width:3px">' + esc(l.text) + '</text>';
     }
     const mapSvg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Projects by city (simplified map)" style="background:#f7f6f3;border:1px solid var(--hairline)">' + dots + '</svg>';
 
@@ -1396,28 +1415,34 @@
       sel('region', 'Region', [['all', 'All'], ['northeast', 'Northeast'], ['south', 'South'], ['midwest', 'Midwest'], ['west', 'West']], LOCFILTER.region) +
       '<span style="font-size:11px;color:var(--mut);align-self:center">' + filtered.length + ' of ' + rows.length + ' projects shown</span></div>';
 
-    const cityTable = '<table class="vtable"><thead><tr><th>City</th><th class="num">Projects</th><th class="num">Really located</th><th class="num">' + DATA.overview.year + ' revenue</th><th>Largest project</th></tr></thead><tbody>' +
+    const cityTable = '<table class="vtable"><thead><tr><th>City</th><th class="num">Projects</th><th class="num">' + DATA.overview.year + ' revenue</th><th>Largest project</th></tr></thead><tbody>' +
       [...byCity.entries()].sort((a, b) => b[1].value - a[1].value).map(([ci, e]) => {
         const big = e.rows.slice().sort((a, b) => b.revenue - a.revenue)[0];
-        const realHere = e.rows.filter((p) => p.placed === 'real').length;
         return '<tr><td>' + esc(CORE.CITIES[ci][0]) + '</td><td class="num">' + e.count + '</td>' +
-          '<td class="num ' + (realHere === e.count ? 'tone-good' : realHere ? '' : 'tone-neutral') + '">' + realHere + '</td>' +
           '<td class="num">' + fm(e.value) + '</td><td>' + esc(big.name) + ' · ' + fm(big.revenue) + '</td></tr>';
       }).join('') + '</tbody></table>';
 
     const realN = rows.filter((r) => r.placed === 'real').length;
-    const unmatchedN = rows.filter((r) => r.placed === 'unmatched').length;
-    const scatteredN = rows.filter((r) => r.placed === 'scattered').length;
+    const unmatched = unplaced.filter((r) => r.placed === 'unmatched');
+    const missing = unplaced.filter((r) => r.placed === 'missing');
+    const unplacedValue = unplaced.reduce((a, r) => a + r.revenue, 0);
     const pctReal = rows.length ? Math.round((realN / rows.length) * 100) : 0;
     const banner = '<div class="note" style="border-left:3px solid ' + (pctReal >= 80 ? 'var(--good)' : 'var(--amber-ink)') + '">' +
-      '<b>' + realN + ' of ' + rows.length + ' projects (' + pctReal + '%) are placed where they really are</b>, read from the location recorded against the project. ' +
-      (unmatchedN ? unmatchedN + ' have a location written in a form that does not match a known city. ' : '') +
-      (scatteredN ? scatteredN + ' have no location recorded yet and are scattered so they stay visible; those pins represent real projects, but not their actual locations. ' : '') +
-      'The map gets more accurate as the location field is filled in.</div>';
+      '<b>' + realN + ' of ' + rows.length + ' projects (' + pctReal + '%) are on the map</b>, placed from the location recorded against each project. ' +
+      (unplaced.length ? '<b>' + unplaced.length + ' are not</b> (' + fm(unplacedValue) + ' of ' + DATA.overview.year + ' revenue): ' +
+        (missing.length ? missing.length + ' have no location recorded' : '') + (missing.length && unmatched.length ? ' and ' : '') +
+        (unmatched.length ? unmatched.length + ' have one the map cannot read' : '') + '. They are listed below the map, not guessed onto a city. ' : '') +
+      'Fill the location in on the Projects Index (filter “Missing location”, Quick edit) or in the calculator and the map follows.</div>';
+    const fixRow = (r) => '<tr><td><a href="Universal%20Fee%20Calculator.html?id=' + encodeURIComponent(r.id) + '" style="color:inherit;font-weight:600">' + esc(r.name) + '</a></td><td>' + esc(r.client) + '</td><td>' + esc(r.leader) + '</td><td>' + esc(r.status || '') + '</td><td class="num">' + fm(r.revenue) + '</td><td>' + (r.location ? esc(r.location) : '<span style="color:var(--mut)">—</span>') + '</td></tr>';
+    const fixList = unplaced.length
+      ? '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;color:var(--mut)">Not on the map: ' + unplaced.length + ' project' + (unplaced.length === 1 ? '' : 's') + ' to give a location (largest first)</summary>' +
+        '<table class="vtable" style="margin-top:8px"><thead><tr><th>Project</th><th>Client</th><th>Leader</th><th>Status</th><th class="num">' + DATA.overview.year + ' revenue</th><th>Location as written</th></tr></thead><tbody>' +
+        unplaced.slice().sort((a, b) => b.revenue - a.revenue).map(fixRow).join('') + '</tbody></table></details>'
+      : '';
     return banner +
-      panel('Projects by city', pctReal >= 80 ? liveFlag() : { kind: 'demo', text: pctReal + '% REAL PLACEMENT' }, '',
-        'What it is: every project with ' + DATA.overview.year + ' revenue placed on a city cluster, sized by revenue, filterable by rating class, leader and region. Hover a cluster for its largest projects and how many are really placed.',
-        filters + mapSvg + cityTable);
+      panel('Projects by city', pctReal >= 80 ? liveFlag() : { kind: 'demo', text: pctReal + '% PLACED' }, '',
+        'What it is: every project with ' + DATA.overview.year + ' revenue and a readable location, on its city, sized by revenue, filterable by rating class, leader and region. Projects without a location are counted and listed, never guessed onto the map. Hover a cluster for its largest projects.',
+        filters + mapSvg + cityTable + fixList);
   }
 
   /* ---------------- TAB · Confidence (internal, no export) ---------------- */
