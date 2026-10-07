@@ -427,13 +427,26 @@
     notify: 'notifications',           // the Power Automate outbox — stays a direct child of the root
   };
   let _rootItems = null, _rootItemsAt = 0;
-  const _subIds = {};
+  /* Subfolder ids, remembered across page loads: with them in hand the root
+     and the subfolder are listed IN PARALLEL, so a lookup costs one round
+     trip — the same as the single root listing it replaced. A remembered id
+     that stops answering is forgotten and found again from the root. */
+  const SUB_IDS_KEY = 'ufc_box_folders_v1';
+  let _subIds = {};
+  try { _subIds = JSON.parse(localStorage.getItem(SUB_IDS_KEY) || '{}') || {}; } catch (e) { _subIds = {}; }
+  const rememberSub = (kind, id) => { _subIds[kind] = id; try { localStorage.setItem(SUB_IDS_KEY, JSON.stringify(_subIds)); } catch (e) {} };
+  const forgetSub = (kind) => { delete _subIds[kind]; try { localStorage.setItem(SUB_IDS_KEY, JSON.stringify(_subIds)); } catch (e) {} };
+  async function listFolder(id) {
+    const res = await boxFetch('/folders/' + id + '/items?fields=name,type,etag,size&limit=1000');
+    if (!res.ok) { const err = new Error('could not list Box folder ' + id + ': ' + res.status); err.status = res.status; throw err; }
+    const j = await res.json(); return j.entries || [];
+  }
   /** Everything directly in the shared folder (one call, cached a minute). */
   async function rootItems(fresh) {
     if (!fresh && _rootItems && (Date.now() - _rootItemsAt) < 60000) return _rootItems;
-    const res = await boxFetch('/folders/' + BOX_CONFIG.folderId + '/items?fields=name,type,etag,size&limit=1000');
-    if (!res.ok) throw new Error('could not list the Box folder: ' + res.status);
-    const j = await res.json(); _rootItems = j.entries || []; _rootItemsAt = Date.now();
+    _rootItems = await listFolder(BOX_CONFIG.folderId); _rootItemsAt = Date.now();
+    // Learn every subfolder from this listing, so later lookups need no extra call.
+    _rootItems.forEach(e => { if (e.type !== 'folder') return; Object.keys(BOX_LAYOUT).forEach(k => { if (String(e.name || '').toLowerCase() === BOX_LAYOUT[k].toLowerCase()) rememberSub(k, e.id); }); });
     return _rootItems;
   }
   /** The folder a kind of file lives in: its subfolder when it exists, else the root. */
@@ -443,21 +456,28 @@
     if (_subIds[kind]) return _subIds[kind];
     let items; try { items = await rootItems(); } catch (e) { return BOX_CONFIG.folderId; }
     const hit = items.find(e => e.type === 'folder' && String(e.name || '').toLowerCase() === want);
-    if (hit) _subIds[kind] = hit.id;
+    if (hit) rememberSub(kind, hit.id);
     return hit ? hit.id : BOX_CONFIG.folderId;
   }
   /** Every FILE of a kind: the subfolder's, plus whatever is still in the root.
       A name present in both resolves to the subfolder's copy. */
   async function listKind(kind, fresh) {
-    const root = await rootItems(fresh);
-    const sub = await folderFor(kind);
+    const known = _subIds[kind];
+    // Root and subfolder together when the subfolder is already known.
+    const [root, subRaw] = await Promise.all([
+      rootItems(fresh),
+      known ? listFolder(known).catch(e => { if (e && e.status === 404) forgetSub(kind); return null; }) : Promise.resolve(null),
+    ]);
+    let inSub = subRaw;
+    if (inSub === null) {                                    // not known before, or the id went stale
+      const sub = await folderFor(kind);
+      if (sub !== BOX_CONFIG.folderId) inSub = await listFolder(sub);
+    }
     let entries = root.filter(e => e.type === 'file');
-    if (sub !== BOX_CONFIG.folderId) {
-      const res = await boxFetch('/folders/' + sub + '/items?fields=name,type,etag,size&limit=1000');
-      if (!res.ok) throw new Error('could not list ' + BOX_LAYOUT[kind] + ': ' + res.status);
-      const j = await res.json(); const inSub = (j.entries || []).filter(e => e.type === 'file');
-      const names = new Set(inSub.map(e => e.name));
-      entries = inSub.concat(entries.filter(e => !names.has(e.name)));
+    if (inSub) {
+      const files = inSub.filter(e => e.type === 'file');
+      const names = new Set(files.map(e => e.name));
+      entries = files.concat(entries.filter(e => !names.has(e.name)));
     }
     return entries;
   }
