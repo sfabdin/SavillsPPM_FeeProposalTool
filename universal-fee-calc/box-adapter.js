@@ -366,18 +366,35 @@
           + 'Call UFC_Perf.report() again in a second to see it.');
       },
       overlay() {
-        const t = this.totals();
+        /* LIVE for half a minute: boot is only the first stretch. The refresh
+           behind it (projects.json when anyone saved since this browser last
+           looked, the rate grid, the confirmed-book check for the pill) is
+           where a page that "boots fast but feels slow" spends its time, so
+           the overlay keeps listing requests as they land. */
         const el = document.createElement('div');
-        el.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:2147483647;background:#25273A;color:#fff;font:12px/1.5 ui-monospace,Menlo,monospace;padding:12px 14px;max-width:420px;box-shadow:0 4px 18px rgba(0,0,0,.3)';
-        el.innerHTML = '<div style="font-weight:700;color:#FFDF00;margin-bottom:6px">Boot ' + t.bootMs + ' ms</div>'
-          + '<div>' + t.waitingMs + ' ms waiting on Box · ' + t.appMs + ' ms app work</div>'
-          + '<div style="opacity:.7">' + t.requests + ' request' + (t.requests === 1 ? '' : 's')
-          + ' · ' + (t.bytes / 1024).toFixed(0) + ' KB</div>'
-          + '<div style="opacity:.55;margin-top:4px">background refresh may still be running</div>'
-          + '<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,.2);padding-top:6px">'
-          + reqs.map(r => r.label + '  <b>' + r.ms + 'ms</b>' + (r.bytes ? '  ' + (r.bytes / 1024).toFixed(0) + 'KB' : '')).join('<br>')
-          + '</div>';
+        el.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:2147483647;background:#25273A;color:#fff;font:12px/1.5 ui-monospace,Menlo,monospace;padding:12px 14px;max-width:460px;box-shadow:0 4px 18px rgba(0,0,0,.3)';
         (document.body || document.documentElement).appendChild(el);
+        const kb = (n) => (n / 1024).toFixed(0) + 'KB';
+        const row = (r) => r.label + '  <b>' + r.ms + 'ms</b>' + (r.bytes ? '  ' + kb(r.bytes) : '') + (r.status && r.status !== 200 ? '  <span style="opacity:.6">' + r.status + '</span>' : '');
+        const started = now();
+        const render = () => {
+          const t = this.totals();
+          const boot = reqs.filter(r => r.at <= bootMs), later = reqs.filter(r => r.at > bootMs);
+          const laterBytes = later.reduce((a, r) => a + r.bytes, 0);
+          const lastAt = later.length ? Math.max.apply(null, later.map(r => r.at)) : 0;
+          el.innerHTML = '<div style="font-weight:700;color:#FFDF00;margin-bottom:6px">Boot ' + t.bootMs + ' ms</div>'
+            + '<div>' + t.waitingMs + ' ms waiting on Box · ' + t.appMs + ' ms app work</div>'
+            + '<div style="opacity:.7">' + boot.length + ' request' + (boot.length === 1 ? '' : 's') + ' · ' + kb(boot.reduce((a, r) => a + r.bytes, 0)) + '</div>'
+            + '<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,.2);padding-top:6px">' + boot.map(row).join('<br>') + '</div>'
+            + '<div style="font-weight:700;color:#FFDF00;margin:10px 0 4px">After boot · background refresh</div>'
+            + (later.length
+                ? '<div style="opacity:.7">' + later.length + ' request' + (later.length === 1 ? '' : 's') + ' · ' + kb(laterBytes) + ' · last finished at ' + (lastAt / 1000).toFixed(1) + ' s</div>'
+                  + '<div style="margin-top:4px">' + later.map(row).join('<br>') + '</div>'
+                : '<div style="opacity:.55">nothing yet</div>')
+            + '<div style="opacity:.45;margin-top:8px">' + (now() - started < 30000 ? 'updating for ' + Math.ceil((30000 - (now() - started)) / 1000) + ' s…' : 'stopped updating · UFC_Perf.report() in the console for the full table') + '</div>';
+        };
+        render();
+        const timer = setInterval(() => { render(); if (now() - started >= 30000) clearInterval(timer); }, 500);
       },
     };
   })();
