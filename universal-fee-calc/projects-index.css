@@ -407,3 +407,9 @@
 .recent-changes li .rc-proj { color: var(--sav-navy); text-decoration: none; font-weight: 600; }
 .recent-changes li .rc-proj:hover { color: var(--sav-teal); }
 .recent-changes li .rc-who { color: #79828c; }
+
+/* Location column + the "missing location" filter */
+.projects-table td.ploc { font-family: var(--font-body); font-size: 12.5px; color: var(--sav-navy); max-width: 180px; }
+.projects-table td.ploc .ploc-miss { color: var(--sav-red); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; opacity: .85; }
+.filter-chip.filter-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.filter-chip.filter-check input { margin: 0; accent-color: var(--sav-navy); }
