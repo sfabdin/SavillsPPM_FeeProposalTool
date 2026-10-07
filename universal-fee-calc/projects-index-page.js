@@ -18,6 +18,7 @@
     industry: '',
     ptype: '',
     lead: '',
+    noloc: false,
   };
   let sort = { col: 'updatedAt', dir: 'desc' };
   let quickEdit = false;   // superuser-only inline editing of Lead PE / type / industry
@@ -191,7 +192,7 @@
         : `Showing only projects led or owned by <strong>${esc(cur.name || '—')}</strong>. Other teams' fees are hidden.`;
     }
     const exit = document.getElementById('id-exit');
-    if (exit) exit.addEventListener('click', (e) => { e.preventDefault(); STORE.clearImpersonation(); filters = { search: '', client: '', status: '', industry: '', ptype: '', lead: '' }; render(); });
+    if (exit) exit.addEventListener('click', (e) => { e.preventDefault(); STORE.clearImpersonation(); filters = { search: '', client: '', status: '', industry: '', ptype: '', lead: '', noloc: false }; { const nl = $('#filter-noloc'); if (nl) nl.checked = false; } render(); });
   }
   function applyFilters(projects) {
     return projects.filter(p => {
@@ -201,6 +202,7 @@
       if (filters.industry && pj.industry !== filters.industry) return false;
       if (filters.ptype && pj.projectType !== filters.ptype) return false;
       if (filters.lead && ((STORE.leaderDisplay ? STORE.leaderDisplay(pj.leadId || pj.lead) : pj.lead) || '') !== filters.lead) return false;
+      if (filters.noloc && String(pj.location || '').trim()) return false;
       if (filters.search) {
         const q = filters.search.toLowerCase();
         const hay = [pj.name, pj.client, pj.lead, pj.location, pj.clientContact, pj.clientRelOwner]
@@ -218,6 +220,9 @@
       switch (sort.col) {
         case 'name': av = a.project?.name || ''; bv = b.project?.name || ''; break;
         case 'client': av = a.project?.client || ''; bv = b.project?.client || ''; break;
+        // Blank locations sort LAST either way, so "sort by location" puts the ones to fill in together at the end.
+        case 'location': { const la = String(a.project?.location || '').trim(), lb = String(b.project?.location || '').trim();
+          if (!la && lb) return 1; if (la && !lb) return -1; av = la; bv = lb; break; }
         case 'status': av = a.project?.status || ''; bv = b.project?.status || ''; break;
         case 'industry': av = a.project?.industry || ''; bv = b.project?.industry || ''; break;
         case 'lead': av = a.project?.lead || ''; bv = b.project?.lead || ''; break;
@@ -419,8 +424,9 @@
     }
 
     const cols = [
-      { key: 'client',    label: 'Client · location' },
+      { key: 'client',    label: 'Client' },
       { key: 'name',      label: 'Project' },
+      { key: 'location',  label: 'Location' },
       { key: 'status',    label: 'Status' },
       { key: 'industry',  label: 'Industry' },
       { key: 'ptype',     label: 'Project type', sortable: false },
@@ -462,19 +468,17 @@
         : `<span class="pname-sub">${esc(pj.industry || '—')}${amendsTxt}</span>`;
       return `<tr data-id="${p.id}">
         ${quickEdit ? `
-        <td>
-          <input class="qe-in" data-qe="client" data-id="${p.id}" value="${esc(pj.client || '')}" placeholder="Client">
-          <input class="qe-in qe-sm" data-qe="location" data-id="${p.id}" value="${esc(pj.location || '')}" placeholder="Location">
-        </td>
+        <td><input class="qe-in" data-qe="client" data-id="${p.id}" value="${esc(pj.client || '')}" placeholder="Client"></td>
         <td><input class="qe-in" data-qe="name" data-id="${p.id}" value="${esc(pj.name || '')}" placeholder="Project name"></td>
+        <td><input class="qe-in" data-qe="location" data-id="${p.id}" value="${esc(pj.location || '')}" placeholder="City, ST"></td>
         <td><select class="qe-sel" data-qe="status" data-id="${p.id}">${STORE.STATUSES.map(x => `<option value="${esc(x)}" ${pj.status === x ? 'selected' : ''}>${esc(STORE.STATUS_LABELS[x] || x)}</option>`).join('')}</select></td>` : `
         <td>
           <div class="pclient">${esc(pj.client || '—')}</div>
-          <div class="pclient-sub">${esc(pj.location || '')}</div>
         </td>
         <td>
           <div class="pname">${esc(pj.name || 'Untitled')}${nameSub}</div>
         </td>
+        <td class="ploc">${pj.location && String(pj.location).trim() ? esc(pj.location) : '<span class="ploc-miss" title="No location recorded — the Executive Reporting map cannot place this project">no location</span>'}</td>
         <td><span class="pill status-${statusKey}">${esc(statusLabel)}</span></td>`}
         ${quickEdit ? `
         <td><select class="qe-sel" data-qe="industry" data-id="${p.id}"><option value="">—</option>${STORE.INDUSTRIES.map(x => `<option ${pj.industry === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></td>
@@ -609,7 +613,7 @@
       STORE.setImpersonation(v);
     }
     // reset filters so a stale lead filter doesn't compound with the wall
-    filters = { search: '', client: '', status: '', industry: '', ptype: '', lead: '' };
+    filters = { search: '', client: '', status: '', industry: '', ptype: '', lead: '', noloc: false }; { const nl = $('#filter-noloc'); if (nl) nl.checked = false; }
     $('#search-input').value = '';
     render();
   });
@@ -617,6 +621,7 @@
   $('#filter-industry')?.addEventListener('change', e => { filters.industry = e.target.value; render(); });
   $('#filter-ptype')?.addEventListener('change', e => { filters.ptype = e.target.value; render(); });
   $('#filter-lead')?.addEventListener('change', e => { filters.lead = e.target.value; render(); });
+  $('#filter-noloc')?.addEventListener('change', e => { filters.noloc = !!e.target.checked; if (filters.noloc) { sort = { col: 'client', dir: 'asc' }; } render(); });
   $('#filter-client')?.addEventListener('change', e => { filters.client = e.target.value; render(); });
   // Quick edit — the button only exists for the superuser's REAL identity
   // (impersonation previews don't unlock it).
@@ -633,7 +638,7 @@
     });
   }
   $('#clear-btn')?.addEventListener('click', () => {
-    filters = { search: '', client: '', status: '', industry: '', ptype: '', lead: '' };
+    filters = { search: '', client: '', status: '', industry: '', ptype: '', lead: '', noloc: false }; { const nl = $('#filter-noloc'); if (nl) nl.checked = false; }
     $('#search-input').value = '';
     render();
   });

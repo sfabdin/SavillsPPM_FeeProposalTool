@@ -100,7 +100,7 @@
   </div>
 
   <div class="legend">
-    <span>Tracked fields: <b>Leader</b>, <b>Client</b>, <b>Industry</b>, <b>Type</b>, <b>Rating</b>, <b>Staffing</b>, <b>Fee $</b>, <b>Date</b></span>
+    <span>Tracked fields: <b>Leader</b>, <b>Client</b>, <b>Location</b>, <b>Industry</b>, <b>Type</b>, <b>Rating</b>, <b>Staffing</b>, <b>Fee $</b>, <b>Date</b></span>
     <span><b>Staffing</b> = priced roles allocated, or pass-through lines entered (imported-$-only projects count as missing until built).</span>
   </div>
 
@@ -166,6 +166,7 @@
     const fields = {
       Leader:   !!(pj.leadId || pj.lead),
       Client:   !!(pj.client && String(pj.client).trim()),
+      Location: !!(pj.location && String(pj.location).trim()),
       Industry: !!pj.industry,
       Type:     !!pj.projectType,
       Rating:   !!(STORE.ratingFor ? STORE.ratingFor(p) : pj.rating),
@@ -177,7 +178,7 @@
     return { fields, missing, fee, info: { passthrough: hasPt, staffingViaPt, ptBilled } };
   }
 
-  const FIELD_ORDER = ['Leader','Client','Industry','Type','Rating','Staffing','Fee $','Date'];
+  const FIELD_ORDER = ['Leader','Client','Location','Industry','Type','Rating','Staffing','Fee $','Date'];
 
   /* ---------- Identity bar (reused pattern, admin-lite) ---------- */
   function buildIdentityBar() {

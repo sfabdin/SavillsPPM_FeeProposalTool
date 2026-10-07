@@ -1751,8 +1751,11 @@
     ['Washington DC', 38.9072, -77.0369], ['Chicago', 41.8781, -87.6298], ['Miami', 25.7617, -80.1918],
     ['Dallas', 32.7767, -96.797], ['Denver', 39.7392, -104.9903], ['San Francisco', 37.7749, -122.4194],
     ['Los Angeles', 34.0522, -118.2437], ['Seattle', 47.6062, -122.3321], ['Atlanta', 33.749, -84.388],
+    // Added for where the book actually is (appended so the indices above hold).
+    ['Houston', 29.7604, -95.3698], ['Huntsville', 34.7304, -86.5861], ['Portland', 45.5152, -122.6784],
+    ['Dayton', 39.7589, -84.1916], ['Fairfax', 38.8462, -77.3064],
   ];
-  const REGIONS = { northeast: [0, 1, 2, 3], south: [5, 6, 11], midwest: [4, 7], west: [8, 9, 10] };
+  const REGIONS = { northeast: [0, 1, 2, 3], south: [5, 6, 11, 12, 13, 16], midwest: [4, 7, 15], west: [8, 9, 10, 14] };
   function _hash31(s) {
     let h = 0;
     for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
@@ -1771,6 +1774,9 @@
      labelled as such, never silently mixed in with the real ones. */
   const STATE_CITY = {
     ny: 0, ma: 1, pa: 2, dc: 3, il: 4, fl: 5, tx: 6, co: 7, ca: 8, wa: 10, ga: 11,
+    // Metro fallbacks: a Connecticut or New Jersey office is the New York book,
+    // Northern Virginia and Maryland are the DC book.
+    ct: 0, nj: 0, va: 16, md: 3, al: 13, or: 14, oh: 15,
   };
   function resolveCity(locationText) {
     const t = String(locationText || '').trim().toLowerCase();
@@ -1779,11 +1785,12 @@
       if (t.indexOf(CITIES[i][0].toLowerCase()) !== -1) return i;
     }
     // "Menlo Park, CA" style: fall back to the state, then to its main city.
-    const st = t.match(/,\s*([a-z]{2})\b|\b(california|texas|florida|illinois|washington|georgia|colorado|massachusetts|pennsylvania)\b/);
+    // "Menlo Park, CA", "Secaucus NJ", "New York NY 10001": the state, then its city.
+    const st = t.match(/(?:,|\s)\s*([a-z]{2})(?=\s*\d{5}|\s*$|\s*[,(])|\b(california|texas|florida|illinois|washington|georgia|colorado|massachusetts|pennsylvania|virginia|connecticut|alabama|oregon|ohio|maryland|new jersey)\b/);
     if (st) {
       const key = (st[1] || '').toLowerCase();
       if (key && STATE_CITY[key] != null) return STATE_CITY[key];
-      const long = { california: 8, texas: 6, florida: 5, illinois: 4, washington: 10, georgia: 11, colorado: 7, massachusetts: 1, pennsylvania: 2 };
+      const long = { california: 8, texas: 6, florida: 5, illinois: 4, washington: 10, georgia: 11, colorado: 7, massachusetts: 1, pennsylvania: 2, virginia: 16, connecticut: 0, alabama: 13, oregon: 14, ohio: 15, maryland: 3, 'new jersey': 0 };
       if (st[2] && long[st[2]] != null) return long[st[2]];
     }
     return null;
@@ -1802,8 +1809,11 @@
         leader: p.leader_id ? leaderDisplay(p.leader_id) : 'Unassigned',
         rating: p.rating, status: p.status, revenue: years.get(year) || 0,
         location: p.location || null,
-        placed: real != null ? 'real' : (nullIfBlank(p.location) ? 'unmatched' : 'scattered'),
-        city: real != null ? real : cityFor(client, p.source_id),
+        // Only a REAL placement goes on the map. A blank or unreadable
+        // location is reported, never guessed — a pin in the wrong city
+        // looked like data and was not.
+        placed: real != null ? 'real' : (nullIfBlank(p.location) ? 'unmatched' : 'missing'),
+        city: real,
       });
     }
     return rows;
