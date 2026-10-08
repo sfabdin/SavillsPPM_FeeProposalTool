@@ -439,6 +439,26 @@
 
   /* ============ DATA LAYER: tombstones ============ */
 
+  test('Notices · completeness digest', 'one pre-rendered email per leader, a deep link per project, lost/closed left out', () => {
+    const a = S.saveProject(base({ project: { name: 'Lobby Repositioning', client: 'Acme', status: 'active', leadId: 'esobel', industry: 'Financial Services', projectType: 'Program & Project Management', proposalDate: '2026-01-01' } }));
+    const b = S.saveProject(base({ project: { name: 'Old Pursuit', client: 'Acme', status: 'lost', leadId: 'esobel' } }));
+    try {
+      const c = S.completenessOf(a);
+      if (c.missing.indexOf('Location') < 0) return 'Location should be missing: ' + c.missing.join(',');
+      const d = S.buildCompletenessDigest();
+      const em = d.leaders.find(e => e.id === 'esobel');
+      if (!em) return 'no digest entry for the leader';
+      if (em.email !== 'esobel@savills.us') return 'leader email: ' + em.email;
+      if (!em.projects.some(p => p.id === a.id)) return 'the incomplete project is listed';
+      if (em.projects.some(p => p.id === b.id)) return 'a lost pursuit must not be nagged';
+      if (em.html.indexOf('Universal%20Fee%20Calculator.html?id=' + encodeURIComponent(a.id)) < 0) return 'the email links straight to the project';
+      if (em.html.indexOf('Data%20Entry%20Status.html') < 0) return 'the email links to Data Entry Status';
+      if (!/need(s)? a detail filled in/.test(em.subject)) return 'subject: ' + em.subject;
+      if (d.fields.join(',') !== 'Leader,Client,Location,Industry,Type,Rating,Staffing,Fee $,Date') return 'fields: ' + d.fields.join(',');
+      return true;
+    } finally { S.deleteProject(a.id); S.deleteProject(b.id); }
+  });
+
   test('Notices · project closed', 'active → closed mails the case-study list (admins until marketing is set), with the lead in copy; any other change is silent', () => {
     window.__notices = [];
     const p = S.saveProject(base({ project: { name: 'Lobby Repositioning', client: 'Acme', status: 'active', leadId: 'esobel', salesforceId: 'P009999' } }));

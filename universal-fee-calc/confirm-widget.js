@@ -79,7 +79,11 @@
     try {
       if (C.isLeadership() && C.publishStatus) {
         const K = 'ufc_notify_status_published'; const last = Number(localStorage.getItem(K) || 0);
-        if (Date.now() - last > 6 * 3600 * 1000) { C.publishStatus(); localStorage.setItem(K, String(Date.now())); }
+        if (Date.now() - last > 6 * 3600 * 1000) {
+          C.publishStatus();
+          try { if (S.publishCompletenessDigest) S.publishCompletenessDigest(); } catch (e) {}
+          localStorage.setItem(K, String(Date.now()));
+        }
       }
     } catch (e) { /* never on the critical path */ }
   }

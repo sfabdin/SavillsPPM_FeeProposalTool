@@ -3637,6 +3637,89 @@
       '<p style="font-size:12px;color:#79828C;margin-top:20px">' + escHtml(footer || 'Sent automatically by the fee tool.') + '</p></div>';
   }
   function appPageUrl(page) { try { return location.origin + location.pathname.replace(/[^/]*$/, '') + encodeURIComponent(page); } catch (e) { return page; } }
+  /* ------------------------------------------------------------
+     DATA COMPLETENESS — one rule for the Data Entry Status page and the
+     weekly digest email, so what the page shows as missing is exactly
+     what the email asks for.
+     ------------------------------------------------------------ */
+  const COMPLETENESS_FIELDS = ['Leader', 'Client', 'Location', 'Industry', 'Type', 'Rating', 'Staffing', 'Fee $', 'Date'];
+  function completenessOf(p, catalog) {
+    const cat = catalog || window.RATES_CATALOG;
+    const pj = p.project || {}; const roles = p.roles || []; const pt = p.passthrough || {};
+    const hasAlloc = roles.some(r => (r.fteMonthly && Object.values(r.fteMonthly).some(v => v > 0)) || (r.fte && Object.values(r.fte).some(v => v > 0)));
+    const ptLines = pt.enabled && Array.isArray(pt.lines) ? pt.lines.filter(l => (parseFloat(l.cost) || 0) > 0) : [];
+    const ptBilled = ptLines.reduce((a, l) => { const c = parseFloat(l.cost) || 0; return a + c + c * ((parseFloat(l.markupPct) || 0) / 100); }, 0);
+    let fee = 0;
+    try {
+      if (p.source && p.source.importedByMonth && !p.source.reconciled) fee = (monthlySeries(p, cat) || []).reduce((a, s) => a + (s.amount || 0), 0);
+      else { const f = projectFinancials(p, r => getTierRateFromCatalog(r, cat, p)); fee = f ? f.net : 0; }
+    } catch (e) { fee = 0; }
+    const staffingViaPt = !hasAlloc && ptLines.length > 0;
+    const fields = {
+      Leader: !!(pj.leadId || pj.lead), Client: !!(pj.client && String(pj.client).trim()), Location: !!(pj.location && String(pj.location).trim()),
+      Industry: !!pj.industry, Type: !!pj.projectType, Rating: !!(typeof ratingFor === 'function' ? ratingFor(p) : pj.rating),
+      Staffing: hasAlloc || staffingViaPt, 'Fee $': fee > 0 || ptBilled > 0, Date: !!(pj.firstProposalDate || pj.proposalDate),
+    };
+    const missing = COMPLETENESS_FIELDS.filter(k => !fields[k]);
+    return { fields, missing, fee, info: { passthrough: ptLines.length > 0, staffingViaPt, ptBilled } };
+  }
+  /** The weekly digest, pre-rendered per leader so the sending flow only
+      loops and mails: who, how many, and an email with one deep link per
+      project. Lost and closed projects are history and are not nagged. */
+  function buildCompletenessDigest(opts) {
+    const o = opts || {}; const cat = o.catalog || window.RATES_CATALOG;
+    const live = listProjects().filter(p => !(isChangeOrder && isChangeOrder(p)) && !/^(lost|closed)$/.test(String((p.project || {}).status || '')));
+    const groups = {};   // leaderId|'unassigned' -> rows
+    const ledCount = {}; // leaderId|'unassigned' -> every live project they lead, complete or not
+    live.forEach(p => {
+      const pj = p.project || {}; const l = resolveLeader(pj.leadId || pj.lead);
+      const key = l ? l.id : 'unassigned';
+      ledCount[key] = (ledCount[key] || 0) + 1;
+      const c = completenessOf(p, cat); if (!c.missing.length) return;
+      (groups[key] = groups[key] || []).push({ id: p.id, name: pj.name || 'Untitled', client: pj.client || '', status: pj.status || '', missing: c.missing, updatedAt: p.updatedAt || '' });
+    });
+    const CAP = 20;   // the most incomplete first; the rest wait on Data Entry Status
+    const statusPage = appPageUrl('Data Entry Status.html');
+    const link = (id) => appPageUrl('Universal Fee Calculator.html') + '?id=' + encodeURIComponent(id);
+    const leaders = Object.keys(groups).map(key => {
+      const l = key === 'unassigned' ? null : leaderById(key);
+      const rows = groups[key].sort((a, b) => b.missing.length - a.missing.length || a.client.localeCompare(b.client) || a.name.localeCompare(b.name));
+      const name = l ? l.displayName : 'Unassigned projects';
+      const email = l ? String(l.username || '').toLowerCase() : adminEmails().join(';');
+      const byField = {}; rows.forEach(r => r.missing.forEach(f => { byField[f] = (byField[f] || 0) + 1; }));
+      const n = rows.length, led = ledCount[key] || n, blanks = rows.reduce((a, r) => a + r.missing.length, 0);
+      const topField = Object.entries(byField).sort((a, b) => b[1] - a[1])[0];
+      const shown = rows.slice(0, CAP), more = rows.length - shown.length;
+      const stat = (v, lab) => '<td style="padding:10px 14px;background:#F6F5F1;border-right:4px solid #fff;vertical-align:top"><div style="font-size:22px;font-weight:800;color:#25273A;line-height:1.1">' + v + '</div><div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#79828C;margin-top:3px">' + lab + '</div></td>';
+      const summary = '<table style="border-collapse:collapse;width:100%;margin:4px 0 14px"><tr>' +
+        stat(led, (l ? 'projects you lead' : 'projects with no leader')) + stat(n, 'need a detail') + stat(blanks, 'blank field' + (blanks === 1 ? '' : 's')) +
+        stat(topField ? escHtml(topField[0]) : '—', 'missing most often' + (topField ? ' · ' + topField[1] : '')) + '</tr></table>';
+      const table = '<table style="border-collapse:collapse;font-size:13px;width:100%">' +
+        '<tr><th style="text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid #D9D6CE;color:#79828C;font-weight:600">Project</th><th style="text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid #D9D6CE;color:#79828C;font-weight:600">Client</th><th style="text-align:left;padding:6px 0;border-bottom:1px solid #D9D6CE;color:#79828C;font-weight:600">Still missing</th></tr>' +
+        shown.map(r => '<tr><td style="padding:7px 10px 7px 0;border-bottom:1px solid #EFEDE7;vertical-align:top"><a href="' + escHtml(link(r.id)) + '" style="color:#25273A;font-weight:700;text-decoration:underline">' + escHtml(r.name) + '</a><div style="font-size:11px;color:#79828C">' + escHtml(r.status) + '</div></td>' +
+          '<td style="padding:7px 10px 7px 0;border-bottom:1px solid #EFEDE7;vertical-align:top">' + escHtml(r.client) + '</td>' +
+          '<td style="padding:7px 0;border-bottom:1px solid #EFEDE7;vertical-align:top">' + r.missing.map(f => '<span style="display:inline-block;background:#FBE9EA;color:#A6131A;font-size:11px;font-weight:700;padding:2px 7px;margin:0 4px 4px 0">' + escHtml(f) + '</span>').join('') + '</td></tr>').join('') + '</table>';
+      const subject = (l ? 'Your fee tool data: ' : 'Unassigned projects: ') + n + ' project' + (n === 1 ? '' : 's') + ' need' + (n === 1 ? 's' : '') + ' a detail filled in';
+      const html = noticeHtml(n + ' project' + (n === 1 ? '' : 's') + ' need' + (n === 1 ? 's' : '') + ' a detail filled in', [
+        summary,
+        (l ? 'Hi ' + escHtml(l.displayName.split(' ')[0]) + ', these are the projects you lead' : 'These projects have no revenue leader and') + ' with something still blank' + (more > 0 ? ', the ' + CAP + ' most incomplete first' : '') + '. Click a project to open it in the calculator, fill the red fields in the setup panel, and save. That is all.',
+        table,
+        (more > 0 ? '<b>And ' + more + ' more</b> on Data Entry Status. ' : '') + 'Missing most often: ' + Object.entries(byField).sort((a, b) => b[1] - a[1]).map(([f, c]) => escHtml(f) + ' (' + c + ')').join(', ') + '.',
+        '<div style="margin-top:14px;padding:10px 14px;background:#FFF6CC;border-left:4px solid #D9A400"><b>Reminder:</b> every proposal and every revenue projection must be entered in the fee tool before the next month-end close. Anything not in the system by then is not in the book.</div>'],
+        { href: statusPage, label: 'See your whole list on Data Entry Status' },
+        'Sent weekly by the fee tool while something is missing. The list empties as the fields are filled in.');
+      const text = subject + '. ' + rows.map(r => r.name + ' (' + r.missing.join(', ') + '): ' + link(r.id)).join(' | ') + ' Full list: ' + statusPage;
+      return { id: key, name, email, count: n, totalProjects: led, blankFields: blanks, shown: shown.length, more, byField, subject, html, text, projects: rows.map(r => ({ id: r.id, name: r.name, client: r.client, status: r.status, missing: r.missing, link: link(r.id) })) };
+    }).filter(e => e.email).sort((a, b) => b.count - a.count);
+    return { updatedAt: new Date().toISOString(), app: (typeof location !== 'undefined' ? location.origin : ''), page: statusPage, fields: COMPLETENESS_FIELDS.slice(),
+      totals: { projects: live.length, incomplete: leaders.reduce((a, e) => a + e.count, 0), leaders: leaders.length }, leaders };
+  }
+  /** Hand the digest to the Box outbox (notify-digest.json). Returns it, or null when Box is off. */
+  function publishCompletenessDigest() {
+    const B = window.UFC_Box; if (!(B && B.enabled && B.writeNotifyDigest)) return null;
+    const d = buildCompletenessDigest(); B.writeNotifyDigest(d); return d;
+  }
+
   /** Active → closed: tell marketing there may be a case study in it. */
   function noticeProjectClosed(record, prev) {
     const B = window.UFC_Box; if (!(B && B.enabled && B.notify)) return null;
@@ -3844,7 +3927,7 @@
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries, revenueSeries, isDeadPursuit,
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, isAdmin, adminEmails, marketingEmails, noticeHtml, seesAllProjects, userOwnsProject, visibleProjects,
+    getCurrentUser, isAdmin, adminEmails, marketingEmails, noticeHtml, completenessOf, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
