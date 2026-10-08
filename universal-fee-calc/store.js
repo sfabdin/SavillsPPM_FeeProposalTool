@@ -3709,7 +3709,8 @@
         { href: statusPage, label: 'See your whole list on Data Entry Status' },
         'Sent weekly by the fee tool while something is missing. The list empties as the fields are filled in.');
       const text = subject + '. ' + rows.map(r => r.name + ' (' + r.missing.join(', ') + '): ' + link(r.id)).join(' | ') + ' Full list: ' + statusPage;
-      return { id: key, name, email, count: n, totalProjects: led, blankFields: blanks, shown: shown.length, more, byField, subject, html, text, projects: rows.map(r => ({ id: r.id, name: r.name, client: r.client, status: r.status, missing: r.missing, link: link(r.id) })) };
+      const B = window.UFC_Box; const cc = (B && B.notifyAlwaysCc ? B.notifyAlwaysCc() : []).filter(e => e !== email).join(';');
+      return { id: key, name, email, cc, count: n, totalProjects: led, blankFields: blanks, shown: shown.length, more, byField, subject, html, text, projects: rows.map(r => ({ id: r.id, name: r.name, client: r.client, status: r.status, missing: r.missing, link: link(r.id) })) };
     }).filter(e => e.email).sort((a, b) => b.count - a.count);
     return { updatedAt: new Date().toISOString(), app: (typeof location !== 'undefined' ? location.origin : ''), page: statusPage, fields: COMPLETENESS_FIELDS.slice(),
       totals: { projects: live.length, incomplete: leaders.reduce((a, e) => a + e.count, 0), leaders: leaders.length }, leaders };
@@ -3729,6 +3730,11 @@
     const pj = record.project || {};
     const lead = resolveLeader(pj.leadId || pj.lead); const leadName = lead ? lead.displayName : (pj.lead || pj.leadId || '');
     let bill = null; try { bill = clientBillOf(record, window.RATES_CATALOG); } catch (e) {}
+    // Pass-through split: a line ticked "fee share" is a broker's cut going out, not a vendor.
+    let ptVendor = 0, ptShare = 0;
+    try { (passThroughMonths(record).lines || []).forEach(L => { const c = Object.values(L.clientByMonth || {}).reduce((a, b) => a + b, 0); if (L.feeShare) ptShare += c; else ptVendor += c; }); } catch (e) {}
+    const fsA = (record.assumptions && record.assumptions.feeShare) || {};
+    const pctShare = bill ? Math.max(0, (bill.broker || 0) - (bill.shareOut || 0)) : 0;
     const money = (n) => '$' + Math.round(n || 0).toLocaleString();
     const tl = record.timeline || {}; const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const mon = (m, y) => (m && y) ? MN[m - 1] + ' ' + y : '';
@@ -3737,7 +3743,10 @@
     const facts = [
       ['Client', pj.client], ['Project', pj.name], ['Revenue leader', leadName], ['Industry', pj.industry], ['Project type', [pj.projectType, pj.projectSubtype || pj.subType].filter(Boolean).join(' · ')],
       ['Location', pj.location], ['Timeline', when], ['Salesforce ID', pj.salesforceId], ['Project number', pj.projectNumber],
-      ['Total client contract', bill ? money(bill.total) : ''], ['Of which pass-through', bill && bill.pass ? money(bill.pass) : ''],
+      ['Total client contract', bill ? money(bill.total) : ''],
+      ['Of which pass-through (vendors)', ptVendor > 0 ? money(ptVendor) : ''],
+      ['Of which broker fee share', ptShare > 0 ? money(ptShare) : ''],
+      ['Broker fee share · ' + (parseFloat(fsA.pct) || 0) + '%' + (fsA.broker ? ' · ' + fsA.broker : ''), fsA.enabled && pctShare > 0 ? money(pctShare) : ''],
     ].filter(f => f[1]);
     const table = '<table style="border-collapse:collapse;font-size:13px">' + facts.map(f => '<tr><td style="padding:3px 14px 3px 0;color:#79828C;white-space:nowrap">' + escHtml(f[0]) + '</td><td style="padding:3px 0"><b>' + escHtml(f[1]) + '</b></td></tr>').join('') + '</table>';
     const title = (pj.client ? pj.client + ' · ' : '') + (pj.name || 'Untitled');
@@ -3751,7 +3760,7 @@
         '<b>' + escHtml(by) + '</b> moved this project from <b>active</b> to <b>closed</b> on ' + escHtml(new Date().toLocaleString()) + '. Please consider it for a case study — the revenue leader is in copy.',
         table],
         { href: link, label: 'Open the project record' },
-        'Sent automatically by the fee tool when a project closes. Who receives this is set in the tool (MARKETING_TEAM / notify list).'),
+        'Sent automatically by the fee tool when a project closes. Reply to the revenue leader in copy with any questions.'),
     });
   }
 
