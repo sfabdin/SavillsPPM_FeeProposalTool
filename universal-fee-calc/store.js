@@ -3619,7 +3619,7 @@
      admins get it, so nothing is lost while the list is being set up.
      ------------------------------------------------------------ */
   const MARKETING_TEAM = [
-    // 'marketing@savills.us',
+    'ppmmarketing@savills.us',   // PPM marketing — case-study candidates when a project moves active → closed
   ].map(s => s.toLowerCase());
   function marketingEmails() {
     let extra = []; try { extra = readVocab().notifyMarketing || []; } catch (e) {}
