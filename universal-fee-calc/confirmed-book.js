@@ -370,7 +370,8 @@
       const B = window.UFC_Box; if (!(B && B.enabled && B.writeNotifyStatus)) return null;
       const st = S(); const recs = records || st.listProjects();
       const cur = currentCycle();
-      const status = { updatedAt: new Date().toISOString(), app: (typeof location !== 'undefined' ? location.origin : ''), page: pageUrl('Monthly Confirmed Book.html'), admins: adminEmails(), book: null, pending: [], confirmed: [] };
+      const status = { updatedAt: new Date().toISOString(), app: (typeof location !== 'undefined' ? location.origin : ''), page: pageUrl('Monthly Confirmed Book.html'), admins: adminEmails(),
+        cc: (B.notifyAlwaysCc ? B.notifyAlwaysCc() : []).join(';'), book: null, pending: [], confirmed: [] };
       if (cur) {
         let remindFrom = ''; try { const d = new Date(String(cur.deadline) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 3); remindFrom = d.toISOString(); } catch (e) {}
         status.book = { id: cur.id, title: bookTitle(cur), period: cur.period || '', deadline: cur.deadline, deadlineText: fmtDay(cur.deadline + 'T12:00:00'), remindFrom, lockedAt: cur.lockedAt || null, openedAt: cur.openedAt || null };
