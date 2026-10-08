@@ -145,6 +145,8 @@
 
   /* ---------- Per-project field completeness ---------- */
   function assess(p) {
+    // The store's rule — the same one the weekly digest email is built from.
+    if (STORE.completenessOf) return STORE.completenessOf(p, CATALOG);
     const pj = p.project || {};
     const roles = p.roles || [];
     const pt = p.passthrough || {};

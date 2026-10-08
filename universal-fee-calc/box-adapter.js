@@ -1692,7 +1692,7 @@
   const NOTIFY_OUTBOX_KEY = 'ufc_notify_outbox_v1';
   const NOTIFY_STATUS = 'notify-status.json';
   const NOTIFY_STATUS_KEY = 'ufc_notify_status_id';
-  let _notifyFolderId = null, _notifyFlushing = null, _statusTimer = null, _statusPending = null;
+  let _notifyFolderId = null, _notifyFlushing = null;
   const readOutbox = () => { try { return JSON.parse(localStorage.getItem(NOTIFY_OUTBOX_KEY) || '[]') || []; } catch (e) { return []; } };
   const writeOutbox = (q) => { try { localStorage.setItem(NOTIFY_OUTBOX_KEY, JSON.stringify(q.slice(-50))); } catch (e) {} };
   const cleanEmails = (v) => [].concat(v || []).map(s => String(s || '').trim().toLowerCase()).filter(s => /^[^\s@]+@[^\s@]+$/.test(s));
@@ -1763,34 +1763,48 @@
     })().finally(() => { _notifyFlushing = null; });
     return _notifyFlushing;
   }
-  /** The standing status for the reminder flow — debounced, last writer wins. */
-  Box.writeNotifyStatus = function (status) {
-    if (!BOX_CONFIG.enabled || !status) return;
-    _statusPending = Object.assign({ schemaVersion: 1 }, status);
-    try { localStorage.setItem(NOTIFY_STATUS_KEY + ':pending', JSON.stringify(_statusPending)); } catch (e) {}
-    clearTimeout(_statusTimer); _statusTimer = setTimeout(() => { flushNotifyStatus().catch(() => {}); }, BOX_CONFIG.pushDebounceMs);
-  };
-  async function flushNotifyStatus() {
-    let s = _statusPending;
-    if (!s) { try { s = JSON.parse(localStorage.getItem(NOTIFY_STATUS_KEY + ':pending') || 'null'); } catch (e) { s = null; } }
+  /* Standing files the scheduled flows read — notify-status.json for the
+     deadline reminders, notify-digest.json for the weekly completeness
+     digest. Debounced, last writer wins, each remembered by file id. */
+  const NOTIFY_FILES = { status: NOTIFY_STATUS, digest: 'notify-digest.json' };
+  const _named = {};   // kind -> { pending, timer }
+  function writeNotifyFile(kind, obj) {
+    if (!BOX_CONFIG.enabled || !obj || !NOTIFY_FILES[kind]) return;
+    const st = _named[kind] || (_named[kind] = { pending: null, timer: null });
+    st.pending = Object.assign({ schemaVersion: 1 }, obj);
+    try { localStorage.setItem(NOTIFY_STATUS_KEY + ':' + kind + ':pending', JSON.stringify(st.pending)); } catch (e) {}
+    clearTimeout(st.timer); st.timer = setTimeout(() => { flushNotifyFile(kind).catch(() => {}); }, BOX_CONFIG.pushDebounceMs);
+  }
+  async function flushNotifyFile(kind) {
+    const name = NOTIFY_FILES[kind]; if (!name) return;
+    const st = _named[kind] || (_named[kind] = { pending: null, timer: null });
+    let s = st.pending;
+    if (!s) { try { s = JSON.parse(localStorage.getItem(NOTIFY_STATUS_KEY + ':' + kind + ':pending') || 'null'); } catch (e) { s = null; } }
     if (!s || !getToken()) return;
     const folder = await resolveNotifyFolderId();
-    let id = null; try { id = localStorage.getItem(NOTIFY_STATUS_KEY); } catch (e) {}
+    const idKey = kind === 'status' ? NOTIFY_STATUS_KEY : NOTIFY_STATUS_KEY + ':' + kind;
+    let id = null; try { id = localStorage.getItem(idKey); } catch (e) {}
     const body = JSON.stringify(s);
     let res = null;
-    if (id) { res = await overwriteFile(id, NOTIFY_STATUS, body); if (res.status === 404) id = null; }
+    if (id) { res = await overwriteFile(id, name, body); if (res.status === 404) id = null; }
     if (!id) {
-      res = await uploadNewFile(folder, NOTIFY_STATUS, body);
+      res = await uploadNewFile(folder, name, body);
       if (res.status === 409) {
-        try { const j = await res.json(); const c = j.context_info && j.context_info.conflicts; const cid = c && ((Array.isArray(c) ? c[0] : c) || {}).id; if (cid) { id = cid; res = await overwriteFile(cid, NOTIFY_STATUS, body); } } catch (e) {}
+        try { const j = await res.json(); const c = j.context_info && j.context_info.conflicts; const cid = c && ((Array.isArray(c) ? c[0] : c) || {}).id; if (cid) { id = cid; res = await overwriteFile(cid, name, body); } } catch (e) {}
       } else if (res.ok) { try { const j = await res.json(); id = j.entries && j.entries[0] && j.entries[0].id; } catch (e) {} }
     }
     if (res && res.ok) {
-      if (id) { try { localStorage.setItem(NOTIFY_STATUS_KEY, id); } catch (e) {} }
-      _statusPending = null; try { localStorage.removeItem(NOTIFY_STATUS_KEY + ':pending'); } catch (e) {}
+      if (id) { try { localStorage.setItem(idKey, id); } catch (e) {} }
+      st.pending = null; try { localStorage.removeItem(NOTIFY_STATUS_KEY + ':' + kind + ':pending'); } catch (e) {}
     }
   }
-  Box.flushNotify = async function () { clearTimeout(_statusTimer); await flushNotifyOutbox(); await flushNotifyStatus(); };
+  Box.writeNotifyStatus = (status) => writeNotifyFile('status', status);
+  Box.writeNotifyDigest = (digest) => writeNotifyFile('digest', digest);
+  Box.flushNotify = async function () {
+    Object.values(_named).forEach(st => clearTimeout(st.timer));
+    await flushNotifyOutbox();
+    for (const kind of Object.keys(NOTIFY_FILES)) { try { await flushNotifyFile(kind); } catch (e) { /* next load */ } }
+  };
 
   /* ---- OPT-IN STORES ------------------------------------------------------
      studio.json and revenue.json used to be pulled by every page in the app,
