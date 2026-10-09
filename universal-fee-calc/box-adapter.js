@@ -1745,6 +1745,9 @@
       event: msg.event, at, from,
       to: to.join(';'), toList: to, cc: cc.join(';'), ccList: cc,
       subject: String(msg.subject || ''), text: String(msg.text || ''), html: String(msg.html || msg.text || ''),
+      // Outlook's shape, so the flow can hand the array straight to "Attachments": [{ Name, ContentBytes (base64), ContentType }]
+      attachments: (Array.isArray(msg.attachments) ? msg.attachments : []).filter(a => a && a.Name && a.ContentBytes)
+        .map(a => ({ Name: String(a.Name), ContentBytes: String(a.ContentBytes), ContentType: String(a.ContentType || 'application/octet-stream') })),
       data: msg.data || {}, app: location.origin,
     };
     const q = readOutbox(); q.push(item); writeOutbox(q);

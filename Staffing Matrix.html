@@ -130,6 +130,14 @@
 </div>
 
 <!-- allocation add/edit modal -->
+<div class="modal-ov" id="mail-modal">
+  <div class="modal wide">
+    <div class="mh"><h3 id="mm-title">Email Clockify status</h3><button id="mm-close" aria-label="Close">&times;</button></div>
+    <div class="mm-tabs" role="tablist"><button class="on" data-mm="digest" role="tab">Status digest</button><button data-mm="nudges" role="tab">Nudges <span id="mm-nudge-n" class="mm-count"></span></button></div>
+    <div class="mm-body" id="mm-body"></div>
+    <div class="mf"><span class="note-txt grow" id="mm-note"></span><button class="btn btn-secondary" id="mm-cancel">Cancel</button><button class="btn btn-primary" id="mm-send">Send</button></div>
+  </div>
+</div>
 <div class="modal-ov" id="alloc-modal">
   <div class="modal">
     <div class="mh"><h3 id="am-title">Allocation</h3><button id="am-close">&times;</button></div>
