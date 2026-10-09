@@ -1690,7 +1690,7 @@
     // ---- lateness join + chase reasons: shared with the email composer ----
     const { latePP, lagOf, teamLag } = latenessByPerson(ms, late.rows);
     const totMissing = rows.reduce((s, r) => s + r.behindHrs, 0);
-    const behindRows = rows.filter(r => r.behindHrs > 8);   // engine sorts behind-desc already
+    const behindRows = rows.filter(S.isBehind);   // engine sorts behind-desc already; behind = more than a month of their own hours missing
     let nowH = 0, nowEff = 0;
     // capM is ALREADY pro-rated for the current month by the engine — don't re-apply.
     rows.forEach(r => { const c = r.byMonth[nowYm]; if (c && c !== 'leave' && !c.early && !c.joinMonth) { nowH += c.h; nowEff += c.capM; } });
@@ -1742,19 +1742,19 @@
           <td>${spark(r)} <span style="font-size:11.5px;color:${col}">${esc(word)}</span></td>
           <td class="num">${fmtH(r.totLogged)}</td>
           <td class="num">${fmtH(r.totCap)}</td>
-          <td class="num" ${r.behindHrs > 8 ? 'style="color:#8f2418;font-weight:800"' : ''}>${r.behindHrs > 1 ? fmtH(r.behindHrs) : '—'}</td>
+          <td class="num" ${S.isBehind(r) ? 'style="color:#8f2418;font-weight:800"' : ''}>${r.behindHrs > 1 ? fmtH(r.behindHrs) : '—'}</td>
           <td class="num">${lag != null ? lag.toFixed(1) + ' d' : '—'}</td>
         </tr>`;
       };
       const measured = rows.filter(r => r.totCap > 0);
       const notMeasured = rows.filter(r => r.totCap <= 0);
-      const gBehind = measured.filter(r => r.behindHrs > 8 && matches(r));
-      const gOk = measured.filter(r => r.behindHrs <= 8 && matches(r)).sort((a, b) => a.person.name.localeCompare(b.person.name));
+      const gBehind = measured.filter(r => S.isBehind(r) && matches(r));
+      const gOk = measured.filter(r => !S.isBehind(r) && matches(r)).sort((a, b) => a.person.name.localeCompare(b.person.name));
       const gNot = notMeasured.filter(matches);
       const unShown = untracked.filter(u => !q2 || u.person.name.toLowerCase().includes(q2));
       const grp = (label, note, n) => `<tr class="grouprow"><td colspan="6">${label} · ${n} ${n === 1 ? 'person' : 'people'} <span style="font-weight:400;color:var(--sav-steel)">— ${note}</span></td></tr>`;
       let sBody = '';
-      if (gBehind.length) sBody += grp('Behind', 'more than 8 h under their own bar', gBehind.length) + gBehind.map(rowHtml).join('');
+      if (gBehind.length) sBody += grp('Behind', 'more than a month of their own hours missing', gBehind.length) + gBehind.map(rowHtml).join('');
       if (gOk.length) sBody += grp('On target', 'nothing to do', gOk.length) + gOk.map(rowHtml).join('');
       if (gNot.length + unShown.length) sBody += grp('Not measured', 'on leave all window, or no hours can arrive for them', gNot.length + unShown.length)
         + gNot.map(rowHtml).join('')
@@ -1789,7 +1789,7 @@
       shown.forEach(r => {
         body += `<tr><td class="who"><div class="who-name" style="cursor:default">${esc(r.person.name)}${personTags(r)}</div><div class="who-meta">${esc(r.person.title || '')}</div></td>`;
         ms.forEach(ym => body += cellFor(r.byMonth[ym]));
-        body += `<td class="pk ${r.behindHrs > 8 ? 'over' : ''}">${r.behindHrs > 1 ? fmtH(r.behindHrs) + 'h' : '—'}</td>`;
+        body += `<td class="pk ${S.isBehind(r) ? 'over' : ''}">${r.behindHrs > 1 ? fmtH(r.behindHrs) + 'h' : '—'}</td>`;
         body += `<td class="pk ${r.compliance < 0.5 ? 'over' : ''}">${Math.round(r.compliance * 100)}%</td></tr>`;
       });
       const arrow = (key) => sort.key === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : '';
@@ -1802,7 +1802,7 @@
     $('#p-compliance').innerHTML = topBar + `
       <div class="kpi-strip">
         <div class="kpi-card ${totMissing > 40 ? 'warn' : 'accent'}"><div class="k-num">${fmtH(totMissing)} h</div><div class="k-lbl">Hours missing · this window · vs each person's own bar</div></div>
-        <div class="kpi-card ${behindRows.length ? 'warn' : ''}"><div class="k-num">${behindRows.length}<span style="font-size:14px;font-weight:400;color:var(--sav-steel)"> of ${rows.length}</span></div><div class="k-lbl">People behind (&gt;8 h under their bar)</div></div>
+        <div class="kpi-card ${behindRows.length ? 'warn' : ''}"><div class="k-num">${behindRows.length}<span style="font-size:14px;font-weight:400;color:var(--sav-steel)"> of ${rows.length}</span></div><div class="k-lbl">People behind (&gt;1 month of their own hours missing)</div></div>
         <div class="kpi-card ${nowPct != null && nowPct < 80 ? 'warn' : ''}"><div class="k-num">${nowPct != null ? nowPct + '%' : '—'}</div><div class="k-lbl">${expect.early ? esc(dueLbl) : 'Logged for ' + esc(dueLbl)}</div></div>
         <div class="kpi-card"><div class="k-num">${teamLag != null ? teamLag.toFixed(1) + ' d' : '—'}</div><div class="k-lbl">Avg days to log an entry${teamLag == null ? ' · pull lateness in Data Sources' : ''}</div></div>
       </div>
@@ -1836,7 +1836,25 @@
      person who is behind, to the address Clockify holds for them. Every
      message is previewed exactly as it will land; nothing goes until Send is
      pressed, and then it goes through the same outbox as every other notice. */
-  const MAIL = { tab: 'digest', to: '', cc: '', subject: '', attach: true, picked: {}, emails: {}, preview: null, from: '', until: '', snap: null };
+  const MAIL = { tab: 'digest', to: '', cc: '', subject: '', attach: true, picked: {}, emails: {}, preview: null, from: '', until: '', snap: null, edits: {} };
+  /* edits: hand changes to a generated email, keyed 'digest' or a person id →
+     { subject, html }. The preview is the editor: whatever it shows is what
+     goes. A range change throws edits away (the numbers underneath moved). */
+  const htmlToText = (h) => String(h || '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<\/(p|div|tr|h\d|li)>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\n{3,}/g, '\n\n').trim();
+  function mailFor(key, generated) {
+    const e = MAIL.edits[key];
+    if (!e) return { subject: generated.subject, html: generated.html, text: generated.text, edited: false };
+    const html = e.html != null ? e.html : generated.html;
+    return { subject: e.subject || generated.subject, html, text: htmlToText(html), edited: true };
+  }
+  function wireEditor(key, generated) {
+    const ed = $('#mm-editor'); if (!ed) return;
+    ed.oninput = () => { MAIL.edits[key] = Object.assign({}, MAIL.edits[key], { html: ed.innerHTML }); const r = $('#mm-reset'); if (r) r.style.display = ''; const l = $('#mm-edited'); if (l) l.textContent = 'edited'; };
+    const r = $('#mm-reset'); if (r) r.onclick = (e) => { e.preventDefault(); delete MAIL.edits[key]; if (key !== 'digest') MAIL.subject = ''; renderMailModal(); };
+    const sub = $('#mm-subject'); if (sub) sub.oninput = (e) => { MAIL.edits[key] = Object.assign({}, MAIL.edits[key], { subject: e.target.value }); if (key === 'digest') MAIL.subject = e.target.value; };
+  }
+  const editorHtml = (lbl, m) => `<div class="mm-preview-lbl">${lbl} · <span id="mm-edited">${m.edited ? 'edited' : 'exactly what lands in the inbox'}</span> · click into the email to change the wording <a href="#" id="mm-reset" style="${m.edited ? '' : 'display:none'}">Reset to generated</a></div>
+        <div class="mm-preview" id="mm-editor" contenteditable="true" spellcheck="true">${m.html}</div>`;
   /** Months the email can cover: everything with hours, up to the current month. */
   function mailMonthChoices() {
     const db = S.readDb(); const now = S.currentYM();
@@ -1877,7 +1895,7 @@
   }
   function closeMailModal() { $('#mail-modal').classList.remove('open'); }
   function mailCtx() { const s = mailSnap(); return { nowYm: s.nowYm, expect: s.expect, dueLbl: s.dueLbl, teamLag: s.teamLag, lagOf: s.lagOf, reasonFor: s.reasonFor, lastEntry: (r) => S.lastTimeEntered(r, s.ms), toolUrl: location.origin + location.pathname, pulledAt: s.pulledAt ? new Date(s.pulledAt).toLocaleDateString() : null }; }
-  function behindRows() { const s = mailSnap(); return s.rows.filter(r => r.totCap > 0 && r.behindHrs > 8); }
+  function behindRows() { const s = mailSnap(); return s.rows.filter(S.isBehind); }
   function renderMailModal() {
     const s = mailSnap(); if (!s) return;
     const body = $('#mm-body'), note = $('#mm-note'), send = $('#mm-send');
@@ -1889,20 +1907,20 @@
     const opt = (sel) => choices.map(m => `<option value="${m}" ${m === sel ? 'selected' : ''}>${esc(S.ymLabel(m))}</option>`).join('');
     const rangeRow = `<div class="mm-row"><label>Months</label><div class="mm-range"><select id="mm-from">${opt(MAIL.from)}</select><span>to</span><select id="mm-until">${opt(MAIL.until)}</select><span class="note-txt">${s.ms.length} month${s.ms.length === 1 ? '' : 's'} · the email covers only this range</span></div></div>`;
     if (MAIL.tab === 'digest') {
-      const mail = S.clockifyStatusEmail(s.comp, mailCtx());
-      if (!MAIL.subject) MAIL.subject = mail.subject;
-      $('#mm-title').textContent = 'Email Clockify status · ' + mail.counts.people + ' people';
+      const gen = S.clockifyStatusEmail(s.comp, mailCtx());
+      const mail = mailFor('digest', gen);
+      MAIL.subject = mail.subject;
+      $('#mm-title').textContent = 'Email Clockify status · ' + gen.counts.people + ' people';
       body.innerHTML = rangeRow + `
         <div class="mm-row"><label>To</label><input type="text" id="mm-to" value="${esc(MAIL.to)}" placeholder="addresses separated by ;"></div>
         <div class="mm-row"><label>Cc</label><input type="text" id="mm-cc" value="${esc(MAIL.cc)}"></div>
-        <div class="mm-row"><label>Subject</label><input type="text" id="mm-subject" value="${esc(MAIL.subject)}"></div>
+        <div class="mm-row"><label>Subject</label><input type="text" id="mm-subject" value="${esc(mail.subject)}"></div>
         <label class="mm-check"><input type="checkbox" id="mm-attach" ${MAIL.attach ? 'checked' : ''}> Attach the Clockify Reporting workbook (the same Excel as the export button)</label>
-        <div class="mm-preview-lbl">Preview · exactly what lands in the inbox</div>
-        <div class="mm-preview">${mail.html}</div>`;
+        ${editorHtml('Preview', mail)}`;
       $('#mm-to').oninput = (e) => { MAIL.to = e.target.value; };
       $('#mm-cc').oninput = (e) => { MAIL.cc = e.target.value; };
-      $('#mm-subject').oninput = (e) => { MAIL.subject = e.target.value; };
       $('#mm-attach').onchange = (e) => { MAIL.attach = e.target.checked; };
+      wireEditor('digest', gen);
       send.textContent = 'Send status email'; send.disabled = !authed;
       note.textContent = authed ? 'Goes through the notifications outbox, from PPMRevenueSystem@savills.us.' : 'Sign in to Box to send.';
       wireMailRange();
@@ -1911,20 +1929,28 @@
       behind.forEach(r => { if (!(r.person.id in MAIL.emails)) MAIL.emails[r.person.id] = emailForPerson(r.person); if (!(r.person.id in MAIL.picked)) MAIL.picked[r.person.id] = !!MAIL.emails[r.person.id]; });
       if (!MAIL.preview || !behind.some(r => r.person.id === MAIL.preview)) MAIL.preview = behind.length ? behind[0].person.id : null;
       const pv = behind.find(r => r.person.id === MAIL.preview);
-      const mail = pv ? S.clockifyNudgeEmail(pv, mailCtx()) : null;
+      const gen = pv ? S.clockifyNudgeEmail(pv, mailCtx()) : null;
+      const mail = pv ? mailFor(pv.person.id, gen) : null;
       const n = behind.filter(r => MAIL.picked[r.person.id] && MAIL.emails[r.person.id]).length;
+      const addressable = behind.filter(r => MAIL.emails[r.person.id]).length;
+      const editedN = behind.filter(r => MAIL.edits[r.person.id]).length;
       $('#mm-title').textContent = 'Nudge ' + behind.length + ' ' + (behind.length === 1 ? 'person' : 'people') + ' who are behind';
       body.innerHTML = rangeRow + (behind.length ? `
-        <div class="note-txt">One short email each, to the address Clockify holds for them. Untick anyone you would rather speak to. Click a row to preview their email.${(state.clockifyUsers || []).length ? '' : ' Clockify addresses are loading…'}</div>
+        <div class="note-txt">One short email each, to the address Clockify holds for them. Untick anyone you would rather speak to. Click a row to preview their email; click into the preview to reword it for that person only.${(state.clockifyUsers || []).length ? '' : ' Clockify addresses are loading…'}</div>
+        <div class="mm-pickbar"><span><b>${n}</b> of ${addressable} with an address selected${editedN ? ` · ${editedN} reworded` : ''}</span><a href="#" id="mm-all">Select all</a><a href="#" id="mm-none">Deselect all</a></div>
         <div class="mm-people"><table><tbody>${behind.map(r => `<tr class="${r.person.id === MAIL.preview ? 'sel' : ''}" data-pid="${esc(r.person.id)}">
           <td style="width:28px"><input type="checkbox" data-pick="${esc(r.person.id)}" ${MAIL.picked[r.person.id] ? 'checked' : ''} ${MAIL.emails[r.person.id] ? '' : 'disabled'}></td>
-          <td><b>${esc(r.person.name)}</b><div class="vmini">${esc(r.person.title || '')}</div></td>
-          <td class="num" style="color:#8f2418;font-weight:800;white-space:nowrap">${fmtH(r.behindHrs)} h</td>
+          <td><b>${esc(r.person.name)}</b>${MAIL.edits[r.person.id] ? ' <span class="nh-tag" title="You changed this person\'s email">reworded</span>' : ''}<div class="vmini">${esc(r.person.title || '')}</div></td>
+          <td class="num" style="color:#8f2418;font-weight:800;white-space:nowrap">${fmtH(r.behindHrs)} h<div class="vmini" style="font-weight:400">≈ ${(Math.round(S.behindMonths(r) * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 })} mo</div></td>
           <td style="width:40%"><input type="text" data-email="${esc(r.person.id)}" value="${esc(MAIL.emails[r.person.id] || '')}" placeholder="no Clockify email — type one">${MAIL.emails[r.person.id] ? '' : '<div class="miss">No address on the Clockify user list</div>'}</td>
         </tr>`).join('')}</tbody></table></div>
         <div class="mm-row"><label>Cc</label><input type="text" id="mm-cc" value="${esc(MAIL.cc)}"></div>
-        <div class="mm-preview-lbl">Preview · ${pv ? esc(pv.person.name) : ''}</div>
-        <div class="mm-preview">${mail ? mail.html : ''}</div>` : '<div class="empty" style="border:0">Nobody is more than 8 hours behind their own bar in this range. Nothing to nudge.</div>');
+        ${pv ? `<div class="mm-row"><label>Subject</label><input type="text" id="mm-subject" value="${esc(mail.subject)}"></div>` : ''}
+        ${mail ? editorHtml('Preview · ' + esc(pv.person.name), mail) : ''}` : '<div class="empty" style="border:0">Nobody is more than a month of their own hours behind in this range. Nothing to nudge.</div>');
+      const setAll = (v) => { behind.forEach(r => { if (MAIL.emails[r.person.id]) MAIL.picked[r.person.id] = v; }); renderMailModal(); };
+      const all = $('#mm-all'); if (all) all.onclick = (e) => { e.preventDefault(); setAll(true); };
+      const none = $('#mm-none'); if (none) none.onclick = (e) => { e.preventDefault(); setAll(false); };
+      if (pv) wireEditor(pv.person.id, gen);
       $$('#mm-body [data-pick]').forEach(cb => cb.onchange = (e) => { MAIL.picked[cb.dataset.pick] = e.target.checked; renderMailModal(); });
       $$('#mm-body [data-email]').forEach(inp => { inp.oninput = (e) => { MAIL.emails[inp.dataset.email] = e.target.value.trim().toLowerCase(); if (!MAIL.emails[inp.dataset.email]) MAIL.picked[inp.dataset.email] = false; else if (!(inp.dataset.email in MAIL.picked)) MAIL.picked[inp.dataset.email] = true; }; inp.onchange = () => renderMailModal(); inp.onclick = (e) => e.stopPropagation(); });
       $$('#mm-body tr[data-pid]').forEach(tr => tr.onclick = (e) => { if (e.target.closest('input')) return; MAIL.preview = tr.dataset.pid; renderMailModal(); });
@@ -1936,7 +1962,7 @@
   }
   function wireMailRange() {
     const f = $('#mm-from'), u = $('#mm-until'); if (!f || !u) return;
-    const apply = () => { MAIL.from = f.value; MAIL.until = u.value; if (MAIL.from > MAIL.until) { const t = MAIL.from; MAIL.from = MAIL.until; MAIL.until = t; } MAIL.subject = ''; MAIL.picked = {}; MAIL.preview = null; renderMailModal(); };
+    const apply = () => { MAIL.from = f.value; MAIL.until = u.value; if (MAIL.from > MAIL.until) { const t = MAIL.from; MAIL.from = MAIL.until; MAIL.until = t; } MAIL.subject = ''; MAIL.picked = {}; MAIL.preview = null; MAIL.edits = {}; renderMailModal(); };
     f.onchange = apply; u.onchange = apply;
   }
   const splitAddrs = (v) => String(v || '').split(/[;,\s]+/).map(x => x.trim().toLowerCase()).filter(x => /@/.test(x));
@@ -1946,7 +1972,8 @@
     try {
       if (MAIL.tab === 'digest') {
         const to = splitAddrs(MAIL.to); if (!to.length) { toast('Add at least one address in To.'); send.disabled = false; return; }
-        const mail = S.clockifyStatusEmail(s.comp, mailCtx());
+        const gen = S.clockifyStatusEmail(s.comp, mailCtx());
+        const mail = mailFor('digest', gen);
         const attachments = [];
         if (MAIL.attach) {
           note.textContent = 'Building the workbook…';
@@ -1955,15 +1982,15 @@
           const bytes = new Uint8Array(buf); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
           attachments.push({ Name: wb.__fileName || 'Clockify-Reporting.xlsx', ContentBytes: btoa(bin), ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         }
-        B.notify({ event: 'clockify-status', to, cc: splitAddrs(MAIL.cc), subject: MAIL.subject || mail.subject, html: mail.html, text: mail.text, attachments, data: mail.counts });
-        try { STORE.logSystem && STORE.logSystem('clockify-email', { kind: 'status', to: to.length, people: mail.counts.people, behind: mail.counts.behind, attached: attachments.length }); } catch (e) {}
+        B.notify({ event: 'clockify-status', to, cc: splitAddrs(MAIL.cc), subject: mail.subject, html: mail.html, text: mail.text, attachments, data: gen.counts });
+        try { STORE.logSystem && STORE.logSystem('clockify-email', { kind: 'status', to: to.length, people: gen.counts.people, behind: gen.counts.behind, cost: gen.counts.cost, attached: attachments.length, edited: mail.edited }); } catch (e) {}
         if (B.flushNotify) B.flushNotify().catch(() => {});
         toast('Status email queued to ' + to.length + ' address' + (to.length === 1 ? '' : 'es') + (attachments.length ? ' with the workbook attached' : '') + '.', 'ok');
       } else {
         const picked = behindRows().filter(r => MAIL.picked[r.person.id] && MAIL.emails[r.person.id]);
         if (!picked.length) { send.disabled = false; return; }
-        picked.forEach(r => { const m = S.clockifyNudgeEmail(r, mailCtx()); B.notify({ event: 'clockify-nudge', to: [MAIL.emails[r.person.id]], cc: splitAddrs(MAIL.cc), subject: m.subject, html: m.html, text: m.text, data: { personId: r.person.id, behindHrs: Math.round(r.behindHrs * 10) / 10 } }); });
-        try { STORE.logSystem && STORE.logSystem('clockify-email', { kind: 'nudge', people: picked.length, names: picked.map(r => r.person.name).join(', ') }); } catch (e) {}
+        picked.forEach(r => { const m = mailFor(r.person.id, S.clockifyNudgeEmail(r, mailCtx())); B.notify({ event: 'clockify-nudge', to: [MAIL.emails[r.person.id]], cc: splitAddrs(MAIL.cc), subject: m.subject, html: m.html, text: m.text, data: { personId: r.person.id, behindHrs: Math.round(r.behindHrs * 10) / 10, edited: m.edited } }); });
+        try { STORE.logSystem && STORE.logSystem('clockify-email', { kind: 'nudge', people: picked.length, names: picked.map(r => r.person.name).join(', '), edited: picked.filter(r => MAIL.edits[r.person.id]).length }); } catch (e) {}
         if (B.flushNotify) B.flushNotify().catch(() => {});
         toast(picked.length + ' nudge' + (picked.length === 1 ? '' : 's') + ' queued.', 'ok');
       }
@@ -2260,7 +2287,7 @@
       let gapDot = 'warn', gapTxt = 'needs actuals', gapAge = 'load Clockify hours first';
       if (S.hasActuals()) {
         const comp = S.complianceRows(months(), { clockifyUsers: state.clockifyUsers || [] });
-        const behind = comp.rows.filter(r => r.behindHrs > 8).length;
+        const behind = comp.rows.filter(S.isBehind).length;
         const miss = comp.rows.reduce((s, r) => s + r.behindHrs, 0);
         gapDot = behind ? 'warn' : 'ok';
         gapTxt = behind ? behind + (behind === 1 ? ' person behind' : ' people behind') : 'everyone current';

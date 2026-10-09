@@ -709,7 +709,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
     const behind = ws.getCell(`${colLetter(base)}${r}`);
     behind.value = row.behindHrs > 1 ? round1(row.behindHrs) : null;
     behind.numFmt = '#,##0.0'; behind.alignment = { horizontal: 'right' };
-    if (row.behindHrs > 8) behind.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
+    if (S.isBehind(row)) behind.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
     const tgt = ws.getCell(`${colLetter(base + 1)}${r}`);
     tgt.value = row.compliance; tgt.numFmt = '0%'; tgt.alignment = { horizontal: 'right' };
     if (row.compliance < 0.5) tgt.font = { name: 'Calibri', bold: true, color: { argb: 'FFB3413B' } };
