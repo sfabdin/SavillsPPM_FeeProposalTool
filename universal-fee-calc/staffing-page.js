@@ -1629,6 +1629,47 @@
      survives one click away under "Month detail". Same engine
      (staff.js complianceRows) drives this tab AND the Excel export, so the
      two can never disagree. */
+  /** Lateness rows (from the API pull) folded per person over a month window. */
+  function latenessByPerson(ms, lateRowsAll) {
+    const lateRows = (lateRowsAll || S.getLateness().rows).filter(r => ms.includes(r.ym));
+    const latePP = {};
+    lateRows.forEach(r => {
+      const person = S.listPeople().find(p => S.namesMatch(p.name, r.user));
+      if (state.group && !(person && S.inView(person))) return;   // team lag is the viewed group's lag
+      const pid = person ? person.id : 'x:' + r.user;
+      const a = latePP[pid] || (latePP[pid] = { name: person ? person.name : r.user, entries: 0, lagW: 0, maxLag: 0, w3: 0, w7: 0 });
+      a.entries += r.entries; a.lagW += r.avgLag * r.entries; a.maxLag = Math.max(a.maxLag, r.maxLag);
+      a.w3 += r.pctWithin3 * r.entries / 100; a.w7 += r.pctWithin7 * r.entries / 100;
+    });
+    const lagOf = (pid) => { const a = latePP[pid]; return a && a.entries ? a.lagW / a.entries : null; };
+    const teamLag = (() => { const as = Object.values(latePP); const e = as.reduce((s, a) => s + a.entries, 0); return e ? as.reduce((s, a) => s + a.lagW, 0) / e : null; })();
+    return { latePP, lagOf, teamLag };
+  }
+  /** One sentence on why a person is on the chase list — the shortest path
+      from the tab (or the email) to fixed data. Empty months first, OLDEST
+      first: a whole September with nothing in it matters more than an October
+      six working days old, so the current month is named last, as "so far". */
+  function chaseReasonFor(r, ctx) {
+    const { ms, nowYm, expect, lagOf } = ctx;
+    const lastTime = () => S.lastTimeEntered(r, ms).replace(/^./, c => c.toUpperCase());
+    const lag = lagOf(r.person.id);
+    const expMs = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early && !r.byMonth[m].joinMonth);
+    const zeroMs = expMs.filter(m => r.byMonth[m].h === 0);
+    const zeroPast = zeroMs.filter(m => m !== nowYm), zeroNow = zeroMs.includes(nowYm);
+    if (zeroPast.length) {
+      const whole = zeroPast.length === 1 ? 'the whole month' : 'whole months';
+      return `Nothing logged for ${zeroPast.map(m => S.ymLabel(m)).join(', ')} — ${whole}, ${fmtH(zeroPast.reduce((s, m) => s + r.byMonth[m].capM, 0))} h, missing outright` +
+        (zeroNow ? `, and nothing yet for ${S.ymLabel(nowYm)}` : '') + '. ' + lastTime() + '.';
+    }
+    if (zeroNow) return `Nothing logged yet for ${S.ymLabel(nowYm)} — working day ${expect.elapsed} of ${expect.total}, ${fmtH(r.byMonth[nowYm].capM)} h expected by now. ` + lastTime() + '.';
+    const under = expMs.filter(m => r.byMonth[m].pct < 0.8).length;
+    if (r.compliance < 0.5 && r.expectedMonths >= 3) return `Under target ${under} of ${expMs.length} months — their projects read as under-served in Compare even if the work happened.`;
+    const recent = expMs.slice(-3);
+    if (recent.length === 3 && recent.every(m => r.byMonth[m].pct < 0.8)) return `Slipping — 3 months in a row under target.`;
+    if (lag != null && lag > 7) return `Logs late rather than not at all — ${lag.toFixed(1)}-day average lag.`;
+    return `${fmtH(r.behindHrs)} h short of their own bar across the window.`;
+  }
+
   function renderCompliance() {
     const late = S.getLateness();
     const topBar = `<div class="toolbar">
@@ -1646,55 +1687,15 @@
       : `${S.ymLabel(nowYm)} to date · working day ${expect.elapsed} of ${expect.total}, less a ${expect.grace}-day grace`;
     if (!ms.length) { $('#p-compliance').innerHTML = topBar + '<div class="empty">Window is entirely in the future — step back to see logged months.</div>'; wireLateness(); wireGoto('#p-compliance'); return; }
 
-    // ---- lateness join: rows from the API, per person over the window ----
-    const lateRows = late.rows.filter(r => ms.includes(r.ym));
-    const latePP = {};
-    /* Latest day each person logged time FOR (the entry's own date), from every lateness row we
-       hold (not just the window) — the most useful fact about someone who
-       has gone quiet. Falls back to the last month with hours when the
-       lateness pull has not been run. */
-    const lastDayPP = S.lastWorkedDays ? S.lastWorkedDays() : {};
-    const fmtDay = (iso) => { const d = new Date(iso + 'T00:00:00Z'); return isNaN(d) ? iso : (d.getUTCMonth() + 1) + '/' + d.getUTCDate(); };   // 8/17 — no year
-    const lastTimeFor = (r) => S.lastTimeEntered(r, ms);
-    lateRows.forEach(r => {
-      const person = S.listPeople().find(p => S.namesMatch(p.name, r.user));
-      if (state.group && !(person && S.inView(person))) return;   // team lag is the viewed group's lag
-      const pid = person ? person.id : 'x:' + r.user;
-      const a = latePP[pid] || (latePP[pid] = { name: person ? person.name : r.user, entries: 0, lagW: 0, maxLag: 0, w3: 0, w7: 0 });
-      a.entries += r.entries; a.lagW += r.avgLag * r.entries; a.maxLag = Math.max(a.maxLag, r.maxLag);
-      a.w3 += r.pctWithin3 * r.entries / 100; a.w7 += r.pctWithin7 * r.entries / 100;
-    });
-    const lagOf = (pid) => { const a = latePP[pid]; return a && a.entries ? a.lagW / a.entries : null; };
-    const teamLag = (() => { const as = Object.values(latePP); const e = as.reduce((s, a) => s + a.entries, 0); return e ? as.reduce((s, a) => s + a.lagW, 0) / e : null; })();
-
-    // ---- headline numbers ----
+    // ---- lateness join + chase reasons: shared with the email composer ----
+    const { latePP, lagOf, teamLag } = latenessByPerson(ms, late.rows);
     const totMissing = rows.reduce((s, r) => s + r.behindHrs, 0);
     const behindRows = rows.filter(r => r.behindHrs > 8);   // engine sorts behind-desc already
     let nowH = 0, nowEff = 0;
     // capM is ALREADY pro-rated for the current month by the engine — don't re-apply.
     rows.forEach(r => { const c = r.byMonth[nowYm]; if (c && c !== 'leave' && !c.early && !c.joinMonth) { nowH += c.h; nowEff += c.capM; } });
     const nowPct = nowEff ? Math.round(nowH / nowEff * 100) : null;
-
-    // ---- chase list: the shortest path from this tab to fixed data ----
-    const reasonFor = (r) => {
-      const lag = lagOf(r.person.id);
-      // Months that are actually due — a current month still inside its grace is not one of them.
-      const expMs = ms.filter(m => r.byMonth[m] && r.byMonth[m] !== 'leave' && !r.byMonth[m].early && !r.byMonth[m].joinMonth);
-      const lastDue = expMs[expMs.length - 1];
-      if (lastDue && r.byMonth[lastDue].h === 0) {
-        return (lastDue === nowYm
-          ? `Nothing logged yet for ${S.ymLabel(nowYm)} — working day ${expect.elapsed} of ${expect.total}, ${fmtH(r.byMonth[lastDue].capM)} h expected by now.`
-          : `Nothing logged for ${S.ymLabel(lastDue)} — the whole month, ${fmtH(r.byMonth[lastDue].capM)} h, is missing.`) + ' ' + lastTimeFor(r).replace(/^./, c => c.toUpperCase()) + '.';
-      }
-      const zeroMs = expMs.filter(m => r.byMonth[m].h === 0);
-      if (zeroMs.length) return `Nothing logged for ${zeroMs.map(m => S.ymLabel(m)).join(', ')} — ${fmtH(zeroMs.reduce((s, m) => s + r.byMonth[m].capM, 0))} h missing outright.`;
-      const under = expMs.filter(m => r.byMonth[m].pct < 0.8).length;
-      if (r.compliance < 0.5 && r.expectedMonths >= 3) return `Under target ${under} of ${expMs.length} months — their projects read as under-served in Compare even if the work happened.`;
-      const recent = expMs.slice(-3);
-      if (recent.length === 3 && recent.every(m => r.byMonth[m].pct < 0.8)) return `Slipping — 3 months in a row under target.`;
-      if (lag != null && lag > 7) return `Logs late rather than not at all — ${lag.toFixed(1)}-day average lag.`;
-      return `${fmtH(r.behindHrs)} h short of their own bar across the window.`;
-    };
+    const reasonFor = (r) => chaseReasonFor(r, { ms, nowYm, expect, lagOf });
     const chaseTop = behindRows.slice(0, 4);
     const chaseSum = chaseTop.reduce((s, r) => s + r.behindHrs, 0);
     const chaseHtml = chaseTop.length ? `
@@ -1825,8 +1826,6 @@
     });
     wireGoto('#p-compliance');
     wireLateness();
-    // What the email composer reads — the same rows, reasons and lags this tab just drew.
-    state.compSnap = { comp, ms, rows, untracked, nowYm, dueLbl, teamLag, expect, lagOf, reasonFor, pulledAt: (S.readDb().meta || {}).clockifyImportedAt || null };
     const em = $('#email-clockify'); if (em) em.onclick = () => openMailModal();
   }
 
@@ -1837,15 +1836,38 @@
      person who is behind, to the address Clockify holds for them. Every
      message is previewed exactly as it will land; nothing goes until Send is
      pressed, and then it goes through the same outbox as every other notice. */
-  const MAIL = { tab: 'digest', to: '', cc: '', subject: '', attach: true, picked: {}, emails: {}, preview: null };
-  function mailSnap() { return state.compSnap; }
+  const MAIL = { tab: 'digest', to: '', cc: '', subject: '', attach: true, picked: {}, emails: {}, preview: null, from: '', until: '', snap: null };
+  /** Months the email can cover: everything with hours, up to the current month. */
+  function mailMonthChoices() {
+    const db = S.readDb(); const now = S.currentYM();
+    const set = new Set((db.meta && db.meta.clockifyMonths) || []);
+    Object.keys(db.actuals || {}).forEach(k => set.add(k.split('|')[2]));
+    return [...set].filter(m => /^\d{4}-\d{2}$/.test(m) && m <= now).sort();
+  }
+  /** The email's own numbers for the chosen range — not the tab's window. */
+  function mailRange() {
+    const all = mailMonthChoices(); if (!all.length) return [];
+    const from = MAIL.from && all.includes(MAIL.from) ? MAIL.from : all[Math.max(0, all.length - 3)];
+    const until = MAIL.until && all.includes(MAIL.until) ? MAIL.until : all[all.length - 1];
+    MAIL.from = from <= until ? from : until; MAIL.until = until;
+    return all.filter(m => m >= MAIL.from && m <= MAIL.until);
+  }
+  function mailSnap() {
+    const ms = mailRange(); if (!ms.length) return null;
+    const comp = S.complianceRows(ms, { clockifyUsers: state.clockifyUsers || [] });
+    const nowYm = comp.nowYm, expect = comp.expect || { early: false, elapsed: 0, total: 0, grace: 5 };
+    const dueLbl = expect.early ? `${S.ymLabel(nowYm)} not yet due · counts from working day ${expect.grace + 1}` : `${S.ymLabel(nowYm)} to date · working day ${expect.elapsed} of ${expect.total}, less a ${expect.grace}-day grace`;
+    const { lagOf, teamLag } = latenessByPerson(comp.months);
+    const reasonFor = (r) => chaseReasonFor(r, { ms: comp.months, nowYm, expect, lagOf });
+    return { comp, ms: comp.months, rows: comp.rows, untracked: comp.untracked, nowYm, dueLbl, teamLag, expect, lagOf, reasonFor, pulledAt: (S.readDb().meta || {}).clockifyImportedAt || null };
+  }
   function emailForPerson(p) {
     const users = state.clockifyUsers || [];
     const hit = users.find(u => S.namesMatch(p.name, u.name) && u.email) || users.find(u => S.namesMatch(p.name, u.name));
     return (hit && hit.email) ? String(hit.email).toLowerCase() : '';
   }
   async function openMailModal() {
-    if (!mailSnap()) { toast('Open the Clockify Reporting tab first.'); return; }
+    if (!mailSnap()) { toast('No Clockify hours loaded yet — pull them in Data Sources first.'); return; }
     const ov = $('#mail-modal'); ov.classList.add('open');
     MAIL.tab = 'digest';
     MAIL.to = MAIL.to || (STORE.adminEmails ? STORE.adminEmails().join('; ') : '');
@@ -1863,11 +1885,14 @@
     const behind = behindRows();
     $('#mm-nudge-n').textContent = behind.length;
     const authed = !!(window.UFC_Box && window.UFC_Box.enabled && window.UFC_Box.isAuthed && window.UFC_Box.isAuthed());
+    const choices = mailMonthChoices();
+    const opt = (sel) => choices.map(m => `<option value="${m}" ${m === sel ? 'selected' : ''}>${esc(S.ymLabel(m))}</option>`).join('');
+    const rangeRow = `<div class="mm-row"><label>Months</label><div class="mm-range"><select id="mm-from">${opt(MAIL.from)}</select><span>to</span><select id="mm-until">${opt(MAIL.until)}</select><span class="note-txt">${s.ms.length} month${s.ms.length === 1 ? '' : 's'} · the email covers only this range</span></div></div>`;
     if (MAIL.tab === 'digest') {
       const mail = S.clockifyStatusEmail(s.comp, mailCtx());
       if (!MAIL.subject) MAIL.subject = mail.subject;
       $('#mm-title').textContent = 'Email Clockify status · ' + mail.counts.people + ' people';
-      body.innerHTML = `
+      body.innerHTML = rangeRow + `
         <div class="mm-row"><label>To</label><input type="text" id="mm-to" value="${esc(MAIL.to)}" placeholder="addresses separated by ;"></div>
         <div class="mm-row"><label>Cc</label><input type="text" id="mm-cc" value="${esc(MAIL.cc)}"></div>
         <div class="mm-row"><label>Subject</label><input type="text" id="mm-subject" value="${esc(MAIL.subject)}"></div>
@@ -1880,6 +1905,7 @@
       $('#mm-attach').onchange = (e) => { MAIL.attach = e.target.checked; };
       send.textContent = 'Send status email'; send.disabled = !authed;
       note.textContent = authed ? 'Goes through the notifications outbox, from PPMRevenueSystem@savills.us.' : 'Sign in to Box to send.';
+      wireMailRange();
     } else {
       // Nudges: who, to which address, and a preview of the highlighted one.
       behind.forEach(r => { if (!(r.person.id in MAIL.emails)) MAIL.emails[r.person.id] = emailForPerson(r.person); if (!(r.person.id in MAIL.picked)) MAIL.picked[r.person.id] = !!MAIL.emails[r.person.id]; });
@@ -1888,7 +1914,7 @@
       const mail = pv ? S.clockifyNudgeEmail(pv, mailCtx()) : null;
       const n = behind.filter(r => MAIL.picked[r.person.id] && MAIL.emails[r.person.id]).length;
       $('#mm-title').textContent = 'Nudge ' + behind.length + ' ' + (behind.length === 1 ? 'person' : 'people') + ' who are behind';
-      body.innerHTML = behind.length ? `
+      body.innerHTML = rangeRow + (behind.length ? `
         <div class="note-txt">One short email each, to the address Clockify holds for them. Untick anyone you would rather speak to. Click a row to preview their email.${(state.clockifyUsers || []).length ? '' : ' Clockify addresses are loading…'}</div>
         <div class="mm-people"><table><tbody>${behind.map(r => `<tr class="${r.person.id === MAIL.preview ? 'sel' : ''}" data-pid="${esc(r.person.id)}">
           <td style="width:28px"><input type="checkbox" data-pick="${esc(r.person.id)}" ${MAIL.picked[r.person.id] ? 'checked' : ''} ${MAIL.emails[r.person.id] ? '' : 'disabled'}></td>
@@ -1898,14 +1924,20 @@
         </tr>`).join('')}</tbody></table></div>
         <div class="mm-row"><label>Cc</label><input type="text" id="mm-cc" value="${esc(MAIL.cc)}"></div>
         <div class="mm-preview-lbl">Preview · ${pv ? esc(pv.person.name) : ''}</div>
-        <div class="mm-preview">${mail ? mail.html : ''}</div>` : '<div class="empty" style="border:0">Nobody is more than 8 hours behind their own bar. Nothing to nudge.</div>';
+        <div class="mm-preview">${mail ? mail.html : ''}</div>` : '<div class="empty" style="border:0">Nobody is more than 8 hours behind their own bar in this range. Nothing to nudge.</div>');
       $$('#mm-body [data-pick]').forEach(cb => cb.onchange = (e) => { MAIL.picked[cb.dataset.pick] = e.target.checked; renderMailModal(); });
       $$('#mm-body [data-email]').forEach(inp => { inp.oninput = (e) => { MAIL.emails[inp.dataset.email] = e.target.value.trim().toLowerCase(); if (!MAIL.emails[inp.dataset.email]) MAIL.picked[inp.dataset.email] = false; else if (!(inp.dataset.email in MAIL.picked)) MAIL.picked[inp.dataset.email] = true; }; inp.onchange = () => renderMailModal(); inp.onclick = (e) => e.stopPropagation(); });
       $$('#mm-body tr[data-pid]').forEach(tr => tr.onclick = (e) => { if (e.target.closest('input')) return; MAIL.preview = tr.dataset.pid; renderMailModal(); });
       const cc = $('#mm-cc'); if (cc) cc.oninput = (e) => { MAIL.cc = e.target.value; };
       send.textContent = 'Send ' + n + ' nudge' + (n === 1 ? '' : 's'); send.disabled = !authed || !n;
       note.textContent = authed ? (n ? 'Each person gets only their own email.' : 'Tick at least one person with an address.') : 'Sign in to Box to send.';
+      wireMailRange();
     }
+  }
+  function wireMailRange() {
+    const f = $('#mm-from'), u = $('#mm-until'); if (!f || !u) return;
+    const apply = () => { MAIL.from = f.value; MAIL.until = u.value; if (MAIL.from > MAIL.until) { const t = MAIL.from; MAIL.from = MAIL.until; MAIL.until = t; } MAIL.subject = ''; MAIL.picked = {}; MAIL.preview = null; renderMailModal(); };
+    f.onchange = apply; u.onchange = apply;
   }
   const splitAddrs = (v) => String(v || '').split(/[;,\s]+/).map(x => x.trim().toLowerCase()).filter(x => /@/.test(x));
   async function sendMail() {
@@ -1918,7 +1950,7 @@
         const attachments = [];
         if (MAIL.attach) {
           note.textContent = 'Building the workbook…';
-          const wb = await window.UFC_buildTimeEntryWorkbook(months(), { clockifyUsers: state.clockifyUsers || [] });
+          const wb = await window.UFC_buildTimeEntryWorkbook(s.ms, { clockifyUsers: state.clockifyUsers || [] });
           const buf = await wb.xlsx.writeBuffer();
           const bytes = new Uint8Array(buf); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
           attachments.push({ Name: wb.__fileName || 'Clockify-Reporting.xlsx', ContentBytes: btoa(bin), ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
