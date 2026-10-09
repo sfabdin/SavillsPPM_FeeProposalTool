@@ -73,13 +73,14 @@
     const at = C.listedAt();
     if (at && (Date.now() - new Date(at).getTime()) < REFRESH_MS) return;
     try { await Box.syncConfirmed(); paint(); } catch (e) { /* the cache is what it is */ }
-    /* Keep notify-status.json (the daily reminder flow's input) fresh even on
-       a day when nothing happens: a leadership admin's first page load of the
-       day republishes it. Events republish it anyway; this is the floor. */
+    /* Keep notify-status.json and notify-digest.json (the scheduled flows'
+       inputs) fresh even on a day when nothing happens: a leadership admin's
+       page load republishes them, at most hourly per browser. Events
+       republish the status anyway; this is the floor. */
     try {
       if (C.isLeadership() && C.publishStatus) {
         const K = 'ufc_notify_status_published'; const last = Number(localStorage.getItem(K) || 0);
-        if (Date.now() - last > 6 * 3600 * 1000) {
+        if (Date.now() - last > 3600 * 1000) {          // hourly at most, per admin browser
           C.publishStatus();
           try { if (S.publishCompletenessDigest) S.publishCompletenessDigest(); } catch (e) {}
           localStorage.setItem(K, String(Date.now()));
