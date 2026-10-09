@@ -2302,6 +2302,15 @@
     if (S2 && S2.noticeHtml) return S2.noticeHtml(title, paras, cta, footer);
     return '<div><h2>' + escM(title) + '</h2>' + paras.map(p => '<p>' + p + '</p>').join('') + (cta ? '<p><a href="' + escM(cta.href) + '">' + escM(cta.label) + '</a></p>' : '') + '<p>' + escM(footer || '') + '</p></div>';
   }
+  /** The notice shell at table width — the status grid has a column per month. */
+  function mailShellWide(title, paras, cta, footer) {
+    const btn = cta ? '<p style="margin:18px 0"><a href="' + escM(cta.href) + '" style="background:#25273A;color:#fff;padding:10px 16px;text-decoration:none;font-weight:700">' + escM(cta.label) + '</a></p>' : '';
+    return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#25273A;line-height:1.5;max-width:1040px">' +
+      '<p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#79828C;margin:0 0 6px">Savills PPM · Fee tool</p>' +
+      '<h2 style="margin:0 0 12px;font-size:18px">' + escM(title) + '</h2>' +
+      paras.map(p => '<p style="margin:0 0 10px">' + p + '</p>').join('') + btn +
+      '<p style="font-size:12px;color:#79828C;margin-top:20px">' + escM(footer || 'Sent automatically by the fee tool.') + '</p></div>';
+  }
   /** ctx: { lagOf(pid) → days|null, reasonFor(row) → text, nowYm, dueLbl, teamLag, toolUrl } */
   function clockifyStatusEmail(comp, ctx) {
     const c = ctx || {}; const rows = comp.rows || [], untracked = comp.untracked || [], ms = comp.months || [];
@@ -2319,27 +2328,42 @@
       stat(behind.length + '<span style="font-size:13px;font-weight:400;color:#79828C"> of ' + rows.length + '</span>', 'people behind (&gt;8 h)', behind.length > 0) +
       stat(nowPct != null ? nowPct + '%' : '—', escM(c.dueLbl || 'logged this month to date'), nowPct != null && nowPct < 80) +
       stat(c.teamLag != null ? c.teamLag.toFixed(1) + ' d' : '—', 'avg days to log an entry', false) + '</tr></table>';
-    const th = (t, right) => '<th style="text-align:' + (right ? 'right' : 'left') + ';padding:6px 8px 6px 0;border-bottom:1px solid #D9D6CE;color:#79828C;font-weight:600;font-size:12px;white-space:nowrap">' + t + '</th>';
-    const td = (t, right, style) => '<td style="text-align:' + (right ? 'right' : 'left') + ';padding:6px 8px 6px 0;border-bottom:1px solid #EFEDE7;vertical-align:top;' + (style || '') + '">' + t + '</td>';
-    const grp = (label, note, n) => '<tr><td colspan="7" style="padding:12px 0 4px;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#25273A">' + escM(label) + ' · ' + n + ' <span style="font-weight:400;color:#79828C;text-transform:none;letter-spacing:0">— ' + escM(note) + '</span></td></tr>';
+    /* The grid the tab shows: one column per month, each cell that month's %
+       of the person's own bar in the tab's colours, then Behind and Months
+       on target. The chase reason sits under the name on Behind rows. */
+    const nCols = ms.length + 3;
+    const th = (t, right, extra) => '<th style="text-align:' + (right ? 'right' : 'left') + ';padding:6px 6px;border-bottom:1px solid #D9D6CE;color:#79828C;font-weight:600;font-size:11px;white-space:nowrap;' + (extra || '') + '">' + t + '</th>';
+    const cell = (x) => {
+      const base = 'text-align:center;padding:5px 4px;border-bottom:1px solid #EFEDE7;font-size:11.5px;font-weight:700;white-space:nowrap;';
+      if (x === 'leave') return '<td style="' + base + 'background:#efe6f7;color:#6b3fa0" title="On leave">leave</td>';
+      if (!x) return '<td style="' + base + 'color:#C9C5BB">·</td>';
+      if (x.joinMonth) return '<td style="' + base + 'background:#f4f2ef;color:#79828C;font-weight:400">' + (x.h ? fmtHm(x.h) + 'h' : 'joined') + '</td>';
+      if (x.early) return '<td style="' + base + 'background:#f4f2ef;color:#79828C;font-weight:400">' + (x.h ? fmtHm(x.h) + 'h' : 'soon') + '</td>';
+      const p = Math.round(x.pct * 100);
+      const bg = p >= 100 ? '#cfe6e4' : p >= 80 ? '#eef4f4' : p > 0 ? '#fce7c2' : '#CE181E';
+      return '<td style="' + base + 'background:' + bg + ';color:' + (p === 0 ? '#fff' : '#25273A') + '" title="' + fmtHm(x.h) + ' / ' + fmtHm(x.capM) + ' h">' + p + '%</td>';
+    };
+    const grp = (label, note, n) => '<tr><td colspan="' + nCols + '" style="padding:12px 0 4px;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#25273A">' + escM(label) + ' · ' + n + ' <span style="font-weight:400;color:#79828C;text-transform:none;letter-spacing:0">— ' + escM(note) + '</span></td></tr>';
     const row = (r) => {
-      const lag = c.lagOf ? c.lagOf(r.person.id) : null; const note = complianceNote(r, comp);
       const isBehind = r.behindHrs > 8;
-      return '<tr>' + td('<b>' + escM(r.person.name) + '</b><div style="font-size:11px;color:#79828C">' + escM(r.person.title || '') + '</div>') +
-        td(fmtHm(r.totLogged), true) + td(fmtHm(r.totCap), true) +
-        td(r.behindHrs > 1 ? fmtHm(r.behindHrs) : '—', true, isBehind ? 'color:#A6131A;font-weight:800' : '') +
-        td(r.expectedMonths ? r.okMonths + ' / ' + r.expectedMonths : '—', true) + td(lag != null ? lag.toFixed(1) + ' d' : '—', true) +
-        td('<span style="font-size:12px;color:' + ({ bad: '#A6131A', warn: '#8a6d00', ok: '#0E7C7B' }[note.tone] || '#79828C') + '">' + escM(note.text) + '</span>' + (isBehind && c.reasonFor ? '<div style="font-size:11.5px;color:#4a4f5e;margin-top:2px">' + escM(c.reasonFor(r)) + '</div>' : '')) + '</tr>';
+      const nameCell = '<td style="padding:6px 8px 6px 0;border-bottom:1px solid #EFEDE7;vertical-align:top;min-width:150px"><b>' + escM(r.person.name) + '</b><div style="font-size:11px;color:#79828C">' + escM(r.person.title || '') + '</div>' +
+        (isBehind && c.reasonFor ? '<div style="font-size:11px;color:#4a4f5e;margin-top:3px;max-width:260px">' + escM(c.reasonFor(r)) + '</div>' : '') + '</td>';
+      return '<tr>' + nameCell + ms.map(m => cell(r.byMonth[m])).join('') +
+        '<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #EFEDE7;white-space:nowrap;' + (isBehind ? 'color:#A6131A;font-weight:800' : '') + '">' + (r.behindHrs > 1 ? fmtHm(r.behindHrs) + 'h' : '—') + '</td>' +
+        '<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #EFEDE7;white-space:nowrap;' + (r.compliance < 0.5 ? 'color:#A6131A;font-weight:800' : '') + '">' + Math.round((r.compliance || 0) * 100) + '%</td>' +
+        '<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #EFEDE7;white-space:nowrap">' + ((c.lagOf && c.lagOf(r.person.id) != null) ? c.lagOf(r.person.id).toFixed(1) + ' d' : '—') + '</td></tr>';
     };
     let body = '';
     if (behind.length) body += grp('Behind', 'more than 8 h under their own bar', behind.length) + behind.map(row).join('');
     if (ok.length) body += grp('On target', 'nothing to do', ok.length) + ok.map(row).join('');
     if (notMeasured.length + untracked.length) body += grp('Not measured', 'on leave all window, or no hours can arrive for them', notMeasured.length + untracked.length) +
-      notMeasured.map(row).join('') + untracked.map(u => '<tr>' + td('<b>' + escM(u.person.name) + '</b><div style="font-size:11px;color:#79828C">' + escM(u.person.title || '') + '</div>') + '<td colspan="6" style="padding:6px 0;border-bottom:1px solid #EFEDE7;font-size:12px;color:#79828C">' + escM(u.reason) + '</td></tr>').join('');
-    const table = '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:13px;width:100%"><tr>' + th('Person') + th('Logged', true) + th('Their bar', true) + th('Missing', true) + th('Months on target', true) + th('Avg lag', true) + th('Status') + '</tr>' + body + '</table></div>';
+      notMeasured.map(row).join('') + untracked.map(u => '<tr><td style="padding:6px 8px 6px 0;border-bottom:1px solid #EFEDE7"><b>' + escM(u.person.name) + '</b><div style="font-size:11px;color:#79828C">' + escM(u.person.title || '') + '</div></td><td colspan="' + (nCols - 1) + '" style="padding:6px 0;border-bottom:1px solid #EFEDE7;font-size:12px;color:#79828C">' + escM(u.reason) + '</td></tr>').join('');
+    const monthHead = ms.map(m => th(escM(ymLabel(m)) + (m === c.nowYm ? '<div style="font-weight:400;text-transform:none;letter-spacing:0">to date</div>' : ''), false, 'text-align:center')).join('');
+    const table = '<table style="border-collapse:collapse;font-size:12px;width:100%"><tr>' + th('Person') + monthHead + th('Behind', true) + th('Months on target', true) + th('Avg lag', true) + '</tr>' + body + '</table>' +
+      '<div style="font-size:11px;color:#79828C;margin-top:8px">Each cell is that month as a % of the person\'s own bar. <span style="background:#cfe6e4;padding:1px 6px">≥100%</span> <span style="background:#eef4f4;padding:1px 6px">80–99% on target</span> <span style="background:#fce7c2;padding:1px 6px">1–79% behind</span> <span style="background:#CE181E;color:#fff;padding:1px 6px">0% nothing logged</span> <span style="background:#efe6f7;color:#6b3fa0;padding:1px 6px">leave</span></div>';
     const title = 'Clockify status · ' + label;
     const subject = 'Clockify status · ' + label + ' · ' + behind.length + ' behind, ' + fmtHm(totMissing) + ' h missing';
-    const html = mailShell(title, [
+    const html = mailShellWide(title, [
       kpis,
       'Where everyone stands on time entry for <b>' + escM(label) + '</b>, measured against each person\'s own capacity (part-timers against their percentage, the current month pro-rata, leave and start months left out). The full workbook is attached.',
       table,
