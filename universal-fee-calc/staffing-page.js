@@ -1634,6 +1634,7 @@
     const topBar = `<div class="toolbar">
       <span class="note-txt">${late.at ? 'Entry lateness pulled ' + new Date(late.at).toLocaleString() + ' — refresh it in <a href="#" data-goto-tab="sources" style="font-weight:700">Data Sources</a>.' : 'Lag numbers are empty until entry lateness is pulled — <a href="#" data-goto-tab="sources" style="font-weight:700">pull it in Data Sources →</a>'}</span>
       <span class="grow"></span>
+      <button class="btn btn-secondary" id="email-clockify" title="Compose the Clockify status email (Excel attached) and the personal nudges — you see each one and press Send yourself">✉ Email Clockify status…</button>
       <button class="btn btn-primary" id="export-timeentry" title="Download this report as Excel — same month grid, same colour coding, plus per-person detail and the not-tracked list">⭳ Export Clockify Reporting</button>
     </div>`;
     if (!S.hasActuals()) { $('#p-compliance').innerHTML = topBar + '<div class="empty">No Clockify actuals loaded — <a href="#" data-goto-tab="sources" style="font-weight:700">load them in Data Sources →</a>. This report is computed from logged hours by month.</div>'; wireLateness(); wireGoto('#p-compliance'); return; }
@@ -1824,6 +1825,125 @@
     });
     wireGoto('#p-compliance');
     wireLateness();
+    // What the email composer reads — the same rows, reasons and lags this tab just drew.
+    state.compSnap = { comp, ms, rows, untracked, nowYm, dueLbl, teamLag, expect, lagOf, reasonFor, pulledAt: (S.readDb().meta || {}).clockifyImportedAt || null };
+    const em = $('#email-clockify'); if (em) em.onclick = () => openMailModal();
+  }
+
+  /* ---------- EMAIL CLOCKIFY STATUS · composed here, sent by hand ----------
+     One modal, two tabs. "Status digest" is one email to the admins (or
+     whoever is typed into To) with the whole table in the body and the
+     Clockify Reporting workbook attached. "Nudges" is one short email per
+     person who is behind, to the address Clockify holds for them. Every
+     message is previewed exactly as it will land; nothing goes until Send is
+     pressed, and then it goes through the same outbox as every other notice. */
+  const MAIL = { tab: 'digest', to: '', cc: '', subject: '', attach: true, picked: {}, emails: {}, preview: null };
+  function mailSnap() { return state.compSnap; }
+  function emailForPerson(p) {
+    const users = state.clockifyUsers || [];
+    const hit = users.find(u => S.namesMatch(p.name, u.name) && u.email) || users.find(u => S.namesMatch(p.name, u.name));
+    return (hit && hit.email) ? String(hit.email).toLowerCase() : '';
+  }
+  async function openMailModal() {
+    if (!mailSnap()) { toast('Open the Clockify Reporting tab first.'); return; }
+    const ov = $('#mail-modal'); ov.classList.add('open');
+    MAIL.tab = 'digest';
+    MAIL.to = MAIL.to || (STORE.adminEmails ? STORE.adminEmails().join('; ') : '');
+    MAIL.cc = MAIL.cc || ((window.UFC_Box && window.UFC_Box.notifyAlwaysCc) ? window.UFC_Box.notifyAlwaysCc().join('; ') : '');
+    renderMailModal();
+    if (!(state.clockifyUsers || []).length) { try { await pullClockifyNames(); } catch (e) {} renderMailModal(); }
+  }
+  function closeMailModal() { $('#mail-modal').classList.remove('open'); }
+  function mailCtx() { const s = mailSnap(); return { nowYm: s.nowYm, dueLbl: s.dueLbl, teamLag: s.teamLag, lagOf: s.lagOf, reasonFor: s.reasonFor, toolUrl: location.origin + location.pathname, pulledAt: s.pulledAt ? new Date(s.pulledAt).toLocaleDateString() : null }; }
+  function behindRows() { const s = mailSnap(); return s.rows.filter(r => r.totCap > 0 && r.behindHrs > 8); }
+  function renderMailModal() {
+    const s = mailSnap(); if (!s) return;
+    const body = $('#mm-body'), note = $('#mm-note'), send = $('#mm-send');
+    $$('#mail-modal .mm-tabs button').forEach(b => b.classList.toggle('on', b.dataset.mm === MAIL.tab));
+    const behind = behindRows();
+    $('#mm-nudge-n').textContent = behind.length;
+    const authed = !!(window.UFC_Box && window.UFC_Box.enabled && window.UFC_Box.isAuthed && window.UFC_Box.isAuthed());
+    if (MAIL.tab === 'digest') {
+      const mail = S.clockifyStatusEmail(s.comp, mailCtx());
+      if (!MAIL.subject) MAIL.subject = mail.subject;
+      $('#mm-title').textContent = 'Email Clockify status · ' + mail.counts.people + ' people';
+      body.innerHTML = `
+        <div class="mm-row"><label>To</label><input type="text" id="mm-to" value="${esc(MAIL.to)}" placeholder="addresses separated by ;"></div>
+        <div class="mm-row"><label>Cc</label><input type="text" id="mm-cc" value="${esc(MAIL.cc)}"></div>
+        <div class="mm-row"><label>Subject</label><input type="text" id="mm-subject" value="${esc(MAIL.subject)}"></div>
+        <label class="mm-check"><input type="checkbox" id="mm-attach" ${MAIL.attach ? 'checked' : ''}> Attach the Clockify Reporting workbook (the same Excel as the export button)</label>
+        <div class="mm-preview-lbl">Preview · exactly what lands in the inbox</div>
+        <div class="mm-preview">${mail.html}</div>`;
+      $('#mm-to').oninput = (e) => { MAIL.to = e.target.value; };
+      $('#mm-cc').oninput = (e) => { MAIL.cc = e.target.value; };
+      $('#mm-subject').oninput = (e) => { MAIL.subject = e.target.value; };
+      $('#mm-attach').onchange = (e) => { MAIL.attach = e.target.checked; };
+      send.textContent = 'Send status email'; send.disabled = !authed;
+      note.textContent = authed ? 'Goes through the notifications outbox, from PPMRevenueSystem@savills.us.' : 'Sign in to Box to send.';
+    } else {
+      // Nudges: who, to which address, and a preview of the highlighted one.
+      behind.forEach(r => { if (!(r.person.id in MAIL.emails)) MAIL.emails[r.person.id] = emailForPerson(r.person); if (!(r.person.id in MAIL.picked)) MAIL.picked[r.person.id] = !!MAIL.emails[r.person.id]; });
+      if (!MAIL.preview || !behind.some(r => r.person.id === MAIL.preview)) MAIL.preview = behind.length ? behind[0].person.id : null;
+      const pv = behind.find(r => r.person.id === MAIL.preview);
+      const mail = pv ? S.clockifyNudgeEmail(pv, mailCtx()) : null;
+      const n = behind.filter(r => MAIL.picked[r.person.id] && MAIL.emails[r.person.id]).length;
+      $('#mm-title').textContent = 'Nudge ' + behind.length + ' ' + (behind.length === 1 ? 'person' : 'people') + ' who are behind';
+      body.innerHTML = behind.length ? `
+        <div class="note-txt">One short email each, to the address Clockify holds for them. Untick anyone you would rather speak to. Click a row to preview their email.${(state.clockifyUsers || []).length ? '' : ' Clockify addresses are loading…'}</div>
+        <div class="mm-people"><table><tbody>${behind.map(r => `<tr class="${r.person.id === MAIL.preview ? 'sel' : ''}" data-pid="${esc(r.person.id)}">
+          <td style="width:28px"><input type="checkbox" data-pick="${esc(r.person.id)}" ${MAIL.picked[r.person.id] ? 'checked' : ''} ${MAIL.emails[r.person.id] ? '' : 'disabled'}></td>
+          <td><b>${esc(r.person.name)}</b><div class="vmini">${esc(r.person.title || '')}</div></td>
+          <td class="num" style="color:#8f2418;font-weight:800;white-space:nowrap">${fmtH(r.behindHrs)} h</td>
+          <td style="width:40%"><input type="text" data-email="${esc(r.person.id)}" value="${esc(MAIL.emails[r.person.id] || '')}" placeholder="no Clockify email — type one">${MAIL.emails[r.person.id] ? '' : '<div class="miss">No address on the Clockify user list</div>'}</td>
+        </tr>`).join('')}</tbody></table></div>
+        <div class="mm-row"><label>Cc</label><input type="text" id="mm-cc" value="${esc(MAIL.cc)}"></div>
+        <div class="mm-preview-lbl">Preview · ${pv ? esc(pv.person.name) : ''}</div>
+        <div class="mm-preview">${mail ? mail.html : ''}</div>` : '<div class="empty" style="border:0">Nobody is more than 8 hours behind their own bar. Nothing to nudge.</div>';
+      $$('#mm-body [data-pick]').forEach(cb => cb.onchange = (e) => { MAIL.picked[cb.dataset.pick] = e.target.checked; renderMailModal(); });
+      $$('#mm-body [data-email]').forEach(inp => { inp.oninput = (e) => { MAIL.emails[inp.dataset.email] = e.target.value.trim().toLowerCase(); if (!MAIL.emails[inp.dataset.email]) MAIL.picked[inp.dataset.email] = false; else if (!(inp.dataset.email in MAIL.picked)) MAIL.picked[inp.dataset.email] = true; }; inp.onchange = () => renderMailModal(); inp.onclick = (e) => e.stopPropagation(); });
+      $$('#mm-body tr[data-pid]').forEach(tr => tr.onclick = (e) => { if (e.target.closest('input')) return; MAIL.preview = tr.dataset.pid; renderMailModal(); });
+      const cc = $('#mm-cc'); if (cc) cc.oninput = (e) => { MAIL.cc = e.target.value; };
+      send.textContent = 'Send ' + n + ' nudge' + (n === 1 ? '' : 's'); send.disabled = !authed || !n;
+      note.textContent = authed ? (n ? 'Each person gets only their own email.' : 'Tick at least one person with an address.') : 'Sign in to Box to send.';
+    }
+  }
+  const splitAddrs = (v) => String(v || '').split(/[;,\s]+/).map(x => x.trim().toLowerCase()).filter(x => /@/.test(x));
+  async function sendMail() {
+    const s = mailSnap(); const B = window.UFC_Box; if (!s || !B || !B.notify) return;
+    const send = $('#mm-send'); send.disabled = true; const note = $('#mm-note');
+    try {
+      if (MAIL.tab === 'digest') {
+        const to = splitAddrs(MAIL.to); if (!to.length) { toast('Add at least one address in To.'); send.disabled = false; return; }
+        const mail = S.clockifyStatusEmail(s.comp, mailCtx());
+        const attachments = [];
+        if (MAIL.attach) {
+          note.textContent = 'Building the workbook…';
+          const wb = await window.UFC_buildTimeEntryWorkbook(months(), { clockifyUsers: state.clockifyUsers || [] });
+          const buf = await wb.xlsx.writeBuffer();
+          const bytes = new Uint8Array(buf); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+          attachments.push({ Name: wb.__fileName || 'Clockify-Reporting.xlsx', ContentBytes: btoa(bin), ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        }
+        B.notify({ event: 'clockify-status', to, cc: splitAddrs(MAIL.cc), subject: MAIL.subject || mail.subject, html: mail.html, text: mail.text, attachments, data: mail.counts });
+        try { STORE.logSystem && STORE.logSystem('clockify-email', { kind: 'status', to: to.length, people: mail.counts.people, behind: mail.counts.behind, attached: attachments.length }); } catch (e) {}
+        if (B.flushNotify) B.flushNotify().catch(() => {});
+        toast('Status email queued to ' + to.length + ' address' + (to.length === 1 ? '' : 'es') + (attachments.length ? ' with the workbook attached' : '') + '.', 'ok');
+      } else {
+        const picked = behindRows().filter(r => MAIL.picked[r.person.id] && MAIL.emails[r.person.id]);
+        if (!picked.length) { send.disabled = false; return; }
+        picked.forEach(r => { const m = S.clockifyNudgeEmail(r, mailCtx()); B.notify({ event: 'clockify-nudge', to: [MAIL.emails[r.person.id]], cc: splitAddrs(MAIL.cc), subject: m.subject, html: m.html, text: m.text, data: { personId: r.person.id, behindHrs: Math.round(r.behindHrs * 10) / 10 } }); });
+        try { STORE.logSystem && STORE.logSystem('clockify-email', { kind: 'nudge', people: picked.length, names: picked.map(r => r.person.name).join(', ') }); } catch (e) {}
+        if (B.flushNotify) B.flushNotify().catch(() => {});
+        toast(picked.length + ' nudge' + (picked.length === 1 ? '' : 's') + ' queued.', 'ok');
+      }
+      closeMailModal();
+    } catch (e) { toast('Could not send: ' + (e.message || e)); send.disabled = false; }
+  }
+  function wireMailModal() {
+    const ov = $('#mail-modal'); if (!ov) return;
+    $('#mm-close').onclick = closeMailModal; $('#mm-cancel').onclick = closeMailModal;
+    ov.onclick = (e) => { if (e.target === ov) closeMailModal(); };
+    $$('#mail-modal .mm-tabs button').forEach(b => b.onclick = () => { MAIL.tab = b.dataset.mm; renderMailModal(); });
+    $('#mm-send').onclick = sendMail;
   }
 
   /** The little fairness tags every person-row carries (PT / INT / joined / leave). */
@@ -2233,6 +2353,7 @@
     $('#am-close').onclick = closeAllocModal; $('#am-cancel').onclick = closeAllocModal; $('#am-save').onclick = saveAllocModal;
     $('#am-project').addEventListener('change', () => { const fee = allocFeePick($('#am-project').value); if (fee && !$('#am-client').value.trim()) $('#am-client').value = fee.client; });
     $('#alloc-modal').onclick = (e) => { if (e.target.id === 'alloc-modal') closeAllocModal(); };
+    wireMailModal();
     renderAll();
     });
   }

@@ -2287,6 +2287,89 @@
     return matrixName;
   }
 
+  /* ---------- CLOCKIFY STATUS EMAILS ----------
+     Composed here from the same complianceRows the tab and the Excel export
+     read, sent only when an admin presses the button on the Clockify
+     Reporting tab and confirms the preview. Two shapes: the whole-team
+     status (one email, Excel attached) and a personal nudge per person who
+     is behind. Nothing here sends anything. */
+  const CLOCKIFY_URL = 'https://app.clockify.me/tracker';
+  const escM = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fmtHm = (n) => n ? (Math.round(n * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
+  const fmtH0 = (n) => (Math.round((n || 0) * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 });   // a nudge says "0 of 7.8", never "— of 7.8"
+  function mailShell(title, paras, cta, footer) {
+    const S2 = window.UFC_Store;
+    if (S2 && S2.noticeHtml) return S2.noticeHtml(title, paras, cta, footer);
+    return '<div><h2>' + escM(title) + '</h2>' + paras.map(p => '<p>' + p + '</p>').join('') + (cta ? '<p><a href="' + escM(cta.href) + '">' + escM(cta.label) + '</a></p>' : '') + '<p>' + escM(footer || '') + '</p></div>';
+  }
+  /** ctx: { lagOf(pid) → days|null, reasonFor(row) → text, nowYm, dueLbl, teamLag, toolUrl } */
+  function clockifyStatusEmail(comp, ctx) {
+    const c = ctx || {}; const rows = comp.rows || [], untracked = comp.untracked || [], ms = comp.months || [];
+    const label = ms.length ? (ms.length === 1 ? ymLabel(ms[0]) : ymLabel(ms[0]) + ' – ' + ymLabel(ms[ms.length - 1])) : '';
+    const measured = rows.filter(r => r.totCap > 0);
+    const behind = measured.filter(r => r.behindHrs > 8);
+    const ok = measured.filter(r => r.behindHrs <= 8).sort((a, b) => a.person.name.localeCompare(b.person.name));
+    const notMeasured = rows.filter(r => r.totCap <= 0);
+    const totMissing = rows.reduce((s, r) => s + r.behindHrs, 0);
+    let nowH = 0, nowEff = 0; rows.forEach(r => { const x = r.byMonth[c.nowYm]; if (x && x !== 'leave' && !x.early && !x.joinMonth) { nowH += x.h; nowEff += x.capM; } });
+    const nowPct = nowEff ? Math.round(nowH / nowEff * 100) : null;
+    const stat = (v, lab, warn) => '<td style="padding:10px 14px;background:' + (warn ? '#FBE9EA' : '#F6F5F1') + ';border-right:4px solid #fff;vertical-align:top"><div style="font-size:22px;font-weight:800;color:' + (warn ? '#A6131A' : '#25273A') + ';line-height:1.1">' + v + '</div><div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#79828C;margin-top:3px">' + lab + '</div></td>';
+    const kpis = '<table style="border-collapse:collapse;width:100%;margin:4px 0 14px"><tr>' +
+      stat(fmtHm(totMissing) + ' h', 'hours missing · vs each person\'s own bar', totMissing > 40) +
+      stat(behind.length + '<span style="font-size:13px;font-weight:400;color:#79828C"> of ' + rows.length + '</span>', 'people behind (&gt;8 h)', behind.length > 0) +
+      stat(nowPct != null ? nowPct + '%' : '—', escM(c.dueLbl || 'logged this month to date'), nowPct != null && nowPct < 80) +
+      stat(c.teamLag != null ? c.teamLag.toFixed(1) + ' d' : '—', 'avg days to log an entry', false) + '</tr></table>';
+    const th = (t, right) => '<th style="text-align:' + (right ? 'right' : 'left') + ';padding:6px 8px 6px 0;border-bottom:1px solid #D9D6CE;color:#79828C;font-weight:600;font-size:12px;white-space:nowrap">' + t + '</th>';
+    const td = (t, right, style) => '<td style="text-align:' + (right ? 'right' : 'left') + ';padding:6px 8px 6px 0;border-bottom:1px solid #EFEDE7;vertical-align:top;' + (style || '') + '">' + t + '</td>';
+    const grp = (label, note, n) => '<tr><td colspan="7" style="padding:12px 0 4px;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#25273A">' + escM(label) + ' · ' + n + ' <span style="font-weight:400;color:#79828C;text-transform:none;letter-spacing:0">— ' + escM(note) + '</span></td></tr>';
+    const row = (r) => {
+      const lag = c.lagOf ? c.lagOf(r.person.id) : null; const note = complianceNote(r, comp);
+      const isBehind = r.behindHrs > 8;
+      return '<tr>' + td('<b>' + escM(r.person.name) + '</b><div style="font-size:11px;color:#79828C">' + escM(r.person.title || '') + '</div>') +
+        td(fmtHm(r.totLogged), true) + td(fmtHm(r.totCap), true) +
+        td(r.behindHrs > 1 ? fmtHm(r.behindHrs) : '—', true, isBehind ? 'color:#A6131A;font-weight:800' : '') +
+        td(r.expectedMonths ? r.okMonths + ' / ' + r.expectedMonths : '—', true) + td(lag != null ? lag.toFixed(1) + ' d' : '—', true) +
+        td('<span style="font-size:12px;color:' + ({ bad: '#A6131A', warn: '#8a6d00', ok: '#0E7C7B' }[note.tone] || '#79828C') + '">' + escM(note.text) + '</span>' + (isBehind && c.reasonFor ? '<div style="font-size:11.5px;color:#4a4f5e;margin-top:2px">' + escM(c.reasonFor(r)) + '</div>' : '')) + '</tr>';
+    };
+    let body = '';
+    if (behind.length) body += grp('Behind', 'more than 8 h under their own bar', behind.length) + behind.map(row).join('');
+    if (ok.length) body += grp('On target', 'nothing to do', ok.length) + ok.map(row).join('');
+    if (notMeasured.length + untracked.length) body += grp('Not measured', 'on leave all window, or no hours can arrive for them', notMeasured.length + untracked.length) +
+      notMeasured.map(row).join('') + untracked.map(u => '<tr>' + td('<b>' + escM(u.person.name) + '</b><div style="font-size:11px;color:#79828C">' + escM(u.person.title || '') + '</div>') + '<td colspan="6" style="padding:6px 0;border-bottom:1px solid #EFEDE7;font-size:12px;color:#79828C">' + escM(u.reason) + '</td></tr>').join('');
+    const table = '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:13px;width:100%"><tr>' + th('Person') + th('Logged', true) + th('Their bar', true) + th('Missing', true) + th('Months on target', true) + th('Avg lag', true) + th('Status') + '</tr>' + body + '</table></div>';
+    const title = 'Clockify status · ' + label;
+    const subject = 'Clockify status · ' + label + ' · ' + behind.length + ' behind, ' + fmtHm(totMissing) + ' h missing';
+    const html = mailShell(title, [
+      kpis,
+      'Where everyone stands on time entry for <b>' + escM(label) + '</b>, measured against each person\'s own capacity (part-timers against their percentage, the current month pro-rata, leave and start months left out). The full workbook is attached.',
+      table,
+      '<p style="margin:14px 0 0"><a href="' + escM(CLOCKIFY_URL) + '" style="color:#25273A;font-weight:700">Open Clockify</a>' + (c.toolUrl ? ' · <a href="' + escM(c.toolUrl) + '" style="color:#25273A;font-weight:700">Clockify Reporting in the fee tool</a>' : '') + '</p>'],
+      { href: CLOCKIFY_URL, label: 'Open Clockify' },
+      'Sent from the fee tool by an admin. Hours are as last pulled from Clockify' + (c.pulledAt ? ' on ' + escM(c.pulledAt) : '') + '.');
+    const text = subject + '. ' + behind.map(r => r.person.name + ': ' + fmtHm(r.behindHrs) + ' h missing').join('; ') + '. ' + CLOCKIFY_URL;
+    return { subject, html, text, counts: { people: rows.length, behind: behind.length, missing: totMissing } };
+  }
+  /** One person's nudge. row from complianceRows; ctx: { nowYm, dueLbl, reasonFor(row), lagOf(pid) } */
+  function clockifyNudgeEmail(row, ctx) {
+    const c = ctx || {}; const p = row.person; const first = String(p.name || '').split(' ')[0];
+    const cur = row.byMonth[c.nowYm];
+    const curLine = (cur && cur !== 'leave' && !cur.early && !cur.joinMonth && cur.capM)
+      ? 'So far in <b>' + escM(ymLabel(c.nowYm)) + '</b> you have logged <b>' + fmtH0(cur.h) + ' of ' + fmtH0(cur.capM) + ' hours</b> expected to date (' + Math.round(cur.pct * 100) + '%).'
+      : 'Across the last ' + (row.expectedMonths || 0) + ' month' + (row.expectedMonths === 1 ? '' : 's') + ' you have logged <b>' + fmtH0(row.totLogged) + ' of ' + fmtH0(row.totCap) + ' hours</b> (' + Math.round((row.compliance || 0) * 100) + '%).';
+    const reason = c.reasonFor ? c.reasonFor(row) : '';
+    const lag = c.lagOf ? c.lagOf(p.id) : null;
+    const subject = 'Clockify: please bring your time up to date' + (c.nowYm ? ' · ' + ymLabel(c.nowYm) : '');
+    const html = mailShell('Please bring your Clockify time up to date', [
+      'Hi ' + escM(first) + ',',
+      curLine + (reason ? ' ' + escM(reason) : ''),
+      'The staffing plans, the project books and the profitability view all read from Clockify, so hours that are not logged read as work that did not happen. Please update your time entries by <b>end of day Friday</b>' + (lag != null && lag > 5 ? ', and try to log within a day or two of the work (your entries average ' + lag.toFixed(1) + ' days late).' : '.'),
+      'If you believe this is wrong — you were on leave, or your hours sit under a different Clockify project — reply to this email and we will fix the mapping.'],
+      { href: CLOCKIFY_URL, label: 'Open Clockify' },
+      'Sent from the fee tool by an admin. Figures are as last pulled from Clockify.');
+    const text = subject + '. ' + curLine.replace(/<[^>]+>/g, '') + ' ' + reason + ' ' + CLOCKIFY_URL;
+    return { subject, html, text };
+  }
+
   /* ---------- MAPPING SEEDS ----------
      Mapping decisions made outside the app (a leader's pilot, a review of a
      mis-link) shipped as code and applied ONCE per shared staff.json by the
@@ -2621,5 +2704,6 @@
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers
     namesMatch, cleanName, isNewHireName, allocEnd, isOpenEnded, clampPct,
+    clockifyStatusEmail, clockifyNudgeEmail, CLOCKIFY_URL,
   };
 })();

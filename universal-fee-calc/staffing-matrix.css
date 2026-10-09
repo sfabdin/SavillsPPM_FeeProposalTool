@@ -266,3 +266,24 @@ body.leader-view .admin-only, body.leader-view #fresh-strip, body.leader-view #s
 .lv-gap-act input { padding:7px 10px; border:1px solid rgba(37,39,58,0.3); font-size:12.5px; min-width:220px; }
 .lv-map input { width:95%; padding:6px 8px; border:1px solid rgba(37,39,58,0.3); font-size:12px; } .lv-link { margin:2px 0; } .lv-flag { margin-top:6px; font-size:11.5px; color:#b3151b; font-weight:700; }
 .lv-queue { background:#fff5f5; border:2px solid var(--sav-red); padding:12px 14px; margin:0 0 14px; } .lv-queue-h { font-family:var(--font-display); font-weight:900; font-size:14px; color:var(--sav-red); margin-bottom:8px; }
+
+/* ---- email Clockify status modal ---- */
+.modal.wide { width:860px; max-width:94vw; display:flex; flex-direction:column; }
+.modal .mm-tabs { display:flex; gap:0; border-bottom:1px solid rgba(37,39,58,0.12); background:#f7f6f3; padding:0 22px; }
+.modal .mm-tabs button { background:0; border:0; border-bottom:3px solid transparent; padding:10px 14px; font-family:var(--font-display); font-weight:700; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--sav-steel); cursor:pointer; }
+.modal .mm-tabs button.on { color:var(--sav-navy); border-bottom-color:var(--sav-yellow, #FFDF00); }
+.modal .mm-count { display:inline-block; min-width:18px; padding:1px 6px; margin-left:4px; border-radius:999px; background:#CE181E; color:#fff; font-size:10px; }
+.modal .mm-body { padding:16px 22px; overflow:auto; max-height:62vh; display:grid; gap:12px; }
+.modal .mm-row { display:grid; grid-template-columns:90px 1fr; gap:8px 12px; align-items:center; }
+.modal .mm-row label { font-family:var(--font-display); font-weight:700; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--sav-steel); }
+.modal .mm-row input[type=text] { font-family:var(--font-body); font-size:13px; padding:7px 10px; border:1px solid rgba(37,39,58,0.25); width:100%; box-sizing:border-box; }
+.modal .mm-check { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--sav-navy); }
+.modal .mm-preview { border:1px solid rgba(37,39,58,0.15); background:#fff; padding:18px 20px; max-height:40vh; overflow:auto; }
+.modal .mm-preview-lbl { font-family:var(--font-display); font-weight:700; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--sav-steel); }
+.modal .mm-people { border:1px solid rgba(37,39,58,0.15); max-height:200px; overflow:auto; }
+.modal .mm-people table { width:100%; border-collapse:collapse; font-size:12.5px; }
+.modal .mm-people td { padding:6px 10px; border-bottom:1px solid #EFEDE7; vertical-align:middle; }
+.modal .mm-people td.num { text-align:right; font-variant-numeric:tabular-nums; }
+.modal .mm-people input[type=text] { width:100%; font-size:12px; padding:4px 6px; border:1px solid rgba(37,39,58,0.2); }
+.modal .mm-people tr.sel { background:#FFF9DB; }
+.modal .mm-people .miss { color:#CE181E; font-size:11px; }

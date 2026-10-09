@@ -849,8 +849,9 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
   return comp;
 }
 
-/** Standalone Clockify Reporting download — the tab plus a flat detail sheet. */
-window.UFC_buildAndDownloadTimeEntryExport = async function (monthsList, opts) {
+/** The Clockify Reporting workbook — the tab plus a flat detail sheet — as an
+    ExcelJS workbook, for the download below and for the status email's attachment. */
+window.UFC_buildTimeEntryWorkbook = async function (monthsList, opts) {
   await window.UFC_Vendor.excel();
   const S = window.UFC_Staff;
   const STORE = window.UFC_Store;
@@ -868,8 +869,13 @@ window.UFC_buildAndDownloadTimeEntryExport = async function (monthsList, opts) {
   const lastRow = ws.lastRow ? ws.lastRow.number + 2 : 2;
   ws.getCell(`A${lastRow}`).value = `Exported ${dateStr} by ${who} · static values, not live formulas`;
   ws.getCell(`A${lastRow}`).font = { name: 'Calibri', italic: true, size: 9, color: { argb: STEEL } };
-
-  await download(wb, `Clockify-Reporting_${dateStr}.xlsx`);
+  wb.__fileName = `Clockify-Reporting_${dateStr}.xlsx`;
+  return wb;
+};
+/** Standalone Clockify Reporting download. */
+window.UFC_buildAndDownloadTimeEntryExport = async function (monthsList, opts) {
+  const wb = await window.UFC_buildTimeEntryWorkbook(monthsList, opts);
+  await download(wb, wb.__fileName);
 };
 
 })();
