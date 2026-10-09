@@ -1876,7 +1876,7 @@
     if (!(state.clockifyUsers || []).length) { try { await pullClockifyNames(); } catch (e) {} renderMailModal(); }
   }
   function closeMailModal() { $('#mail-modal').classList.remove('open'); }
-  function mailCtx() { const s = mailSnap(); return { nowYm: s.nowYm, dueLbl: s.dueLbl, teamLag: s.teamLag, lagOf: s.lagOf, reasonFor: s.reasonFor, toolUrl: location.origin + location.pathname, pulledAt: s.pulledAt ? new Date(s.pulledAt).toLocaleDateString() : null }; }
+  function mailCtx() { const s = mailSnap(); return { nowYm: s.nowYm, expect: s.expect, dueLbl: s.dueLbl, teamLag: s.teamLag, lagOf: s.lagOf, reasonFor: s.reasonFor, lastEntry: (r) => S.lastTimeEntered(r, s.ms), toolUrl: location.origin + location.pathname, pulledAt: s.pulledAt ? new Date(s.pulledAt).toLocaleDateString() : null }; }
   function behindRows() { const s = mailSnap(); return s.rows.filter(r => r.totCap > 0 && r.behindHrs > 8); }
   function renderMailModal() {
     const s = mailSnap(); if (!s) return;
