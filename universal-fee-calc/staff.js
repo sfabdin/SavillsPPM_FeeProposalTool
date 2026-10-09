@@ -1570,13 +1570,25 @@
       rows.push({
         person, byMonth, expectedMonths, okMonths, totLogged, totCap,
         compliance: expectedMonths ? okMonths / expectedMonths : 0,
-        lastMs, lastPct, behindHrs: Math.round(shortfall * 10) / 10,
+        lastMs, lastPct, behindHrs: Math.round(shortfall * 10) / 10, capMonth: cap,
         joinedMid: joined > ms[0] && (joinedByHand || joined > dataStart), joined, leaveMonths,
       });
     });
     rows.sort((a, b) => b.behindHrs - a.behindHrs || a.lastPct - b.lastPct);
     return { months: ms, rows, untracked, prorata, nowYm, expect };
   }
+
+  /* ---------- "behind": more than one month of their own hours missing ----------
+     One rule for the tab, the Excel export, the status digest and the nudges.
+     A person is behind when the hours missing across the window add up to
+     more than a full month of THEIR capacity (a part-timer's month is
+     smaller). A few hours light in a month is noise; a month's worth is a
+     gap in the record. */
+  function behindMonths(row) { const cap = row.capMonth || capacityHours(row.person); return cap ? (row.behindHrs || 0) / cap : 0; }
+  function isBehind(row) { return (row.totCap || 0) > 0 && behindMonths(row) > 1; }
+  /** Dollar value of the hours a person has not logged, at the internal cost
+      rate for their title — null when no rate is known for them. */
+  function missingCost(row) { const rate = personCostRate(row.person); return rate ? Math.round((row.behindHrs || 0) * rate) : null; }
 
   /** The one line that says where a person stands — the trend column on the
       Clockify Reporting tab and the Flags column of its export both read it.
@@ -2316,22 +2328,28 @@
     const c = ctx || {}; const rows = comp.rows || [], untracked = comp.untracked || [], ms = comp.months || [];
     const label = ms.length ? (ms.length === 1 ? ymLabel(ms[0]) : ymLabel(ms[0]) + ' – ' + ymLabel(ms[ms.length - 1])) : '';
     const measured = rows.filter(r => r.totCap > 0);
-    const behind = measured.filter(r => r.behindHrs > 8);
-    const ok = measured.filter(r => r.behindHrs <= 8).sort((a, b) => a.person.name.localeCompare(b.person.name));
+    const behind = measured.filter(isBehind);
+    const ok = measured.filter(r => !isBehind(r)).sort((a, b) => a.person.name.localeCompare(b.person.name));
     const notMeasured = rows.filter(r => r.totCap <= 0);
     const totMissing = rows.reduce((s, r) => s + r.behindHrs, 0);
+    // $ at cost rate — people without a rate are counted, not guessed
+    let totCost = 0, noRate = 0, noRateHrs = 0;
+    rows.forEach(r => { const d = missingCost(r); if (d == null) { if (r.behindHrs > 1) { noRate++; noRateHrs += r.behindHrs; } } else totCost += d; });
+    const fmtD = (n) => '$' + Math.round(n || 0).toLocaleString();
+    const fmtMo = (r) => { const m = behindMonths(r); return m >= 0.95 ? (Math.round(m * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' mo' : ''; };
     let nowH = 0, nowEff = 0; rows.forEach(r => { const x = r.byMonth[c.nowYm]; if (x && x !== 'leave' && !x.early && !x.joinMonth) { nowH += x.h; nowEff += x.capM; } });
     const nowPct = nowEff ? Math.round(nowH / nowEff * 100) : null;
     const stat = (v, lab, warn) => '<td style="padding:10px 14px;background:' + (warn ? '#FBE9EA' : '#F6F5F1') + ';border-right:4px solid #fff;vertical-align:top"><div style="font-size:22px;font-weight:800;color:' + (warn ? '#A6131A' : '#25273A') + ';line-height:1.1">' + v + '</div><div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#79828C;margin-top:3px">' + lab + '</div></td>';
     const kpis = '<table style="border-collapse:collapse;width:100%;margin:4px 0 14px"><tr>' +
       stat(fmtHm(totMissing) + ' h', 'hours missing · vs each person\'s own bar', totMissing > 40) +
-      stat(behind.length + '<span style="font-size:13px;font-weight:400;color:#79828C"> of ' + rows.length + '</span>', 'people behind (&gt;8 h)', behind.length > 0) +
+      stat(fmtD(totCost), 'value of missing hours · at cost rate' + (noRate ? ' · ' + noRate + ' without a rate' : ''), totCost > 0) +
+      stat(behind.length + '<span style="font-size:13px;font-weight:400;color:#79828C"> of ' + rows.length + '</span>', 'people behind (&gt;1 month of their hours)', behind.length > 0) +
       stat(nowPct != null ? nowPct + '%' : '—', escM(c.dueLbl || 'logged this month to date'), nowPct != null && nowPct < 80) +
       stat(c.teamLag != null ? c.teamLag.toFixed(1) + ' d' : '—', 'avg days to log an entry', false) + '</tr></table>';
     /* The grid the tab shows: one column per month, each cell that month's %
        of the person's own bar in the tab's colours, then Behind and Months
        on target. The chase reason sits under the name on Behind rows. */
-    const nCols = ms.length + 3;
+    const nCols = ms.length + 5;
     const th = (t, right, extra) => '<th style="text-align:' + (right ? 'right' : 'left') + ';padding:6px 6px;border-bottom:1px solid #D9D6CE;color:#79828C;font-weight:600;font-size:11px;white-space:nowrap;' + (extra || '') + '">' + t + '</th>';
     const cell = (x) => {
       const base = 'text-align:center;padding:5px 4px;border-bottom:1px solid #EFEDE7;font-size:11.5px;font-weight:700;white-space:nowrap;';
@@ -2345,24 +2363,27 @@
     };
     const grp = (label, note, n) => '<tr><td colspan="' + nCols + '" style="padding:12px 0 4px;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#25273A">' + escM(label) + ' · ' + n + ' <span style="font-weight:400;color:#79828C;text-transform:none;letter-spacing:0">— ' + escM(note) + '</span></td></tr>';
     const row = (r) => {
-      const isBehind = r.behindHrs > 8;
+      const isBehind = behind.includes(r);
+      const dollars = missingCost(r);
       const nameCell = '<td style="padding:6px 8px 6px 0;border-bottom:1px solid #EFEDE7;vertical-align:top;min-width:150px"><b>' + escM(r.person.name) + '</b><div style="font-size:11px;color:#79828C">' + escM(r.person.title || '') + '</div>' +
         (isBehind && c.reasonFor ? '<div style="font-size:11px;color:#4a4f5e;margin-top:3px;max-width:260px">' + escM(c.reasonFor(r)) + '</div>' : '') + '</td>';
       return '<tr>' + nameCell + ms.map(m => cell(r.byMonth[m])).join('') +
         '<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #EFEDE7;white-space:nowrap;' + (isBehind ? 'color:#A6131A;font-weight:800' : '') + '">' + (r.behindHrs > 1 ? fmtHm(r.behindHrs) + 'h' : '—') + '</td>' +
+        '<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #EFEDE7;white-space:nowrap;' + (isBehind ? 'color:#A6131A;font-weight:800' : 'color:#79828C') + '">' + (r.behindHrs > 1 ? fmtMo(r) || '<1 mo' : '—') + '</td>' +
+        '<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #EFEDE7;white-space:nowrap;' + (isBehind ? 'font-weight:800' : '') + '" title="' + (dollars == null ? 'no cost rate for this title' : 'hours missing × cost rate') + '">' + (r.behindHrs > 1 ? (dollars == null ? '<span style="color:#79828C">no rate</span>' : fmtD(dollars)) : '—') + '</td>' +
         '<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #EFEDE7;white-space:nowrap;' + (r.compliance < 0.5 ? 'color:#A6131A;font-weight:800' : '') + '">' + Math.round((r.compliance || 0) * 100) + '%</td>' +
         '<td style="text-align:right;padding:5px 8px;border-bottom:1px solid #EFEDE7;white-space:nowrap">' + ((c.lagOf && c.lagOf(r.person.id) != null) ? c.lagOf(r.person.id).toFixed(1) + ' d' : '—') + '</td></tr>';
     };
     let body = '';
-    if (behind.length) body += grp('Behind', 'more than 8 h under their own bar', behind.length) + behind.map(row).join('');
+    if (behind.length) body += grp('Behind', 'more than a month of their own hours missing', behind.length) + behind.map(row).join('');
     if (ok.length) body += grp('On target', 'nothing to do', ok.length) + ok.map(row).join('');
     if (notMeasured.length + untracked.length) body += grp('Not measured', 'on leave all window, or no hours can arrive for them', notMeasured.length + untracked.length) +
       notMeasured.map(row).join('') + untracked.map(u => '<tr><td style="padding:6px 8px 6px 0;border-bottom:1px solid #EFEDE7"><b>' + escM(u.person.name) + '</b><div style="font-size:11px;color:#79828C">' + escM(u.person.title || '') + '</div></td><td colspan="' + (nCols - 1) + '" style="padding:6px 0;border-bottom:1px solid #EFEDE7;font-size:12px;color:#79828C">' + escM(u.reason) + '</td></tr>').join('');
     const monthHead = ms.map(m => th(escM(ymLabel(m)) + (m === c.nowYm ? '<div style="font-weight:400;text-transform:none;letter-spacing:0">to date</div>' : ''), false, 'text-align:center')).join('');
-    const table = '<table style="border-collapse:collapse;font-size:12px;width:100%"><tr>' + th('Person') + monthHead + th('Behind', true) + th('Months on target', true) + th('Avg lag', true) + '</tr>' + body + '</table>' +
-      '<div style="font-size:11px;color:#79828C;margin-top:8px">Each cell is that month as a % of the person\'s own bar. <span style="background:#cfe6e4;padding:1px 6px">≥100%</span> <span style="background:#eef4f4;padding:1px 6px">80–99% on target</span> <span style="background:#fce7c2;padding:1px 6px">1–79% behind</span> <span style="background:#CE181E;color:#fff;padding:1px 6px">0% nothing logged</span> <span style="background:#efe6f7;color:#6b3fa0;padding:1px 6px">leave</span></div>';
+    const table = '<table style="border-collapse:collapse;font-size:12px;width:100%"><tr>' + th('Person') + monthHead + th('Behind', true) + th('≈ months', true) + th('$ at cost', true) + th('Months on target', true) + th('Avg lag', true) + '</tr>' + body + '</table>' +
+      '<div style="font-size:11px;color:#79828C;margin-top:8px">Each cell is that month as a % of the person\'s own bar. <span style="background:#cfe6e4;padding:1px 6px">≥100%</span> <span style="background:#eef4f4;padding:1px 6px">80–99% on target</span> <span style="background:#fce7c2;padding:1px 6px">1–79% behind</span> <span style="background:#CE181E;color:#fff;padding:1px 6px">0% nothing logged</span> <span style="background:#efe6f7;color:#6b3fa0;padding:1px 6px">leave</span> · Behind = more than one month of the person\'s own hours missing across the range · $ = hours missing × internal cost rate for the title' + (noRate ? ' (' + noRate + ' ' + (noRate === 1 ? 'person has' : 'people have') + ' no rate — ' + fmtHm(noRateHrs) + ' h unpriced)' : '') + '</div>';
     const title = 'Clockify status · ' + label;
-    const subject = 'Clockify status · ' + label + ' · ' + behind.length + ' behind, ' + fmtHm(totMissing) + ' h missing';
+    const subject = 'Clockify status · ' + label + ' · ' + behind.length + ' behind, ' + fmtHm(totMissing) + ' h missing' + (totCost ? ' (' + fmtD(totCost) + ' at cost)' : '');
     const html = mailShellWide(title, [
       kpis,
       'Where everyone stands on time entry for <b>' + escM(label) + '</b>, measured against each person\'s own capacity (part-timers against their percentage, the current month pro-rata, leave and start months left out). The full workbook is attached.',
@@ -2371,7 +2392,7 @@
       { href: CLOCKIFY_URL, label: 'Open Clockify' },
       'Sent from the fee tool by an admin. Hours are as last pulled from Clockify' + (c.pulledAt ? ' on ' + escM(c.pulledAt) : '') + '.');
     const text = subject + '. ' + behind.map(r => r.person.name + ': ' + fmtHm(r.behindHrs) + ' h missing').join('; ') + '. ' + CLOCKIFY_URL;
-    return { subject, html, text, counts: { people: rows.length, behind: behind.length, missing: totMissing } };
+    return { subject, html, text, counts: { people: rows.length, behind: behind.length, missing: totMissing, cost: totCost, noRate } };
   }
   /** One person's nudge. row from complianceRows; ctx: { nowYm, expect, lastEntry(row) → 'last entry dated 7/13' | '' }
       Leads with what is actually missing — whole months first — and never
@@ -2394,17 +2415,18 @@
     if (curEmpty) parts.push('nothing yet for <b>' + escM(ymLabel(c.nowYm)) + '</b>');
     else if (curUnder) parts.push('<b>' + escM(ymLabel(c.nowYm)) + '</b> running at ' + Math.round(cur.pct * 100) + '% so far');
     const lastEntry = c.lastEntry ? String(c.lastEntry(row) || '') : '';
+    const asOf = c.pulledAt ? 'Our Clockify records, last pulled on <b>' + escM(c.pulledAt) + '</b>, show ' : 'Our Clockify records show ';
     const situation = parts.length
-      ? 'Our Clockify records show ' + parts.join(parts.length === 2 ? ', and ' : ', ') + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.'
-      : 'Our Clockify records show you ' + fmtH0(row.behindHrs) + ' hours short of your usual time across the last ' + (row.expectedMonths || 0) + ' months' + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.';
+      ? asOf + parts.join(parts.length === 2 ? ', and ' : ', ') + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.'
+      : asOf + 'you ' + fmtH0(row.behindHrs) + ' hours short of your usual time across the last ' + (row.expectedMonths || 0) + ' months' + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.';
     const subject = 'Clockify: your time entries need to be brought up to date';
     const html = mailShell('Please bring your Clockify time up to date', [
       'Hi ' + escM(first) + ',',
       situation,
-      'As you know, staffing plans, project health and profitability are all measured from Clockify. Hours that are not logged read as work that did not happen, and the projects you worked on look under-served. Please update your entries to reflect the time you actually spent by <b>end of day Friday</b>.',
-      'If something is preventing you from getting current — leave, an access problem, hours sitting under the wrong project — please speak with your manager and agree a date by which you will be up to date.'],
+      'As you know, staffing plans, project health and profitability are all measured from Clockify. Hours that are not logged read as work that did not happen — and as hours you were paid for but cannot account for. Please update your entries to reflect the time you actually spent by <b>end of day Friday</b>.',
+      'If something is preventing you from getting current — planned PTO, an access problem, hours sitting under the wrong project — please speak with your manager and agree a date by which you will be up to date.'],
       { href: CLOCKIFY_URL, label: 'Open Clockify' },
-      'Sent from the fee tool by an admin. Figures are as last pulled from Clockify.');
+      'Sent from the fee tool by an admin. Figures are as last pulled from Clockify' + (c.pulledAt ? ' on ' + escM(c.pulledAt) : '') + '. Entries made since then are not reflected.');
     const text = subject + '. ' + situation.replace(/<[^>]+>/g, '') + ' Please update your entries by end of day Friday. ' + CLOCKIFY_URL;
     return { subject, html, text };
   }
@@ -2738,7 +2760,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
-    titleFamily, costRateForTitle, personCostRate, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
+    titleFamily, costRateForTitle, personCostRate, behindMonths, isBehind, missingCost, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers

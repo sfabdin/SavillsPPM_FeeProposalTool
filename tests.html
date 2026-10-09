@@ -445,16 +445,21 @@
       { person: { id: 'p1', name: 'Ada Lovelace', title: 'Director' }, totLogged: 100, totCap: 300, behindHrs: 200, compliance: 0.33, expectedMonths: 2, okMonths: 0, byMonth: { '2026-08': { h: 50, capM: 150, pct: 0.33 }, '2026-09': { h: 50, capM: 150, pct: 0.33 } } },
       { person: { id: 'p2', name: 'Grace Hopper', title: 'Manager' }, totLogged: 300, totCap: 300, behindHrs: 0, compliance: 1, expectedMonths: 2, okMonths: 2, byMonth: { '2026-08': { h: 150, capM: 150, pct: 1 }, '2026-09': { h: 150, capM: 150, pct: 1 } } },
     ], untracked: [{ person: { id: 'p3', name: 'Alan Turing', title: '' }, reason: 'no Clockify user mapped' }] };
-    const ctx = { nowYm: '2026-09', expect: { elapsed: 12, total: 22, grace: 5 }, dueLbl: 'Sep-26 to date', teamLag: 3.2, lagOf: () => 2.5, reasonFor: () => 'Nothing logged for August.', lastEntry: () => 'last entry dated 7/13', toolUrl: 'https://x/Staffing%20Matrix.html' };
+    const ctx = { nowYm: '2026-09', expect: { elapsed: 12, total: 22, grace: 5 }, dueLbl: 'Sep-26 to date', teamLag: 3.2, lagOf: () => 2.5, reasonFor: () => 'Nothing logged for August.', lastEntry: () => 'last entry dated 7/13', toolUrl: 'https://x/Staffing%20Matrix.html', pulledAt: '10/5/2026' };
     const m = St.clockifyStatusEmail(comp, ctx);
+    // Ada is 200 h short of a 300 h window — more than a month of her own hours — so behind; Grace is not.
     if (!/1 behind, 200 h missing/.test(m.subject)) return 'subject: ' + m.subject;
+    if (!/people behind \(&gt;1 month/.test(m.html) || !/value of missing hours/.test(m.html) || !/≈ months/.test(m.html)) return 'behind rule + $ column in the digest';
+    if (!St.isBehind(comp.rows[0]) || St.isBehind(comp.rows[1])) return 'isBehind: more than a month of own hours missing';
+    if (St.isBehind({ person: { id: 'q', name: 'Q' }, totCap: 300, behindHrs: 20, capMonth: 150 })) return '20 h short is not behind any more';
     const iA = m.html.indexOf('Ada Lovelace'), iG = m.html.indexOf('Grace Hopper'), iT = m.html.indexOf('Alan Turing');
     if (!(iA > 0 && iG > iA && iT > iG)) return 'behind first, then on target, then not measured';
     if (m.html.indexOf('app.clockify.me') < 0) return 'links to Clockify';
     if (m.counts.behind !== 1 || m.counts.people !== 2) return 'counts: ' + JSON.stringify(m.counts);
     const n = St.clockifyNudgeEmail(comp.rows[0], ctx);
     if (!/Hi Ada,/.test(n.html) || !/Aug-26<\/b> at 33% of your usual hours/.test(n.html) || !/Sep-26<\/b> running at 33% so far/.test(n.html) || n.html.indexOf('last entry is dated 7/13') < 0) return 'nudge body: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 400);
-    if (!/speak with your manager/.test(n.html) || /7\.8 hours/.test(n.html)) return 'nudge tone';
+    if (!/speak with your manager/.test(n.html) || /7\.8 hours/.test(n.html) || /under-served/.test(n.html) || /— leave,/.test(n.html)) return 'nudge tone';
+    if (!/last pulled on <b>10\/5\/2026/.test(n.html) || !/planned PTO/.test(n.html) || !/cannot account for/.test(n.html)) return 'nudge: pull date, planned PTO, sharper line';
     if (n.html.indexOf('app.clockify.me') < 0) return 'nudge links to Clockify';
     return true;
   });

@@ -281,6 +281,11 @@ body.leader-view .admin-only, body.leader-view #fresh-strip, body.leader-view #s
 .modal .mm-preview { border:1px solid rgba(37,39,58,0.15); background:#fff; padding:18px 20px; max-height:40vh; overflow:auto; }
 .modal .mm-preview-lbl { font-family:var(--font-display); font-weight:700; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--sav-steel); }
 .modal .mm-people { border:1px solid rgba(37,39,58,0.15); max-height:200px; overflow:auto; }
+.modal .mm-pickbar { display:flex; gap:14px; align-items:center; font-size:12px; color:var(--sav-steel); margin:6px 0 4px; }
+.modal .mm-pickbar a { color:var(--sav-navy); font-weight:700; text-decoration:underline; }
+.modal .mm-preview-lbl a { color:var(--sav-navy); text-decoration:underline; font-weight:700; margin-left:6px; }
+.modal .mm-preview[contenteditable] { cursor:text; }
+.modal .mm-preview[contenteditable]:focus { outline:2px solid #e8c400; outline-offset:-2px; }
 .modal .mm-people table { width:100%; border-collapse:collapse; font-size:12.5px; }
 .modal .mm-people td { padding:6px 10px; border-bottom:1px solid #EFEDE7; vertical-align:middle; }
 .modal .mm-people td.num { text-align:right; font-variant-numeric:tabular-nums; }
