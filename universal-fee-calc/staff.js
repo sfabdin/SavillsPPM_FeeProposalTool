@@ -2373,24 +2373,39 @@
     const text = subject + '. ' + behind.map(r => r.person.name + ': ' + fmtHm(r.behindHrs) + ' h missing').join('; ') + '. ' + CLOCKIFY_URL;
     return { subject, html, text, counts: { people: rows.length, behind: behind.length, missing: totMissing } };
   }
-  /** One person's nudge. row from complianceRows; ctx: { nowYm, dueLbl, reasonFor(row), lagOf(pid) } */
+  /** One person's nudge. row from complianceRows; ctx: { nowYm, expect, lastEntry(row) → 'last entry dated 7/13' | '' }
+      Leads with what is actually missing — whole months first — and never
+      quotes a few hours of a month that has barely started. */
   function clockifyNudgeEmail(row, ctx) {
     const c = ctx || {}; const p = row.person; const first = String(p.name || '').split(' ')[0];
+    const ms = Object.keys(row.byMonth || {}).sort();
+    const expMs = ms.filter(m => row.byMonth[m] && row.byMonth[m] !== 'leave' && !row.byMonth[m].early && !row.byMonth[m].joinMonth);
+    const past = expMs.filter(m => m !== c.nowYm);
+    const zeroPast = past.filter(m => row.byMonth[m].h === 0);
+    const underPast = past.filter(m => row.byMonth[m].h > 0 && row.byMonth[m].pct < 0.8);
     const cur = row.byMonth[c.nowYm];
-    const curLine = (cur && cur !== 'leave' && !cur.early && !cur.joinMonth && cur.capM)
-      ? 'So far in <b>' + escM(ymLabel(c.nowYm)) + '</b> you have logged <b>' + fmtH0(cur.h) + ' of ' + fmtH0(cur.capM) + ' hours</b> expected to date (' + Math.round(cur.pct * 100) + '%).'
-      : 'Across the last ' + (row.expectedMonths || 0) + ' month' + (row.expectedMonths === 1 ? '' : 's') + ' you have logged <b>' + fmtH0(row.totLogged) + ' of ' + fmtH0(row.totCap) + ' hours</b> (' + Math.round((row.compliance || 0) * 100) + '%).';
-    const reason = c.reasonFor ? c.reasonFor(row) : '';
-    const lag = c.lagOf ? c.lagOf(p.id) : null;
-    const subject = 'Clockify: please bring your time up to date' + (c.nowYm ? ' · ' + ymLabel(c.nowYm) : '');
+    // The current month only counts when it is well under way: past the grace and at least a working week in.
+    const curIn = cur && cur !== 'leave' && !cur.early && !cur.joinMonth && c.expect && c.expect.elapsed >= (c.expect.grace || 0) + 5;
+    const curEmpty = curIn && cur.h === 0, curUnder = curIn && cur.h > 0 && cur.pct < 0.6;
+    const list = (arr) => arr.map(m => escM(ymLabel(m))).join(arr.length === 2 ? ' and ' : ', ').replace(/, ([^,]*)$/, ' and $1');
+    const parts = [];
+    if (zeroPast.length) parts.push('nothing logged for <b>' + list(zeroPast) + '</b>' + (zeroPast.length === 1 ? ' — the whole month' : ' — whole months'));
+    if (underPast.length) parts.push(underPast.map(m => '<b>' + escM(ymLabel(m)) + '</b> at ' + Math.round(row.byMonth[m].pct * 100) + '% of your usual hours').join(', '));
+    if (curEmpty) parts.push('nothing yet for <b>' + escM(ymLabel(c.nowYm)) + '</b>');
+    else if (curUnder) parts.push('<b>' + escM(ymLabel(c.nowYm)) + '</b> running at ' + Math.round(cur.pct * 100) + '% so far');
+    const lastEntry = c.lastEntry ? String(c.lastEntry(row) || '') : '';
+    const situation = parts.length
+      ? 'Our Clockify records show ' + parts.join(parts.length === 2 ? ', and ' : ', ') + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.'
+      : 'Our Clockify records show you ' + fmtH0(row.behindHrs) + ' hours short of your usual time across the last ' + (row.expectedMonths || 0) + ' months' + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.';
+    const subject = 'Clockify: your time entries need to be brought up to date';
     const html = mailShell('Please bring your Clockify time up to date', [
       'Hi ' + escM(first) + ',',
-      curLine + (reason ? ' ' + escM(reason) : ''),
-      'The staffing plans, the project books and the profitability view all read from Clockify, so hours that are not logged read as work that did not happen. Please update your time entries by <b>end of day Friday</b>' + (lag != null && lag > 5 ? ', and try to log within a day or two of the work (your entries average ' + lag.toFixed(1) + ' days late).' : '.'),
-      'If you believe this is wrong — you were on leave, or your hours sit under a different Clockify project — reply to this email and we will fix the mapping.'],
+      situation,
+      'As you know, staffing plans, project health and profitability are all measured from Clockify. Hours that are not logged read as work that did not happen, and the projects you worked on look under-served. Please update your entries to reflect the time you actually spent by <b>end of day Friday</b>.',
+      'If something is preventing you from getting current — leave, an access problem, hours sitting under the wrong project — please speak with your manager and agree a date by which you will be up to date.'],
       { href: CLOCKIFY_URL, label: 'Open Clockify' },
       'Sent from the fee tool by an admin. Figures are as last pulled from Clockify.');
-    const text = subject + '. ' + curLine.replace(/<[^>]+>/g, '') + ' ' + reason + ' ' + CLOCKIFY_URL;
+    const text = subject + '. ' + situation.replace(/<[^>]+>/g, '') + ' Please update your entries by end of day Friday. ' + CLOCKIFY_URL;
     return { subject, html, text };
   }
 

@@ -445,7 +445,7 @@
       { person: { id: 'p1', name: 'Ada Lovelace', title: 'Director' }, totLogged: 100, totCap: 300, behindHrs: 200, compliance: 0.33, expectedMonths: 2, okMonths: 0, byMonth: { '2026-08': { h: 50, capM: 150, pct: 0.33 }, '2026-09': { h: 50, capM: 150, pct: 0.33 } } },
       { person: { id: 'p2', name: 'Grace Hopper', title: 'Manager' }, totLogged: 300, totCap: 300, behindHrs: 0, compliance: 1, expectedMonths: 2, okMonths: 2, byMonth: { '2026-08': { h: 150, capM: 150, pct: 1 }, '2026-09': { h: 150, capM: 150, pct: 1 } } },
     ], untracked: [{ person: { id: 'p3', name: 'Alan Turing', title: '' }, reason: 'no Clockify user mapped' }] };
-    const ctx = { nowYm: '2026-09', dueLbl: 'Sep-26 to date', teamLag: 3.2, lagOf: () => 2.5, reasonFor: () => 'Nothing logged for August.', toolUrl: 'https://x/Staffing%20Matrix.html' };
+    const ctx = { nowYm: '2026-09', expect: { elapsed: 12, total: 22, grace: 5 }, dueLbl: 'Sep-26 to date', teamLag: 3.2, lagOf: () => 2.5, reasonFor: () => 'Nothing logged for August.', lastEntry: () => 'last entry dated 7/13', toolUrl: 'https://x/Staffing%20Matrix.html' };
     const m = St.clockifyStatusEmail(comp, ctx);
     if (!/1 behind, 200 h missing/.test(m.subject)) return 'subject: ' + m.subject;
     const iA = m.html.indexOf('Ada Lovelace'), iG = m.html.indexOf('Grace Hopper'), iT = m.html.indexOf('Alan Turing');
@@ -453,7 +453,8 @@
     if (m.html.indexOf('app.clockify.me') < 0) return 'links to Clockify';
     if (m.counts.behind !== 1 || m.counts.people !== 2) return 'counts: ' + JSON.stringify(m.counts);
     const n = St.clockifyNudgeEmail(comp.rows[0], ctx);
-    if (!/Hi Ada,/.test(n.html) || !/50 of 150 hours/.test(n.html) || n.html.indexOf('Nothing logged for August') < 0) return 'nudge body: ' + n.html.slice(0, 300);
+    if (!/Hi Ada,/.test(n.html) || !/Aug-26<\/b> at 33% of your usual hours/.test(n.html) || !/Sep-26<\/b> running at 33% so far/.test(n.html) || n.html.indexOf('last entry is dated 7/13') < 0) return 'nudge body: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 400);
+    if (!/speak with your manager/.test(n.html) || /7\.8 hours/.test(n.html)) return 'nudge tone';
     if (n.html.indexOf('app.clockify.me') < 0) return 'nudge links to Clockify';
     return true;
   });
