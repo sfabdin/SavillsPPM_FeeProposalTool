@@ -3628,7 +3628,20 @@
   }
   const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   /** The house email shell every notice uses: eyebrow, title, paragraphs, one button. */
+  /* Outlook renders email with Word's engine, which does not carry a
+     font-family from a wrapping div into table cells — every <td>/<th>
+     without its own font falls back to whatever Word picks (often a
+     monospace or East Asian face). So every cell and table gets the font
+     stated on it explicitly. Idempotent: cells that already name a font
+     are left alone. */
+  const MAIL_FONT = 'Segoe UI,Arial,sans-serif';
+  function emailFonts(html) {
+    return String(html || '')
+      .replace(/<(td|th|table)(\s[^>]*?)?\sstyle="(?![^"]*font-family)/gi, (m, tag, attrs) => '<' + tag + (attrs || '') + ' style="font-family:' + MAIL_FONT + ';')
+      .replace(/<(td|th|table)(?=[\s>])(?![^>]*\sstyle=)([^>]*)>/gi, (m, tag, attrs) => '<' + tag + attrs + ' style="font-family:' + MAIL_FONT + '">');
+  }
   function noticeHtml(title, paras, cta, footer) {
+    paras = (paras || []).map(emailFonts);
     const btn = cta ? '<p style="margin:18px 0"><a href="' + escHtml(cta.href) + '" style="background:#25273A;color:#fff;padding:10px 16px;text-decoration:none;font-weight:700">' + escHtml(cta.label) + '</a></p>' : '';
     return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#25273A;line-height:1.5;max-width:640px">' +
       '<p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#79828C;margin:0 0 6px">Savills PPM · Fee tool</p>' +
@@ -3936,7 +3949,7 @@
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries, revenueSeries, isDeadPursuit,
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, isAdmin, adminEmails, marketingEmails, noticeHtml, completenessOf, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
+    getCurrentUser, isAdmin, adminEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,

@@ -2309,13 +2309,24 @@
   const escM = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fmtHm = (n) => n ? (Math.round(n * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
   const fmtH0 = (n) => (Math.round((n || 0) * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 });   // a nudge says "0 of 7.8", never "— of 7.8"
+  // Outlook drops the wrapper font at every table boundary — state it on each cell (see store.emailFonts).
+  const MAIL_FONT = 'Segoe UI,Arial,sans-serif';
+  function outlookFonts(html) {
+    const S2 = (typeof window !== 'undefined') && window.UFC_Store;
+    if (S2 && S2.emailFonts) return S2.emailFonts(html);
+    return String(html || '')
+      .replace(/<(td|th|table)(\s[^>]*?)?\sstyle="(?![^"]*font-family)/gi, (m, tag, attrs) => '<' + tag + (attrs || '') + ' style="font-family:' + MAIL_FONT + ';')
+      .replace(/<(td|th|table)(?=[\s>])(?![^>]*\sstyle=)([^>]*)>/gi, (m, tag, attrs) => '<' + tag + attrs + ' style="font-family:' + MAIL_FONT + '">');
+  }
   function mailShell(title, paras, cta, footer) {
     const S2 = window.UFC_Store;
+    paras = (paras || []).map(outlookFonts);
     if (S2 && S2.noticeHtml) return S2.noticeHtml(title, paras, cta, footer);
     return '<div><h2>' + escM(title) + '</h2>' + paras.map(p => '<p>' + p + '</p>').join('') + (cta ? '<p><a href="' + escM(cta.href) + '">' + escM(cta.label) + '</a></p>' : '') + '<p>' + escM(footer || '') + '</p></div>';
   }
   /** The notice shell at table width — the status grid has a column per month. */
   function mailShellWide(title, paras, cta, footer) {
+    paras = (paras || []).map(outlookFonts);
     const btn = cta ? '<p style="margin:18px 0"><a href="' + escM(cta.href) + '" style="background:#25273A;color:#fff;padding:10px 16px;text-decoration:none;font-weight:700">' + escM(cta.label) + '</a></p>' : '';
     return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#25273A;line-height:1.5;max-width:1040px">' +
       '<p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#79828C;margin:0 0 6px">Savills PPM · Fee tool</p>' +

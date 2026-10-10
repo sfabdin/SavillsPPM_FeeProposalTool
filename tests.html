@@ -451,6 +451,9 @@
     if (!/1 behind, 200 h missing/.test(m.subject)) return 'subject: ' + m.subject;
     if (!/people behind \(&gt;1 month/.test(m.html) || !/value of missing hours/.test(m.html) || !/≈ months/.test(m.html)) return 'behind rule + $ column in the digest';
     if (!St.isBehind(comp.rows[0]) || St.isBehind(comp.rows[1])) return 'isBehind: more than a month of own hours missing';
+    // Outlook: every table cell must carry its own font-family or Word picks one
+    const bare = (m.html.match(/<(td|th|table)\b[^>]*>/gi) || []).filter(t => !/font-family/.test(t));
+    if (bare.length) return 'cells without a font: ' + bare.slice(0, 2).join(' ');
     if (St.isBehind({ person: { id: 'q', name: 'Q' }, totCap: 300, behindHrs: 20, capMonth: 150 })) return '20 h short is not behind any more';
     const iA = m.html.indexOf('Ada Lovelace'), iG = m.html.indexOf('Grace Hopper'), iT = m.html.indexOf('Alan Turing');
     if (!(iA > 0 && iG > iA && iT > iG)) return 'behind first, then on target, then not measured';
