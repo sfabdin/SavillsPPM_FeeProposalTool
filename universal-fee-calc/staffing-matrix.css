@@ -141,6 +141,11 @@ table.mini thead th { color:var(--sav-steel); font-family:var(--font-display); f
 .toolbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
 .toolbar input[type=search], .toolbar select { font-family:var(--font-body); font-size:13px; padding:8px 11px; border:1px solid rgba(37,39,58,0.22); }
 .toolbar input[type=search]{ min-width:220px; }
+.toolbar .cmp-find { display:inline-flex; align-items:center; }
+.toolbar .cmp-find input[type=search] { min-width:200px; }
+.toolbar .lock-chip { display:inline-flex; align-items:center; gap:6px; font-family:var(--font-body); font-size:12.5px; font-weight:700; color:#fff; background:var(--sav-navy); padding:6px 6px 6px 10px; max-width:320px; }
+.toolbar .lock-chip button { border:0; background:rgba(255,255,255,0.18); color:#fff; font-size:14px; line-height:1; width:20px; height:20px; cursor:pointer; padding:0; }
+.toolbar .lock-chip button:hover { background:rgba(255,255,255,0.35); }
 .toolbar .grow { flex:1; }
 table.dt { width:100%; border-collapse:collapse; font-size:12.5px; background:#fff; }
 table.dt th, table.dt td { padding:8px 11px; border-top:1px solid rgba(37,39,58,0.09); text-align:left; vertical-align:middle; }

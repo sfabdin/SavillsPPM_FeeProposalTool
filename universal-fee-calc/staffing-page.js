@@ -87,7 +87,7 @@
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
     pplSearch: '', expandedRoster: new Set(), pplExpandInit: false,
-    varProject: '', varPerson: '', varGroup: 'project', varUnit: 'hours', showMacro: true, glossaryOpen: false,
+    varProject: '', varPerson: '', varProjectQ: '', varPersonQ: '', varGroup: 'project', varUnit: 'hours', showMacro: true, glossaryOpen: false,
     expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
@@ -815,6 +815,10 @@
       let rows = S.varianceMatrix(ms, { project: projFilter || undefined, person: state.varPerson || undefined });
       // Leaves consume capacity but bill nothing — plan-vs-actual noise here.
       rows = rows.filter(r => !S.isLeaveProject(r.project));
+      // Type-to-search narrows live; Enter (or a pick from the list) locks it as a chip.
+      const pq = String(state.varProjectQ || '').trim().toLowerCase(), qq = String(state.varPersonQ || '').trim().toLowerCase();
+      if (pq) rows = rows.filter(r => (r.project + ' ' + (r.client || '')).toLowerCase().includes(pq));
+      if (qq) rows = rows.filter(r => String(r.person.name || '').toLowerCase().includes(qq));
       // Dollars mode: ①③ become hours × the person's internal COST rate (by title)
       if (dollars) rows = rows.map(r => { const k = rateOf(r.person); const bm = {}; ms.forEach(m => { const c = r.byMonth[m]; bm[m] = { e: c.e * k, a: c.a * k }; }); return { ...r, expected: r.expected * k, actual: r.actual * k, variance: r.variance * k, byMonth: bm }; });
       const byPerson = state.varGroup === 'person';
@@ -837,8 +841,12 @@
       const projNames = Object.keys(byProj).sort((a, b) => byPerson ? (S.getPerson(a) || { name: a }).name.localeCompare((S.getPerson(b) || { name: b }).name) : a.localeCompare(b));
       const totExp = rows.reduce((s, r) => s + r.expected, 0), totAct = rows.reduce((s, r) => s + r.actual, 0);
 
-      const projOpts = ['<option value="">All projects</option>'].concat(S.distinctProjects().map(p => `<option ${projFilter === p ? 'selected' : ''}>${esc(p)}</option>`)).join('');
-      const pplOpts = ['<option value="">All people</option>'].concat(S.listPeople().filter(S.inView).map(p => `<option value="${esc(p.id)}" ${state.varPerson === p.id ? 'selected' : ''}>${esc(p.name)}</option>`)).join('');
+      const projList = S.distinctProjects().filter(x => !S.isLeaveProject(x));
+      const pplList = S.listPeople().filter(S.inView).sort((a, b) => a.name.localeCompare(b.name));
+      const lockedPerson = state.varPerson ? (S.getPerson(state.varPerson) || { name: state.varPerson }).name : '';
+      const findBox = (id, q, list, chip, unlockKey, ph) => `<span class="cmp-find">${chip ? `<span class="lock-chip" title="Locked — click × to clear">🔒 ${esc(chip)}<button type="button" data-unlock="${unlockKey}" aria-label="Clear">×</button></span>` : `<input type="search" id="${id}" list="${id}-list" placeholder="${ph}" value="${esc(q)}" autocomplete="off"><datalist id="${id}-list">${list.map(v => `<option value="${esc(v)}">`).join('')}</datalist>`}</span>`;
+      const findProject = findBox('var-project-q', state.varProjectQ, projList, projFilter, 'project', 'Project… Enter locks');
+      const findPerson = findBox('var-person-q', state.varPersonQ, pplList.map(x => x.name), lockedPerson, 'person', 'Person… Enter locks');
       // Contract only applies when grouped by project (the contract has no names)
       let totContract = 0; const contractByProj = {};
       (byPerson ? [...new Set(rows.map(r => r.project))] : projNames).forEach(pn => { const cl = (rows.find(r => r.project === pn) || {}).client || ''; const cp = S.contractPlan(pn, ms, cl); if (cp) { contractByProj[pn] = cp; totContract += cpTot(cp); } });
@@ -874,32 +882,41 @@
           <button type="button" class="seg-btn ${!byPerson ? 'active' : ''}" data-group="project">By Project</button>
           <button type="button" class="seg-btn ${byPerson ? 'active' : ''}" data-group="person">By Person</button>
         </div>
-        <select id="var-project">${projOpts}</select>
-        <select id="var-person">${pplOpts}</select>
+        ${findProject}${findPerson}
         ${canDollars ? `<select id="var-unit" title="Show hours or dollars"><option value="hours">Units: hours</option><option value="dollars" ${dollars ? 'selected' : ''}>Units: $ cost vs fee</option></select>` : ''}
         ${!byPerson ? `<label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" id="var-showmacro" ${state.showMacro ? 'checked' : ''}> Include Macro / Time Off</label>` : ''}
         <button type="button" class="seg-btn" id="cmp-expand-all" style="border:1px solid rgba(37,39,58,0.25)">Expand all</button>
-        <span class="grow"></span><span class="note-txt">${dollars ? '① ③ = hours × internal COST rate for each person’s title (rates.json · titles from Clockify) · ② = contracted NET fee from the fee tool. Profitable = ③ below ②.' : `▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.`}</span></div>`;
+        <span class="grow"></span><span class="note-txt">${dollars ? '② = the contracted fee — what the client pays (fee tool, net). ③ = hours × internal COST rate for each person’s title. Every project total compares ③ against ②; ① is the matrix plan priced at cost, kept as a reference row. Profitable = ③ below ②.' : `▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.`}</span></div>`;
       html += compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars);
 
       if (!projNames.length) html += `<div class="empty">No matched allocations or actuals in this window.</div>`;
+      const cmpHead = (firstCol) => `<thead><tr><th class="sticky-col">${firstCol}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">act /plan · %</div></th>`).join('')}<th class="num">${dollars ? '① Plan cost' : '① Plan hrs'}</th><th class="num">${dollars ? '③ Actual cost' : '③ Actual hrs'}</th><th class="num">Variance${dollars ? '<div class="vmini" style="text-transform:none;letter-spacing:0">people vs ① · totals vs ② fee</div>' : ''}</th><th class="num">${dollars ? '% of ① / ② fee' : '% of plan'}</th></tr></thead>`;
+      const mcell = (ref, act) => { const cls = (ref || act) ? varCls(ref, act) : ''; const pct = ref ? Math.round(act / ref * 100) + '%' : (act ? '—' : ''); return `<td class="num ${cls}" style="white-space:nowrap">${(act || ref) ? `${varArrow(ref, act)} <b>${fmtH(act)}</b><span class="vmini"> /${ref ? fmtH(ref) : '0'}</span><div class="vmini">${pct}</div>` : '·'}</td>`; };
+      const refRow = (label, refM, refTot, act, tip) => `<tr style="background:#f4f6f7"><td class="vmini sticky-col" style="font-weight:700" title="${esc(tip || '')}">${label}</td>${msDesc.map(m => `<td class="num vmini">${refM(m) ? fmtH(refM(m)) : '·'}</td>`).join('')}<td class="num vmini" style="font-weight:700">${fmtH(refTot)}</td><td class="num vmini">${fmtH(act)}</td><td class="num vmini ${varCls(refTot, act)}">${act >= refTot ? '+' : ''}${fmtH(act - refTot)}</td><td class="num vmini">${refTot ? Math.round(act / refTot * 100) + '%' : '—'}</td></tr>`;
       projNames.forEach(pn => {
         const list = byProj[pn].sort((a, b) => b.actual - a.actual);
         const pe = list.reduce((s, r) => s + r.expected, 0), pa = list.reduce((s, r) => s + r.actual, 0);
         const cardTitle = byPerson ? (S.getPerson(pn) || { name: pn }).name : pn;
         const cardSub = byPerson ? ((S.getPerson(pn) || {}).title || '') : (list[0].client || '');
         const rowLabel = (r) => byPerson ? r.project : r.person.name;
+        const cp = byPerson ? null : contractByProj[pn];
+        // Dollars: the yardstick is the FEE — what the client pays — not the
+        // matrix hours priced at cost. The plan stays as a reference row.
+        const feeRef = !!(dollars && cp && cpTot(cp) > 0);
+        const fee = feeRef ? cpTot(cp) : 0;
         let b = '';
         list.forEach(r => {
           const vcls = varCls(r.expected, r.actual);
-          const mcells = msDesc.map(m => { const c = r.byMonth[m]; const cls = (c.e || c.a) ? varCls(c.e, c.a) : ''; const pct = c.e ? Math.round(c.a / c.e * 100) + '%' : (c.a ? '—' : ''); return `<td class="num ${cls}" style="white-space:nowrap">${(c.a || c.e) ? `${varArrow(c.e, c.a)} <b>${fmtH(c.a)}</b><span class="vmini"> /${c.e ? fmtH(c.e) : '0'}</span><div class="vmini">${pct}</div>` : '·'}</td>`; }).join('');
+          const mcells = msDesc.map(m => { const c = r.byMonth[m]; return mcell(c.e, c.a); }).join('');
           b += `<tr><td class="pname sticky-col" style="font-weight:600">${esc(rowLabel(r))}</td>${mcells}<td class="num">${fmtH(r.expected)}</td><td class="num">${fmtH(r.actual)}</td><td class="num ${vcls}">${varArrow(r.expected, r.actual)} ${r.variance >= 0 ? '+' : ''}${fmtH(r.variance)}</td><td class="num vmini">${r.expected ? Math.round(r.actual / r.expected * 100) + '%' : '—'}</td></tr>`;
         });
-        // TOTAL row — per-month plan/actual/% summed over people
-        const pcls = varCls(pe, pa);
-        const totCells = msDesc.map(m => { let e = 0, a = 0; list.forEach(r => { e += r.byMonth[m].e; a += r.byMonth[m].a; }); const pct = e ? Math.round(a / e * 100) + '%' : (a ? '—' : ''); return `<td class="num ${e || a ? varCls(e, a) : ''}" style="white-space:nowrap">${(e || a) ? `${varArrow(e, a)} <b>${fmtH(a)}</b><span class="vmini"> /${fmtH(e)}</span><div class="vmini">${pct}</div>` : '·'}</td>`; }).join('');
-        const totRow = `<tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total</td>${totCells}<td class="num" style="font-weight:800">${fmtH(pe)}</td><td class="num" style="font-weight:800">${fmtH(pa)}</td><td class="num ${pcls}" style="font-weight:800">${varArrow(pe, pa)} ${pa >= pe ? '+' : ''}${fmtH(pa - pe)}</td><td class="num vmini" style="font-weight:700">${pe ? Math.round(pa / pe * 100) + '%' : '—'}</td></tr>`;
-        const cp = byPerson ? null : contractByProj[pn];
+        // TOTAL row — per-month plan/actual/% summed over people; in dollars,
+        // against the fee for the month when the project has one.
+        const planMo = (m) => list.reduce((s, r) => s + r.byMonth[m].e, 0), actMo = (m) => list.reduce((s, r) => s + r.byMonth[m].a, 0);
+        const refTot = feeRef ? fee : pe, refMo = feeRef ? (m) => cpM(cp, m) : planMo;
+        const pcls = varCls(refTot, pa);
+        const totCells = msDesc.map(m => mcell(refMo(m), actMo(m))).join('');
+        const totRow = `<tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total${feeRef ? ' <span class="vmini" style="font-weight:600">· vs ② fee</span>' : ''}</td>${totCells}<td class="num" style="font-weight:800">${fmtH(pe)}</td><td class="num" style="font-weight:800">${fmtH(pa)}</td><td class="num ${pcls}" style="font-weight:800">${varArrow(refTot, pa)} ${pa >= refTot ? '+' : ''}${fmtH(pa - refTot)}</td><td class="num vmini" style="font-weight:700">${refTot ? Math.round(pa / refTot * 100) + '%' : '—'}</td></tr>`;
         // Trust marker: a pinned Mapping link and a fuzzy auto-match look the
         // same everywhere else — say which one this ② number is riding on.
         const autoMatched = cp && (cp.feeProjects || []).some(f => f.via !== 'mapped');
@@ -907,6 +924,9 @@
           ? ` <span title="Fee link is auto-matched by name — confirm it in Mapping" style="color:#8a6d00;cursor:help">≈ auto</span>`
           : ` <span title="Fee link confirmed in Mapping" style="color:#0E7C7B;cursor:help">🔗</span>`) : '';
         const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cpTot(cp))}</b>${linkBadge}` : (byPerson ? `<span style="color:#b0b5bc">no contract staffing</span>` : `<a href="#" data-goto-tab="mapping" style="color:#b0b5bc" title="Link this project to its fee-tool record">no contract staffing — link in Mapping</a>`);
+        const summaryLine = feeRef
+          ? `② fee <b style="color:var(--sav-navy)">${fmtH(fee)}</b>${linkBadge} · ③ actual cost <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${fee - pa >= 0 ? '+' : ''}${fmtH(fee - pa)} margin · ${Math.round(pa / fee * 100)}% of fee spent</span> · <span style="color:#8a94a0">① plan cost ${fmtH(pe)}</span>`
+          : `① matrix <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · ${contractCell} · ③ actual <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)} vs plan</span>`;
         let contractTbl = '';
         if (cp && cp.roles.length) {
           contractTbl = `<div style="padding:8px 16px 12px;border-top:1px dashed rgba(37,39,58,0.12);background:#faf9f7">
@@ -914,44 +934,47 @@
             <div style="display:flex;flex-wrap:wrap;gap:6px">${cp.roles.map(r => `<span class="mv-chip" style="background:#e7eef0"><b>${_fmtHours(r.hours)}h</b> ${esc(r.title)} · ${r.fteMonths} FTE-mo</span>`).join('')}</div>
           </div>`;
         }
+        const refRows = feeRef
+          ? refRow('① Plan cost (matrix × rate)', planMo, pe, pa, 'The matrix plan priced at each person’s cost rate — a reference, not the yardstick')
+          : (cp ? refRow(dollars ? '② Contract fee $' : '② Contract (titles)', (m) => cpM(cp, m), cpTot(cp), pa, '') : '');
         html += `<details class="cmp-card" style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px">
           <summary style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;cursor:pointer">
             <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span></div>
-            <div class="note-txt">① matrix <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · ${contractCell} · ③ actual <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)} vs plan</span></div>
+            <div class="note-txt">${summaryLine}</div>
           </summary>
           <div style="border-top:1px solid rgba(37,39,58,0.1)">
-          <div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">${byPerson ? 'Project' : 'Person'}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">act /plan · %</div></th>`).join('')}<th class="num">${dollars ? '① Plan cost' : '① Plan hrs'}</th><th class="num">${dollars ? '③ Actual cost' : '③ Actual hrs'}</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>${b}${totRow}
-          ${cp ? `<tr style="background:#f4f6f7"><td class="vmini sticky-col" style="font-weight:700">${dollars ? '② Contract fee $' : '② Contract (titles)'}</td>${msDesc.map(m => `<td class="num vmini">${cpM(cp, m) ? fmtH(cpM(cp, m)) : '·'}</td>`).join('')}<td class="num vmini" style="font-weight:700">${fmtH(cpTot(cp))}</td><td class="num vmini">${fmtH(pa)}</td><td class="num vmini ${varCls(cpTot(cp), pa)}">${pa >= cpTot(cp) ? '+' : ''}${fmtH(pa - cpTot(cp))}</td><td class="num vmini">${cpTot(cp) ? Math.round(pa / cpTot(cp) * 100) + '%' : '—'}</td></tr>` : ''}
+          <div class="cmp-scroll"><table class="dt cmp-table">${cmpHead(byPerson ? 'Project' : 'Person')}<tbody>${b}${totRow}${refRows}
           </tbody></table></div>
           ${contractTbl}
           </div>
         </details>`;
       });
       if (projNames.length) {
-        const gtCells = msDesc.map(m => {
-          const e = planM[m] || 0, a = actM[m] || 0;
-          const cls = (e || a) ? varCls(e, a) : '';
-          const pct = e ? Math.round(a / e * 100) + '%' : (a ? '—' : '');
-          return `<td class="num ${cls}" style="white-space:nowrap">${(e || a) ? `${varArrow(e, a)} <b>${fmtH(a)}</b><span class="vmini"> /${fmtH(e)}</span><div class="vmini">${pct}</div>` : '·'}</td>`;
-        }).join('');
-        const gtConCells = msDesc.map(m => `<td class="num vmini">${conM[m] ? fmtH(conM[m]) : '·'}</td>`).join('');
-        const gtCls = varCls(totExp, totAct);
+        const feeRefAll = !!(dollars && totContract > 0);
+        const refTot = feeRefAll ? totContract : totExp, refMo = feeRefAll ? (m) => conM[m] || 0 : (m) => planM[m] || 0;
+        const gtCells = msDesc.map(m => mcell(refMo(m), actM[m] || 0)).join('');
+        const gtCls = varCls(refTot, totAct);
+        const gtSummary = feeRefAll
+          ? `② fee <b style="color:var(--sav-navy)">${fmtH(totContract)}</b> · ③ actual cost <b style="color:var(--sav-navy)">${fmtH(totAct)}</b> · <span class="${gtCls}">${totContract - totAct >= 0 ? '+' : ''}${fmtH(totContract - totAct)} margin · ${Math.round(totAct / totContract * 100)}% of fee spent</span> · <span style="color:#8a94a0">① plan cost ${fmtH(totExp)}</span>`
+          : `① matrix <b style="color:var(--sav-navy)">${fmtH(totExp)}</b> · ② contract <b style="color:var(--sav-navy)">${fmtH(totContract)}</b> · ③ actual <b style="color:var(--sav-navy)">${fmtH(totAct)}</b> · <span class="${gtCls}">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)} vs plan</span>`;
+        const gtRef = feeRefAll
+          ? refRow('① Plan cost (matrix × rate)', (m) => planM[m] || 0, totExp, totAct, 'The matrix plan priced at cost — a reference, not the yardstick')
+          : (totContract ? refRow(dollars ? '② Contract fee $' : '② Contract (titles)', (m) => conM[m] || 0, totContract, totAct, '') : '');
         html += `<div class="cmp-card" style="background:#fff;border:2px solid var(--sav-navy);margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;border-bottom:1px solid rgba(37,39,58,0.1)">
             <div class="pname" style="font-size:14px">Grand total <span class="note-txt">· ${projNames.length} ${byPerson ? 'people' : 'projects'} in view — matches the chart above</span></div>
-            <div class="note-txt">① matrix <b style="color:var(--sav-navy)">${fmtH(totExp)}</b> · ② contract <b style="color:var(--sav-navy)">${fmtH(totContract)}</b> · ③ actual <b style="color:var(--sav-navy)">${fmtH(totAct)}</b> · <span class="${gtCls}">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)} vs plan</span></div>
+            <div class="note-txt">${gtSummary}</div>
           </div>
-          <div class="cmp-scroll"><table class="dt cmp-table"><thead><tr><th class="sticky-col">All ${byPerson ? 'people' : 'projects'}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">act /plan · %</div></th>`).join('')}<th class="num">${dollars ? '① Plan cost' : '① Plan hrs'}</th><th class="num">${dollars ? '③ Actual cost' : '③ Actual hrs'}</th><th class="num">Variance</th><th class="num">% of plan</th></tr></thead><tbody>
-            <tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total</td>${gtCells}<td class="num" style="font-weight:800">${fmtH(totExp)}</td><td class="num" style="font-weight:800">${fmtH(totAct)}</td><td class="num ${gtCls}" style="font-weight:800">${varArrow(totExp, totAct)} ${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)}</td><td class="num vmini" style="font-weight:700">${totExp ? Math.round(totAct / totExp * 100) + '%' : '—'}</td></tr>
-            ${totContract ? `<tr style="background:#f4f6f7"><td class="vmini sticky-col" style="font-weight:700">${dollars ? '② Contract fee $' : '② Contract (titles)'}</td>${gtConCells}<td class="num vmini" style="font-weight:700">${fmtH(totContract)}</td><td class="num vmini">${fmtH(totAct)}</td><td class="num vmini ${varCls(totContract, totAct)}">${totAct >= totContract ? '+' : ''}${fmtH(totAct - totContract)}</td><td class="num vmini">${totContract ? Math.round(totAct / totContract * 100) + '%' : '—'}</td></tr>` : ''}
+          <div class="cmp-scroll"><table class="dt cmp-table">${cmpHead('All ' + (byPerson ? 'people' : 'projects'))}<tbody>
+            <tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total${feeRefAll ? ' <span class="vmini" style="font-weight:600">· vs ② fee</span>' : ''}</td>${gtCells}<td class="num" style="font-weight:800">${fmtH(totExp)}</td><td class="num" style="font-weight:800">${fmtH(totAct)}</td><td class="num ${gtCls}" style="font-weight:800">${varArrow(refTot, totAct)} ${totAct >= refTot ? '+' : ''}${fmtH(totAct - refTot)}</td><td class="num vmini" style="font-weight:700">${refTot ? Math.round(totAct / refTot * 100) + '%' : '—'}</td></tr>
+            ${gtRef}
           </tbody></table></div>
         </div>`;
       }
     }
     $('#p-actuals').innerHTML = html;
     wireImport();
-    const vp2 = $('#var-project'); if (vp2) vp2.onchange = (e) => { state.varProject = e.target.value; renderActuals(); };
-    const vpp = $('#var-person'); if (vpp) vpp.onchange = (e) => { state.varPerson = e.target.value; renderActuals(); };
+    wireCompareFind();
     $$('#p-actuals [data-group]').forEach(b => b.onclick = () => { state.varGroup = b.dataset.group; renderActuals(); });
     const vu = $('#var-unit'); if (vu) vu.onchange = (e) => { state.varUnit = e.target.value; renderActuals(); };
     const vsm = $('#var-showmacro'); if (vsm) vsm.onchange = (e) => { state.showMacro = e.target.checked; renderActuals(); };
@@ -971,6 +994,27 @@
      never masquerade as billable actuals in the total bar height. Every
      segment's value is printed INSIDE the segment (when tall enough to hold
      it) rather than floating above the bar. */
+  /* Type-to-search with a lock. Typing narrows the comparison live; Enter
+     (or picking from the list) locks the best match as a chip, so you can
+     lock a project, then type a person and lock that too. × clears a lock. */
+  let cmpFindTimer = null, cmpRefocus = null;
+  function wireCompareFind() {
+    const resolveProject = (q) => { const list = S.distinctProjects(); const lq = q.trim().toLowerCase(); if (!lq) return ''; return list.find(x => x.toLowerCase() === lq) || list.find(x => x.toLowerCase().includes(lq)) || ''; };
+    const resolvePerson = (q) => { const list = S.listPeople().filter(S.inView); const lq = q.trim().toLowerCase(); if (!lq) return ''; const hit = list.find(x => x.name.toLowerCase() === lq) || list.find(x => x.name.toLowerCase().includes(lq)); return hit ? hit.id : ''; };
+    const wire = (id, qKey, lockKey, resolve) => {
+      const el = $('#' + id); if (!el) return;
+      el.oninput = () => { clearTimeout(cmpFindTimer); const v = el.value; cmpFindTimer = setTimeout(() => { state[qKey] = v; cmpRefocus = { id, pos: el.selectionStart }; renderActuals(); }, 140); };
+      el.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); clearTimeout(cmpFindTimer); const hit = resolve(el.value); if (hit) { state[lockKey] = hit; state[qKey] = ''; cmpRefocus = null; renderActuals(); } else toast('No ' + (lockKey === 'varProject' ? 'project' : 'person') + ' matches “' + el.value + '”.'); }
+        if (e.key === 'Escape') { el.value = ''; state[qKey] = ''; renderActuals(); }
+      };
+      el.onchange = () => { const v = el.value, list = lockKey === 'varProject' ? S.distinctProjects() : S.listPeople().filter(S.inView).map(x => x.name); if (list.some(x => x.toLowerCase() === v.trim().toLowerCase())) { clearTimeout(cmpFindTimer); state[lockKey] = resolve(v); state[qKey] = ''; cmpRefocus = null; renderActuals(); } };
+    };
+    wire('var-project-q', 'varProjectQ', 'varProject', resolveProject);
+    wire('var-person-q', 'varPersonQ', 'varPerson', resolvePerson);
+    $$('#p-actuals [data-unlock]').forEach(b => b.onclick = () => { state[b.dataset.unlock === 'project' ? 'varProject' : 'varPerson'] = ''; renderActuals(); });
+    if (cmpRefocus) { const el = $('#' + cmpRefocus.id); if (el) { el.focus(); try { el.setSelectionRange(cmpRefocus.pos, cmpRefocus.pos); } catch (e) {} } cmpRefocus = null; }
+  }
   function compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars) {
     const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 14, padB = 30, padR = 8;
     const max = Math.max(1, ...ms.map(m => Math.max(planM[m] || 0, conM[m] || 0, actM[m] || 0)));
