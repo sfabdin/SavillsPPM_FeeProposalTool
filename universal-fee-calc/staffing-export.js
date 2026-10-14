@@ -174,6 +174,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     { header: 'Title', key: 'title', width: 22 },
     { header: 'Client', key: 'client', width: 22 },
     { header: 'Project', key: 'project', width: 34 },
+    { header: 'Matrix / Clockify name', key: 'source', width: 30 },
     { header: 'Status', key: 'status', width: 12 },
     { header: 'Type', key: 'type', width: 14 },
     { header: 'Start', key: 'start', width: 10 },
@@ -190,7 +191,8 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     s1.addRow({
       person: p ? p.name : a.personId,
       title: p ? (p.title || '') : '',
-      project: a.project || '',
+      project: S.projectLabel(a.project, a.client).name,
+      source: a.project || '',
       client: a.client || '',
       status: a.status || '',
       type: a.type || '',
@@ -201,7 +203,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     });
   });
   s1.getColumn('pct').numFmt = '0"%"';
-  if (allocs.length) s1.autoFilter = { from: 'A1', to: `J${allocs.length + 1}` };
+  if (allocs.length) s1.autoFilter = { from: 'A1', to: `K${allocs.length + 1}` };
 
   /* ============================================================
      SHEET 2 · Actuals (raw)
@@ -211,6 +213,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     { header: 'Person', key: 'person', width: 22 },
     { header: 'Client', key: 'client', width: 22 },
     { header: 'Project', key: 'project', width: 34 },
+    { header: 'Matrix / Clockify name', key: 'source', width: 30 },
     { header: 'Month', key: 'month', width: 12 },
     { header: 'Actual Hours', key: 'hours', width: 14 },
   ];
@@ -222,14 +225,14 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     months.forEach(ym => {
       const a = r.byMonth[ym] ? r.byMonth[ym].a : 0;
       if (a > 0) {
-        s2.addRow({ person: r.person.name, project: r.project, client: r.client || '', month: ym, hours: Math.round(a * 100) / 100 });
+        s2.addRow({ person: r.person.name, project: S.projectLabel(r.project, r.client).name, source: r.project, client: r.client || '', month: ym, hours: Math.round(a * 100) / 100 });
         actualRowCount++;
       }
     });
   });
   s2.getColumn('hours').numFmt = '#,##0.00';
-  if (actualRowCount) s2.autoFilter = { from: 'A1', to: `E${actualRowCount + 1}` };
-  else s2.addRow({ person: '(no actuals in range)', project: '', client: '', month: '', hours: '' });
+  if (actualRowCount) s2.autoFilter = { from: 'A1', to: `F${actualRowCount + 1}` };
+  else s2.addRow({ person: '(no actuals in range)', project: '', source: '', client: '', month: '', hours: '' });
 
   /* ============================================================
      SHEET 3 · Project Summary — mirrors the Compare tab: quick
@@ -395,17 +398,17 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     const ws = wb.addWorksheet('By Project', { views: [{ state: 'frozen', ySplit: 1, xSplit: 2 }] });
     headerRow(ws, [
       { h: 'Client', w: 22 }, { h: 'Project', w: 34 }, { h: 'People', w: 9, align: 'right' },
-      { h: 'Peak FTE', w: 10, align: 'right' }, { h: 'Fee link', w: 30 },
+      { h: 'Peak FTE', w: 10, align: 'right' }, { h: 'Matrix / Clockify name', w: 30 },
       ...months.map(m => ({ h: S.ymLabel(m), w: 9, align: 'right' })),
     ], { xSplit: 2 });
     const roll = S.projectRollup(months, { includePursuit: true });
     let r = 2;
     roll.forEach(p => {
       ws.getCell(`A${r}`).value = p.client || '';
-      ws.getCell(`B${r}`).value = p.project;
+      ws.getCell(`B${r}`).value = S.projectLabel(p.project, p.client).name;
       ws.getCell(`C${r}`).value = p.headcount;
       ws.getCell(`D${r}`).value = round1(p.peakFte);
-      ws.getCell(`E${r}`).value = p.feeProject ? (p.feeProject.name || '') : '';
+      ws.getCell(`E${r}`).value = p.project;
       months.forEach((ym, i) => {
         const c = ws.getCell(`${colLetter(6 + i)}${r}`);
         const v = round1(p.byMonth[ym] || 0);
@@ -484,7 +487,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     gaps.forEach(g => {
       (g.segments || []).forEach((sg, i) => {
         ws.getCell(`A${r}`).value = g.client || '';
-        ws.getCell(`B${r}`).value = g.project;
+        ws.getCell(`B${r}`).value = S.projectLabelText(g.project, g.client);
         ws.getCell(`C${r}`).value = g.open ? '(open role — needs a name)' : (g.resource || '');
         ws.getCell(`D${r}`).value = g.roleTitle || '';
         ws.getCell(`E${r}`).value = g.open ? 'Yes' : 'No';
@@ -799,7 +802,7 @@ function writeTimeEntrySheets(wb, S, monthsList, opts, cfg) {
       r2++;
       names.forEach(n => {
         bp.getCell(`A${r2}`).value = person.name; bp.getCell(`A${r2}`).font = { name: 'Calibri', color: { argb: STEEL } };
-        bp.getCell(`B${r2}`).value = n;
+        bp.getCell(`B${r2}`).value = S.projectLabelText(n);
         let t = 0;
         ms.forEach((m, i) => { const v = projects[n][m] || 0; t += v; num(bp.getCell(`${colLetter(3 + i)}${r2}`), v); });
         num(bp.getCell(`${colLetter(3 + ms.length)}${r2}`), t);

@@ -1116,6 +1116,35 @@
       roles: Object.values(agg.roleAgg).map(r => ({ title: r.title, fteMonths: Math.round(r.fteMonths * 100) / 100, hours: Math.round(r.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours) };
   }
   /** Matrix projects whose fee link resolves to this fee project (pinned or auto). */
+  /* ---------- DISPLAY NAME: the fee tool's name first ----------
+     Three systems name the same job: the fee record (the one edited in the
+     tool), the matrix row and the Clockify project. Every report reads by
+     the FEE name; the matrix / Clockify name trails as an alias so the join
+     stays visible. Keys, mappings and allocations keep the matrix name —
+     this only changes what is printed. Unlinked, macro and time-off names
+     print as they are. */
+  let _labelCache = null;
+  function projectLabel(matrixName, client) {
+    const raw = String(matrixName || '');
+    const plain = { name: raw, client: client || '', alias: '', fee: [] };
+    if (!raw || isTimeOffProject(raw) || isMacroProject(raw) || isLeaveProject(raw)) return plain;
+    if (!_labelCache || Date.now() - _labelCache.t > 500) _labelCache = { t: Date.now(), m: new Map() };
+    const ck = nkey(raw) + '|' + String(client || '').toLowerCase();
+    if (_labelCache.m.has(ck)) return _labelCache.m.get(ck);
+    let cl = client || '';
+    if (!cl) { try { cl = (readDb().allocations.find(a => a.project === raw) || {}).client || ''; } catch (e) {} }
+    let links = []; try { links = matchFeeProjects(raw, cl) || []; } catch (e) {}
+    let out = plain;
+    if (links.length) {
+      const names = [...new Set(links.map(l => l.name).filter(Boolean))];
+      const name = names.join(' + ') || raw;
+      out = { name, client: cl || links[0].client || '', alias: nkey(name) === nkey(raw) ? '' : raw, fee: links };
+    } else out = { name: raw, client: cl, alias: '', fee: [] };
+    _labelCache.m.set(ck, out);
+    return out;
+  }
+  /** Fee name, then the matrix name when it differs — for Excel cells and plain text. */
+  function projectLabelText(matrixName, client) { const L = projectLabel(matrixName, client); return L.alias ? L.name + ' ⇐ ' + L.alias : L.name; }
   function matrixProjectsForFee(feeProjectId) {
     const db = readDb();
     // Planned names plus names that only have LOGGED time (a claimed Clockify
@@ -2214,6 +2243,7 @@
   }
 
   function setFeeMapping(matrixProject, feeProjectId, opts) {
+    _labelCache = null;
     const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
     db.mappings.fee = db.mappings.fee || {};
     const key = nkey(matrixProject);
@@ -2771,7 +2801,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
-    titleFamily, costRateForTitle, personCostRate, behindMonths, isBehind, missingCost, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
+    titleFamily, costRateForTitle, personCostRate, behindMonths, isBehind, missingCost, projectLabel, projectLabelText, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers
