@@ -3742,13 +3742,8 @@
     if (isChangeOrder && isChangeOrder(record)) return null;            // the parent project is the story
     const pj = record.project || {};
     const lead = resolveLeader(pj.leadId || pj.lead); const leadName = lead ? lead.displayName : (pj.lead || pj.leadId || '');
-    let bill = null; try { bill = clientBillOf(record, window.RATES_CATALOG); } catch (e) {}
-    // Pass-through split: a line ticked "fee share" is a broker's cut going out, not a vendor.
-    let ptVendor = 0, ptShare = 0;
-    try { (passThroughMonths(record).lines || []).forEach(L => { const c = Object.values(L.clientByMonth || {}).reduce((a, b) => a + b, 0); if (L.feeShare) ptShare += c; else ptVendor += c; }); } catch (e) {}
-    const fsA = (record.assumptions && record.assumptions.feeShare) || {};
-    const pctShare = bill ? Math.max(0, (bill.broker || 0) - (bill.shareOut || 0)) : 0;
-    const money = (n) => '$' + Math.round(n || 0).toLocaleString();
+    // No money in this email: marketing gets the story (who, what, where,
+    // when), not the contract value. The figures live on the record it links to.
     const tl = record.timeline || {}; const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const mon = (m, y) => (m && y) ? MN[m - 1] + ' ' + y : '';
     const when = [mon(tl.startMonth, tl.startYear), mon(tl.endMonth, tl.endYear)].filter(Boolean).join(' – ');
@@ -3756,17 +3751,13 @@
     const facts = [
       ['Client', pj.client], ['Project', pj.name], ['Revenue leader', leadName], ['Industry', pj.industry], ['Project type', [pj.projectType, pj.projectSubtype || pj.subType].filter(Boolean).join(' · ')],
       ['Location', pj.location], ['Timeline', when], ['Salesforce ID', pj.salesforceId], ['Project number', pj.projectNumber],
-      ['Total client contract', bill ? money(bill.total) : ''],
-      ['Of which pass-through (vendors)', ptVendor > 0 ? money(ptVendor) : ''],
-      ['Of which broker fee share', ptShare > 0 ? money(ptShare) : ''],
-      ['Broker fee share · ' + (parseFloat(fsA.pct) || 0) + '%' + (fsA.broker ? ' · ' + fsA.broker : ''), fsA.enabled && pctShare > 0 ? money(pctShare) : ''],
     ].filter(f => f[1]);
     const table = '<table style="border-collapse:collapse;font-size:13px">' + facts.map(f => '<tr><td style="padding:3px 14px 3px 0;color:#79828C;white-space:nowrap">' + escHtml(f[0]) + '</td><td style="padding:3px 0"><b>' + escHtml(f[1]) + '</b></td></tr>').join('') + '</table>';
     const title = (pj.client ? pj.client + ' · ' : '') + (pj.name || 'Untitled');
     const link = appPageUrl('Universal Fee Calculator.html') + '?id=' + encodeURIComponent(record.id);
     return B.notify({
       event: 'project-closed', to: marketingEmails(), cc: lead && lead.username ? [lead.username] : [],
-      data: { projectId: record.id, client: pj.client || '', name: pj.name || '', leadId: lead ? lead.id : '', salesforceId: pj.salesforceId || '', total: bill ? Math.round(bill.total) : null, closedBy: u.username || '' },
+      data: { projectId: record.id, client: pj.client || '', name: pj.name || '', leadId: lead ? lead.id : '', salesforceId: pj.salesforceId || '', closedBy: u.username || '' },
       subject: 'Case study candidate: ' + title + ' just closed',
       text: by + ' moved “' + title + '” from active to closed. Consider it for a case study. ' + link,
       html: noticeHtml('Case study candidate: ' + title, [
