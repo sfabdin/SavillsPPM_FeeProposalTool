@@ -353,7 +353,8 @@
   const escH = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   function pageUrl(page) { try { return location.origin + location.pathname.replace(/[^/]*$/, '') + encodeURIComponent(page); } catch (e) { return page; } }
   function leaderEmail(id) { const l = S().leaderById ? S().leaderById(id) : null; const u = l && String(l.username || '').toLowerCase(); return (u && /@/.test(u)) ? u : ''; }
-  function adminEmails() { try { return S().adminEmails ? S().adminEmails() : []; } catch (e) { return []; } }
+  /** The book's audience (store.BOOK_WATCHERS) — not every admin. */
+  function adminEmails() { try { const st = S(); return st.bookWatcherEmails ? st.bookWatcherEmails() : (st.adminEmails ? st.adminEmails() : []); } catch (e) { return []; } }
   function noticeHtml(title, paras, cta) {
     const btn = cta ? '<p style="margin:18px 0"><a href="' + escH(cta.href) + '" style="background:#25273A;color:#fff;padding:10px 16px;text-decoration:none;font-weight:700">' + escH(cta.label) + '</a></p>' : '';
     return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#25273A;line-height:1.5;max-width:640px">' +

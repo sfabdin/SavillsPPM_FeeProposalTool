@@ -3605,9 +3605,20 @@
     return getCurrentUser();
   }
   function isAdmin(user) { return (user || getCurrentUser()).role === 'admin'; }
-  /** Leadership admins' logins — who the confirmed-book notices go to. Tool
-      admins run tools, not the book, so they are not on this list. */
+  /** Every leadership admin's login — access, impersonation, the fallback
+      recipient when a notice has nobody else. Not the book's audience. */
   function adminEmails() { return [...new Set([...ADMINS, ...vocabAdmins()])].map(e => String(e || '').toLowerCase()).filter(e => /@/.test(e)).sort(); }
+  /* Who hears about confirmed-book activity — a leader confirmed, confirmed
+     late, acknowledged a miss, the book was locked, plus the copy on the
+     opened and locked-missed notices to leaders. Being an admin does not
+     put someone here; the owner is on every message through the always-cc
+     in box-adapter.js. Edit this list to change the audience. */
+  const BOOK_WATCHERS = [
+    'eglatt@savills.us',     // Emily Glatt
+    'jsantoro@savills.us',   // Jeff Santoro
+    'esobel@savills.us',     // Emily Sobel
+  ].map(s => s.toLowerCase());
+  function bookWatcherEmails() { const list = BOOK_WATCHERS.filter(e => /@/.test(e)).sort(); return list.length ? list : adminEmails(); }
 
   /* ------------------------------------------------------------
      NOTICES OUT OF THE PROJECT BOOK
@@ -3940,7 +3951,7 @@
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries, revenueSeries, isDeadPursuit,
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, isAdmin, adminEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
+    getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
