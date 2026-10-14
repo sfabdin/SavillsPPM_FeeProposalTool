@@ -1120,7 +1120,7 @@
       S.lockReconMonth(2026, 2, { 'rc_a|fee': feb, 'rc_a|pt:v': L.out.find(x => x.id === 'pt:v').byMonth['2026-02'], 'rc_a|share': L.out.find(x => x.id === 'share').byMonth['2026-02'] });
       let refused = false; try { S.setReconStatus(2026, 'rc_a', 'fee', '2026-02', 'billed'); } catch (e) { refused = true; }
       const settled = S.settleReconAccrual(2026, 'rc_a', 'share', '2026-02', { billedIn: '2026-03', amount: -50 });
-      S.setRealIdentity({ username: 'bshepparding@savills.us', name: 'Brianna King' });
+      S.setRealIdentity({ username: 'bsheppardking@savills.us', name: 'Brianna King' });
       let leaderRefused = false; try { S.setReconStatus(2026, 'rc_a', 'fee', '2026-03', 'billed'); } catch (e) { leaderRefused = true; }
       asAdmin();
       return sq(S.reconCell(2026, 'rc_a', 'fee', '2026-02').amount, 1000, 'amount stored') && sq(kinds, 'billed-diff:fee,slipped:pt:v', 'both flags on the project, the accrual is not a flag') &&
@@ -2341,9 +2341,9 @@
     });
     test('Confirmed book', 'only a leadership admin opens or locks a month', () => {
       try {
-        reset(); as('bshepparding@savills.us', 'Brianna King');   // a leader, not on the leadership list
+        reset(); as('bsheppardking@savills.us', 'Brianna King');   // a leader, not on the leadership list
         try { C.createCycle({ name: 'Sneaky', period: YM, deadline: '2026-09-15' }); return 'a leader created a book'; } catch (e) { if (!/leadership admin/.test(e.message)) return e.message; }
-        open(); as('bshepparding@savills.us', 'Brianna King');
+        open(); as('bsheppardking@savills.us', 'Brianna King');
         try { C.lockCycle(ID, { records: book() }); return 'a leader locked a month'; } catch (e) { return /leadership admin/.test(e.message) || e.message; }
       } finally { restore(); reset(); }
     });
@@ -2361,7 +2361,7 @@
         localStorage.setItem(dbKey, JSON.stringify({ schemaVersion: 2, projects: {} }));
         const y = new Date().getFullYear();
         const d = S.getReportYears();
-        S.setRealIdentity({ username: 'bshepparding@savills.us', name: 'Brianna King' });
+        S.setRealIdentity({ username: 'bsheppardking@savills.us', name: 'Brianna King' });
         let refused = false; try { S.setReportYears(2027, 2028); } catch (e) { refused = /leadership admin/.test(e.message); }
         S.setRealIdentity({ username: 'sabdin@savills.us', name: 'Sarah Abdin' });
         const set = S.setReportYears(2027, 2028);
@@ -2518,7 +2518,7 @@
         const a = sw({ id: 'cl_a', timeline: { startMonth: 10, startYear: 2026, endMonth: 10, endYear: 2026 }, passthrough: pt([{ id: 'x', cost: 86750, markupPct: 10, mode: 'billed', monthly: { '2026-8': 86750 } }]) });
         const b = sw({ id: 'cl_b', passthrough: pt([{ id: 'y', cost: 1000, markupPct: 10, mode: 'billed', monthly: { '2026-5': 1000 } }]) });   // already exact
         localStorage.setItem(dbKey, JSON.stringify({ schemaVersion: 2, projects: { cl_a: a, cl_b: b } }));
-        S.setRealIdentity({ username: 'bshepparding@savills.us', name: 'Brianna King' });
+        S.setRealIdentity({ username: 'bsheppardking@savills.us', name: 'Brianna King' });
         const none = S.runDataCleanups();
         S.setRealIdentity({ username: 'sabdin@savills.us', name: 'Sarah Abdin' });
         const ran = S.runDataCleanups();
