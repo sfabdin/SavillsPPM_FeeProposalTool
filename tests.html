@@ -2199,14 +2199,14 @@
                sq(w.kind, 'quiet', 'nothing left to nag about');
       } finally { restore(); }
     });
-    test('Confirmed book', 'notices: opening a book mails the leaders, confirming mails the admins, locking mails whoever was carried in; the status file lists who still owes', () => {
+    test('Confirmed book', 'notices: opening a book mails the leaders, confirming mails the book watchers (not every admin), locking mails whoever was carried in; the status file lists who still owes', () => {
       try {
         window.__notices = []; window.__notifyStatus = null;
         open();
         const opened = window.__notices.find(n => n.event === 'book-opened');
         if (!opened) return 'no book-opened notice';
         const e1 = sq(opened.to.slice().sort().join(','), 'esobel@savills.us,jsantoro@savills.us', 'to: every expected leader') ; if (e1 !== true) return e1;
-        const e2 = sq(opened.cc.indexOf('sabdin@savills.us') >= 0, true, 'cc: the admins'); if (e2 !== true) return e2;
+        const e2 = sq(opened.cc.slice().sort().join(','), 'eglatt@savills.us,esobel@savills.us,jsantoro@savills.us', 'cc: the book watchers, not every admin'); if (e2 !== true) return e2;
         if (!/Revenue Projections #12/.test(opened.subject) || !/Sep 15/.test(opened.subject)) return 'subject names the book and the date: ' + opened.subject;
         const s0 = window.__notifyStatus;
         if (!s0 || !s0.book || s0.book.id !== ID) return 'status names the open book';
@@ -2216,7 +2216,8 @@
         C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
         const conf = window.__notices.find(n => n.event === 'book-confirmed');
         if (!conf) return 'no book-confirmed notice';
-        const e4 = sq(conf.to.indexOf('sabdin@savills.us') >= 0, true, 'to the admins'); if (e4 !== true) return e4;
+        const e4 = sq(conf.to.slice().sort().join(','), 'eglatt@savills.us,esobel@savills.us,jsantoro@savills.us', 'to the book watchers only'); if (e4 !== true) return e4;
+        if (conf.to.indexOf('mglatt@savills.us') >= 0 || conf.to.indexOf('sabdin@savills.us') >= 0) return 'other admins are not on the confirmed notice';
         if (!/Emily Sobel confirmed/.test(conf.subject) || !/1 still to go/.test(conf.subject)) return 'subject: ' + conf.subject;
         const e5 = sq(window.__notifyStatus.pending.map(p => p.id).join(','), 'jsantoro', 'status: Jeff still pending'); if (e5 !== true) return e5;
         as('sabdin@savills.us', 'Sarah Abdin');
