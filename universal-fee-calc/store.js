@@ -3489,7 +3489,7 @@
     { id: 'bjosselson',displayName: 'Benay Josselson',  username: 'bjosselson@savills.us',  aliases: ['Benay Josselson', 'B. Josselson', 'Josselson', 'BLJ'] },
     // NOTE: confirm Brianna's actual SSO login. Both spellings resolve to her
     // (resolveLeader matches aliases too), so neither can lock her out.
-    { id: 'bking',     displayName: 'Brianna King',     username: 'bshepparding@savills.us',aliases: ['Brianna King', 'B. King', 'King', 'Brianna Sheppard King', 'BSK', 'bsheppardking@savills.us'] },
+    { id: 'bking',     displayName: 'Brianna King',     username: 'bsheppardking@savills.us', aliases: ['Brianna King', 'B. King', 'King', 'Brianna Sheppard King', 'BSK', 'bshepparding@savills.us'] },   // bshepparding@ was a typo that lived in this file for a while — kept as an alias so anything stamped with it still resolves
     { id: 'emerkelson',displayName: 'Eric Merkelson',   username: 'emerkelson@savills.us',  aliases: ['Eric Merkelson', 'E. Merkelson', 'Merkelson', 'EM'] },
     { id: 'esobel',    displayName: 'Emily Sobel',      username: 'esobel@savills.us',      aliases: ['Emily Sobel', 'E. Sobel', 'Sobel', 'ES'] },
     { id: 'fbuscaglia',displayName: 'Fred Buscaglia',   username: 'fbuscaglia@savills.us',  aliases: ['Fred Buscaglia', 'F. Buscaglia', 'Buscaglia', 'FB'] },
