@@ -287,7 +287,7 @@
         <div class="note-txt" style="margin:0 0 8px">These people hold more than one allocation to the same project over the same months, so their load is counted twice. Two genuine concurrent roles are possible — nothing is removed automatically. Delete the row that shouldn't be there.</div>
         ${dups.map(d => `<div style="border-bottom:1px dashed rgba(37,39,58,0.12);padding:8px 0">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px">
-            <b>${esc(d.person.name)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(d.project)}</span>
+            <b>${esc(d.person.name)}</b><span class="note-txt">on</span><span style="font-weight:600">${pLbl(d.project)}</span>
             <span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">${d.worstPct}% in ${esc(S.ymLabel(d.worstMonth))}</span>
             ${d.identical ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Same window, same percentage — almost certainly one row saved twice">identical rows</span>' : ''}
           </div>
@@ -348,7 +348,7 @@
       <datalist id="bridge-people">${rosterOptions}</datalist>
       ${gaps.map((g, i) => isHidden(g, i) ? '' : `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
         <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
-          <b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${esc(g.project)}</span>
+          <b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${pLbl(g.project, g.client)}</span>
           ${g.open
             ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">unstaffed — needs a name</span>'
             : (g.isNew
@@ -383,7 +383,7 @@
         <table class="dt" style="margin-top:6px"><thead><tr><th>Who / role</th><th>Project</th><th>Reason</th><th>By</th><th></th></tr></thead><tbody>
         ${dropped.map(g => `<tr>
           <td>${g.open ? 'Open: ' + esc(g.roleTitle) : esc(g.resource)}</td>
-          <td>${esc(g.project)}</td>
+          <td>${pLbl(g.project, g.client)}</td>
           <td class="note-txt">${esc((g.dismissed && g.dismissed.reason) || '—')}</td>
           <td class="note-txt">${esc((g.dismissed && g.dismissed.by) || '')}${g.dismissed && g.dismissed.at ? ' · ' + esc(String(g.dismissed.at).slice(0, 10)) : ''}</td>
           <td><button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" data-bridge-restore="${esc(g.key)}">Put back</button></td>
@@ -566,7 +566,7 @@
       }
       body += `<tr class="${isP ? 'pursuit-row' : ''}"${isLeave ? ' style="background:#faf7fd"' : ''}>
         <td>${esc(a.client || '—')}</td>
-        <td class="pname">${esc(a.project)}</td>
+        <td class="pname">${pLbl(a.project, a.client)}</td>
         <td>${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${person.isPool ? ' <span class="nh-tag" style="background:#dff0ee;color:#0E7C7B" title="Shared contract pool — several people can bill toward this line">POOL</span>' : ''}</td>
         <td>${isLeave ? '<span class="badge" style="background:#efe6f7;color:#6b3fa0">🌴 Leave</span>' : `<span class="badge ${isP ? 'pursuit' : 'active'}">${esc(a.status)}${a.type === 'Opportunity' ? ' · opp' : ''}</span>`}</td>
         <td>${esc(a.start ? S.ymLabel(a.start) : '—')} – ${esc(a.end ? S.ymLabel(a.end) : '—')}${isLeave && a.end ? ` <span class="vmini" style="color:#6b3fa0">back ${esc(S.ymLabel(S.ymAdd(a.end, 1)))}</span>` : ''}</td>
@@ -597,7 +597,7 @@
     const ms = months();
     let rows = S.projectRollup(ms, { includePursuit: state.incPursuit });
     const q = state.projSearch.toLowerCase();
-    if (q) rows = rows.filter(r => (r.project + ' ' + r.client).toLowerCase().includes(q));
+    if (q) rows = rows.filter(r => (r.project + ' ' + r.client + ' ' + S.projectLabel(r.project, r.client).name).toLowerCase().includes(q));
     if (state.projClient) rows = rows.filter(r => r.client === state.projClient);
     const feeOpts = S.listFeeProjects().map(p => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
     const unassignedByProj = {};
@@ -627,7 +627,8 @@
       const un = unassignedByProj[r.project];
       const unBadge = un ? ` <span class="badge" style="color:#8f2418;background:#fbe9e7" title="${esc(un.map(u => u.role + ' — ' + fmtH(u.hours) + 'h unstaffed').join(' · '))}">⚠ ${un.length} unassigned</span>` : '';
       const peak = Math.max(1e-6, r.peakFte);
-      body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.project)}">${esc(r.project)}</div><div class="who-meta">${esc(r.client || '—')} ${link}${unBadge}</div></td>`;
+      const L = S.projectLabel(r.project, r.client);
+      body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.project)}">${esc(L.name)}</div><div class="who-meta">${esc(r.client || L.client || '—')}${L.alias ? ` <span class="vmini" title="Matrix / Clockify name">⇐ ${esc(L.alias)}</span>` : ''} ${link}${unBadge}</div></td>`;
       ms.forEach(m => {
         const v = r.byMonth[m] || 0; const pct = Math.round(v / peak * 100);
         const hasPursuit = r.allocs.some(a => isPursuitAlloc(a) && S.allocActiveIn(a, m));
@@ -727,7 +728,7 @@
           const isP = isPursuitAlloc(a);
           const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
           const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-          return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(a.project)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+          return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${pLbl(a.project, a.client)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         };
         const sumRow = (label, list, style, title) => {
           const cells = ms.map(m => {
@@ -776,6 +777,10 @@
     $$('#p-people [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
   }
 
+  /** A project as people know it: the fee tool's name, with the matrix /
+      Clockify name trailing in small type when it differs. Keys stay raw. */
+  function pLbl(name, client) { const L = S.projectLabel(name, client); return esc(L.name) + (L.alias ? ` <span class="vmini" title="Matrix / Clockify name">⇐ ${esc(L.alias)}</span>` : ''); }
+
   /* ---------- ACTUALS vs EXPECTED ----------
      Just the comparison now. The Clockify import card, the ①②③ glossary and
      the data-health notices that used to stack above it live on Data Sources
@@ -817,7 +822,7 @@
       rows = rows.filter(r => !S.isLeaveProject(r.project));
       // Type-to-search narrows live; Enter (or a pick from the list) locks it as a chip.
       const pq = String(state.varProjectQ || '').trim().toLowerCase(), qq = String(state.varPersonQ || '').trim().toLowerCase();
-      if (pq) rows = rows.filter(r => (r.project + ' ' + (r.client || '')).toLowerCase().includes(pq));
+      if (pq) rows = rows.filter(r => (r.project + ' ' + (r.client || '') + ' ' + S.projectLabel(r.project, r.client).name).toLowerCase().includes(pq));
       if (qq) rows = rows.filter(r => String(r.person.name || '').toLowerCase().includes(qq));
       // Dollars mode: ①③ become hours × the person's internal COST rate (by title)
       if (dollars) rows = rows.map(r => { const k = rateOf(r.person); const bm = {}; ms.forEach(m => { const c = r.byMonth[m]; bm[m] = { e: c.e * k, a: c.a * k }; }); return { ...r, expected: r.expected * k, actual: r.actual * k, variance: r.variance * k, byMonth: bm }; });
@@ -844,8 +849,10 @@
       const projList = S.distinctProjects().filter(x => !S.isLeaveProject(x));
       const pplList = S.listPeople().filter(S.inView).sort((a, b) => a.name.localeCompare(b.name));
       const lockedPerson = state.varPerson ? (S.getPerson(state.varPerson) || { name: state.varPerson }).name : '';
-      const findBox = (id, q, list, chip, unlockKey, ph) => `<span class="cmp-find">${chip ? `<span class="lock-chip" title="Locked — click × to clear">🔒 ${esc(chip)}<button type="button" data-unlock="${unlockKey}" aria-label="Clear">×</button></span>` : `<input type="search" id="${id}" list="${id}-list" placeholder="${ph}" value="${esc(q)}" autocomplete="off"><datalist id="${id}-list">${list.map(v => `<option value="${esc(v)}">`).join('')}</datalist>`}</span>`;
-      const findProject = findBox('var-project-q', state.varProjectQ, projList, projFilter, 'project', 'Project… Enter locks');
+      const findBox = (id, q, list, chip, unlockKey, ph) => `<span class="cmp-find">${chip ? `<span class="lock-chip" title="Locked — click × to clear">🔒 ${esc(chip)}<button type="button" data-unlock="${unlockKey}" aria-label="Clear">×</button></span>` : `<input type="search" id="${id}" list="${id}-list" placeholder="${ph}" value="${esc(q)}" autocomplete="off"><datalist id="${id}-list">${list.map(v => typeof v === 'string' ? `<option value="${esc(v)}">` : `<option value="${esc(v.value)}" label="${esc(v.label)}">`).join('')}</datalist>`}</span>`;
+      // Suggestions carry the fee name (what people know) with the matrix name as the value that locks.
+      const projSuggest = projList.map(x => { const L = S.projectLabel(x); return L.alias ? { value: x, label: L.name } : x; });
+      const findProject = findBox('var-project-q', state.varProjectQ, projSuggest, projFilter ? S.projectLabel(projFilter).name : '', 'project', 'Project… Enter locks');
       const findPerson = findBox('var-person-q', state.varPersonQ, pplList.map(x => x.name), lockedPerson, 'person', 'Person… Enter locks');
       // Contract only applies when grouped by project (the contract has no names)
       let totContract = 0; const contractByProj = {};
@@ -896,9 +903,10 @@
       projNames.forEach(pn => {
         const list = byProj[pn].sort((a, b) => b.actual - a.actual);
         const pe = list.reduce((s, r) => s + r.expected, 0), pa = list.reduce((s, r) => s + r.actual, 0);
-        const cardTitle = byPerson ? (S.getPerson(pn) || { name: pn }).name : pn;
-        const cardSub = byPerson ? ((S.getPerson(pn) || {}).title || '') : (list[0].client || '');
-        const rowLabel = (r) => byPerson ? r.project : r.person.name;
+        const pL = byPerson ? null : S.projectLabel(pn, list[0].client || '');
+        const cardTitle = byPerson ? (S.getPerson(pn) || { name: pn }).name : pL.name;
+        const cardSub = byPerson ? ((S.getPerson(pn) || {}).title || '') : ((list[0].client || pL.client || '') + (pL.alias ? ' · ⇐ ' + pL.alias : ''));
+        const rowLabel = (r) => byPerson ? pLbl(r.project, r.client) : esc(r.person.name);
         const cp = byPerson ? null : contractByProj[pn];
         // Dollars: the yardstick is the FEE — what the client pays — not the
         // matrix hours priced at cost. The plan stays as a reference row.
@@ -908,7 +916,7 @@
         list.forEach(r => {
           const vcls = varCls(r.expected, r.actual);
           const mcells = msDesc.map(m => { const c = r.byMonth[m]; return mcell(c.e, c.a); }).join('');
-          b += `<tr><td class="pname sticky-col" style="font-weight:600">${esc(rowLabel(r))}</td>${mcells}<td class="num">${fmtH(r.expected)}</td><td class="num">${fmtH(r.actual)}</td><td class="num ${vcls}">${varArrow(r.expected, r.actual)} ${r.variance >= 0 ? '+' : ''}${fmtH(r.variance)}</td><td class="num vmini">${r.expected ? Math.round(r.actual / r.expected * 100) + '%' : '—'}</td></tr>`;
+          b += `<tr><td class="pname sticky-col" style="font-weight:600">${rowLabel(r)}</td>${mcells}<td class="num">${fmtH(r.expected)}</td><td class="num">${fmtH(r.actual)}</td><td class="num ${vcls}">${varArrow(r.expected, r.actual)} ${r.variance >= 0 ? '+' : ''}${fmtH(r.variance)}</td><td class="num vmini">${r.expected ? Math.round(r.actual / r.expected * 100) + '%' : '—'}</td></tr>`;
         });
         // TOTAL row — per-month plan/actual/% summed over people; in dollars,
         // against the fee for the month when the project has one.
@@ -999,7 +1007,7 @@
      lock a project, then type a person and lock that too. × clears a lock. */
   let cmpFindTimer = null, cmpRefocus = null;
   function wireCompareFind() {
-    const resolveProject = (q) => { const list = S.distinctProjects(); const lq = q.trim().toLowerCase(); if (!lq) return ''; return list.find(x => x.toLowerCase() === lq) || list.find(x => x.toLowerCase().includes(lq)) || ''; };
+    const resolveProject = (q) => { const list = S.distinctProjects(); const lq = q.trim().toLowerCase(); if (!lq) return ''; const fee = (x) => S.projectLabel(x).name.toLowerCase(); return list.find(x => x.toLowerCase() === lq || fee(x) === lq) || list.find(x => x.toLowerCase().includes(lq) || fee(x).includes(lq)) || ''; };
     const resolvePerson = (q) => { const list = S.listPeople().filter(S.inView); const lq = q.trim().toLowerCase(); if (!lq) return ''; const hit = list.find(x => x.name.toLowerCase() === lq) || list.find(x => x.name.toLowerCase().includes(lq)); return hit ? hit.id : ''; };
     const wire = (id, qKey, lockKey, resolve) => {
       const el = $('#' + id); if (!el) return;
@@ -1008,7 +1016,7 @@
         if (e.key === 'Enter') { e.preventDefault(); clearTimeout(cmpFindTimer); const hit = resolve(el.value); if (hit) { state[lockKey] = hit; state[qKey] = ''; cmpRefocus = null; renderActuals(); } else toast('No ' + (lockKey === 'varProject' ? 'project' : 'person') + ' matches “' + el.value + '”.'); }
         if (e.key === 'Escape') { el.value = ''; state[qKey] = ''; renderActuals(); }
       };
-      el.onchange = () => { const v = el.value, list = lockKey === 'varProject' ? S.distinctProjects() : S.listPeople().filter(S.inView).map(x => x.name); if (list.some(x => x.toLowerCase() === v.trim().toLowerCase())) { clearTimeout(cmpFindTimer); state[lockKey] = resolve(v); state[qKey] = ''; cmpRefocus = null; renderActuals(); } };
+      el.onchange = () => { const v = el.value, list = lockKey === 'varProject' ? S.distinctProjects().flatMap(x => [x, S.projectLabel(x).name]) : S.listPeople().filter(S.inView).map(x => x.name); if (list.some(x => x.toLowerCase() === v.trim().toLowerCase())) { clearTimeout(cmpFindTimer); state[lockKey] = resolve(v); state[qKey] = ''; cmpRefocus = null; renderActuals(); } };
     };
     wire('var-project-q', 'varProjectQ', 'varProject', resolveProject);
     wire('var-person-q', 'varPersonQ', 'varPerson', resolvePerson);
@@ -1057,7 +1065,7 @@
     });
     return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);padding:14px 16px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
-        <div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">${dollars ? 'Dollars' : 'Hours'} by month — ${projFilter ? esc(projFilter) : 'all projects'}</div>
+        <div style="font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">${dollars ? 'Dollars' : 'Hours'} by month — ${projFilter ? esc(S.projectLabel(projFilter).name) : 'all projects'}</div>
         <div class="note-txt"><span style="color:#0E7C7B">■</span> ${names[0]}&nbsp;&nbsp;<span style="color:#9aa3ad">■</span> ${names[1]}&nbsp;&nbsp;<span style="color:#e8c400">■</span> ${names[2]} billable&nbsp;&nbsp;<span style="color:#E5DCC0;border:1px solid rgba(37,39,58,0.3)">■</span> ${names[2]} macro&nbsp;&nbsp;<span style="display:inline-block;width:12px;height:12px;vertical-align:-2px;border:1px solid rgba(37,39,58,0.3);background-color:#EDE6D6;background-image:repeating-linear-gradient(45deg, rgba(37,39,58,0.35) 0 3px, transparent 3px 7px)"></span> ${names[2]} Time Off · hover a bar for the number</div>
       </div>
       <div class="note-txt" style="margin-bottom:8px">③ Actual, this window: <b style="color:var(--sav-navy)">${tf(totBillable)}</b> billable + <b style="color:var(--sav-navy)">${tf(totMacro)}</b> macro + <b style="color:var(--sav-navy)">${tf(totPto)}</b> Time Off = <b style="color:var(--sav-navy)">${tf(totBillable + totMacro + totPto)}</b> total</div>
@@ -1633,7 +1641,7 @@
 
     const fH = (n) => fmtH(Math.round(n * 10) / 10);
     const noAct = hasAct ? '' : `<div class="note-txt" style="margin-bottom:14px;color:#8a6d00">No Clockify actuals loaded — burn-based insights are empty. Pull actuals on the Compare tab first.</div>`;
-    const projTable = (list, dir) => list.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">③ Actual</th><th class="num">① Plan</th><th class="num">② Contract</th><th class="num">${dir}</th></tr></thead><tbody>${list.map(p => `<tr><td class="pname">${esc(p.project)}<div class="vmini">${esc(p.client || '')}</div></td><td class="num"><b>${fH(p.act)}</b></td><td class="num">${fH(p.plan)}</td><td class="num">${p.contract != null ? fH(p.contract) : '—'}</td><td class="num ${dir === 'Over' ? 'var-over' : 'var-under'}">${p.varPlan >= 0 ? '+' : ''}${fH(p.varPlan)}${p.pctPlan != null ? `<div class="vmini">${Math.round(p.pctPlan * 100)}% of plan</div>` : '<div class="vmini">no plan</div>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nothing here — clean.</div>';
+    const projTable = (list, dir) => list.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">③ Actual</th><th class="num">① Plan</th><th class="num">② Contract</th><th class="num">${dir}</th></tr></thead><tbody>${list.map(p => `<tr><td class="pname">${pLbl(p.project, p.client)}<div class="vmini">${esc(p.client || '')}</div></td><td class="num"><b>${fH(p.act)}</b></td><td class="num">${fH(p.plan)}</td><td class="num">${p.contract != null ? fH(p.contract) : '—'}</td><td class="num ${dir === 'Over' ? 'var-over' : 'var-under'}">${p.varPlan >= 0 ? '+' : ''}${fH(p.varPlan)}${p.pctPlan != null ? `<div class="vmini">${Math.round(p.pctPlan * 100)}% of plan</div>` : '<div class="vmini">no plan</div>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nothing here — clean.</div>';
 
     const gapsShown = gaps, trendsShown = trends.slice(0, 5);
     const more = (n, total) => total > n ? `<div class="vmini" style="padding:6px 2px 0">+${total - n} more</div>` : '';
@@ -1644,10 +1652,10 @@
       <div class="ins-card"><h3>🧊 Under-served <span>· scope risk or stale plan</span></h3>${projTable(cold, 'Under')}</div>
       <div class="ins-card"><h3>⚠️ Most overextended <span>· load + burn vs capacity</span></h3>${overext.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Person</th><th class="num">Peak</th><th class="num">Months &gt;100%</th><th class="num">Burn</th></tr></thead><tbody>${overext.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num ${p.peak > 100 ? 'var-over' : ''}">${Math.round(p.peak)}%</td><td class="num">${p.overMonths}</td><td class="num ${p.burnPct > 1.05 ? 'var-over' : ''}">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty" style="border:0">Nobody over the line.</div>'}</div>
       <div class="ins-card"><h3>🎯 Role heat <span>· over-plan hours by title${hireSignal ? ' · <b>' + hireSignal + '</b>' : ''}</span></h3>${roles.length ? `<table class="dt"><tbody>${roles.map(r => `<tr><td style="width:38%" class="pname">${esc(r.title)}</td><td><div class="heat-bar"><i style="width:${Math.round(r.hrs / maxRole * 100)}%;background:${r.hrs / maxRole > 0.6 ? '#e4453a' : '#e8b563'}"></i></div></td><td class="num" style="width:70px"><b>+${fH(r.hrs)}</b>h</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">Nothing to attribute yet.</div>'}</div>
-      <div class="ins-card"><h3>🕳️ Contract coverage gaps <span>· &lt;60% staffed</span></h3>${gapsShown.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Project</th><th class="num">Contract</th><th class="num">Gap</th></tr></thead><tbody>${gapsShown.map(g => `<tr><td class="pname">${esc(g.project)}</td><td class="num">${fH(g.contract)}</td><td class="num var-over">${fH(g.gap)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty" style="border:0">Every contract is ≥60% staffed.</div>'}</div>
+      <div class="ins-card"><h3>🕳️ Contract coverage gaps <span>· &lt;60% staffed</span></h3>${gapsShown.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Project</th><th class="num">Contract</th><th class="num">Gap</th></tr></thead><tbody>${gapsShown.map(g => `<tr><td class="pname">${pLbl(g.project, g.client)}</td><td class="num">${fH(g.contract)}</td><td class="num var-over">${fH(g.gap)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty" style="border:0">Every contract is ≥60% staffed.</div>'}</div>
       <div class="ins-card"><h3>🟢 Headroom <span>· first call before hiring</span></h3>${headroom.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Person</th><th class="num">Avg load</th><th class="num">Burn</th></tr></thead><tbody>${headroom.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.avg)}%</td><td class="num">${p.capH ? Math.round(p.burnPct * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty" style="border:0">No one with meaningful headroom.</div>'}</div>
       <div class="ins-card"><h3>🎯 Pursuit exposure <span>· forward load on unsigned work</span></h3>${pursuitPpl.length ? `<table class="dt"><thead><tr><th>Person</th><th class="num">Firm</th><th class="num">+ Pursuit</th><th class="num">If landed</th></tr></thead><tbody>${pursuitPpl.map(p => `<tr><td class="pname">${esc(p.person.name)}</td><td class="num">${Math.round(p.firm)}%</td><td class="num" style="color:#8a6d00;font-weight:700">+${Math.round(p.pur)}</td><td class="num ${p.all > 100 ? 'var-over' : ''}">${Math.round(p.all)}%</td></tr>`).join('')}</tbody></table>` : '<div class="empty" style="border:0">No pursuit allocations in the forward window.</div>'}</div>
-      <div class="ins-card"><h3>📈 Burn trend <span>· last 3 months, ±30%+ swings</span></h3>${trendsShown.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Trend</th></tr></thead><tbody>${trendsShown.map(t => `<tr><td class="pname">${esc(t.project)}</td><td class="num ${t.delta > 0 ? 'var-over' : 'var-under'}">${t.delta > 0 ? '▲' : '▼'} ${t.pct > 0 ? '+' : ''}${Math.round(t.pct * 100)}%</td></tr>`).join('')}</tbody></table>${more(5, trends.length)}` : `<div class="empty" style="border:0">${hasAct ? (msPast.length >= 3 ? 'No big swings.' : 'Widen the window to ≥3 past months.') : 'Needs Clockify actuals.'}</div>`}</div>
+      <div class="ins-card"><h3>📈 Burn trend <span>· last 3 months, ±30%+ swings</span></h3>${trendsShown.length ? `<table class="dt"><thead><tr><th>Project</th><th class="num">Trend</th></tr></thead><tbody>${trendsShown.map(t => `<tr><td class="pname">${pLbl(t.project, t.client)}</td><td class="num ${t.delta > 0 ? 'var-over' : 'var-under'}">${t.delta > 0 ? '▲' : '▼'} ${t.pct > 0 ? '+' : ''}${Math.round(t.pct * 100)}%</td></tr>`).join('')}</tbody></table>${more(5, trends.length)}` : `<div class="empty" style="border:0">${hasAct ? (msPast.length >= 3 ? 'No big swings.' : 'Widen the window to ≥3 past months.') : 'Needs Clockify actuals.'}</div>`}</div>
       <div class="ins-card"><h3>📉 Coming available <span>· next 3 months · frees 25%+ · pursuits excluded</span></h3>${freeing.length ? `<div style="max-height:320px;overflow-y:auto"><table class="dt"><thead><tr><th>Person</th><th class="num">Now</th><th class="num">Drops to</th><th class="num">Frees</th><th>When</th></tr></thead><tbody>${freeing.map(f => `<tr><td class="pname">${esc(f.person.name)}${f.stillLoaded ? ' <span class="badge pursuit" title="Still over 100% today — the drop brings them back toward the line rather than opening a full slot">over-allocated now</span>' : ''}</td><td class="num">${Math.round(f.cur)}%</td><td class="num" style="color:#1f7a44;font-weight:700">${Math.round(f.to)}%</td><td class="num">${Math.round(f.freedPct)}%</td><td>${esc(S.ymLabel(f.m))}</td></tr>`).join('')}</tbody></table></div><div class="note-txt" style="padding:6px 16px 2px;font-size:11px">${freeing.length} ${freeing.length === 1 ? 'person frees' : 'people free'} 25% or more of their capacity. Sorted by where they land, so the most available person is first.</div>` : '<div class="empty" style="border:0">Nobody frees 25% or more in the next three months.</div>'}</div>
       ${(() => {
         const noAlloc = S.loggingWithoutAllocation(msPast);

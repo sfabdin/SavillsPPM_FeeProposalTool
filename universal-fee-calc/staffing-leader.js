@@ -171,7 +171,7 @@
       html += `<details class="lv-bridge" open><summary>🤝 Contract staffing to be allocated <span class="lv-chip lv-w">${gaps.length} item${gaps.length === 1 ? '' : 's'}</span><span class="note-txt">your proposals staff these roles; the matrix does not yet</span></summary>
         <datalist id="lv-people">${rosterOptions}</datalist>`;
       gaps.forEach((g, i) => {
-        html += `<div class="lv-gap"><div class="lv-gap-h"><b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b> <span class="note-txt">on</span> <b>${esc(g.project)}</b> <span class="note-txt">· ${esc(g.roles.join(', '))} · ${g.totalNeedFteMo} FTE-mo missing</span></div>
+        html += `<div class="lv-gap"><div class="lv-gap-h"><b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b> <span class="note-txt">on</span> <b>${esc(st.projectLabel(g.project, g.client).name)}</b> <span class="note-txt">· ${esc(g.roles.join(', '))} · ${g.totalNeedFteMo} FTE-mo missing</span></div>
           <div class="vmini">${g.segments.map(sg => `${esc(st.ymLabel(sg.start))}${sg.start !== sg.end ? ' → ' + esc(st.ymLabel(sg.end)) : ''} · contract ${sg.want}% · staffed ${sg.have}% · <b>+${sg.need}%</b>`).join(' &nbsp;|&nbsp; ')}</div>
           <div class="lv-gap-act"><input list="lv-people" data-gname="${i}" value="${g.open ? '' : esc(g.person ? g.person.name : g.resource)}" placeholder="${g.open ? 'Who takes this role?' : 'Change the name to map it onto someone else'}">
             <button class="btn btn-primary" data-gapply="${i}">Confirm — create ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'}</button>
@@ -185,7 +185,7 @@
       rows.forEach(a => {
         const person = st.getPerson(a.personId) || { name: a.personName || a.personId };
         const load = Math.round(st.personLoad(a.personId, now) || 0);
-        html += `<tr><td>${esc(a.client || '—')}</td><td class="pname">${esc(a.project)}</td><td>${esc(person.name)}</td>
+        html += `<tr><td>${esc(a.client || '—')}</td><td class="pname">${esc(st.projectLabel(a.project, a.client).name)}</td><td>${esc(person.name)}</td>
           <td class="num" style="color:${load > 100 ? 'var(--sav-red)' : 'inherit'}">${load}%</td>
           <td><span class="badge ${a.status === 'Pursuit' || a.type === 'Opportunity' ? 'pursuit' : 'active'}">${esc(a.status || '')}</span></td>
           <td>${esc(a.start ? st.ymLabel(a.start) : '—')} – ${esc(a.end ? st.ymLabel(a.end) : 'open')}</td><td class="num">${a.pct}%</td><td class="vmini">${esc(a.note || '')}</td>
