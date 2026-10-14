@@ -504,6 +504,7 @@
     if (n.cc.indexOf('esobel@savills.us') < 0) return 'the revenue leader is in copy: ' + n.cc.join(',');
     if (!/Case study candidate: Acme · Lobby Repositioning/.test(n.subject)) return 'subject: ' + n.subject;
     if (!/P009999/.test(n.html) || !/Open the project record/.test(n.html)) return 'body carries the facts and the link';
+    if (/\$\d/.test(n.html) || /contract|fee share|pass-through/i.test(n.html) || 'total' in (n.data || {})) return 'no money in the marketing email';
     return true;
   });
 
