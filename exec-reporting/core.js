@@ -112,6 +112,7 @@
   const DEFAULT_LEADERS = [
     { id: 'acpeters',   displayName: 'Andrew Peters',    username: 'acpeters@savills.us',    aliases: ['Andrew Peters', 'A. Peters', 'Peters', 'AP'] },
     { id: 'bjosselson', displayName: 'Benay Josselson',  username: 'bjosselson@savills.us',  aliases: ['Benay Josselson', 'B. Josselson', 'Josselson', 'BLJ'] },
+    { id: 'brubin',     displayName: 'Ben Rubin',        username: 'brubin@savills.us',      aliases: ['Ben Rubin', 'B. Rubin', 'Rubin', 'Benjamin Rubin', 'BR'] },
     { id: 'bking',      displayName: 'Brianna King',     username: 'bsheppardking@savills.us', aliases: ['Brianna King', 'B. King', 'King', 'Brianna Sheppard King', 'BSK', 'bshepparding@savills.us'] },
     { id: 'esobel',     displayName: 'Emily Sobel',      username: 'esobel@savills.us',      aliases: ['Emily Sobel', 'E. Sobel', 'Sobel', 'ES'] },
     { id: 'fbuscaglia', displayName: 'Fred Buscaglia',   username: 'fbuscaglia@savills.us',  aliases: ['Fred Buscaglia', 'F. Buscaglia', 'Buscaglia', 'FB'] },
@@ -119,6 +120,7 @@
     { id: 'jsantoro',   displayName: 'Jeff Santoro',     username: 'jsantoro@savills.us',    aliases: ['Jeff Santoro', 'J. Santoro', 'Santoro', 'Jeffrey Santoro', 'JS'] },
     { id: 'jjeffrey',   displayName: 'Jessica Jeffrey',  username: 'jjeffrey@savills.us',    aliases: ['Jessica Jeffrey', 'J. Jeffrey', 'Jeffrey', 'JJ'] },
     { id: 'kmartinez',  displayName: 'Kathryn Martinez', username: 'kmartinez@savills.us',   aliases: ['Kathryn Martinez', 'K. Martinez', 'Martinez', 'KM'] },
+    { id: 'kspiegel',   displayName: 'Kathy Spiegel',    username: 'kspiegel@savills.us',    aliases: ['Kathy Spiegel', 'K. Spiegel', 'Spiegel', 'Katherine Spiegel', 'Kathleen Spiegel', 'KS'] },
     { id: 'kraymond',   displayName: 'Kristen Raymond',  username: 'kraymond@savills.us',    aliases: ['Kristen Raymond', 'K. Raymond', 'Raymond', 'KR'] },
     { id: 'msmessina',  displayName: 'Marc Messina',     username: 'msmessina@savills.us',   aliases: ['Marc Messina', 'M. Messina', 'Messina', 'MSM'] },
     { id: 'mmclane',    displayName: 'Michael McLane',   username: 'mmclane@savills.us',     aliases: ['Michael McLane', 'M. McLane', 'McLane', 'Mike McLane', 'MHM'] },
