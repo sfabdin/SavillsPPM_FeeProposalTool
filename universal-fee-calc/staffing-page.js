@@ -91,7 +91,7 @@
     expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
-    mapSearch: '', mapOnlyProblems: false, clockifyNames: null,
+    mapSearch: '', mapOnlyProblems: false, mapAllFee: false, clockifyNames: null,
     compSearch: '', compSort: { key: 'behind', dir: -1 },   // Clockify Reporting table: filter + column sort
     compView: 'summary',                                    // 'summary' (grouped + sparklines) | 'grid' (month detail)
     bridgeOpen: false,                                      // "contract staffing" card starts rolled up — it can dwarf the page
@@ -903,8 +903,8 @@
   function legacySectionHtml() {
     const legacy = S.legacyProjects(); if (!legacy.length) return '';
     return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid #C0392B;padding:12px 16px;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><span style="font-family:var(--font-display);font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#8f2418">⚠ ${legacy.length} project name${legacy.length === 1 ? '' : 's'} need a fee project</span><span class="note-txt">These rows still carry an old matrix name. Pick the fee project (or internal line) they staff and every row moves at once; until then they count toward nobody's contract.</span></div>
-      <table class="dt"><thead><tr><th>Old name</th><th class="num">Rows</th><th class="num">People</th><th>Looks like</th><th style="width:34%">Move to</th></tr></thead><tbody>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><span style="font-family:var(--font-display);font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#8f2418">⚠ ${legacy.length} allocation project name${legacy.length === 1 ? ' is' : 's are'} not fee-tool names</span><span class="note-txt">Rows planned under a name the fee tool does not know. Map each to the fee project (or internal line) it staffs and every row moves at once; until then they count toward nobody's contract.</span></div>
+      <table class="dt"><thead><tr><th>Name in the allocations</th><th class="num">Rows</th><th class="num">People</th><th>Looks like</th><th style="width:34%">Map to fee-tool project</th></tr></thead><tbody>
       ${legacy.map(g => `<tr><td class="pname">${esc(g.name)}<div class="vmini">${esc(g.client || '')}</div></td><td class="num">${g.rows}</td><td class="num">${g.people}</td><td>${g.suggest ? `<span class="badge pursuit">${esc(g.suggest.label)}</span> <button class="btn sm" data-legacy-take="${esc(g.name)}" data-key="${esc(g.suggest.key)}">Use this</button>` : '<span class="vmini">no match</span>'}</td><td><input list="target-dl" data-legacy-move="${esc(g.name)}" class="fee-link-sel" style="width:95%" placeholder="type the fee project…"></td></tr>`).join('')}
       </tbody></table>${targetDatalist()}</div>`;
   }
@@ -1478,33 +1478,50 @@
     const feeList = S.listFeeProjects();
     const ckList = state.clockifyNames;
     const ckClient = {}; ckList.forEach(c => { ckClient[c.name.toLowerCase()] = c.client || ''; });
-    /* One row per CLOCKIFY project: where its hours land. Many Clockify
-       projects may point at one fee project; nothing points the other way. */
+    /* FEE PROJECTS ON THE LEFT. One row per fee-tool project (and per
+       internal line); the Clockify projects feeding it sit beside it, and a
+       picker over the Clockify list attaches another. Many Clockify projects
+       to one fee project; nothing points the other way. */
     const ckRows = S.clockifyProjectRows(ckList.map(c => c.name));
     const q = state.mapSearch.toLowerCase();
-    let rows = ''; let problems = 0;
-    const viaBadge = (r) => r.ignored ? '<span class="badge" style="background:#e7eef0;color:#4a5560">ignored</span>'
-      : r.unmapped ? '<span class="badge" style="color:#8f2418;background:#fbe9e7">unmapped</span>'
-      : r.via === 'auto' ? '<span class="badge pursuit" title="Matched on words alone — confirm it, or pick another">≈ guess</span>'
-      : `<span class="badge active" title="${esc(r.via)}">${r.via === 'mapped' ? 'pinned' : r.via === 'salesforce' ? 'SF ID' : r.via === 'rule' ? 'rule' : 'exact name'}</span>`;
-    ckRows.forEach(r => {
-      const isProblem = r.unmapped || r.via === 'auto' || !!r.conflict;
+    const ckByKey = {}; ckRows.forEach(r => { if (r.key) (ckByKey[r.key] = ckByKey[r.key] || []).push(r); });
+    const AXk = S.actualsIndex().byKey;
+    // rows: planned projects + anything hours land on + every fee project when asked (or when searching)
+    const rowKeys = new Map();
+    S.planProjects().forEach(p => { if (p.feeId || p.internal) rowKeys.set(p.key, p); });
+    Object.keys(AXk).forEach(k => { if (/^(fee|int):/.test(k) && !rowKeys.has(k)) rowKeys.set(k, S.describeKey(k)); });
+    S.INTERNAL_ORDER.forEach(k => { if (!rowKeys.has('int:' + k)) rowKeys.set('int:' + k, S.describeKey('int:' + k)); });
+    if (state.mapAllFee || q) feeList.forEach(p => { if (!rowKeys.has('fee:' + p.id) && (!q || (p.label + ' ' + p.client).toLowerCase().includes(q) || state.mapAllFee)) rowKeys.set('fee:' + p.id, S.describeKey('fee:' + p.id)); });
+    const feeRows = [...rowKeys.values()].sort((a, b) => (a.internal ? 1 : 0) - (b.internal ? 1 : 0) || a.label.localeCompare(b.label));
+    const ckBadge = (c) => {
+      const how = c.via === 'mapped' ? 'pinned' : c.via === 'salesforce' ? 'Salesforce id' : c.via === 'rule' ? 'internal rule' : c.via === 'auto' ? 'guessed from the name — not confirmed' : 'exact name';
+      return `<div class="lv-link" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0"><span class="badge ${c.via === 'auto' ? 'pursuit' : 'active'}" title="${how}">${esc(c.name)}</span><span class="vmini">${c.hours ? fmtH(c.hours) + ' h' : 'no hours yet'} · ${c.via === 'mapped' ? 'pinned' : c.via === 'salesforce' ? 'SF id' : c.via === 'rule' ? 'rule' : c.via === 'auto' ? 'guess' : 'name'}</span>${c.via === 'auto' ? `<button class="btn sm" data-confirm-ck="${esc(c.name)}" data-fee="${esc(c.key)}" title="Pin this match">✓ Confirm</button>` : ''}${c.pinned ? `<a href="#" data-unpin-ck="${esc(c.name)}" style="color:#8f2418;text-decoration:none;font-weight:800" title="Detach — back to the automatic match">✕</a>` : ''}${c.conflict ? `<span class="vmini" style="color:#8f2418">⚠ its Salesforce id belongs to <b>${esc(c.conflict)}</b></span>` : ''}</div>`;
+    };
+    let rows = ''; let problems = 0; let shown = 0;
+    feeRows.forEach(p => {
+      const cks = ckByKey[p.key] || [];
+      const planned = S.planProjects().some(x => x.key === p.key);
+      const silent = planned && !!p.feeId && !cks.length;
+      const isProblem = silent || cks.some(c => c.via === 'auto' || c.conflict);
       if (isProblem) problems++;
-      if (q && !(r.name + ' ' + r.label + ' ' + r.client).toLowerCase().includes(q)) return;
+      if (q && !(p.label + ' ' + p.client + ' ' + cks.map(c => c.name).join(' ')).toLowerCase().includes(q)) return;
       if (state.mapOnlyProblems && !isProblem) return;
-      const landing = r.ignored ? '<span class="vmini">hours not counted</span>'
-        : r.unmapped ? `<span class="no-link" style="margin:0">no fee project — ${r.plannedRows ? `planned under this name too (${r.plannedRows} row${r.plannedRows === 1 ? '' : 's'}); picking a project moves both` : 'hours show as “no project”'}</span>`
-        : `${esc(r.label)}${r.feeId ? ` <a class="link-fee" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.feeId)}" title="Open in fee tool">↗</a>` : ''}`;
+      shown++;
+      const ckCell = cks.length ? cks.map(ckBadge).join('') : `<span class="no-link" style="margin:0">${silent ? 'planned, but no Clockify project lands here — hours cannot reach it' : p.internal ? 'nothing lands here' : 'nothing lands here'}</span>`;
       rows += `<tr>
-        <td class="pname">${esc(r.name)}<div class="vmini">${esc(ckClient[r.name.toLowerCase()] || '')}</div></td>
-        <td class="num">${r.hours ? fmtH(r.hours) : '<span class="vmini">—</span>'}</td>
-        <td>${viaBadge(r)} ${landing}${r.pinned ? ` <a href="#" data-unpin-ck="${esc(r.name)}" style="color:#8f2418;text-decoration:none;font-weight:800" title="Remove the pin — back to the automatic match">✕</a>` : ''}${r.conflict ? `<div class="vmini" style="color:#8f2418;margin-top:3px">⚠ the Salesforce id in this name belongs to <b>${esc(r.conflict)}</b> — remove the pin (✕) to follow the id, or leave it if the pin is deliberate</div>` : ''}</td>
-        <td><input list="target-dl" data-map-ck="${esc(r.name)}" class="fee-link-sel" style="width:${r.unmapped || r.via === 'auto' ? '60%' : '95%'}" placeholder="${r.unmapped ? 'type the fee project…' : r.via === 'auto' ? 'confirm, or type another…' : 'type to change…'}">${r.via === 'auto' && r.feeId ? ` <button class="btn sm" data-confirm-ck="${esc(r.name)}" data-fee="${esc(r.feeId)}" title="Pin this match">✓ Confirm</button>` : ''}${r.unmapped ? ` <button class="btn sm ghost" data-ignore-proj="${esc(r.name)}" title="Not project work — never count these hours">Ignore</button>` : ''}</td>
+        <td class="pname">${esc(p.label)}${p.feeId ? ` <a class="link-fee" href="Universal Fee Calculator.html?id=${encodeURIComponent(p.feeId)}" title="Open in fee tool">↗</a>` : ''}<div class="vmini">${p.internal ? 'internal line · no fee project by design' : esc(((STORE.STATUS_LABELS || {})[p.status] || p.status || '') + (planned ? ' · planned' : ''))}</div></td>
+        <td>${ckCell}</td>
+        <td><input list="ck-dl" data-attach="${esc(p.key)}" class="fee-link-sel" style="width:95%" placeholder="${cks.length ? 'add another Clockify project…' : 'pick the Clockify project…'}" title="Type part of a Clockify project name and pick it — the list shows where each one lands today"></td>
       </tr>`;
     });
-    // fee projects that are planned but hear nothing from Clockify
-    const silent = S.planProjects().filter(p => p.feeId && !S.clockifyNamesFor(p.key).length).filter(p => !q || p.label.toLowerCase().includes(q));
-    const silentNote = silent.length ? `<div class="note-txt" style="margin:10px 0 0;padding:8px 12px;background:#fdf6e3;border-left:3px solid #e8b563"><b>${silent.length} planned project${silent.length === 1 ? ' has' : 's have'} no Clockify project landing on ${silent.length === 1 ? 'it' : 'them'}</b> — logged hours cannot reach ${silent.length === 1 ? 'it' : 'them'} until one is mapped above: ${silent.slice(0, 12).map(p => esc(p.label)).join(' · ')}${silent.length > 12 ? ' · …' : ''}</div>` : '';
+    // the Clockify list to pick from: unmapped first, each with where it lands today
+    const ckPick = ckRows.slice().sort((a, b) => (a.unmapped ? 0 : 1) - (b.unmapped ? 0 : 1) || b.hours - a.hours);
+    const ckDatalist = `<datalist id="ck-dl">${ckPick.map(c => `<option value="${esc(c.name)}" label="${esc(c.ignored ? 'ignored' : c.unmapped ? 'UNMAPPED' + (c.hours ? ' · ' + fmtH(c.hours) + ' h' : '') : '→ ' + c.label)}"></option>`).join('')}</datalist>`;
+    // Clockify projects with hours and no fee project — the other way in
+    const unmappedRows = ckRows.filter(r => r.unmapped).filter(r => !q || (r.name + ' ' + (ckClient[r.name.toLowerCase()] || '')).toLowerCase().includes(q));
+    problems += ckRows.filter(r => r.unmapped).length;
+    const unmappedSection = unmappedRows.length ? `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">Clockify projects with no fee project <span class="note-txt" style="font-weight:400">(${unmappedRows.length} · ${fmtH(unmappedRows.reduce((t, r) => t + r.hours, 0))} h shown as “no project” until mapped — pick the fee project, or Ignore non-project time)</span></h3>
+      <table class="dt"><thead><tr><th style="width:34%">③ Clockify project</th><th class="num" style="width:80px">Hours</th><th>Map to ② fee project / internal line</th></tr></thead><tbody>${unmappedRows.map(r => `<tr><td class="pname">${esc(r.name)}<div class="vmini">${esc(ckClient[r.name.toLowerCase()] || '')}${r.plannedRows ? ` · planned under this name too (${r.plannedRows} row${r.plannedRows === 1 ? '' : 's'}) — mapping it moves both` : ''}</div></td><td class="num">${r.hours ? fmtH(r.hours) : '—'}</td><td><input list="target-dl" data-map-ck="${esc(r.name)}" class="fee-link-sel" style="width:60%" placeholder="type the fee project…"> <button class="btn sm ghost" data-ignore-proj="${esc(r.name)}" title="Not project work — never count these hours">Ignore</button></td></tr>`).join('')}</tbody></table>` : '';
     // ---- PEOPLE mapping: roster ↔ Clockify users ----
     const ckUsers = state.clockifyUsers || [];
     const userMaps = maps.users || {};
@@ -1589,21 +1606,32 @@
         <table class="dt"><thead><tr><th>Fee project</th><th>Flagged by</th><th>When</th><th>Note</th><th></th></tr></thead><tbody>${flagIds.map(id => { const f = flags[id]; const fp = feeList.find(x => x.id === id); return `<tr><td class="pname">${esc(fp ? fp.label : (f.feeName || id))}</td><td>${esc(f.byName || f.by || '')}</td><td>${esc(new Date(f.at).toLocaleString())}</td><td>${esc(f.note || '')}</td><td><button class="btn sm" data-flag-resolve="${esc(id)}">Resolved</button></td></tr>`; }).join('')}</tbody></table></div>` : '';
     $('#p-mapping').innerHTML = `${banner}${flagQueue}
       <div class="toolbar">
-        <input type="search" id="map-search" placeholder="Filter Clockify or fee projects…" value="${esc(state.mapSearch)}">
+        <input type="search" id="map-search" placeholder="Find a fee project or a Clockify project…" value="${esc(state.mapSearch)}">
         <label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" id="map-problems" ${state.mapOnlyProblems ? 'checked' : ''}> Only problems (${problems})</label>
+        <label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px" title="By default only planned projects and projects with hours are listed"><input type="checkbox" id="map-all-fee" ${state.mapAllFee ? 'checked' : ''}> Every fee project (${feeList.length})</label>
         <span class="grow"></span>
         <button class="btn btn-ghost" id="map-refresh" title="Re-pull the Clockify project list">⟳ Refresh Clockify list</button>
-        <span class="note-txt">Clockify project → fee project, many to one. Every pick is saved for everyone and applies to all future pulls.</span>
+        <span class="note-txt">Fee project on the left, the Clockify projects feeding it on the right — several can. Every pick is saved for everyone and applies to all future pulls.</span>
       </div>
-      <table class="dt"><thead><tr><th style="width:30%">③ Clockify project</th><th class="num" style="width:80px">Hours</th><th style="width:34%">Lands on · ② fee project / internal line</th><th>Fix</th></tr></thead><tbody>${rows || '<tr><td colspan="4"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
-      ${targetDatalist()}
-      ${silentNote}
-      <div style="margin-top:14px">${legacySectionHtml()}</div>
+      <table class="dt"><thead><tr><th style="width:32%">② Fee-tool project</th><th>③ Clockify project(s) landing here</th><th style="width:26%">Attach a Clockify project</th></tr></thead><tbody>${rows || '<tr><td colspan="3"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
+      <div class="note-txt" style="margin-top:6px">${shown} of ${feeRows.length} projects shown${state.mapAllFee ? '' : ' · planned projects and projects with hours; tick “Every fee project” or search to reach the rest'}.</div>
+      ${ckDatalist}${targetDatalist()}
+      <div style="margin-top:18px">${legacySectionHtml()}</div>
+      ${unmappedSection}
       ${pplSection}
       ${titleSection}`;
     $$('#p-mapping [data-flag-resolve]').forEach(b => b.onclick = () => { S.clearMappingFlag(b.dataset.flagResolve); toast('Flag resolved.', 'ok'); renderMapping(); });
     $('#map-search').oninput = searchBox('#map-search', v => { state.mapSearch = v; renderMapping(); });
     $('#map-problems').onchange = (e) => { state.mapOnlyProblems = e.target.checked; renderMapping(); };
+    $('#map-all-fee').onchange = (e) => { state.mapAllFee = e.target.checked; renderMapping(); };
+    const ckNames = ckRows.map(r => ({ name: r.name, client: ckClient[r.name.toLowerCase()] || '' }));
+    $$('#p-mapping [data-attach]').forEach(inp => inp.onchange = () => {
+      const v = inp.value.trim(); if (!v) return;
+      let hit = ckNames.find(c => c.name.toLowerCase() === v.toLowerCase()) || resolveTyped(v, ckNames, ['name', 'client']);
+      if (!hit) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a Clockify project from the list — or type more of its name, it only needs to be unique.'; return; }
+      try { S.setProjectMapping(hit.name, inp.dataset.attach); let moved = 0; if (S.legacyProjects().some(g => g.name.toLowerCase() === hit.name.toLowerCase())) moved = S.retargetLegacy(hit.name, S.projectRefToTarget(inp.dataset.attach)); state._gapsKey = null; toast(`“${hit.name}” now lands on ${S.describeKey(inp.dataset.attach).label}${moved ? ` — and ${moved} planned row${moved === 1 ? '' : 's'} under that name moved too` : ''}.`); } catch (e) { toast(e.message || String(e)); }
+      renderMapping(); renderCounts();
+    });
     $('#map-refresh').onclick = () => { state.clockifyNames = null; state.clockifyNamesError = null; renderMapping(); };
     $$('#p-mapping [data-map-ck]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;

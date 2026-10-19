@@ -1285,8 +1285,11 @@
     const seen = new Set(); const out = [];
     const pins = (db.mappings || {}).clockify || {};
     const legacyRows = {}; (db.allocations || []).forEach(a => { if (!a.feeId && !a.internal) { const k = nkey(a.legacyName || a.project || ''); legacyRows[k] = (legacyRows[k] || 0) + 1; } });
-    [...Object.keys(hours), ...Object.values(pins).map(v => v && v.name).filter(Boolean), ...Object.keys(pins), ...(extraNames || [])].forEach(raw => {
-      const k = nkey(raw); if (!k || seen.has(k)) return; seen.add(k);
+    const live = extraNames && extraNames.length ? new Set(extraNames.map(nkey)) : null;
+    [...Object.keys(hours), ...(extraNames || []), ...Object.values(pins).map(v => v && v.name).filter(Boolean), ...Object.keys(pins)].forEach(raw => {
+      const k = nkey(raw); if (!k || seen.has(k)) return;
+      if (live && !hours[raw] && !live.has(k) && !Object.keys(hours).some(h => nkey(h) === k)) return;   // pinned name Clockify does not know and never logged — not a project
+      seen.add(k);
       const res = resolveClockify(raw);
       const row = { name: raw, hours: Math.round((hours[raw] || 0) * 10) / 10, key: null, label: '', client: '', via: res ? res.via : null, pinned: !!pins[k], ignored: !!(res && res.ignore), unmapped: !res };
       if (res && res.key) { const d = describeKey(res.key); row.key = res.key; row.label = d.label; row.client = d.client; row.feeId = d.feeId || null; row.internal = d.internal || null; }
@@ -2700,14 +2703,17 @@
     // carry hours (imports keyed them that way) resolve the same way, so the
     // history keeps landing until the next pull re-keys it by Clockify name.
     db.mappings = db.mappings || { users: {} }; db.mappings.clockify = db.mappings.clockify || {};
-    const put = (ckName, target) => { const k = nkey(ckName); if (!k || db.mappings.clockify[k]) return; db.mappings.clockify[k] = target; counts.clockify++; };
+    const actualNames = new Set(Object.keys(db.actuals || {}).map(k => k.split('|')[1]));
+    const casing = {}; actualNames.forEach(n => { casing[nkey(n)] = n; });
+    const put = (ckName, target) => { const k = nkey(ckName); if (!k || db.mappings.clockify[k]) return; db.mappings.clockify[k] = target === '__ignore__' ? target : Object.assign({ name: casing[k] || String(ckName).trim() }, target); counts.clockify++; };
     Object.entries(lm.projects).forEach(([ck, matrix]) => {
       if (matrix === '__ignore__') { put(ck, '__ignore__'); return; }
       const t = resolveLegacyName(canon(matrix), '', lm); if (t) put(ck, t);
     });
-    const actualNames = new Set(Object.keys(db.actuals || {}).map(k => k.split('|')[1]));
     actualNames.forEach(n => { if (resolveClockifyFresh(n)) return; const t = resolveLegacyName(canon(n), '', lm); if (t) put(n, t); });
-    Object.keys(lm.fee).forEach(mn => { const t = resolveLegacyName(mn, '', lm); if (t) put(mn, t); });
+    // old matrix → fee pins become Clockify pins only where Clockify really
+    // logs under that name; a matrix-only name is not a Clockify project
+    Object.keys(lm.fee).forEach(mn => { if (!casing[nkey(mn)]) return; const t = resolveLegacyName(mn, '', lm); if (t) put(mn, t); });
     db.meta = db.meta || {}; db.meta.legacyMappings = lm; db.meta.feeKeyed = new Date().toISOString(); db.meta.feeKeyedCounts = counts;
     delete db.mappings.fee; delete db.mappings.projects; delete db.mappings.renames;
     return counts;
