@@ -705,7 +705,7 @@
             const isP = isPursuitAlloc(a);
             const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
             const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-            pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+            pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell dacts" colspan="2">${drawerActs(a)}</td></tr>`;
           });
         } else {
           // one row per person who is planned OR logged time here
@@ -714,17 +714,18 @@
           prow.forEach(x => {
             const alloc = r.allocs.find(a => a.personId === x.pid);
             const cells = ms.map(m => { if (!AX.covered.has(m)) return '<td class="dcell" style="color:#c9cdd3">·</td>'; const v = metric === 'actual' ? x.actM[m] : x.actM[m] - x.planM[m]; const txt = metric === 'actual' ? (v ? v.toFixed(2) : '·') : (v ? fmtSigned(v, 2) : '·'); const col = metric === 'var' && v ? (v > 0.1 * Math.max(x.planM[m], 0.05) ? 'color:#7a5600' : v < -0.1 * Math.max(x.planM[m], 0.05) ? 'color:#4a5560' : '') : ''; return `<td class="dcell" style="${col}" title="${metric === 'actual' ? `${x.actM[m].toFixed(2)} FTE actual · ${x.planM[m].toFixed(2)} projected` : `${fmtSigned(v, 2)} vs ${x.planM[m].toFixed(2)} projected`}">${txt}</td>`; }).join('');
-            pr += `<tr class="drawer-tr ${alloc ? 'alloc-row' : ''}" ${alloc ? `data-edit-alloc="${esc(alloc.id)}" title="Click to edit this person's allocation"` : 'title="Logged time, no allocation"'}><td class="who dproj">${esc(x.person.name)}${alloc ? '' : ' <span class="nh-tag" style="background:#fdf3d7;color:#8a6d00">no plan</span>'}</td>${cells}<td class="dcell"></td><td class="dcell"></td></tr>`;
+            pr += `<tr class="drawer-tr ${alloc ? 'alloc-row' : ''}" ${alloc ? `data-edit-alloc="${esc(alloc.id)}" title="Click to edit this person's allocation"` : 'title="Logged time, no allocation"'}><td class="who dproj">${esc(x.person.name)}${alloc ? '' : ' <span class="nh-tag" style="background:#fdf3d7;color:#8a6d00">no plan</span>'}</td>${cells}<td class="dcell dacts" colspan="2">${alloc ? drawerActs(alloc) : ''}</td></tr>`;
           });
         }
         if (!pr) pr = `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+        pr += drawerAddRow(ms, { project: r.project, client: r.client || '' }, '+ Add someone to this project');
         body += pr;
       }
     });
     const table = rows.length ? `<div class="hm-wrap"><table class="hm"><thead>${head}</thead><tbody>${body}</tbody></table></div>` : `<div class="empty">No projects match.</div>`;
     const legend = metric === 'var'
-      ? `<div class="legend"><span><span class="sw" style="background:#cfe6e4"></span>within ±10% of plan</span><span><span class="sw" style="background:#fce7c2"></span>more than planned</span><span><span class="sw" style="background:#f6c9c2"></span>far more (&gt;50% over)</span><span><span class="sw" style="background:#eef4f4"></span>less than planned</span><span><span class="sw nodata" style="background:repeating-linear-gradient(45deg,#f7f6f3 0 4px,#fff 4px 8px)"></span>no Clockify data</span><span style="margin-left:auto">Click a project for who, click a planned row to edit it.</span></div>`
-      : `<div class="legend"><span>Cell shade = that month relative to the project's own peak.</span>${metric === 'plan' ? '<span><span class="sw sw-stripe"></span>includes pursuit hours — not yet signed</span>' : '<span><span class="sw" style="background:repeating-linear-gradient(45deg,#f7f6f3 0 4px,#fff 4px 8px)"></span>no Clockify data</span>'}<span style="margin-left:auto">Click a project for its staffing, click an allocation row to edit it.</span></div>`;
+      ? `<div class="legend"><span><span class="sw" style="background:#cfe6e4"></span>within ±10% of plan</span><span><span class="sw" style="background:#fce7c2"></span>more than planned</span><span><span class="sw" style="background:#f6c9c2"></span>far more (&gt;50% over)</span><span><span class="sw" style="background:#eef4f4"></span>less than planned</span><span><span class="sw nodata" style="background:repeating-linear-gradient(45deg,#f7f6f3 0 4px,#fff 4px 8px)"></span>no Clockify data</span><span style="margin-left:auto">Click a project for who; edit, delete or add rows right in the drawer.</span></div>`
+      : `<div class="legend"><span>Cell shade = that month relative to the project's own peak.</span>${metric === 'plan' ? '<span><span class="sw sw-stripe"></span>includes pursuit hours — not yet signed</span>' : '<span><span class="sw" style="background:repeating-linear-gradient(45deg,#f7f6f3 0 4px,#fff 4px 8px)"></span>no Clockify data</span>'}<span style="margin-left:auto">Click a project for its staffing; edit, delete or add rows right in the drawer.</span></div>`;
     $('#p-projects').innerHTML = kpis + toolbar + table + legend;
     wireMetric('#p-projects', renderProjects);
     $('#pj-search').oninput = searchBox('#pj-search', v => { state.projSearch = v; renderProjects(); });
@@ -738,6 +739,7 @@
     $$('#p-projects [data-ck-map]').forEach(sel => sel.onchange = () => { if (!sel.value) return; try { S.setProjectMapping(sel.dataset.ckMap, sel.value); toast('Mapped — saved for everyone; the hours land there now.'); } catch (e) { toast(e.message || String(e)); } renderAll(); });
     $$('#p-projects [data-legacy-move]').forEach(sel => sel.onchange = () => { if (!sel.value) return; try { const r = S.placeName(sel.dataset.legacyMove, sel.value); state._gapsKey = null; toast(`Moved ${r.rows} allocation${r.rows === 1 ? '' : 's'} onto ${r.label}.`); } catch (e) { toast(e.message || String(e)); } renderAll(); });
     $$('#p-projects [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
+    wireDrawerActs('#p-projects');
   }
 
   /* ---------- BY PERSON ---------- */
@@ -820,7 +822,7 @@
             const isP = isPursuitAlloc(a);
             const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
             const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-            return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${pLbl(a.project, a.client)}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+            return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${pLbl(a.project, a.client)}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell dacts" colspan="2">${drawerActs(a)}</td></tr>`;
           };
           const sumRow = (label, list, style, title) => {
             const cells = ms.map(m => {
@@ -849,11 +851,12 @@
           const names = [...projSet].map(pn => { const planM = {}, actM = {}; ms.forEach(m => { planM[m] = inWin.filter(a => a.project === pn && S.allocActiveIn(a, m)).reduce((t, a) => t + (parseFloat(a.pct) || 0), 0) * AX.planFrac(m); actM[m] = (((AX.byPP[r.person.id] || {})[pn] || { m: {} }).m[m] || 0) / cap * 100; }); const alloc = inWin.find(a => a.project === pn); return { pn, client: alloc ? alloc.client : (((AX.byPP[r.person.id] || {})[pn] || {}).client || ''), planM, actM, alloc, tot: ms.reduce((t, m) => t + actM[m], 0) }; }).sort((a, b) => b.tot - a.tot);
           names.forEach(x => {
             const cells = ms.map(m => { if (!AX.covered.has(m)) return '<td class="dcell" style="color:#c9cdd3">·</td>'; const v = metric === 'actual' ? x.actM[m] : x.actM[m] - x.planM[m]; const rv = Math.round(v); const txt = metric === 'actual' ? (rv ? rv + '%' : '·') : (rv ? fmtSigned(rv, 0) : '·'); const col = metric === 'var' && rv ? (v > Math.max(0.1 * x.planM[m], 5) ? 'color:#7a5600' : v < -Math.max(0.1 * x.planM[m], 5) ? 'color:#4a5560' : '') : ''; return `<td class="dcell" style="${col}" title="${metric === 'actual' ? `${Math.round(x.actM[m])}% actual · ${Math.round(x.planM[m])}% projected` : `${fmtSigned(rv, 0)} pts vs ${Math.round(x.planM[m])}% projected`}">${txt}</td>`; }).join('');
-            pr += `<tr class="drawer-tr ${x.alloc ? 'alloc-row' : ''}" ${x.alloc ? `data-edit-alloc="${esc(x.alloc.id)}" title="Click to edit this allocation"` : 'title="Logged time, no allocation"'}><td class="who dproj">${pLbl(x.pn, x.client)}${x.alloc ? '' : ' <span class="nh-tag" style="background:#fdf3d7;color:#8a6d00">no plan</span>'}</td>${cells}<td class="dcell"></td><td class="dcell"></td></tr>`;
+            pr += `<tr class="drawer-tr ${x.alloc ? 'alloc-row' : ''}" ${x.alloc ? `data-edit-alloc="${esc(x.alloc.id)}" title="Click to edit this allocation"` : 'title="Logged time, no allocation"'}><td class="who dproj">${pLbl(x.pn, x.client)}${x.alloc ? '' : ' <span class="nh-tag" style="background:#fdf3d7;color:#8a6d00">no plan</span>'}</td>${cells}<td class="dcell dacts" colspan="2">${x.alloc ? drawerActs(x.alloc) : ''}</td></tr>`;
           });
           if (names.length > 1) { const tot = ms.map(m => { if (!AX.covered.has(m)) return '<td class="dcell" style="color:#c9cdd3">·</td>'; const v = r.vals[m]; const rv = Math.round(v || 0); return `<td class="dcell" style="font-weight:800;background:#eceff1">${rv ? (metric === 'var' ? fmtSigned(rv, 0) : rv + '%') : '·'}</td>`; }).join(''); pr += `<tr class="drawer-tr"><td class="who dproj" style="font-weight:800;background:#eceff1">Total</td>${tot}<td class="dcell"></td><td class="dcell"></td></tr>`; }
         }
         if (!pr) pr = `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">${metric === 'plan' ? 'No allocations in this window.' : 'Nothing planned or logged in this window.'}</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+        pr += drawerAddRow(ms, { person: r.person.name }, '+ Add a project for ' + r.person.name);
         body += pr;
       }
     });
@@ -867,7 +870,7 @@
       <span><span class="sw" style="background:#f6c9c2"></span>121–150%</span>
       <span><span class="sw" style="background:#e4453a"></span>&gt;150% critical</span>
       ${metric === 'plan' ? '<span><span class="sw sw-stripe"></span>includes pursuit hours — not yet signed</span>' : '<span><span class="sw" style="background:repeating-linear-gradient(45deg,#f7f6f3 0 4px,#fff 4px 8px)"></span>no Clockify data</span>'}
-      <span style="margin-left:auto">Click a name for their allocations, click an allocation row to edit it.</span>
+      <span style="margin-left:auto">Click a name for their allocations; edit, delete or add rows right in the drawer.</span>
     </div>`;
     $('#p-people').innerHTML = kpis + toolbar + table + legend;
     wireMetric('#p-people', renderPeople);
@@ -879,6 +882,29 @@
     };
     $$('#p-people .who-name').forEach(el => el.onclick = () => { const id = el.dataset.exp; if (state.expandedRoster.has(id)) state.expandedRoster.delete(id); else state.expandedRoster.add(id); renderPeople(); });
     $$('#p-people [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
+    wireDrawerActs('#p-people');
+  }
+
+  /* ---------- edit · delete · add straight from a drawer ----------
+     The By Project and By Person drawers are where the plan is READ, so
+     they are where it gets changed too — no round trip to the Allocations
+     tab. Same modal, same verbs, same trail. */
+  function drawerActs(a) {
+    return `<span class="row-act" onclick="event.stopPropagation()"><button type="button" data-dedit="${esc(a.id)}" title="Edit this allocation">Edit</button><button type="button" class="del" data-ddel="${esc(a.id)}" title="Delete this allocation — the plan only; logged hours stay">Del</button></span>`;
+  }
+  function drawerAddRow(ms, preset, label) {
+    return `<tr class="drawer-tr drawer-add"><td class="who dproj" colspan="${ms.length + 3}"><a href="#" class="drawer-add-link" data-dadd="${esc(JSON.stringify(preset))}">${esc(label)}</a></td></tr>`;
+  }
+  function wireDrawerActs(scope) {
+    $$(`${scope} [data-dedit]`).forEach(b => b.onclick = (e) => { e.stopPropagation(); openAllocModal(b.dataset.dedit); });
+    $$(`${scope} [data-ddel]`).forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      const a = S.listAllocations().find(x => x.id === b.dataset.ddel); if (!a) return;
+      const who = (S.getPerson(a.personId) || {}).name || a.personName || '';
+      if (!confirm(`Delete ${who}'s allocation on ${a.project}?\n\n${S.ymLabel(a.start)}${a.end && a.end !== a.start ? ' – ' + S.ymLabel(a.end) : ''} at ${Math.round(parseFloat(a.pct) || 0)}%.\n\nOnly the plan goes — logged Clockify hours stay.`)) return;
+      S.deleteAllocation(a.id); state._gapsKey = null; toast('Allocation deleted.'); renderAll();
+    });
+    $$(`${scope} [data-dadd]`).forEach(a => a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); let preset = {}; try { preset = JSON.parse(a.dataset.dadd); } catch (err) {} openAllocModal(null, preset); });
   }
 
   /** Where an allocation came from: a contract tag, and the contract's own
@@ -1391,6 +1417,7 @@
     }
     if (!a && preset) {   // prefilled add (e.g. "Log a leave")
       if (preset.project != null) $('#am-project').value = preset.project;
+      if (preset.person != null) $('#am-person').value = preset.person;
       if (preset.client != null) $('#am-client').value = preset.client;
       if (preset.pct != null) $('#am-pct').value = preset.pct;
       if (preset.note != null) $('#am-note').value = preset.note;
