@@ -174,7 +174,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     { header: 'Title', key: 'title', width: 22 },
     { header: 'Client', key: 'client', width: 22 },
     { header: 'Project', key: 'project', width: 34 },
-    { header: 'Matrix / Clockify name', key: 'source', width: 30 },
+    { header: 'Clockify project(s)', key: 'source', width: 30 },
     { header: 'Status', key: 'status', width: 12 },
     { header: 'Type', key: 'type', width: 14 },
     { header: 'Start', key: 'start', width: 10 },
@@ -192,7 +192,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
       person: p ? p.name : a.personId,
       title: p ? (p.title || '') : '',
       project: S.projectLabel(a.project, a.client).name,
-      source: a.project || '',
+      source: S.clockifyNamesFor(S.allocKey(a)).join('; '),
       client: a.client || '',
       status: a.status || '',
       type: a.type || '',
@@ -213,7 +213,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     { header: 'Person', key: 'person', width: 22 },
     { header: 'Client', key: 'client', width: 22 },
     { header: 'Project', key: 'project', width: 34 },
-    { header: 'Matrix / Clockify name', key: 'source', width: 30 },
+    { header: 'Clockify project(s)', key: 'source', width: 30 },
     { header: 'Month', key: 'month', width: 12 },
     { header: 'Actual Hours', key: 'hours', width: 14 },
   ];
@@ -225,7 +225,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     months.forEach(ym => {
       const a = r.byMonth[ym] ? r.byMonth[ym].a : 0;
       if (a > 0) {
-        s2.addRow({ person: r.person.name, project: S.projectLabel(r.project, r.client).name, source: r.project, client: r.client || '', month: ym, hours: Math.round(a * 100) / 100 });
+        s2.addRow({ person: r.person.name, project: r.project, source: S.clockifyNamesFor(r.key).join('; '), client: r.client || '', month: ym, hours: Math.round(a * 100) / 100 });
         actualRowCount++;
       }
     });
@@ -398,7 +398,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     const ws = wb.addWorksheet('By Project', { views: [{ state: 'frozen', ySplit: 1, xSplit: 2 }] });
     headerRow(ws, [
       { h: 'Client', w: 22 }, { h: 'Project', w: 34 }, { h: 'People', w: 9, align: 'right' },
-      { h: 'Peak FTE', w: 10, align: 'right' }, { h: 'Matrix / Clockify name', w: 30 },
+      { h: 'Peak FTE', w: 10, align: 'right' }, { h: 'Clockify project(s)', w: 30 },
       ...months.map(m => ({ h: S.ymLabel(m), w: 9, align: 'right' })),
     ], { xSplit: 2 });
     const roll = S.projectRollup(months, { includePursuit: true });
@@ -408,7 +408,7 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
       ws.getCell(`B${r}`).value = S.projectLabel(p.project, p.client).name;
       ws.getCell(`C${r}`).value = p.headcount;
       ws.getCell(`D${r}`).value = round1(p.peakFte);
-      ws.getCell(`E${r}`).value = p.project;
+      ws.getCell(`E${r}`).value = S.clockifyNamesFor(p.key).join('; ');
       months.forEach((ym, i) => {
         const c = ws.getCell(`${colLetter(6 + i)}${r}`);
         const v = round1(p.byMonth[ym] || 0);
@@ -645,25 +645,30 @@ window.UFC_buildAndDownloadStaffingSnapshot = async function () {
     r++;
 
     ws.mergeCells(`A${r}:E${r}`); styleSectionTitle(ws.getCell(`A${r}`));
-    ws.getCell(`A${r}`).value = '  PROJECTS → FEE TOOL'; ws.getRow(r).height = 20; r++;
-    ['Matrix project', 'Client', 'Linked fee project(s)', 'Link', 'Renamed from'].forEach((h, i) => {
+    ws.getCell(`A${r}`).value = '  CLOCKIFY PROJECTS → FEE TOOL'; ws.getRow(r).height = 20; r++;
+    ['Clockify project', 'Hours in store', 'Lands on (fee project / internal line)', 'How', 'Pinned'].forEach((h, i) => {
       const c = ws.getCell(`${colLetter(i + 1)}${r}`); c.value = h; styleHeader(c);
     });
     r++;
-    const renames = maps.renames || {};
-    const revRen = {}; Object.entries(renames).forEach(([oldK, nw]) => { (revRen[nw] = revRen[nw] || []).push(oldK); });
-    S.distinctProjects().sort((a, b) => a.localeCompare(b)).forEach(pn => {
-      const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
-      let links = []; try { links = S.matchFeeProjects ? S.matchFeeProjects(pn, client) : []; } catch (e) {}
-      const names = links.map(l => { const f = (STORE.listProjects() || []).find(x => x.id === l.id); return f ? ((f.project && f.project.name) || f.name || l.id) : l.id; });
-      ws.getCell(`A${r}`).value = pn;
-      ws.getCell(`B${r}`).value = client;
-      ws.getCell(`C${r}`).value = names.join(' + ');
-      ws.getCell(`D${r}`).value = links.length ? (links.some(l => l.via !== 'mapped') ? 'auto-matched' : 'confirmed') : 'not linked';
-      ws.getCell(`E${r}`).value = (revRen[pn] || []).join(', ');
-      if (!links.length) ws.getCell(`D${r}`).font = { name: 'Calibri', color: { argb: 'FFB3413B' } };
+    let ckRows = []; try { ckRows = S.clockifyProjectRows ? S.clockifyProjectRows() : []; } catch (e) {}
+    ckRows.forEach(x => {
+      ws.getCell(`A${r}`).value = x.name;
+      ws.getCell(`B${r}`).value = x.hours; ws.getCell(`B${r}`).alignment = { horizontal: 'right' };
+      ws.getCell(`C${r}`).value = x.ignored ? '(ignored)' : x.unmapped ? '' : x.label;
+      ws.getCell(`D${r}`).value = x.ignored ? 'ignored' : x.unmapped ? 'UNMAPPED' : x.via === 'mapped' ? 'pinned' : x.via === 'salesforce' ? 'Salesforce ID' : x.via === 'auto' ? 'guessed from name' : x.via === 'rule' ? 'internal rule' : 'exact name';
+      ws.getCell(`E${r}`).value = x.pinned ? 'yes' : '';
+      if (x.unmapped) ws.getCell(`D${r}`).font = { name: 'Calibri', color: { argb: 'FFB3413B' } };
       r++;
     });
+    r++;
+    let legacy = []; try { legacy = S.legacyProjects ? S.legacyProjects() : []; } catch (e) {}
+    if (legacy.length) {
+      ws.mergeCells(`A${r}:E${r}`); styleSectionTitle(ws.getCell(`A${r}`));
+      ws.getCell(`A${r}`).value = '  ALLOCATION ROWS STILL UNDER AN OLD NAME (need a fee project)'; ws.getRow(r).height = 20; r++;
+      ['Old name', 'Client', 'Rows', 'People', 'Looks like'].forEach((h, i) => { const c = ws.getCell(`${colLetter(i + 1)}${r}`); c.value = h; styleHeader(c); });
+      r++;
+      legacy.forEach(g => { ws.getCell(`A${r}`).value = g.name; ws.getCell(`B${r}`).value = g.client || ''; ws.getCell(`C${r}`).value = g.rows; ws.getCell(`D${r}`).value = g.people; ws.getCell(`E${r}`).value = g.suggest ? g.suggest.label : ''; r++; });
+    }
   }
 
   await download(wb, `Staffing-Full-Export${grpTag}_${dateStr}.xlsx`);

@@ -1294,7 +1294,9 @@
       if (rows.find(a => a.id === 'cs_3').end !== '2026-07') return 'cs_3 should end Jul-26';
       const db = JSON.parse(localStorage.getItem('savills-ppm-staff-db:v1'));
       if (!db.deleted || !db.deleted.cs_1) return 'tombstone for cs_1 so a teammate copy cannot resurrect it';
-      if ((db.mappings.renames || {})['em nali'] !== 'Exxon NALI') return 'rename table saved for future imports';
+      // no rename table any more: the folded rows simply sit under the one name, as one legacy group
+      const leg = ST.legacyProjects().find(g => g.name === 'Exxon NALI');
+      if (!leg || leg.rows !== 1 || ST.legacyProjects().some(g => g.name === 'EM NALI')) return 'legacy groups: ' + JSON.stringify(ST.legacyProjects().map(g => [g.name, g.rows]));
       if (!ST.CLEANUP_SEEDS.length || !ST.CLEANUP_SEEDS[0].deletes || Object.keys(ST.CLEANUP_SEEDS[0].deletes).length < 50) return 'the shipped seed carries the deep-dive deletions';
       return true;
     });
@@ -1342,10 +1344,14 @@
 
     test('Staffing · trail', 'a mapping change says what it points at now', () => {
       freshTrail();
-      ST.setProjectMapping('Clockify Tower', 'Tower Alpha');
+      const fp = S.saveProject(base({ project: { name: 'Trail Tower', client: 'Acme', status: 'active' } }));
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      ST.setProjectMapping('Clockify Tower', fp.id);
       const e = trail('staff-map')[0];
       if (!e) return 'not recorded';
-      return (e.meta.kind === 'project' && e.meta.to === 'Tower Alpha') || JSON.stringify(e.meta);
+      if (e.meta.kind !== 'clockify project' || e.meta.to !== 'Acme — Trail Tower' || e.projectId !== fp.id) return JSON.stringify(e.meta);
+      const res = ST.resolveClockify('clockify tower');
+      return (res && res.feeId === fp.id && res.via === 'mapped') || 'resolver does not read the pin: ' + JSON.stringify(res);
     });
 
     test('Staffing · merge', 'a browser that has never synced takes Box\'s copy wholesale', () => {
@@ -1399,14 +1405,91 @@
       return (people[0].id === 'stp_jane_tester' && people[0].title === 'Senior PM' && people[0].capacityPct === 80) || JSON.stringify(people[0]);
     });
 
-    test('Staffing · identity', 'renaming a project carries every Clockify mapping with it', () => {
+    test('Staffing · identity', 'a row under an old name moves onto a fee project in one step, and its hours come along', () => {
       cleanStaff();
+      const fp = S.saveProject(base({ project: { name: 'New Name', client: 'Acme', status: 'active' } }));
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
       ST.saveAllocation({ id: 'rn_1', personId: 'stp_x', personName: 'X', project: 'Old Name', start: '2026-01', end: '2026-06', pct: 50 });
-      ST.setProjectMapping('Clockify: Old', 'Old Name');
-      ST.commitRenames([{ from: 'Old Name', to: 'New Name' }]);
-      const m = ST.getMappings();
-      const still = Object.values(m.projects || {}).includes('Old Name');
-      return !still || 'mappings.projects still points at the old name';
+      const before = ST.listAllocations().find(a => a.id === 'rn_1');
+      if (before.feeId || before.legacyName !== 'Old Name' || before.project !== 'Old Name') return 'an unknown name should be a legacy row: ' + JSON.stringify(before);
+      if (!ST.legacyProjects().some(g => g.name === 'Old Name' && g.rows === 1)) return 'legacyProjects should list it';
+      ST.commitClockify({ ok: true, months: ['2026-02'], agg: { 'stp_x|Old Name|2026-02': 30 }, titles: {} }, 'merge');
+      if (ST.actualHours('stp_x', 'Old Name', '2026-02') !== 30) return 'hours under the old name should join the legacy row';
+      const n = ST.retargetLegacy('Old Name', fp.id);
+      const after = ST.listAllocations().find(a => a.id === 'rn_1');
+      if (n !== 1 || after.feeId !== fp.id || after.legacyName || after.project !== 'Acme — New Name') return 'move: ' + JSON.stringify([n, after]);
+      if (ST.legacyProjects().length) return 'nothing should be legacy now';
+      // the hours still sit under the Clockify name "Old Name" — pin it and they land on the fee project
+      ST.setProjectMapping('Old Name', fp.id);
+      return ST.actualHours('stp_x', fp.id, '2026-02') === 30 || 'hours did not follow: ' + ST.actualHours('stp_x', fp.id, '2026-02');
+    });
+    test('Staffing · identity', 'a legacy row adopts a fee record the moment one carries its exact name', () => {
+      cleanStaff();
+      ST.saveAllocation({ id: 'ad_1', personId: 'stp_x', personName: 'X', project: 'Late Record', client: 'Acme', start: '2026-01', end: '2026-06', pct: 50 });
+      if (ST.listAllocations().find(a => a.id === 'ad_1').feeId) return 'no record yet — should be legacy';
+      const fp = S.saveProject(base({ project: { name: 'Late Record', client: 'Acme', status: 'active' } }));
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      const a = ST.listAllocations().find(x => x.id === 'ad_1');
+      if (a.feeId !== fp.id || a.project !== 'Acme — Late Record') return 'not adopted: ' + JSON.stringify(a);
+      ST.saveAllocation({ id: 'ad_2', personId: 'stp_x', personName: 'X', project: 'Leaves of Absence', client: 'Internal', start: '2026-03', end: '2026-04', pct: 100 });
+      const l = ST.listAllocations().find(x => x.id === 'ad_2');
+      return (l.internal === 'leave' && !l.feeId && l.project === 'Leaves of Absence') || 'leave should be the internal line: ' + JSON.stringify(l);
+    });
+    test('Staffing · identity', 'several Clockify projects feed one fee project; nothing points the other way', () => {
+      cleanStaff();
+      const fp = S.saveProject(base({ project: { name: 'PMO', client: 'Grand Tower', status: 'active', salesforceId: 'P001234' } }));
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      ST.savePerson({ id: 'stp_x', name: 'X', capacityPct: 100, active: true });
+      ST.saveAllocation({ id: 'mm_1', personId: 'stp_x', personName: 'X', project: fp.id, start: '2026-01', end: '2026-06', pct: 50 });
+      ST.setProjectMapping('GT PMO - Boston', fp.id);
+      ST.setProjectMapping('GT PMO - Dallas', fp.id);
+      ST.commitClockify({ ok: true, months: ['2026-02'], agg: { 'stp_x|GT PMO - Boston|2026-02': 10, 'stp_x|GT PMO - Dallas|2026-02': 20, 'stp_x|P001234 - Grand Tower PMO|2026-02': 5, 'stp_x|Mystery Job|2026-02': 7 }, titles: {} }, 'merge');
+      const names = ST.clockifyNamesFor(fp.id);
+      if (names.length !== 3) return 'three Clockify names should feed it (two pinned, one by Salesforce id): ' + names.join(' | ');
+      const vm = ST.varianceMatrix(['2026-02'], { project: fp.id });
+      if (vm.length !== 1 || vm[0].actual !== 35 || Math.round(vm[0].expected) !== 86) return 'variance row: ' + JSON.stringify(vm.map(r => [r.project, r.expected, r.actual]));
+      const un = ST.unmappedClockify();
+      if (un.length !== 1 || un[0].name !== 'Mystery Job') return 'unmapped: ' + JSON.stringify(un);
+      const all = ST.varianceMatrix(['2026-02'], {});
+      if (!all.some(r => r.unmapped && r.project === 'Mystery Job' && r.actual === 7)) return 'unmapped hours must still show, as their own row';
+      ST.setProjectMapping('Mystery Job', '__ignore__');
+      if (ST.unmappedClockify().length || ST.varianceMatrix(['2026-02'], {}).some(r => r.project === 'Mystery Job')) return 'ignored hours should vanish from every view';
+      const m = ST.getMappings().clockify;
+      return (m['mystery job'] === '__ignore__' && m['gt pmo - boston'].feeId === fp.id && !m.fee && !m.projects) || 'mapping shape: ' + JSON.stringify(m);
+    });
+    test('Staffing · identity', 'the one-time move to fee keys places rows, composes Clockify pins from the old tables, and keeps every old name', () => {
+      cleanStaff();
+      const fp = S.saveProject(base({ project: { name: 'Exxon NALI', client: 'ExxonMobil', status: 'active' } }));
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      const old = { schemaVersion: 1, people: { stp_x: { id: 'stp_x', name: 'X', capacityPct: 100, active: true } },
+        allocations: [
+          { id: 'mg_1', personId: 'stp_x', project: 'EM NALI', client: 'Exxon', start: '2026-01', end: '2026-06', pct: 50, updatedAt: '2026-08-01T00:00:00Z' },
+          { id: 'mg_2', personId: 'stp_x', project: 'Leaves of Absence', client: 'Internal', start: '2026-02', end: '2026-02', pct: 100, updatedAt: '2026-08-01T00:00:00Z' },
+          { id: 'mg_3', personId: 'stp_x', project: 'Sumitomo Pursuit', client: 'Sumitomo', start: '2026-03', end: '2026-06', pct: 20, updatedAt: '2026-08-01T00:00:00Z' },
+        ],
+        actuals: { 'stp_x|XOM NALI Clockify|2026-02': 12 },
+        mappings: { users: {}, projects: { 'xom nali clockify': 'EM NALI', 'cafeteria': '__ignore__' }, fee: { 'em nali': [fp.id] }, renames: { 'em nali': 'Exxon NALI' } },
+        deleted: {}, meta: { monthHours: 172 } };
+      ST.hydrateFromRemote(old);
+      const db = ST.readDb();
+      if (!db.meta.feeKeyed || db.meta.feeKeyed === 'fresh') return 'migration did not run: ' + db.meta.feeKeyed;
+      const c = db.meta.feeKeyedCounts;
+      if (c.rows !== 3 || c.fee !== 1 || c.internal !== 1 || c.legacy !== 1) return 'counts: ' + JSON.stringify(c);
+      const a1 = db.allocations.find(a => a.id === 'mg_1'), a2 = db.allocations.find(a => a.id === 'mg_2'), a3 = db.allocations.find(a => a.id === 'mg_3');
+      if (a1.feeId !== fp.id || a1.legacyName !== 'EM NALI' || a1.project !== 'ExxonMobil — Exxon NALI') return 'row 1: ' + JSON.stringify(a1);
+      if (a2.internal !== 'leave') return 'row 2: ' + JSON.stringify(a2);
+      if (a3.feeId || a3.internal || a3.project !== 'Sumitomo Pursuit') return 'row 3 should stay legacy: ' + JSON.stringify(a3);
+      const m = db.mappings;
+      if (m.fee || m.projects || m.renames) return 'old tables should be gone: ' + Object.keys(m).join();
+      if (!m.clockify['xom nali clockify'] || m.clockify['xom nali clockify'].feeId !== fp.id || m.clockify['cafeteria'] !== '__ignore__') return 'clockify pins: ' + JSON.stringify(m.clockify);
+      if (!db.meta.legacyMappings || !db.meta.legacyMappings.fee['em nali']) return 'the old tables should be kept under meta.legacyMappings';
+      return ST.actualHours('stp_x', fp.id, '2026-02') === 12 || 'the hours under the old Clockify pin should land on the fee project';
+    });
+    test('Staffing · identity', 'merging two copies keeps every Clockify pin from both', () => {
+      const mk = (ck) => ({ schemaVersion: 1, people: {}, allocations: [], actuals: {}, mappings: { users: {}, clockify: ck }, deleted: {}, meta: { monthHours: 172, feeKeyed: '2026-10-19T00:00:00Z' } });
+      const merged = ST.mergeStaffDb(mk({ 'a job': { feeId: 'proj_a' } }), mk({ 'b job': { feeId: 'proj_b' }, 'c job': '__ignore__' }));
+      const ck = merged.mappings.clockify || {};
+      return (ck['a job'] && ck['b job'] && ck['c job'] === '__ignore__') || 'pins lost in merge: ' + JSON.stringify(ck);
     });
 
     test('Staffing · identity', 'every person edit is stamped, so newest-wins can see it', () => {
@@ -1689,7 +1772,7 @@
     });
     test('Staffing · leader view', 'a leader sees only their projects; plan comes from their proposal, logged hours through the mapping; confirm, claim and flag write only the staffing store', () => {
       const LV = window.UFC_StaffLeader; if (!LV) return 'UFC_StaffLeader not present';
-      const snap = JSON.parse(JSON.stringify(ST.readDb())); const prevId = S.getRealIdentity();
+      const snap = JSON.parse(JSON.stringify(ST.readDb())); const prevId = S.getRealIdentity(); const prevFee = localStorage.getItem('savills-ppm-fee-db:v1');
       try {
         freshTrail(); freshDb(); asAdmin();
         const mine = S.saveProject(base({ id: 'lv_mine', project: { name: 'Tower Alpha', client: 'Acme', status: 'active', rating: 1, leadId: 'esobel' },
@@ -1705,7 +1788,9 @@
         S.setRealIdentity({ username: 'esobel@savills.us', name: 'Emily Sobel' });
         const sc = LV.scope();
         if (sc.fee.map(p => p.id).join() !== 'lv_mine') return 'scope: ' + sc.fee.map(p => p.id).join();
-        if (![...sc.matrixNames].includes('Tower Alpha') || sc.matrixNames.has('Tower Beta')) return 'matrix names: ' + [...sc.matrixNames].join();
+        if (!sc.feeIds.has('lv_mine') || sc.feeIds.has('lv_theirs')) return 'fee ids: ' + [...sc.feeIds].join();
+        const a1 = ST.listAllocations().find(a => a.id === 'lv_a1');
+        if (a1.feeId !== 'lv_mine' || a1.project !== 'Acme — Tower Alpha') return 'the allocation should be keyed on the fee record: ' + JSON.stringify(a1);
         const months = ['2026-01', '2026-02', '2026-03'];
         const plan = ST.feeProjectPlan('lv_mine', months);
         const hrs = ((S.getProject('lv_mine').assumptions || {}).hrsPerMo || 173.33) * 0.5;   // the fixture prices at its own hours-per-month
@@ -1715,15 +1800,16 @@
         const rows = LV.timeRows(sc, months);
         if (rows.length !== 1 || rows[0].logged !== 130) return 'time rows: ' + JSON.stringify(rows.map(r => [r.p.id, r.logged, r.text]));
         // the allocation on Tower Beta is not theirs to touch
-        if (LV.allowedProject(sc, 'Tower Beta') || !LV.allowedProject(sc, 'Tower Alpha')) return 'allowedProject wrong';
-        // confirm pins the auto link; claim takes an unclaimed Clockify name; flag records who and why
-        ST.setFeeMapping('Tower Alpha', 'lv_mine');
-        const via = (ST.matchFeeProjects('Tower Alpha', 'Acme').find(l => l.id === 'lv_mine') || {}).via;
-        if (via !== 'mapped') return 'confirm did not pin: ' + via;
-        const unclaimed = ST.unclaimedClockifyProjects(['Acme Job 991', 'Tower Beta']);   // a name that resolves to a linked matrix project is already claimed
+        if (LV.allowedProject(sc, 'Tower Beta') || LV.allowedProject(sc, 'Acme — Tower Beta') || !LV.allowedProject(sc, 'Tower Alpha') || !LV.allowedProject(sc, 'Acme — Tower Alpha') || !LV.allowedProject(sc, 'lv_mine')) return 'allowedProject wrong';
+        // confirm pins the Clockify project; claim takes an unclaimed one; flag records who and why
+        if ((ST.resolveClockify('Tower Alpha') || {}).via !== 'name') return 'the Clockify project should match the fee record by name first';
+        ST.setProjectMapping('Tower Alpha', 'lv_mine');
+        if ((ST.resolveClockify('Tower Alpha') || {}).via !== 'mapped') return 'confirm did not pin';
+        const unclaimed = ST.unclaimedClockifyProjects(['Acme Job 991', 'Tower Beta']);   // a name that resolves to a fee record is already claimed
         if (!unclaimed.includes('Acme Job 991') || unclaimed.includes('Tower Beta')) return 'unclaimed: ' + unclaimed.join(' | ');
         const landed = ST.claimClockifyForFee('Acme Job 991', 'lv_mine');
-        if (landed !== 'Tower Alpha' || ST.getMappings().projects['acme job 991'] !== 'Tower Alpha') return 'claim: ' + landed;
+        if (landed !== 'Acme — Tower Alpha' || (ST.getMappings().clockify['acme job 991'] || {}).feeId !== 'lv_mine') return 'claim: ' + landed;
+        if (ST.clockifyNamesFor('lv_mine').join('|') !== 'Acme Job 991|Tower Alpha') return 'both Clockify projects should feed the one fee project: ' + ST.clockifyNamesFor('lv_mine').join('|');
         let refused = false; try { ST.claimClockifyForFee('Tower Beta', 'lv_mine'); } catch (e) { refused = /already claimed/.test(e.message); }
         if (!refused) return 'claiming another leader\'s Clockify project was not refused';
         ST.flagMapping('lv_mine', 'hours are under the old name', 'Tower Alpha');
@@ -1734,7 +1820,7 @@
         // and the fee projects are untouched by all of it
         const after = S.getProject('lv_mine');
         return (after.roles.length === 1 && after.roles[0].fte.p1 === 50 && after.updatedAt === mine.updatedAt) || 'the fee project changed: ' + JSON.stringify([after.roles.length, after.updatedAt, mine.updatedAt]);
-      } finally { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); ST.hydrateFromRemote(snap); }
+      } finally { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); if (prevFee == null) localStorage.removeItem('savills-ppm-fee-db:v1'); else localStorage.setItem('savills-ppm-fee-db:v1', prevFee); ST.hydrateFromRemote(snap); }
     });
     test('Staffing', 'a renamed fee project is listed once in the mapping pickers, while its old name still matches', () => {
       const prev = { fee: localStorage.getItem('savills-ppm-fee-db:v1') };
@@ -1845,7 +1931,7 @@
     test('Staffing', 'allocationsForFeeProject resolves matrix rows through the fee link', () => {
       const rows = ST.allocationsForFeeProject(feeP.id);
       if (!rows.length) return 'no allocations resolved for the linked fee project';
-      return rows.every(a => a.project === 'Tower Alpha') || 'picked up a row from the wrong project';
+      return rows.every(a => a.feeId === feeP.id && a.project === 'Acme — Tower Alpha') || 'picked up a row from the wrong project: ' + JSON.stringify(rows.map(a => [a.id, a.feeId, a.project]));
     });
 
     test('Staffing', 'shiftSchedule stamps the pending flag; shifting the allocations moves start AND end; clearing ends the loop', () => {
@@ -2112,7 +2198,7 @@
     const prevId = S.getRealIdentity();
     const as = (login, name) => S.setRealIdentity({ username: login, name });
     const reset = () => { localStorage.removeItem(C.KEY); };
-    const open = () => { reset(); as('sabdin@savills.us', 'Sarah Abdin'); const c = C.createCycle({ name: 'Revenue Projections #12', period: YM, deadline: '2026-09-15', now: '2026-09-01T13:00:00Z' }); ID = c.id; return c; };
+    const open = () => { reset(); as('sabdin@savills.us', 'Sarah Abdin'); const c = C.createCycle({ name: 'Revenue Projections #12', period: YM, deadline: '2026-09-15', now: '2026-09-01T13:00:00Z', records: book() }); ID = c.id; return c; };   // the book, not whatever an earlier test left in the store
     const restore = () => { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); };
 
     test('Confirmed book', 'everyone with an active project is expected; unassigned when a project has no leader', () => {

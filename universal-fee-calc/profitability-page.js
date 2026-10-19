@@ -149,8 +149,8 @@
         const v = inp.value.trim(); if (!v) return;
         const id = feeByLabel[v.toLowerCase()];
         if (!id) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project from the list'; return; }
-        S.setFeeMapping(inp.dataset.mapFee, id);
-        toast('Linked — “' + inp.dataset.mapFee + '” now rolls into that fee project. Saved for the whole team.');
+        S.setProjectMapping(inp.dataset.mapFee, id);   // a loose row IS a Clockify project nothing claims
+        toast('Mapped — “' + inp.dataset.mapFee + '” now rolls into that fee project. Saved for the whole team.');
         render();
       };
     });

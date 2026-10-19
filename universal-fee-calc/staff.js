@@ -104,7 +104,84 @@
   function isPastYM(ym) { return ym < currentYM(); }
 
   // ---------- store ----------
-  function defaultDb() { return { schemaVersion: SCHEMA, people: {}, allocations: [], actuals: {}, mappings: { users: {}, projects: {} }, deleted: {}, meta: { monthHours: DEFAULT_MONTH_HOURS } }; }
+  function defaultDb() { return { schemaVersion: SCHEMA, people: {}, allocations: [], actuals: {}, mappings: { users: {}, clockify: {} }, deleted: {}, meta: { monthHours: DEFAULT_MONTH_HOURS, feeKeyed: 'fresh' } }; }
+
+  /* ============================================================
+     THE MODEL (Oct 2026): every allocation points at a FEE PROJECT.
+     ------------------------------------------------------------
+     There used to be three names for one job — the fee record, the matrix
+     row and the Clockify project — joined by name matching and a rename
+     table, and every seam leaked duplicates. Now:
+
+       allocation.feeId     the fee-tool record it staffs (the only key), or
+       allocation.internal  one of the INTERNAL_LINES below (leave, overhead,
+                            business development, time off) — work that has
+                            no client and no fee record, by design.
+       allocation.project   DERIVED: the fee project's label, refreshed from
+                            the record on every read, never typed.
+       actuals              keyed pid|<Clockify project as Clockify names it>|ym
+       mappings.clockify    Clockify project → { feeId } | { internal } |
+                            '__ignore__' — many Clockify projects may point
+                            at one fee project; nothing points the other way.
+
+     Rows the migration could not place keep their old name under
+     `legacyName` and show up as "needs a project" until an admin picks one.
+     ============================================================ */
+  const INTERNAL_LINES = {
+    leave:    { label: 'Leaves of Absence',        client: 'Internal', test: (n) => isLeaveProject(n) },
+    timeoff:  { label: 'Time off',                 client: 'Internal', test: (n) => isTimeOffProject(n) },
+    bd:       { label: 'Business development',     client: 'Internal', test: (n) => /business\s*development|\bbd\b/i.test(String(n || '')) },
+    overhead: { label: 'Internal / non-billable',  client: 'Internal', test: (n) => isMacroProject(n) || /^internal\b|marketing/i.test(String(n || '')) },
+  };
+  const INTERNAL_ORDER = ['leave', 'timeoff', 'bd', 'overhead'];
+  function internalKindFor(name) { return INTERNAL_ORDER.find(k => INTERNAL_LINES[k].test(name)) || null; }
+  /** The key an allocation (or a Clockify project) is grouped under. */
+  function allocKey(a) { return a.feeId ? 'fee:' + a.feeId : a.internal ? 'int:' + a.internal : 'legacy:' + nkey(a.legacyName || a.project || ''); }
+  function keyParts(key) { const i = String(key || '').indexOf(':'); return i < 0 ? { kind: 'legacy', id: key } : { kind: key.slice(0, i), id: key.slice(i + 1) }; }
+  /* Labels: "Client — Project", made unique when two fee records collide (a
+     project number or status is appended), so a label is a safe handle in
+     every table and picker. Cached against the fee index. */
+  let _labelIdx = null, _labelIdxFee = null;
+  function labelIndex() {
+    const fi = feeIndex();
+    if (_labelIdx && _labelIdxFee === fi) return _labelIdx;
+    const byId = {}, count = {};
+    const recs = feeRecords();
+    recs.forEach(p => { const pj = p.project || {}; const name = pj.name || 'Untitled'; const client = pj.client || ''; const label = client ? client + ' — ' + name : name; byId[p.id] = { id: p.id, name, client, label, status: pj.status || '', number: pj.projectNumber || '' }; count[label] = (count[label] || 0) + 1; });
+    const S2 = window.UFC_Store; const statusLabels = (S2 && S2.STATUS_LABELS) || {};
+    Object.values(byId).forEach(e => { if (count[e.label] > 1) e.label += ' · ' + (e.number || statusLabels[e.status] || e.status || e.id.slice(-4)); });
+    const byLabel = {}; Object.values(byId).forEach(e => { byLabel[nkey(e.label)] = 'fee:' + e.id; byLabel[nkey(e.client ? e.client + ' - ' + e.name : e.name)] = byLabel[nkey(e.client ? e.client + ' - ' + e.name : e.name)] || 'fee:' + e.id; });
+    INTERNAL_ORDER.forEach(k => { byLabel[nkey(INTERNAL_LINES[k].label)] = 'int:' + k; });
+    _labelIdx = { byId, byLabel }; _labelIdxFee = fi;
+    return _labelIdx;
+  }
+  /** Display label + client for a key. Legacy keys show their old name. */
+  function describeKey(key) {
+    const { kind, id } = keyParts(key);
+    if (kind === 'fee') { const e = labelIndex().byId[id]; return e ? { key, label: e.label, name: e.name, client: e.client, feeId: id, status: e.status } : { key, label: '(deleted fee project ' + id.slice(-4) + ')', name: '', client: '', feeId: id, missing: true }; }
+    if (kind === 'int') { const L = INTERNAL_LINES[id] || { label: id, client: 'Internal' }; return { key, label: L.label, name: L.label, client: L.client, internal: id }; }
+    if (kind === 'ck') return { key, label: id, name: id, client: '', unmapped: true };
+    return { key, label: id, name: id, client: '', legacy: true };
+  }
+  /** Anything a caller might hand us for a project — a key, a fee id, a label,
+      an internal line's label, a legacy name — to a key. null when nothing matches. */
+  function keyForRef(ref) {
+    if (!ref) return null;
+    const r = String(ref);
+    if (/^(fee|int|legacy|ck):/.test(r)) return r;
+    if (labelIndex().byId[r]) return 'fee:' + r;
+    const byLabel = labelIndex().byLabel[nkey(r)]; if (byLabel) return byLabel;
+    // the fee record's own name (or a former name) — the way a pursuit that
+    // later gets a record, or a test fixture, names it
+    const pk = projKey(r);
+    if (pk) { const exact = feeIndex().filter(p => p.key === pk); if (exact.length) return 'fee:' + (exact.length === 1 ? exact[0].id : pickFeeId(exact.map(p => p.id))); }
+    // a legacy row's old name, or an unmapped Clockify project's name
+    const db = readDb();
+    if ((db.allocations || []).some(a => !a.feeId && !a.internal && nkey(a.legacyName || a.project) === nkey(r))) return 'legacy:' + nkey(r);
+    if (Object.keys(db.actuals || {}).some(k => nkey(k.split('|')[1]) === nkey(r))) { const res = resolveClockify(r); return res ? res.key : 'ck:' + r; }
+    return null;
+  }
+  const feeIdOfKey = (key) => { const p = keyParts(key); return p.kind === 'fee' ? p.id : null; };
 
   /* Parsed-db cache — the engine calls readDb() thousands of times per render
      (per person × project × month); without this every call re-JSON.parses the
@@ -145,15 +222,40 @@
     return db;
   }
 
+  /* Derived fields, refreshed whenever the fee index changes: project (the
+     label) and client come from the fee record, never from the row. */
+  let _decoratedFee = null;
+  function decorate(db) {
+    const fi = feeIndex();
+    if (_decoratedFee === fi && db.__decorated) return db;
+    (db.allocations || []).forEach(a => {
+      if (!a.feeId && !a.internal) {
+        if (!a.legacyName) a.legacyName = a.project || '';
+        // A row parked under an old name adopts a fee record the moment one
+        // carries that exact name (or an internal line's rule fits) — no
+        // guessing: token matches stay for a person to confirm.
+        const ik = internalKindFor(a.legacyName);
+        if (ik) { a.internal = ik; }
+        else { const pk = projKey(a.legacyName); const exact = pk ? fi.filter(p => p.key === pk) : []; if (exact.length) a.feeId = exact.length === 1 ? exact[0].id : pickFeeId(exact.map(p => p.id)); }
+        if (!a.feeId && !a.internal) { a.project = a.legacyName; return; }
+        delete a.legacyName;
+      }
+      const d = describeKey(allocKey(a));
+      a.project = d.label; if (d.client || a.internal) a.client = d.client;
+    });
+    db.__decorated = true; _decoratedFee = fi;
+    return db;
+  }
   function readDb() {
-    if (_dbCache) return _dbCache;
+    if (_dbCache) { if (_decoratedFee !== feeIndex()) decorate(_dbCache); return _dbCache; }
     try {
       const raw = localStorage.getItem(KEY);
       if (!raw) { const db = seedFromMatrix(defaultDb()); writeDb(db); return db; }
       const p = JSON.parse(raw);
       if (!p.people || !p.allocations) return (_dbCache = seedFromMatrix(defaultDb()));
       if (!p.actuals) p.actuals = {};
-      if (!p.mappings) p.mappings = { users: {}, projects: {} };
+      if (!p.mappings) p.mappings = { users: {}, clockify: {} };
+      if (!p.mappings.clockify) p.mappings.clockify = {};
       if (!p.meta) p.meta = { monthHours: DEFAULT_MONTH_HOURS };
       if (p.meta.monthHours == null) p.meta.monthHours = DEFAULT_MONTH_HOURS;
       if (p.meta.monthHours === 160) p.meta.monthHours = DEFAULT_MONTH_HOURS;   // migrate old default → 172
@@ -172,7 +274,8 @@
       });
       if (remapped) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch (e) {} }
       _dbCache = p;
-      return p;
+      ensureModel(p);
+      return decorate(p);
     } catch (e) { console.error('staff db read failed', e); return (_dbCache = seedFromMatrix(defaultDb())); }
   }
   /* Remote sync — staff.json in Box (same pattern as studio.json). attachRemote
@@ -192,19 +295,23 @@
   function hydrateFromRemote(db) {
     if (!db || !db.people || !db.allocations) return false;
     if (!db.actuals) db.actuals = {};
-    if (!db.mappings) db.mappings = { users: {}, projects: {} };
+    if (!db.mappings) db.mappings = { users: {}, clockify: {} };
+    if (!db.mappings.clockify) db.mappings.clockify = {};
     if (!db.deleted) db.deleted = {};
     if (!db.meta) db.meta = { monthHours: DEFAULT_MONTH_HOURS };
     db.schemaVersion = SCHEMA;
     safeSet(JSON.stringify(db));
     _dbCache = db;
-    _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null;   // fee-tool project list may have changed too
+    ensureModel(db);
     return true;
   }
   function writeDb(db) {
     db.schemaVersion = SCHEMA;
     db.meta = db.meta || {};
     db.meta.updatedAt = new Date().toISOString();
+    _ckCache = null; _actIdx = null; _labelCache = null;
+    decorate(db); delete db.__decorated;
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser && window.UFC_Store.getCurrentUser(); if (u && u.username) db.meta.updatedBy = u.username; } catch (e) {}
     safeSet(JSON.stringify(db));
     _dbCache = db;
@@ -252,12 +359,7 @@
 
   /** Which fee project this matrix line belongs to, so the entry files against
       it. Best-effort: an unmatched line still gets logged, just without a home. */
-  function feeIdForAlloc(a) {
-    try {
-      const hits = matchFeeProjects(a.project, a.client) || [];
-      return hits.length === 1 ? hits[0].id : null;      // ambiguous is worse than none
-    } catch (e) { return null; }
-  }
+  function feeIdForAlloc(a) { return (a && a.feeId) || null; }
 
   const ALLOC_FIELDS = [
     ['personName', 'Person'], ['project', 'Project'], ['client', 'Client'],
@@ -337,7 +439,7 @@
     let rows = 0, hours = 0;
     db.allocations.forEach(a => { if (a.personId === fromId) { a.personId = toId; a.personName = to.name; rows++; } });
     Object.keys(db.actuals || {}).forEach(k => { const parts = k.split('|'); if (parts[0] === fromId) { const nk2 = toId + '|' + parts[1] + '|' + parts[2]; db.actuals[nk2] = (db.actuals[nk2] || 0) + db.actuals[k]; hours += db.actuals[k]; delete db.actuals[k]; } });
-    db.mappings = db.mappings || { users: {}, projects: {} };
+    db.mappings = db.mappings || { users: {}, clockify: {} };
     Object.keys(db.mappings.users || {}).forEach(k => { if (db.mappings.users[k] === fromId) db.mappings.users[k] = toId; });
     db.mappings.personAliases = db.mappings.personAliases || {};
     Object.keys(db.mappings.personAliases).forEach(k => { if (db.mappings.personAliases[k] === fromId) db.mappings.personAliases[k] = toId; });
@@ -478,8 +580,26 @@
 
   // ---------- allocations ----------
   function listAllocations() { return readDb().allocations.slice(); }
+  /** A typed or picked project → { feeId } | { internal } | null. Accepts a
+      fee id, a key, a label, an internal line's label. */
+  function projectRefToTarget(ref) {
+    const key = keyForRef(ref); if (!key) return null;
+    const { kind, id } = keyParts(key);
+    if (kind === 'fee') return { feeId: id };
+    if (kind === 'int') return { internal: id };
+    return null;
+  }
   function saveAllocation(a) {
     const db = readDb();
+    // The row is keyed on a fee project (or an internal line). A caller that
+    // still hands us a project NAME gets it resolved; a name nothing matches
+    // is kept as a legacy row that the page flags as "needs a project".
+    if (!a.feeId && !a.internal) {
+      const t = projectRefToTarget(a.project);
+      if (t) Object.assign(a, t); else a.legacyName = a.legacyName || a.project || '';
+    }
+    if (a.feeId) { delete a.internal; delete a.legacyName; }
+    else if (a.internal) { delete a.legacyName; }
     // ensure the person exists in the roster. Names like "Pooled Support"
     // are contract pools — a shared bucket several people bill toward, not
     // an individual — flagged so views can label them.
@@ -612,8 +732,8 @@
 
     // Actuals + mappings: key-wise union, local wins on a clash. Every
     // mappings sub-key the app writes to (staff.js:setUserMapping,
-    // setProjectMapping, setFeeMapping, setTitleMapping, setUserExclusion,
-    // commitRenames) must be listed here — a key missing from this union is
+    // setProjectMapping → clockify, setTitleMapping, setUserExclusion,
+    // flagMapping) must be listed here — a key missing from this union is
     // silently dropped on every merge, not just when it clashes.
     out.actuals = Object.assign({}, remote.actuals || {}, local.actuals || {});
     const rMap = remote.mappings || {}, lMap = local.mappings || {};
@@ -636,6 +756,7 @@
     };
     out.mappings = {
       users: Object.assign({}, rMap.users || {}, lMap.users || {}),
+      clockify: Object.assign({}, rMap.clockify || {}, lMap.clockify || {}),     // Clockify project → fee project / internal line / ignore
       projects: Object.assign({}, rMap.projects || {}, lMap.projects || {}),
       fee: unionFee(),
       titles: Object.assign({}, rMap.titles || {}, lMap.titles || {}),
@@ -657,28 +778,17 @@
       if (Object.keys(merged).length) out.dismissedGaps = merged;
     }
 
-    // Straggler heal: a row arriving from a stale tab may still carry a
-    // project name that was since renamed to its canonical form — the same
-    // real project then exists under TWO names, splitting coverage. Apply
-    // the saved renames here, then re-collapse twins renaming just created.
+    // Rows are keyed on fee ids, so a stale tab cannot split a project in two
+    // by name any more; exact twins (same person/key/window/pct) still fold.
     {
-      const ren = out.mappings.renames || {};
-      if (Object.keys(ren).length) {
-        const renLC = {};
-        Object.entries(ren).forEach(([o, n]) => { renLC[o.toLowerCase()] = n; });
-        out.allocations.forEach(a => {
-          const t = ren[a.project] || renLC[(a.project || '').toLowerCase()];
-          if (t && t !== a.project) a.project = t;
-        });
-        const seen = {};
-        out.allocations.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-        out.allocations = out.allocations.filter(a => {
-          const k = [a.personId, a.project, a.start, a.end, a.pct].join('|');
-          if (seen[k]) return false;
-          seen[k] = true;
-          return true;
-        });
-      }
+      const seen = {};
+      out.allocations.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+      out.allocations = out.allocations.filter(a => {
+        const k = [a.personId, allocKey(a), a.start, a.end, a.pct].join('|');
+        if (seen[k]) return false;
+        seen[k] = true;
+        return true;
+      });
     }
 
     // Meta: whichever side was written last.
@@ -713,6 +823,7 @@
       && (db.allocations || []).every(a => !a.updatedAt)
       && !Object.keys(db.actuals || {}).length
       && !Object.keys((db.mappings || {}).fee || {}).length
+      && !Object.keys((db.mappings || {}).clockify || {}).length
       && !Object.keys((db.mappings || {}).users || {}).length
       && !Object.keys(db.deleted || {}).length;
   }
@@ -722,7 +833,8 @@
     const merged = isPristineSeed(local) ? remote : mergeStaffDb(remote, local);
     safeSet(JSON.stringify(merged));
     _dbCache = merged;
-    _feeIndex = null; _feeRecords = null; _sfIndex = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null;   // fee-tool project list may have changed too
+    ensureModel(merged);
     return merged;
   }
 
@@ -734,9 +846,16 @@
   }
 
   // ---------- window / distinct ----------
+  /** Every project with an allocation, by label (fee label, internal line,
+      or a legacy name still waiting for a project). */
   function distinctProjects() {
     const s = new Set(); readDb().allocations.forEach(a => a.project && s.add(a.project));
     return [...s].sort();
+  }
+  /** The same set as keys, with what each one is. */
+  function planProjects() {
+    const seen = {}; readDb().allocations.forEach(a => { const k = allocKey(a); if (!seen[k]) seen[k] = Object.assign(describeKey(k), { client: a.client || describeKey(k).client }); });
+    return Object.values(seen).sort((x, y) => x.label.localeCompare(y.label));
   }
   function distinctClients() {
     const s = new Set(); readDb().allocations.forEach(a => a.client && s.add(a.client));
@@ -781,7 +900,8 @@
       const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
       const pid = k.slice(0, i1), proj = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
       if (inWin.size && !inWin.has(ym)) return;
-      if (isMacroProject(proj)) return;              // internal time needs no allocation
+      const res = resolveClockify(proj);
+      if ((res && (res.internal || res.ignore)) || isMacroProject(proj)) return;   // internal time needs no allocation
       const e = byPerson[pid] || (byPerson[pid] = { pid, hours: 0, projects: {} });
       e.hours += h; e.projects[proj] = (e.projects[proj] || 0) + h;
     });
@@ -817,14 +937,13 @@
      the rows are shown with their overlap so a human decides. */
   function duplicateAllocations() {
     const db = readDb();
-    const ren = (db.mappings || {}).renames || {};
-    const canon = (n) => nkey(ren[nkey(n)] || n || '');
     const groups = {};
     (db.allocations || []).forEach(a => {
-      if (!a || !a.personId || !a.project) return;
-      if (isLeaveProject(a.project)) return;            // leave rows legitimately repeat
+      if (!a || !a.personId) return;
+      if (a.internal === 'leave' || isLeaveProject(a.project)) return;            // leave rows legitimately repeat
       if (!inView(a.personId)) return;
-      (groups[a.personId + '|' + canon(a.project)] = groups[a.personId + '|' + canon(a.project)] || []).push(a);
+      const k = a.personId + '|' + allocKey(a);
+      (groups[k] = groups[k] || []).push(a);
     });
     const overlaps = (x, y) => {
       const xs = x.start || '', xe = allocEnd(x);
@@ -899,18 +1018,22 @@
     db.allocations.forEach(a => {
       if (!includePursuit && (a.status === 'Pursuit' || a.type === 'Opportunity')) return;
       if (!inView(a.personId)) return;
-      const key = a.project || '—';
-      const b = byProj[key] || (byProj[key] = { project: key, client: a.client || '', people: new Set(), status: a.status, type: a.type, byMonth: {}, allocs: [] });
+      const key = allocKey(a);
+      const b = byProj[key] || (byProj[key] = { key, project: a.project || '—', client: a.client || '', people: new Set(), status: a.status, type: a.type, byMonth: {}, allocs: [] });
       b.people.add(a.personId); b.allocs.push(a);
       if (a.client) b.client = a.client;
       months.forEach(ym => { if (allocActiveIn(a, ym)) b.byMonth[ym] = (b.byMonth[ym] || 0) + (a.pct || 0) / 100; });
     });
-    return Object.values(byProj).map(b => ({
-      project: b.project, client: b.client, headcount: b.people.size,
-      peakFte: Math.max(0, ...months.map(m => b.byMonth[m] || 0)),
-      byMonth: b.byMonth, allocs: b.allocs,
-      feeProject: matchFeeProject(b.project, b.client),
-    })).sort((a, b) => a.project.localeCompare(b.project));
+    return Object.values(byProj).map(b => {
+      const d = describeKey(b.key);
+      return {
+        key: b.key, project: b.project, client: b.client, headcount: b.people.size,
+        peakFte: Math.max(0, ...months.map(m => b.byMonth[m] || 0)),
+        byMonth: b.byMonth, allocs: b.allocs,
+        feeId: d.feeId || null, internal: d.internal || null, legacy: !!d.legacy,
+        feeProject: d.feeId ? { id: d.feeId, name: d.name, client: d.client, via: 'mapped' } : null,
+      };
+    }).sort((a, b) => a.project.localeCompare(b.project));
   }
 
   /** Best-effort match of a matrix project name to a fee-tool project. */
@@ -921,20 +1044,26 @@
   // silently keep pointing at old data.
   if (typeof document !== 'undefined') {
     document.addEventListener('ufc:remote-updated', (e) => {
-      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; }
+      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; }
     });
   }
   /** Fee-tool project records, parsed ONCE per page load — UFC_Store.getProject
       re-parses the whole projects.json every call, which froze the Compare tab. */
+  let _feeRaw = null;
   function feeRecords() {
+    // The store hands back the SAME projects object until the book changes,
+    // so an identity check is a free staleness test — a record saved a moment
+    // ago (a new pursuit, a test fixture) is seen on the very next call.
+    try { const S2 = window.UFC_Store; const raw = S2 && S2.allProjectsRaw ? S2.allProjectsRaw() : null; if (raw !== _feeRaw) { _feeRaw = raw; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; } } catch (e) {}
     if (_feeRecords) return _feeRecords;
     try { const S2 = window.UFC_Store; _feeRecords = (S2 && S2.listProjects) ? S2.listProjects() : []; } catch (e) { _feeRecords = []; }
     return _feeRecords;
   }
   function feeIndex() {
+    const recs = feeRecords();            // refreshes every cache if the book moved
     if (_feeIndex) return _feeIndex;
     _feeIndex = [];
-    feeRecords().forEach(p => {
+    recs.forEach(p => {
       const name = (p.project && p.project.name) || '';
       const client = (p.project && p.project.client) || '';
       const label = client ? client + ' — ' + name : name;
@@ -962,13 +1091,8 @@
 
   function matchFeeProject(name, client) {
     const k = projKey(name); if (!k) return null;
-    // 0) saved manual link wins — a matrix project can be pinned to several fee
-    // projects (setFeeMapping stores an array); this single-result function
-    // returns the first/primary one for callers that only want one.
-    const feeMap = (readDb().mappings || {}).fee || {};
-    const mappedRaw = feeMap[nkey(name)];
-    const mapped = Array.isArray(mappedRaw) ? mappedRaw[0] : mappedRaw;
-    if (mapped) { const hit = feeIndex().find(p => p.id === mapped); if (hit) return { id: hit.id, name: hit.name, client: hit.client, via: 'mapped' }; }
+    // Pure name matcher — pins live in mappings.clockify (resolveClockify)
+    // and, for sheet names, in meta.legacyMappings (resolveLegacyName).
     const idx = feeIndex();
     // prefer same-client candidates when a client is given and names collide
     const byClient = (list) => {
@@ -994,16 +1118,38 @@
       wherever this feeds contractPlan); falls back to the single best
       auto-match when nothing's pinned yet, same as before multi-link existed. */
   function matchFeeProjects(name, client) {
-    const k = projKey(name); if (!k) return [];
-    const feeMap = (readDb().mappings || {}).fee || {};
-    const mappedRaw = feeMap[nkey(name)];
-    if (mappedRaw) {
-      const ids = Array.isArray(mappedRaw) ? mappedRaw : [mappedRaw];
-      const idx = feeIndex();
-      return ids.map(id => idx.find(p => p.id === id)).filter(Boolean).map(hit => ({ id: hit.id, name: hit.name, client: hit.client, via: 'mapped' }));
-    }
+    // a label / key / fee id answers directly — that is the whole model now
+    const key = keyForRef(name);
+    if (key) { const d = describeKey(key); return d.feeId && !d.missing ? [{ id: d.feeId, name: d.name, client: d.client, via: 'mapped' }] : []; }
     const auto = matchFeeProject(name, client);
     return auto ? [auto] : [];
+  }
+  /** Best fee record among several ids: live work first, change orders never. */
+  function pickFeeId(ids) {
+    const S2 = window.UFC_Store; const rank = { active: 0, won: 1, negotiation: 2, submitted: 2, draft: 2, hold: 2, '': 3, closed: 4, lost: 5 };
+    const recs = (ids || []).map(id => feeRecords().find(p => p.id === id)).filter(Boolean)
+      .filter(p => !(S2 && S2.isChangeOrder && S2.isChangeOrder(p)));
+    recs.sort((a, b) => (rank[(a.project || {}).status || ''] ?? 3) - (rank[(b.project || {}).status || ''] ?? 3));
+    return recs.length ? recs[0].id : (ids && ids[0]) || null;
+  }
+  /** A matrix / sheet project NAME → { feeId } | { internal } | null, for the
+      migration and for sheet re-imports: internal lines by rule, a legacy pin,
+      an exact or former fee name, then the token matcher. */
+  function resolveLegacyName(name, client, legacyMaps) {
+    if (!name) return null;
+    const ik = internalKindFor(name); if (ik) return { internal: ik };
+    const lm = legacyMaps || (readDb().meta || {}).legacyMappings || {};
+    const pin = (lm.fee || {})[nkey(name)];
+    if (pin) { const id = pickFeeId(Array.isArray(pin) ? pin : [pin]); if (id && feeIndex().some(p => p.id === id)) return { feeId: id }; }
+    const k = projKey(name);
+    const exact = feeIndex().filter(p => p.key === k);
+    if (exact.length) {
+      let hit = exact[0];
+      if (exact.length > 1) { const byC = client ? exact.find(p => p.client && tokenScore(client, p.client) >= 0.7) : null; const best = pickFeeId(exact.map(p => p.id)); hit = byC || exact.find(p => p.id === best) || exact[0]; }
+      return { feeId: hit.id };
+    }
+    const auto = matchFeeProject(name, client);
+    return auto ? { feeId: auto.id } : null;
   }
 
   /** Salesforce-ID index over fee-tool projects — Clockify project names carry
@@ -1031,33 +1177,6 @@
     return !ca.some(t => cb.some(u => t === u || t.startsWith(u) || u.startsWith(t)));
   }
 
-  /** Resolve a Clockify project name → matrix project name. Order:
-      1. saved mapping (handled by caller); 2. exact normalized name;
-      3. Salesforce ID; 4. containment — only when UNAMBIGUOUS (exactly one
-      candidate) and no code conflict; 5. token score ≥ 0.7 with a clear
-      margin over the runner-up and no code conflict. Ambiguity → null, so
-      the row surfaces as unmatched instead of landing on a sibling project. */
-  function resolveClockifyProject(raw) {
-    const k = projKey(raw); if (!k) return null;
-    const all = distinctProjects();
-    let hit = all.find(pn => projKey(pn) === k);
-    if (hit) return { name: hit, via: 'name' };
-    const rawL = String(raw).toLowerCase();
-    const sf = sfIndex().find(e => rawL.includes(e.sf) || k.includes(projKey(e.sf)));
-    if (sf) {
-      const fk = projKey(sf.name);
-      const viaMatrix = all.find(pn => projKey(pn) === fk)
-        || all.find(pn => (projKey(pn).includes(fk) || fk.includes(projKey(pn))) && Math.abs(projKey(pn).length - fk.length) < 8);
-      return { name: viaMatrix || sf.name, via: 'salesforce' };
-    }
-    const contain = all.filter(pn => (projKey(pn).includes(k) || k.includes(projKey(pn))) && Math.abs(projKey(pn).length - k.length) < 8 && !codesConflict(raw, pn));
-    if (contain.length === 1) return { name: contain[0], via: 'fuzzy' };
-    // token scoring — best + margin, codes must not conflict
-    const scored = all.filter(pn => !codesConflict(raw, pn)).map(pn => ({ pn, s: tokenScore(raw, pn) })).sort((x, y) => y.s - x.s);
-    if (scored.length && scored[0].s >= 0.7 && (scored.length < 2 || scored[0].s - scored[1].s >= 0.15)) return { name: scored[0].pn, via: 'tokens' };
-    return null;
-  }
-
   /** Fee-tool projects for pickers: [{id, name, client, label}] — label is
       "Client — Project" because project names collide across clients. */
   /** One entry per fee project. feeIndex() also carries a row per FORMER name
@@ -1073,52 +1192,202 @@
   function capacityHours(person) { return monthHours() * ((person && person.capacityPct != null ? person.capacityPct : 100) / 100); }
 
   /** Expected hours for a person on a project in a month = capacity × alloc%. */
-  function expectedHours(personId, project, ym) {
+  /* ---------- Clockify project → fee project ----------
+     The one join between what Clockify calls a job and what the fee tool
+     calls it. A pinned mapping wins; otherwise the Salesforce id in the
+     Clockify name, then an exact (or former) fee project name, then the
+     internal-line rules, then the token matcher as a SUGGESTION (via 'auto',
+     shown unconfirmed until someone pins it). null = unmapped: the hours
+     are kept, shown as "no project", never guessed onto a client. */
+  let _ckCache = null, _ckFee = null;
+  function resolveClockify(ckName) {
+    const k = nkey(ckName); if (!k) return null;
+    if (!_ckCache || _ckFee !== feeIndex()) { _ckCache = new Map(); _actIdx = null; _ckFee = feeIndex(); }
+    if (_ckCache.has(k)) return _ckCache.get(k);
+    let out = null;
+    const m = ((readDb().mappings || {}).clockify || {})[k];
+    if (m === '__ignore__') out = { key: null, ignore: true, via: 'mapped' };
+    else if (m && m.feeId) out = feeIndex().some(p => p.id === m.feeId) ? { key: 'fee:' + m.feeId, feeId: m.feeId, via: 'mapped' } : null;
+    else if (m && m.internal) out = { key: 'int:' + m.internal, internal: m.internal, via: 'mapped' };
+    if (!out) {
+      const raw = String(ckName); const rawL = raw.toLowerCase(); const pk = projKey(raw);
+      const sf = sfIndex().find(e => rawL.includes(e.sf) || pk.includes(projKey(e.sf)));
+      if (sf) out = { key: 'fee:' + sf.id, feeId: sf.id, via: 'salesforce' };
+      else {
+        const exact = feeIndex().filter(p => p.key && p.key === pk);
+        if (exact.length) { const id = exact.length === 1 ? exact[0].id : pickFeeId(exact.map(p => p.id)); out = { key: 'fee:' + id, feeId: id, via: 'name' }; }
+        else {
+          const ik = internalKindFor(raw);
+          if (ik) out = { key: 'int:' + ik, internal: ik, via: 'rule' };
+          else {
+            const auto = matchFeeProject(raw, '');
+            if (auto && auto.via === 'tokens') out = { key: 'fee:' + auto.id, feeId: auto.id, via: 'auto', score: auto.score };
+            else if (auto) out = { key: 'fee:' + auto.id, feeId: auto.id, via: 'name' };
+          }
+        }
+      }
+    }
+    _ckCache.set(k, out);
+    return out;
+  }
+  /* Logged hours folded onto keys: key → pid → ym → hours, plus every
+     Clockify name per key and the unmapped names with their hours. Rebuilt
+     after any write. */
+  let _actIdx = null;
+  function actualsIndex() {
+    if (_ckFee !== feeIndex()) { _ckCache = null; _actIdx = null; }
+    if (_actIdx) return _actIdx;
+    const db = readDb(); const byKey = {}, names = {}, unmapped = {}, ignored = {};
+    const legacyKeys = new Set(); (db.allocations || []).forEach(a => { if (!a.feeId && !a.internal) legacyKeys.add(nkey(a.legacyName || a.project || '')); });
+    Object.entries(db.actuals || {}).forEach(([k, h]) => {
+      const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|');
+      const pid = k.slice(0, i1), ck = k.slice(i1 + 1, i2), ym = k.slice(i2 + 1);
+      const res = resolveClockify(ck);
+      if (res && res.ignore) { ignored[ck] = (ignored[ck] || 0) + h; return; }
+      // no fee project, but rows are planned under this very name: one job, still unplaced
+      const legacy = !res && legacyKeys.has(nkey(ck));
+      const key = res ? res.key : legacy ? 'legacy:' + nkey(ck) : 'ck:' + ck;
+      if (!res && !legacy) unmapped[ck] = (unmapped[ck] || 0) + h;
+      (names[key] = names[key] || new Set()).add(ck);
+      const kp = byKey[key] || (byKey[key] = {});
+      const pp = kp[pid] || (kp[pid] = {});
+      pp[ym] = (pp[ym] || 0) + h;
+    });
+    _actIdx = { byKey, names, unmapped, ignored };
+    return _actIdx;
+  }
+  /** Clockify project names that feed a key (fee id, label or key accepted). */
+  function clockifyNamesFor(ref) {
+    const key = keyForRef(ref); if (!key) return [];
+    const fromActuals = [...(actualsIndex().names[key] || [])];
+    const pinned = Object.entries((readDb().mappings || {}).clockify || {}).filter(([, v]) => v && ((v.feeId && 'fee:' + v.feeId === key) || (v.internal && 'int:' + v.internal === key))).map(([k, v]) => v.name || k);
+    const seen = new Set(); const out = [];
+    [...fromActuals, ...pinned].forEach(n => { const nk2 = nkey(n); if (seen.has(nk2)) return; seen.add(nk2); out.push(n); });
+    return out.sort();
+  }
+  /** Clockify projects with hours that resolve to nothing — the Mapping tab's worklist. */
+  function unmappedClockify() {
+    return Object.entries(actualsIndex().unmapped).map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 })).sort((a, b) => b.hours - a.hours);
+  }
+  /** Every Clockify project we know of (hours in the store, plus any names the
+      caller pulled live) with where it lands: { name, hours, key, label, client,
+      via, pinned, ignored, unmapped }. The admin Mapping tab's main table. */
+  /** A record and its change orders are one job for mapping purposes. */
+  function sameJob(idA, idB) {
+    const recs = feeRecords(); const a = recs.find(p => p.id === idA), b = recs.find(p => p.id === idB);
+    const parent = (p) => (p && p.changeOrder && p.changeOrder.parentId) || (p && p.id);
+    return !!(a && b && parent(a) === parent(b));
+  }
+  function clockifyProjectRows(extraNames) {
+    const AX = actualsIndex(); const hours = {};
+    const db = readDb();
+    Object.entries(db.actuals || {}).forEach(([k, h]) => { const i1 = k.indexOf('|'), i2 = k.lastIndexOf('|'); const ck = k.slice(i1 + 1, i2); hours[ck] = (hours[ck] || 0) + h; });
+    const seen = new Set(); const out = [];
+    const pins = (db.mappings || {}).clockify || {};
+    const legacyRows = {}; (db.allocations || []).forEach(a => { if (!a.feeId && !a.internal) { const k = nkey(a.legacyName || a.project || ''); legacyRows[k] = (legacyRows[k] || 0) + 1; } });
+    [...Object.keys(hours), ...Object.values(pins).map(v => v && v.name).filter(Boolean), ...Object.keys(pins), ...(extraNames || [])].forEach(raw => {
+      const k = nkey(raw); if (!k || seen.has(k)) return; seen.add(k);
+      const res = resolveClockify(raw);
+      const row = { name: raw, hours: Math.round((hours[raw] || 0) * 10) / 10, key: null, label: '', client: '', via: res ? res.via : null, pinned: !!pins[k], ignored: !!(res && res.ignore), unmapped: !res };
+      if (res && res.key) { const d = describeKey(res.key); row.key = res.key; row.label = d.label; row.client = d.client; row.feeId = d.feeId || null; row.internal = d.internal || null; }
+      if (row.unmapped && legacyRows[k]) row.plannedRows = legacyRows[k];   // planned under this very name too — placeName moves both
+      // A pin that contradicts the Salesforce id in the Clockify name is the
+      // old world's mistake carried forward — flagged, never silently fixed.
+      if (row.pinned && row.feeId) {
+        const rawL = raw.toLowerCase(), pk = projKey(raw); const sf = sfIndex().find(e => rawL.includes(e.sf) || pk.includes(projKey(e.sf)));
+        if (sf && sf.id !== row.feeId && !sameJob(sf.id, row.feeId)) row.conflict = describeKey('fee:' + sf.id).label;
+      }
+      out.push(row);
+    });
+    return out.sort((a, b) => (a.unmapped === b.unmapped ? 0 : a.unmapped ? -1 : 1) || b.hours - a.hours || a.name.localeCompare(b.name));
+  }
+  /** Rows the migration could not place, grouped by their old name. */
+  function legacyProjects() {
+    const by = {};
+    readDb().allocations.forEach(a => { if (a.feeId || a.internal) return; const name = a.legacyName || a.project || ''; const g = by[nkey(name)] || (by[nkey(name)] = { name, key: 'legacy:' + nkey(name), client: a.client || '', rows: 0, people: new Set(), suggest: null }); g.rows++; g.people.add(a.personId); });
+    return Object.values(by).map(g => { const t = resolveLegacyName(g.name, g.client); g.suggest = t && t.feeId ? describeKey('fee:' + t.feeId) : t && t.internal ? describeKey('int:' + t.internal) : null; g.people = g.people.size; return g; }).sort((a, b) => b.rows - a.rows || a.name.localeCompare(b.name));
+  }
+  /** One name, both sides: rows planned under it move to the target AND, if
+      Clockify logs hours under that same name with no fee project, the name
+      is pinned there too — so a fix on either tab finishes the job. */
+  function placeName(name, target) {
+    const t = typeof target === 'object' && target ? target : (INTERNAL_LINES[target] ? { internal: target } : projectRefToTarget(target));
+    if (!t) throw new Error('Pick a fee project or an internal line.');
+    const out = { rows: 0, pinned: false, label: describeKey(t.feeId ? 'fee:' + t.feeId : 'int:' + t.internal).label };
+    if (readDb().allocations.some(a => allocKey(a) === 'legacy:' + nkey(name))) out.rows = retargetLegacy(name, t);
+    const logged = Object.keys(readDb().actuals || {}).some(k => nkey(k.split('|')[1]) === nkey(name));
+    const res = resolveClockify(name);
+    if (logged && (!res || res.via === 'auto' || (res.feeId && t.feeId && res.feeId !== t.feeId) || (res.internal && t.internal && res.internal !== t.internal))) { setProjectMapping(name, t); out.pinned = true; }
+    return out;
+  }
+  /** Move every row parked under an old name onto a fee project or internal line. */
+  function retargetLegacy(legacyName, target) {
+    const t = typeof target === 'object' && target ? target : (INTERNAL_LINES[target] ? { internal: target } : projectRefToTarget(target));
+    if (!t) throw new Error('Pick a fee project or an internal line.');
+    const fromKey = 'legacy:' + nkey(legacyName);
+    const db = readDb(); let n = 0;
+    db.allocations.forEach(a => { if (allocKey(a) !== fromKey) return; delete a.feeId; delete a.internal; Object.assign(a, t); delete a.legacyName; a.updatedAt = new Date().toISOString(); n++; });
+    if (n) { writeDb(db); logStaff('staff-map', { kind: 'legacy rows', key: legacyName, to: describeKey(t.feeId ? 'fee:' + t.feeId : 'int:' + t.internal).label, rows: n }, t.feeId); }
+    return n;
+  }
+
+  function expectedHours(personId, ref, ym) {
     const db = readDb(); const person = db.people[personId];
     const cap = capacityHours(person);
+    const key = keyForRef(ref);
     return db.allocations.reduce((s, a) => {
-      if (a.personId !== personId || a.project !== project) return s;
+      if (a.personId !== personId || allocKey(a) !== key) return s;
       return s + (allocActiveIn(a, ym) ? cap * (a.pct || 0) / 100 : 0);
     }, 0);
   }
-
   function actualKey(personId, project, ym) { return personId + '|' + project + '|' + ym; }
-  function actualHours(personId, project, ym) { return readDb().actuals[actualKey(personId, project, ym)] || 0; }
+  function actualHours(personId, ref, ym) {
+    const key = keyForRef(ref); if (!key) return 0;
+    return (((actualsIndex().byKey[key] || {})[personId] || {})[ym]) || 0;
+  }
 
-  /** Full expected-vs-actual matrix over `months`, grouped by project then
-      person. Rows carry expected + actual + variance per month and totals. */
+  /** Full expected-vs-actual matrix over `months`, grouped by project (fee
+      project / internal line / unmapped Clockify project) then person.
+      Rows carry key, project (label), client, feeId, expected + actual +
+      variance per month and totals. opts.project accepts a key, fee id or label. */
   function varianceMatrix(months, opts) {
     const db = readDb();
-    const wantProject = opts && opts.project;
+    const wantKey = opts && opts.project ? keyForRef(opts.project) : null;
     const wantPerson = opts && opts.person;
-    // gather (person, project) pairs that have either an allocation or an actual in-window
     const pairs = {};
     db.allocations.forEach(a => {
-      if (wantProject && a.project !== wantProject) return;
+      const key = allocKey(a);
+      if (wantKey && key !== wantKey) return;
       if (wantPerson && a.personId !== wantPerson) return;
       if (!inView(a.personId)) return;
       if (!months.some(m => allocActiveIn(a, m))) return;
-      pairs[a.personId + '|' + a.project] = { personId: a.personId, project: a.project, client: a.client };
+      pairs[a.personId + '|' + key] = { personId: a.personId, key, client: a.client };
     });
-    Object.keys(db.actuals).forEach(k => {
-      const [personId, project, ym] = k.split('|');
-      if (!months.includes(ym)) return;
-      if (wantProject && project !== wantProject) return;
-      if (wantPerson && personId !== wantPerson) return;
-      if (!inView(personId)) return;
-      const pk = personId + '|' + project;
-      if (!pairs[pk]) pairs[pk] = { personId, project, client: '' };
+    const AX = actualsIndex();
+    Object.entries(AX.byKey).forEach(([key, people]) => {
+      if (wantKey && key !== wantKey) return;
+      Object.entries(people).forEach(([personId, byYm]) => {
+        if (wantPerson && personId !== wantPerson) return;
+        if (!inView(personId)) return;
+        if (!months.some(m => byYm[m])) return;
+        const pk = personId + '|' + key;
+        if (!pairs[pk]) pairs[pk] = { personId, key, client: '' };
+      });
     });
     const rows = Object.values(pairs).map(pr => {
       const person = db.people[pr.personId] || { id: pr.personId, name: pr.personId };
+      const d = describeKey(pr.key);
+      const cap = capacityHours(person);
+      const mine = db.allocations.filter(a => a.personId === pr.personId && allocKey(a) === pr.key);
+      const act = (AX.byKey[pr.key] || {})[pr.personId] || {};
       const byMonth = {}; let eTot = 0, aTot = 0;
       months.forEach(ym => {
-        const e = expectedHours(pr.personId, pr.project, ym);
-        const a = actualHours(pr.personId, pr.project, ym);
+        const e = mine.reduce((s2, a) => s2 + (allocActiveIn(a, ym) ? cap * (a.pct || 0) / 100 : 0), 0);
+        const a = act[ym] || 0;
         byMonth[ym] = { e, a, v: a - e };
         eTot += e; aTot += a;
       });
-      return { person, project: pr.project, client: pr.client, byMonth, expected: eTot, actual: aTot, variance: aTot - eTot };
+      return { person, key: pr.key, project: d.label, client: pr.client || d.client || '', feeId: d.feeId || null, internal: d.internal || null, unmapped: !!d.unmapped, legacy: !!d.legacy, byMonth, expected: eTot, actual: aTot, variance: aTot - eTot };
     });
     return rows.sort((a, b) => a.project.localeCompare(b.project) || a.person.name.localeCompare(b.person.name));
   }
@@ -1129,8 +1398,8 @@
       (roles × FTE × hrsPerMo) — the "once proposals are built out" baseline the
       matrix converges to. Returns null when the project isn't in the fee tool
       or carries no staffing. { byMonth:{ym:hrs}, total, feeProjects } */
-  function feePlanHours(projectName, months) {
-    const cp = contractPlan(projectName, months);
+  function feePlanHours(ref, months) {
+    const cp = contractPlan(ref, months);
     return cp ? { byMonth: cp.byMonth, total: cp.total, feeProjects: cp.feeProjects } : null;
   }
 
@@ -1190,58 +1459,34 @@
      this only changes what is printed. Unlinked, macro and time-off names
      print as they are. */
   let _labelCache = null;
-  function projectLabel(matrixName, client) {
-    const raw = String(matrixName || '');
-    const plain = { name: raw, client: client || '', alias: '', fee: [] };
-    if (!raw || isTimeOffProject(raw) || isMacroProject(raw) || isLeaveProject(raw)) return plain;
-    if (!_labelCache || Date.now() - _labelCache.t > 500) _labelCache = { t: Date.now(), m: new Map() };
-    const ck = nkey(raw) + '|' + String(client || '').toLowerCase();
-    if (_labelCache.m.has(ck)) return _labelCache.m.get(ck);
-    let cl = client || '';
-    if (!cl) { try { cl = (readDb().allocations.find(a => a.project === raw) || {}).client || ''; } catch (e) {} }
-    let links = []; try { links = matchFeeProjects(raw, cl) || []; } catch (e) {}
-    let out = plain;
-    if (links.length) {
-      const names = [...new Set(links.map(l => l.name).filter(Boolean))];
-      const name = names.join(' + ') || raw;
-      out = { name, client: cl || links[0].client || '', alias: nkey(name) === nkey(raw) ? '' : raw, fee: links };
-    } else out = { name: raw, client: cl, alias: '', fee: [] };
-    _labelCache.m.set(ck, out);
-    return out;
+  function projectLabel(ref, client) {
+    const raw = String(ref || '');
+    const key = keyForRef(raw);
+    if (!key) return { name: raw, client: client || '', alias: '', fee: [] };
+    const d = describeKey(key);
+    return { name: d.label, client: client || d.client || '', alias: '', fee: d.feeId ? [{ id: d.feeId, name: d.name, client: d.client, via: 'mapped' }] : [], key, feeId: d.feeId || null, internal: d.internal || null, legacy: !!d.legacy, unmapped: !!d.unmapped };
   }
   /** Fee name, then the matrix name when it differs — for Excel cells and plain text. */
   function projectLabelText(matrixName, client) { const L = projectLabel(matrixName, client); return L.alias ? L.name + ' ⇐ ' + L.alias : L.name; }
+  /** Compatibility: the one label a fee project is planned or logged under,
+      or nothing when it has neither rows nor hours. */
   function matrixProjectsForFee(feeProjectId) {
-    const db = readDb();
-    // Planned names plus names that only have LOGGED time (a claimed Clockify
-    // project with no allocation yet) — the leader's view is time vs plan,
-    // and time with no plan is exactly what it should show.
-    const names = new Set(distinctProjects());
-    Object.keys(db.actuals || {}).forEach(k => { const n = k.split('|')[1]; if (n) names.add(n); });
-    return [...names].filter(pn => {
-      const client = (db.allocations.find(a => a.project === pn) || {}).client || '';
-      return matchFeeProjects(pn, client).some(l => l.id === feeProjectId);
-    });
+    const key = 'fee:' + feeProjectId;
+    const has = readDb().allocations.some(a => allocKey(a) === key) || !!actualsIndex().byKey[key];
+    return has ? [describeKey(key).label] : [];
   }
   /** Allocated vs logged for ONE fee project, per person, over a window — the
       leader's view of their own project. Rows come from every matrix project
       linked to it; a person on two linked matrix names is one row.
       { rows:[{person, byMonth:{ym:{e,a}}, expected, actual}], matrixNames } */
   function feeProjectActuals(feeProjectId, months) {
-    const names = matrixProjectsForFee(feeProjectId);
-    const byPerson = {};
-    names.forEach(pn => {
-      varianceMatrix(months, { project: pn }).forEach(r => {
-        const e = byPerson[r.person.id] || (byPerson[r.person.id] = { person: r.person, byMonth: {}, expected: 0, actual: 0 });
-        months.forEach(ym => { const c = r.byMonth[ym] || { e: 0, a: 0 }; const d = e.byMonth[ym] || (e.byMonth[ym] = { e: 0, a: 0 }); d.e += c.e; d.a += c.a; });
-        e.expected += r.expected; e.actual += r.actual;
-      });
-    });
-    return { rows: Object.values(byPerson).sort((a, b) => b.actual - a.actual || a.person.name.localeCompare(b.person.name)), matrixNames: names };
+    const rows = varianceMatrix(months, { project: 'fee:' + feeProjectId }).map(r => ({ person: r.person, byMonth: r.byMonth, expected: r.expected, actual: r.actual }));
+    const names = clockifyNamesFor('fee:' + feeProjectId);
+    return { rows: rows.sort((a, b) => b.actual - a.actual || a.person.name.localeCompare(b.person.name)), clockifyNames: names, matrixNames: names };
   }
 
-  function contractPlan(projectName, months, client) {
-    const links = matchFeeProjects(projectName, client);
+  function contractPlan(ref, months, client) {
+    const links = matchFeeProjects(ref, client);
     if (!links.length) return null;
     const S2 = window.UFC_Store;
     const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
@@ -1355,11 +1600,11 @@
       const proj = r[cProject]; if (!proj) return;
       const hrs = toHours(r[cDur]); if (!hrs) return;
       const ym = toYm(cDate ? r[cDate] : '', defaultMonth); if (!ym) return;
-      // saved mappings first — '__ignore__' drops the row (e.g. non-delivery staff)
-      const maps = db.mappings || { users: {}, projects: {} };
+      // saved mappings first — '__ignore__' drops the row (e.g. non-delivery staff, a Clockify project nobody wants counted)
+      const maps = db.mappings || { users: {}, clockify: {} };
       const uMap = maps.users[nkey(uname)];
-      const pMap = maps.projects[nkey(proj)];
-      if (uMap === '__ignore__' || pMap === '__ignore__') return;
+      const pRes = resolveClockify(proj);
+      if (uMap === '__ignore__' || (pRes && pRes.ignore)) return;
       monthsSeen.add(ym);
       // match person: saved mapping → name match (exclusions block the fuzzy path)
       let person = (uMap && db.people[uMap]) ? db.people[uMap] : Object.values(db.people).find(p => namesMatch(p.name, uname) && !((maps.userX || {})[nkey(uname)] || []).includes(p.id));
@@ -1369,16 +1614,14 @@
       if (person && cLast && /^\d{4}-\d{2}-\d{2}$/.test(String(r[cLast] || '').trim())) { const d = String(r[cLast]).trim(); if (!lastWorked[personId] || d > lastWorked[personId]) lastWorked[personId] = d; }
       // A detailed export carries a real day per row; that is a last-worked day too.
       if (person && cDate && !cLast && /^\d{4}-\d{2}-\d{2}/.test(String(r[cDate] || '').trim())) { const d = String(r[cDate]).trim().slice(0, 10); if (!/-01$/.test(d) && (!lastWorked[personId] || d > lastWorked[personId])) lastWorked[personId] = d; }   // a summary export dates every row the 1st; a detailed one carries real days
-      // match project: saved mapping → exact name → Salesforce ID → fuzzy
-      let projName, via = null;
-      if (pMap) { projName = pMap; via = 'mapped'; }
-      else { const res = resolveClockifyProject(proj); projName = res ? res.name : proj; via = res && res.via; }
+      // The hours stay under the Clockify name; the resolver says which fee
+      // project (or internal line) they feed, and the Mapping tab fixes the rest.
+      const via = pRes ? pRes.via : null;
       if (via === 'salesforce') sfHits++;
-      if (!via) unmatchedProjects[proj] = (unmatchedProjects[proj] || 0) + hrs;
-      // audit trail: where every Clockify project's hours landed
-      const md = matchDetail[proj] || (matchDetail[proj] = { to: projName, via: via || 'unmatched', hours: 0 });
+      if (!pRes) unmatchedProjects[proj] = (unmatchedProjects[proj] || 0) + hrs;
+      const md = matchDetail[proj] || (matchDetail[proj] = { to: pRes ? describeKey(pRes.key).label : '— no project', via: via || 'unmapped', hours: 0 });
       md.hours += hrs;
-      const key = actualKey(personId, projName, ym);
+      const key = actualKey(personId, proj, ym);
       agg[key] = (agg[key] || 0) + hrs;
       totalHours += hrs; rowCount++;
     });
@@ -1480,11 +1723,14 @@
         unpriced.byPerson[who] = (unpriced.byPerson[who] || 0) + h;
         return;
       }
-      if (isMacroProject(proj)) {
-        addTo(isTimeOffProject(proj) ? timeOff : overhead, proj, pid, person, rate, ym, h);
+      const res = resolveClockify(proj);
+      if (res && res.ignore) return;
+      if ((res && res.internal) || isMacroProject(proj)) {
+        const kind = res && res.internal ? res.internal : (isTimeOffProject(proj) ? 'timeoff' : 'overhead');
+        addTo(kind === 'timeoff' ? timeOff : overhead, proj, pid, person, rate, ym, h);
         return;
       }
-      const link = matchFeeProject(proj, '');
+      const link = res && res.feeId ? { id: res.feeId } : null;
       const bucket = link ? (burnByFee[link.id] = burnByFee[link.id] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set() })
                           : (burnLoose[proj] = burnLoose[proj] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set([proj]) });
       if (link) bucket.srcNames.add(proj);
@@ -1719,11 +1965,11 @@
       Shared by the Insights tab and the By Project view badge. */
   function unassignedRoles(months) {
     const out = [];
-    distinctProjects().forEach(pn => {
-      if (isLeaveProject(pn)) return;
-      const client = (listAllocations().find(a => a.project === pn) || {}).client || '';
-      const cp = contractPlan(pn, months, client); if (!cp || !cp.roles.length) return;
-      const staffedTitles = [...new Set(listAllocations().filter(a => a.project === pn).map(a => ((getPerson(a.personId) || {}).title || '').trim()))].filter(Boolean);
+    planProjects().forEach(pp => {
+      if (!pp.feeId) return;
+      const pn = pp.label;
+      const cp = contractPlan(pp.key, months, pp.client); if (!cp || !cp.roles.length) return;
+      const staffedTitles = [...new Set(listAllocations().filter(a => allocKey(a) === pp.key).map(a => ((getPerson(a.personId) || {}).title || '').trim()))].filter(Boolean);
       const famOf = (t) => { const f = titleFamily(t); return f ? f.titleId : null; };
       const fams = new Set(staffedTitles.map(famOf).filter(Boolean));
       cp.roles.forEach(r => {
@@ -1759,12 +2005,9 @@
      call) AND a project rename, so it is built from the CANONICAL project
      name plus either the open role or the contract-named person. */
   function gapKey(row) {
-    const db = readDb();
-    const ren = (db.mappings || {}).renames || {};
-    const canon = ren[nkey(row.project)] || row.project;
     const who = row.open ? 'open:' + String(row.roleTitle || '').toLowerCase()
                          : 'who:' + nkey(canonicalName(row.resource || ''));
-    return nkey(canon) + '|' + who;
+    return (row.feeId ? 'fee:' + row.feeId : nkey(row.project)) + '|' + who;
   }
   function dismissedGaps() { const db = readDb(); return db.dismissedGaps || {}; }
   /** Hide a contract-staffing row from the working list, with a reason. */
@@ -1796,29 +2039,14 @@
     const nowYm = currentYM();
     const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
     const out = [];
-    const visitedFee = new Set();
 
-    // Project names must be compared through the saved rename table
-    // (old sheet name → canonical Clockify name). Otherwise a fee record
-    // under the OLD name and allocations under the NEW name never see each
-    // other: the gap card keeps resurfacing, confirming it creates a row
-    // that merge renames away, and the "phantom" loops forever.
-    const ren = (db.mappings || {}).renames || {};
-    const canonProjName = (n) => ren[nkey(n)] || n;
-    const sameProj = (a, b) => nkey(canonProjName(a)) === nkey(canonProjName(b));
-    /* Coverage must see every matrix name that links to the same fee project.
-       A leader who planned "Exxon PMO" had the work covered; the bridge, looking
-       only at the fee record's own name, could not see it and accepted a
-       second row under "Workplace Strategy (2026)". feeIdsByName is computed
-       once per call so the lookup inside the allocation filter stays cheap. */
-    const feeIdsByName = {};
-    distinctProjects().forEach(n => { const cl = (db.allocations.find(a => a.project === n) || {}).client || ''; let ids = []; try { ids = matchFeeProjects(n, cl).map(l => l.id); } catch (e) {} feeIdsByName[nkey(n)] = new Set(ids); });
-
-    // Diff ONE matrix project's contract demand (across its linked fee
-    // projects) against existing allocations, pushing gap entries into out.
-    const collect = (pn, client, links) => {
-      const linkIds = new Set(links.map(l => l.id));
-      const sameJob = (name) => sameProj(name, pn) || [...(feeIdsByName[nkey(name)] || [])].some(id => linkIds.has(id));
+    // Diff ONE fee project's contract demand against the allocations keyed
+    // to it, pushing gap entries into out. Coverage is by key, so every
+    // Clockify name and every spelling of the job is one project here.
+    const collect = (feeId, links) => {
+      const key = 'fee:' + feeId; const d = describeKey(key);
+      const pn = d.label, client = d.client;
+      const sameJob = (a) => allocKey(a) === key;
       // Contract demand per NAMED person, summed across roles and linked fee
       // projects (one person can hold two roles, or appear in two links).
       const byName = {};
@@ -1826,7 +2054,6 @@
         const p = feeRecords().find(x => x.id === link.id);
         if (!p || !p.roles || !p.roles.length || !p.timeline) return;
         if (p.project && p.project.status === 'lost') return;   // dead proposals aren't staffing demand
-        visitedFee.add(p.id);
         let byPhase; try { byPhase = S2.computeMonthsByPhase(p); } catch (e) { return; }
         const phaseOf = {};
         (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
@@ -1859,7 +2086,7 @@
           const rf = titleFamily(e.roleLabel);
           const covers = (pt) => { if (!pt) return false; const f = titleFamily(pt); return (f && rf && f.titleId === rf.titleId) || tokenScore(pt, e.roleLabel) >= 0.5; };
           const roleKey = String(e.roleLabel).toLowerCase();
-          existing = db.allocations.filter(a => sameJob(a.project) && (
+          existing = db.allocations.filter(a => sameJob(a) && (
             // an allocation created FOR this open role always counts, whatever
             // the assignee's title says — otherwise confirming never clears it
             String(a.contractRole || '').toLowerCase() === roleKey ||
@@ -1876,18 +2103,15 @@
           if (person && !matches.some(m => m.id === person.id)) matches.push(person);
           const matchIds = new Set(matches.map(m => m.id));
           const nameKey = nkey(canonicalName(e.name));
-          existing = db.allocations.filter(a => sameJob(a.project) && (
+          existing = db.allocations.filter(a => sameJob(a) && (
             matchIds.has(a.personId) ||
             // allocation created FOR this contract name (leader mapped it to
             // someone else) counts even before/without a saved alias
             nkey(canonicalName(a.contractResource || '')) === nameKey
           ));
-          const onProj = matches.find(m => db.allocations.some(a => a.personId === m.id && sameJob(a.project)));
+          const onProj = matches.find(m => db.allocations.some(a => a.personId === m.id && sameJob(a)));
           if (onProj) person = onProj;
         }
-        // If the person is already planned on this job under another matrix
-        // name, a new row belongs under THAT name — never a second name.
-        const fileUnder = (() => { const mine = existing.filter(a => !person || a.personId === person.id); const other = mine.find(a => !sameProj(a.project, pn)); return other && !mine.some(a => sameProj(a.project, pn)) ? other.project : null; })();
         const covAt = (ym) => existing.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
         // Month-by-month shortfall (contract minus what's already allocated),
         // compressed into consecutive equal-% segments — Option A: one
@@ -1918,13 +2142,12 @@
           }
         } catch (err) {}
         const row = {
-          project: pn, client,
+          feeId, project: pn, client,
           open: !!e.open, roleTitle: e.roleLabel || [...e.roles][0] || 'Role',
           resource: e.name, roles: [...e.roles],
           person, isNew: e.open ? false : !person,
           personId: e.open ? null : (person ? person.id : personIdForName(e.name)),
           topUp: existing.length > 0,
-          fileUnder,                                   // matrix name the row must be saved under (null = this project)
           via: e.via,
           rating, lead,
           segments: future,
@@ -1936,66 +2159,17 @@
       });
     };
 
-    // 1) Matrix projects with allocations — diff against their linked fee
-    // projects. Grouped by CANONICAL name so a project living under two
-    // names (stale rows + renamed rows) is one project: links from every
-    // spelling are unioned and the gap is anchored on the canonical name.
-    const byCanon = {};
-    distinctProjects().forEach(pn0 => {
-      const pn = canonProjName(pn0);
-      if (isLeaveProject(pn)) return;             // leaves aren't contract demand
-      const ck = nkey(pn);
-      (byCanon[ck] = byCanon[ck] || { pn, names: [] }).names.push(pn0);
-    });
-    Object.values(byCanon).forEach(({ pn, names }) => {
-      const client = (db.allocations.find(a => names.includes(a.project)) || {}).client || '';
-      const links = [], seenL = new Set();
-      const lookups = names.includes(pn) ? names : names.concat([pn]);
-      lookups.forEach(n => matchFeeProjects(n, client).forEach(l => { if (!seenL.has(l.id)) { seenL.add(l.id); links.push(l); } }));
-      if (links.length) collect(pn, client, links);
-    });
-
-    // 2) SIGNED fee projects no matrix project links to — the most
-    // under-staffed case of all: the contract exists and nobody is on it.
-    // BUT: if the fee record's name closely matches an EXISTING matrix
-    // project, this is most likely a DUPLICATE fee record for work the
-    // matrix already tracks (hand-built copy + imported copy). Diff its
-    // demand against THAT matrix project's real allocations instead of
-    // inventing a parallel project name — fully-covered entries vanish,
-    // under-covered ones surface flagged as a possible duplicate record.
+    // Every fee project that is signed (won / active) or that someone is
+    // already planning against. Unsigned work nobody has staffed demands
+    // nothing; a pursuit a leader is staffing is checked against its roster.
+    const planned = new Set(db.allocations.map(a => a.feeId).filter(Boolean));
     feeRecords().forEach(p => {
-      if (visitedFee.has(p.id)) return;
-      const st = (p.project && p.project.status) || '';
-      if (st !== 'won' && st !== 'active') return;              // unsigned work doesn't demand staffing
       if (!p.roles || !p.roles.length || !p.timeline) return;
-      const rawName = (p.project && p.project.name || '').trim();
-      if (!rawName) return;
-      // The fee record may carry a pre-rename spelling ("EM NALI") of a
-      // project the matrix tracks canonically ("Exxon NALI") — resolve it
-      // through the rename table first so demand lands on the real project.
-      const name = canonProjName(rawName);
-      let pn = name, client = (p.project && p.project.client) || '', dupNote = null;
-      const mk = projKey(name);
-      let best = null, bestScore = 0;
-      distinctProjects().forEach(mp0 => {
-        const mp = canonProjName(mp0);
-        if (isLeaveProject(mp)) return;           // never near-match a fee record onto the leave bucket
-        const k2 = projKey(mp);
-        let s = 0;
-        if (k2 && k2 === mk) s = 1;
-        else if (k2 && (k2.includes(mk) || mk.includes(k2))) s = 0.9;
-        else s = tokenScore(mp, name);
-        if (s > bestScore) { bestScore = s; best = mp; }
-      });
-      if (best && bestScore >= 0.7 && !codesConflict(best, name)) {
-        pn = best;
-        client = (db.allocations.find(a => sameProj(a.project, best)) || {}).client || client;
-        // A saved rename is a KNOWN alias, not a suspected duplicate record —
-        // only flag when fuzzy matching (not the rename table) made the leap.
-        if (nkey(name) === nkey(rawName) && nkey(best) !== nkey(rawName)) dupNote = rawName;
-      }
-      collect(pn, client, [{ id: p.id, via: 'direct' }]);
-      if (dupNote) out.forEach(g => { if (g.project === pn && g.via === 'direct' && !g.possibleDupFee) g.possibleDupFee = dupNote; });
+      const st = (p.project && p.project.status) || '';
+      if (st === 'lost') return;
+      const signed = st === 'won' || st === 'active';
+      if (!signed && !planned.has(p.id)) return;
+      collect(p.id, [{ id: p.id, via: planned.has(p.id) ? 'mapped' : 'direct' }]);
     });
 
     return out.sort((a, b) => b.totalNeedFteMo - a.totalNeedFteMo);
@@ -2010,16 +2184,7 @@
 
   /** Every allocation row whose matrix project resolves to this fee project
       (through the saved fee-link first, fuzzy match otherwise). */
-  function allocationsForFeeProject(feeProjectId) {
-    const byProject = {};   // resolve each distinct matrix name once
-    return listAllocations().filter(a => {
-      if (!a.project) return false;
-      const k = nkey(a.project);
-      if (byProject[k] === undefined)
-        byProject[k] = matchFeeProjects(a.project, a.client).some(l => l.id === feeProjectId);
-      return byProject[k];
-    });
-  }
+  function allocationsForFeeProject(feeProjectId) { return listAllocations().filter(a => a.feeId === feeProjectId); }
 
   /** Shift every allocation on a fee project by N months (start and end move
       together, so row lengths are preserved). Returns how many rows moved. */
@@ -2209,11 +2374,14 @@
       if (!inView(pid)) return;
       const rec = per[pid] || (per[pid] = { person: db.people[pid] || { id: pid, name: pid.replace(/^unmatched:/, '') }, hours: 0, total: 0, ptoHours: 0, byProj: {} });
       rec.total += h;
-      if (!isMacroProject(proj)) return;
+      const res = resolveClockify(proj);
+      if (res && res.ignore) return;
+      const isInternal = (res && res.internal) ? res.internal !== 'leave' : isMacroProject(proj);
+      if (!isInternal) return;
       /* Time off is macro time but nobody should be flagged for taking it.
          `hours` counts WORK-type macro only (BD, internal, admin); PTO is
          tallied beside it so the detail still reconciles to the total. */
-      if (isTimeOffProject(proj)) { rec.ptoHours += h; rec.byProj[proj] = (rec.byProj[proj] || 0) + h; return; }
+      if ((res && res.internal === 'timeoff') || isTimeOffProject(proj)) { rec.ptoHours += h; rec.byProj[proj] = (rec.byProj[proj] || 0) + h; return; }
       rec.hours += h; rec.byProj[proj] = (rec.byProj[proj] || 0) + h;
     });
     return Object.values(per).filter(r => r.hours > 0 || r.ptoHours > 0)
@@ -2223,11 +2391,11 @@
 
   /* ---------- saved Clockify → roster mappings (map once, keeps forever;
      lives in staff.json so the whole team shares it) ---------- */
-  function getMappings() { const db = readDb(); return db.mappings || { users: {}, projects: {} }; }
+  function getMappings() { const db = readDb(); return db.mappings || { users: {}, clockify: {} }; }
   /** Pin a roster/Clockify job title to a rate-grid family + tier. Shared via
       staff.json. Pass null titleId to unpin. */
   function setTitleMapping(title, titleId, tierId) {
-    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    const db = readDb(); db.mappings = db.mappings || { users: {}, clockify: {} };
     db.mappings.titles = db.mappings.titles || {};
     const k = String(title || '').trim().toLowerCase(); if (!k) return;
     if (titleId) db.mappings.titles[k] = { titleId, tierId: tierId || 'mid' };
@@ -2239,7 +2407,7 @@
   }
 
   function setUserMapping(clockifyName, personId) {
-    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    const db = readDb(); db.mappings = db.mappings || { users: {}, clockify: {} };
     const was = db.mappings.users[nkey(clockifyName)] || null;
     if (personId) db.mappings.users[nkey(clockifyName)] = personId; else delete db.mappings.users[nkey(clockifyName)];
     writeDb(db);
@@ -2248,7 +2416,7 @@
   }
   /** Explicit "this Clockify user is NOT this person" — blocks the fuzzy match. */
   function setUserExclusion(clockifyName, personId, on) {
-    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    const db = readDb(); db.mappings = db.mappings || { users: {}, clockify: {} };
     db.mappings.userX = db.mappings.userX || {};
     const k = nkey(clockifyName);
     const list = db.mappings.userX[k] || [];
@@ -2262,99 +2430,39 @@
     const x = (readDb().mappings || {}).userX || {};
     return (x[nkey(clockifyName)] || []).includes(personId);
   }
-  function setProjectMapping(clockifyName, matrixProject) {
-    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
-    if (matrixProject) db.mappings.projects[nkey(clockifyName)] = matrixProject; else delete db.mappings.projects[nkey(clockifyName)];
-    // migrate actuals already committed under the Clockify-side name so plan and
-    // actual land on ONE row immediately (no re-import needed). '__ignore__'
-    // drops those hours.
-    if (matrixProject) {
-      Object.keys(db.actuals).forEach(k => {
-        const parts = k.split('|');
-        if (nkey(parts[1]) !== nkey(clockifyName) || parts[1] === matrixProject) return;
-        if (matrixProject === '__ignore__') { delete db.actuals[k]; return; }
-        const nk2 = parts[0] + '|' + matrixProject + '|' + parts[2];
-        db.actuals[nk2] = Math.round(((db.actuals[nk2] || 0) + db.actuals[k]) * 10) / 10;
-        delete db.actuals[k];
-      });
+  /** Point a Clockify project at a fee project (id), an internal line
+      ('int:<kind>' or the kind), '__ignore__', or null to unpin. Hours stay
+      under the Clockify name; every view re-reads the join. */
+  function setProjectMapping(clockifyName, target) {
+    const db = readDb(); db.mappings = db.mappings || { users: {}, clockify: {} }; db.mappings.clockify = db.mappings.clockify || {};
+    const k = nkey(clockifyName); if (!k) return;
+    let value = null, toLabel = null;
+    if (target === '__ignore__') { value = '__ignore__'; toLabel = 'ignored — hours not counted'; }
+    else if (target) {
+      let t = null;
+      if (typeof target === 'object') t = target;
+      else if (String(target).startsWith('int:') && INTERNAL_LINES[String(target).slice(4)]) t = { internal: String(target).slice(4) };
+      else if (INTERNAL_LINES[target]) t = { internal: target };
+      else t = projectRefToTarget(target);
+      if (!t) throw new Error('Pick a fee project or an internal line.');
+      value = Object.assign({ name: String(clockifyName).trim() }, t);   // the key is normalised; keep Clockify's own spelling for display
+      toLabel = describeKey(t.feeId ? 'fee:' + t.feeId : 'int:' + t.internal).label;
     }
+    if (value) db.mappings.clockify[k] = value; else delete db.mappings.clockify[k];
     writeDb(db);
-    logStaff('staff-map', { kind: 'project', key: clockifyName,
-      to: matrixProject === '__ignore__' ? 'ignored — hours dropped' : (matrixProject || null) });
-  }
-  /** Manual matrix-project → fee-tool-project link(s), shared via staff.json.
-      A matrix project can be pinned to SEVERAL fee projects (their figures
-      then sum in contractPlan) — stored as an array under the hood, but
-      legacy single-string mappings from before multi-link still read fine.
-      setFeeMapping(mp, id)                  → add id to the set
-      setFeeMapping(mp, id, { remove: true }) → remove just that id
-      setFeeMapping(mp, null)                → clear the whole set (revert to auto-match) */
-  /* ---------- freeze auto-matched fee links before a rename ----------
-     A matrix/Clockify project is joined to its fee record either by an
-     explicit pin (stored as the fee project's ID, rename-proof) or by an
-     automatic NAME match. Renaming the fee project silently breaks every
-     automatic link pointing at it: the hours stop landing against that
-     project and reappear as $0-revenue "loose" rows on Profitability, with
-     nothing anywhere saying why.
-
-     Call this with the fee project's id BEFORE its name changes. Every
-     matrix project that currently auto-resolves to it is written down as an
-     explicit pin, so the link survives the rename. Returns the names pinned,
-     so a caller can report them.
-
-     Deliberately does NOT touch matrix projects that already carry an
-     explicit mapping — those are somebody's decision and are already safe. */
-  function pinAutoLinksFor(feeProjectId) {
-    if (!feeProjectId) return [];
-    const db = readDb();
-    const feeMap = (db.mappings || {}).fee || {};
-    const pinned = [];
-    distinctProjects().forEach(pn => {
-      if (feeMap[nkey(pn)]) return;                       // already explicit
-      let hit = null;
-      try { hit = matchFeeProject(pn, ''); } catch (e) { return; }
-      if (!hit || hit.id !== feeProjectId) return;
-      if (hit.via === 'mapped') return;                   // belt and braces
-      setFeeMapping(pn, feeProjectId);
-      pinned.push(pn);
-    });
-    return pinned;
-  }
-
-  function setFeeMapping(matrixProject, feeProjectId, opts) {
-    _labelCache = null;
-    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
-    db.mappings.fee = db.mappings.fee || {};
-    const key = nkey(matrixProject);
-    if (!feeProjectId) {
-      delete db.mappings.fee[key]; writeDb(db);
-      logStaff('staff-map', { kind: 'fee link', key: matrixProject, to: null });
-      return;
-    }
-    let arr = db.mappings.fee[key];
-    arr = Array.isArray(arr) ? arr.slice() : (arr ? [arr] : []);
-    if (opts && opts.remove) {
-      arr = arr.filter(id => id !== feeProjectId);
-      if (arr.length) db.mappings.fee[key] = arr; else delete db.mappings.fee[key];
-    } else {
-      if (!arr.includes(feeProjectId)) arr.push(feeProjectId);
-      db.mappings.fee[key] = arr;
-    }
-    writeDb(db);
-    logStaff('staff-map', { kind: 'fee link', key: matrixProject,
-      to: (opts && opts.remove) ? 'unlinked' : 'linked' }, feeProjectId);
+    logStaff('staff-map', { kind: 'clockify project', key: clockifyName, to: toLabel }, value && value.feeId ? value.feeId : undefined);
   }
 
   /* ---------- the leader's mapping verbs: flag and claim ----------
-     A mapping is global and one-to-one, so a leader cannot move one that
-     belongs to another project. They can CONFIRM an auto-match (setFeeMapping
-     pins it), CLAIM a Clockify project nothing has claimed, or FLAG the rest
-     for an admin. Flags live in staff.json with who and why, and surface as
+     A Clockify project points at ONE fee project, so a leader cannot move
+     one that belongs to another project. They can CLAIM a Clockify project
+     nothing has claimed (setProjectMapping pins it) or FLAG the rest for an
+     admin. Flags live in staff.json with who and why, and surface as
      a queue at the top of the admin Mapping tab. */
   function mappingFlags() { return ((readDb().mappings || {}).flags) || {}; }
   function flagMapping(feeProjectId, note, feeName) {
     if (!feeProjectId) return null;
-    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    const db = readDb(); db.mappings = db.mappings || { users: {}, clockify: {} };
     db.mappings.flags = db.mappings.flags || {};
     let by = '', byName = '';
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u) { by = u.username || ''; byName = u.name || u.username || ''; } } catch (e) {}
@@ -2371,41 +2479,25 @@
     return true;
   }
   /** Clockify project names (from the list given, plus every project that
-      has logged hours) that no fee project claims: unmapped, or resolving to
-      a matrix project with no fee link. Safe for a leader to take. */
+      has logged hours) that resolve to nothing. Safe for a leader to take. */
   function unclaimedClockifyProjects(names) {
-    const db = readDb(); const maps = db.mappings || { projects: {} };
-    const seen = new Set(); const out = [];
+    const db = readDb(); const seen = new Set(); const out = [];
     const fromActuals = new Set(Object.keys(db.actuals || {}).map(k => k.split('|')[1]).filter(Boolean));
     [...(names || []), ...fromActuals].forEach(raw => {
       const k = nkey(raw); if (!k || seen.has(k)) return; seen.add(k);
-      if (isMacroProject(raw) || isTimeOffProject(raw) || isLeaveProject(raw)) return;
-      const mapped = (maps.projects || {})[k];
-      if (mapped === '__ignore__') return;
-      const res = mapped ? { name: mapped } : (resolveClockifyProject(raw) || null);
-      if (res && res.name) {
-        const client = (db.allocations.find(a => a.project === res.name) || {}).client || '';
-        if (matchFeeProjects(res.name, client).length) return;     // claimed by some fee project
-      }
+      const r = resolveClockify(raw); if (r && r.via !== 'auto') return;   // a name-only guess is still up for grabs
       out.push(raw);
     });
     return out.sort((a, b) => a.localeCompare(b));
   }
-  /** Take an unclaimed Clockify project for a fee project: it lands on the
-      matrix project already linked to that fee project, or — when none is —
-      on a matrix project named after the fee project, pinned to it. Hours
-      already imported under the Clockify name move at once. */
+  /** Take an unclaimed Clockify project for a fee project. */
   function claimClockifyForFee(clockifyName, feeProjectId) {
     const p = feeRecords().find(x => x.id === feeProjectId);
     if (!p) throw new Error('No such fee project.');
-    if (!unclaimedClockifyProjects([clockifyName]).some(n => nkey(n) === nkey(clockifyName))) throw new Error('That Clockify project is already claimed by another fee project — flag it for an admin instead.');
-    let matrixName = matrixProjectsForFee(feeProjectId)[0];
-    if (!matrixName) {
-      matrixName = (p.project && p.project.name) || clockifyName;
-      setFeeMapping(matrixName, feeProjectId);
-    }
-    setProjectMapping(clockifyName, matrixName);
-    return matrixName;
+    const res = resolveClockify(clockifyName);
+    if (res && res.feeId && res.feeId !== feeProjectId && res.via !== 'auto') throw new Error('That Clockify project is already claimed by another fee project (' + describeKey(res.key).label + ') — flag it for an admin instead.');
+    setProjectMapping(clockifyName, feeProjectId);
+    return describeKey('fee:' + feeProjectId).label;
   }
 
   /* ---------- CLOCKIFY STATUS EMAILS ----------
@@ -2564,7 +2656,7 @@
     { id: '2026-10-tonya-ws2025',  claim: 'Workplace Strategy (2025)',       fee: 'proj_c7fi5fyh3' },
     // Clockify "P008778 - ExxonMobil - Global Site Survey" IS Salesforce P008778,
     // the active Global Site Survey — it had been pinned to two unrelated records.
-    { id: '2026-10-tonya-p008778', relink: 'P008778 - ExxonMobil - Global Site Survey', fee: ['proj_njzrnaq3j'] },
+    { id: '2026-10-tonya-p008778', relink: 'P008778 - ExxonMobil - Global Site Survey', fee: ['proj_njzrnaq3j'] },   // relink = Clockify name → fee project
   ];
   function applyMappingSeeds() {
     const applied = [];
@@ -2575,18 +2667,71 @@
       if (!feeIds.every(id => feeRecords().some(p => p.id === id))) return;    // not loaded yet — next time
       try {
         if (seed.claim) claimClockifyForFee(seed.claim, seed.fee);
-        else if (seed.relink) {
-          const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} }; db.mappings.fee = db.mappings.fee || {};
-          db.mappings.fee[nkey(seed.relink)] = seed.fee.slice();
-          writeDb(db);
-          logStaff('staff-map', { kind: 'fee link', key: seed.relink, to: 'relinked' }, seed.fee[0]);
-        }
+        else if (seed.relink) setProjectMapping(seed.relink, pickFeeId(seed.fee));
       } catch (e) { console.warn('mapping seed not applied', seed.id, e.message); return; }
       const db = readDb(); db.meta = db.meta || {}; db.meta.mappingSeeds = Object.assign({}, db.meta.mappingSeeds, { [seed.id]: new Date().toISOString() });
       writeDb(db);
       applied.push(seed.id);
     });
     return applied;
+  }
+
+  /* ---------- THE MIGRATION to fee keys ----------
+     Runs once per shared store, in the first browser that has both the
+     staffing data and the fee records loaded; the result is written back
+     like any edit, so every other browser receives the new shape. Every row
+     keeps its old name under legacyName. */
+  let _migrating = false;
+  function migrateToFeeKeys(db) {
+    const lm = { fee: (db.mappings || {}).fee || {}, projects: (db.mappings || {}).projects || {}, renames: (db.mappings || {}).renames || {} };
+    const counts = { rows: 0, fee: 0, internal: 0, legacy: 0, clockify: 0 };
+    const canon = (n) => lm.renames[nkey(n)] || n;
+    (db.allocations || []).forEach(a => {
+      counts.rows++;
+      if (a.feeId || a.internal) return;
+      const name = canon(a.project || '');
+      a.legacyName = a.project || '';
+      const t = resolveLegacyName(name, a.client, lm) || (name !== a.project ? resolveLegacyName(a.project, a.client, lm) : null);
+      if (t && t.feeId) { a.feeId = t.feeId; counts.fee++; }
+      else if (t && t.internal) { a.internal = t.internal; counts.internal++; }
+      else counts.legacy++;
+    });
+    // Clockify → matrix pins become Clockify → fee project; matrix names that
+    // carry hours (imports keyed them that way) resolve the same way, so the
+    // history keeps landing until the next pull re-keys it by Clockify name.
+    db.mappings = db.mappings || { users: {} }; db.mappings.clockify = db.mappings.clockify || {};
+    const put = (ckName, target) => { const k = nkey(ckName); if (!k || db.mappings.clockify[k]) return; db.mappings.clockify[k] = target; counts.clockify++; };
+    Object.entries(lm.projects).forEach(([ck, matrix]) => {
+      if (matrix === '__ignore__') { put(ck, '__ignore__'); return; }
+      const t = resolveLegacyName(canon(matrix), '', lm); if (t) put(ck, t);
+    });
+    const actualNames = new Set(Object.keys(db.actuals || {}).map(k => k.split('|')[1]));
+    actualNames.forEach(n => { if (resolveClockifyFresh(n)) return; const t = resolveLegacyName(canon(n), '', lm); if (t) put(n, t); });
+    Object.keys(lm.fee).forEach(mn => { const t = resolveLegacyName(mn, '', lm); if (t) put(mn, t); });
+    db.meta = db.meta || {}; db.meta.legacyMappings = lm; db.meta.feeKeyed = new Date().toISOString(); db.meta.feeKeyedCounts = counts;
+    delete db.mappings.fee; delete db.mappings.projects; delete db.mappings.renames;
+    return counts;
+  }
+  /** Would the resolver place this name on its own (no mapping needed)? Migration pass only. */
+  function resolveClockifyFresh(ckName) {
+    const raw = String(ckName || ''); const rawL = raw.toLowerCase(); const pk = projKey(raw);
+    if (sfIndex().some(e => rawL.includes(e.sf) || pk.includes(projKey(e.sf)))) return true;
+    if (feeIndex().some(p => p.key && p.key === pk)) return true;
+    if (internalKindFor(raw)) return true;
+    return false;
+  }
+  function ensureModel(db) {
+    if (!db || !db.meta || db.meta.feeKeyed || _migrating) return false;
+    if (!(db.allocations || []).length && !Object.keys(db.actuals || {}).length) { db.meta.feeKeyed = 'fresh'; return false; }
+    if (!feeIndex().length) return false;                       // fee records not loaded yet — next read
+    _migrating = true;
+    try {
+      const counts = migrateToFeeKeys(db);
+      _ckCache = null; _actIdx = null;
+      writeDb(db);
+      logStaff('staff-model', Object.assign({ model: 'fee-keyed' }, counts));
+      return true;
+    } finally { _migrating = false; }
   }
 
   /* ---------- CLEANUP SEEDS ----------
@@ -2699,8 +2844,19 @@
   function applyCleanupSeed(seed) {
     const result = { merges: 0, renames: 0, deletes: 0, ended: 0 };
     Object.entries(seed.merges || {}).forEach(([from, to]) => { if (readDb().people[from] && readDb().people[to]) { if (mergePeople(from, to)) result.merges++; } else if (!readDb().people[from] && readDb().allocations.some(a => a.personId === from) && readDb().people[to]) { /* orphan id with no roster record: move its rows */ const db = readDb(); db.allocations.forEach(a => { if (a.personId === from) { a.personId = to; a.personName = db.people[to].name; } }); writeDb(db); result.merges++; } });
-    const pairs = Object.entries(seed.renames || {}).filter(([from]) => readDb().allocations.some(a => a.project === from) || Object.keys(readDb().actuals).some(k => k.split('|')[1] === from)).map(([from, to]) => ({ from, to }));
-    if (pairs.length) { commitRenames(pairs); result.renames = pairs.length; }
+    // A "rename" in the fee-keyed model: rows still parked under the old
+    // name move to whatever the new name resolves to (a fee project or an
+    // internal line), and a Clockify project logged under the old name is
+    // pinned there too. Rows the migration already placed are untouched.
+    Object.entries(seed.renames || {}).forEach(([from, to]) => {
+      const target = projectRefToTarget(to) || resolveLegacyName(to, '');
+      const fromKey = 'legacy:' + nkey(from);
+      const db = readDb(); let touched = 0;
+      db.allocations.forEach(a => { if (allocKey(a) !== fromKey) return; if (target) { Object.assign(a, target); delete a.legacyName; } else a.legacyName = to; touched++; });
+      if (touched) { writeDb(db); result.renames++; }
+      const logged = Object.keys(readDb().actuals).some(k => nkey(k.split('|')[1]) === nkey(from));
+      if (logged && target && !resolveClockify(from)) { setProjectMapping(from, target); result.renames++; }
+    });
     Object.keys(seed.deletes || {}).forEach(id => { if (storedAlloc(id)) { deleteAllocation(id); result.deletes++; } });
     Object.entries(seed.endRows || {}).forEach(([id, end]) => { const a = storedAlloc(id); if (a && a.end !== end) { const row = Object.assign({}, a, { end }); saveAllocation(row); result.ended++; } });
     return result;
@@ -2726,7 +2882,7 @@
       future contract using that name resolves to them automatically. */
   function setPersonAlias(contractName, personId) {
     const k = nkey(cleanName(contractName)); if (!k || !personId) return;
-    const db = readDb(); db.mappings = db.mappings || { users: {}, projects: {} };
+    const db = readDb(); db.mappings = db.mappings || { users: {}, clockify: {} };
     db.mappings.personAliases = db.mappings.personAliases || {};
     db.mappings.personAliases[k] = personId;
     writeDb(db);
@@ -2740,53 +2896,6 @@
     return Object.values(db.people).find(pp => namesMatch(pp.name, name)) || null;
   }
 
-  /* ---------- canonical name sync (Clockify project list → matrix renames) ----------
-     One-time comparative match; the rename table (old JS-sheet name → canonical
-     Clockify name) persists in mappings.renames so future sheet re-imports
-     auto-rename on the way in. */
-  /** Propose matches: for each matrix project, the best Clockify candidate.
-      canon = [{name, client}] parsed from the project-list CSV. */
-  function proposeCanonical(canonRows) {
-    const canon = canonRows.filter(c => c.name);
-    const renames = ((readDb().mappings || {}).renames) || {};
-    return distinctProjects().map(mp => {
-      const already = canon.find(c => nkey(c.name) === nkey(mp));
-      if (already) return { matrix: mp, match: already.name, client: already.client, score: 100, kind: 'exact' };
-      const saved = renames[nkey(mp)];
-      if (saved) return { matrix: mp, match: saved, client: '', score: 100, kind: 'saved' };
-      let best = null, bestScore = 0;
-      canon.forEach(c => { const s = tokenScore(mp, c.name); if (s > bestScore) { bestScore = s; best = c; } });
-      if (best && bestScore >= 0.55) return { matrix: mp, match: best.name, client: best.client, score: Math.round(bestScore * 100), kind: bestScore >= 0.8 ? 'strong' : 'weak' };
-      return { matrix: mp, match: null, client: '', score: 0, kind: 'none' };
-    });
-  }
-  /** Commit renames: [{from, to}] — rewrites allocation project names AND actuals
-      keys, saves the rename table for future imports. */
-  function commitRenames(pairs) {
-    const db = readDb();
-    db.mappings = db.mappings || { users: {}, projects: {} };
-    db.mappings.renames = db.mappings.renames || {};
-    let n = 0;
-    pairs.forEach(({ from, to }) => {
-      if (!from || !to || from === to) return;
-      db.allocations.forEach(a => { if (a.project === from) { a.project = to; n++; } });
-      Object.keys(db.actuals).forEach(k => { const parts = k.split('|'); if (parts[1] === from) { const nk2 = parts[0] + '|' + to + '|' + parts[2]; db.actuals[nk2] = (db.actuals[nk2] || 0) + db.actuals[k]; delete db.actuals[k]; } });
-      db.mappings.renames[nkey(from)] = to;
-      // keep any fee link pointing at the old name
-      if (db.mappings.fee && db.mappings.fee[nkey(from)]) { db.mappings.fee[nkey(to)] = db.mappings.fee[nkey(from)]; delete db.mappings.fee[nkey(from)]; }
-      // and every Clockify → matrix mapping that pointed at it, or the next
-      // import lands under the old name and splits coverage across two rows
-      Object.keys(db.mappings.projects || {}).forEach(k => { if (db.mappings.projects[k] === from) db.mappings.projects[k] = to; });
-    });
-    db.meta.canonSyncedAt = new Date().toISOString();
-    writeDb(db);
-    if (n) logStaff('staff-rename', { rows: n,
-      pairs: pairs.filter(p => p && p.from && p.to && p.from !== p.to)
-        .map(p => p.from + ' → ' + p.to).slice(0, 12).join('; ') });
-    return n;
-  }
-
-  // ---------- Matrix ingest — JS's staffing sheet (xlsx or csv), repeatable ----------
   function excelSerialToYm(n) { const d = new Date(Date.UTC(1899, 11, 30) + n * 86400000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
   function anyToYm(v) {
     if (v == null || v === '') return null;
@@ -2906,8 +3015,6 @@
       per-person capacity/title edits; stamps the source for the meta line. */
   function importMatrix(rows, sourceName) {
     const db = readDb();
-    const renames = ((db.mappings || {}).renames) || {};
-    rows.forEach(r => { const c = renames[nkey(r.proj)]; if (c) r.proj = c; });   // auto-canonicalize on the way in
     const keepActuals = db.actuals || {};
     const keep = {}; Object.values(db.people).forEach(p => { keep[p.id] = { capacityPct: p.capacityPct, title: p.title, homeTeam: p.homeTeam, nonBillable: p.nonBillable, serviceLine: p.serviceLine }; });
     const fresh = defaultDb();
@@ -2926,8 +3033,11 @@
       const pid = known ? known.id : slug(shown + (isNewHireName(r.person) ? ' newhire' : ''));
       if (!fresh.people[pid]) fresh.people[pid] = { id: pid, name: known ? known.name : shown, isNewHire: isNewHireName(r.person), title: '', homeTeam: '', capacityPct: 100, active: true };
       if (keep[pid]) Object.assign(fresh.people[pid], keep[pid]);
-      fresh.allocations.push({ id: 'al_' + Math.random().toString(36).slice(2, 9), personId: pid, project: r.proj, client: r.client, status: r.status || 'Active', type: r.type || 'Awarded', start: r.start, end: r.end || '', pct: clampPct(r.pct), note: r.note || '' });
+      const row = { id: 'al_' + Math.random().toString(36).slice(2, 9), personId: pid, project: r.proj, client: r.client, status: r.status || 'Active', type: r.type || 'Awarded', start: r.start, end: r.end || '', pct: clampPct(r.pct), note: r.note || '' };
+      const t = resolveLegacyName(r.proj, r.client); if (t) Object.assign(row, t); else row.legacyName = r.proj;
+      fresh.allocations.push(row);
     });
+    fresh.mappings = db.mappings || fresh.mappings; fresh.meta.feeKeyed = (db.meta && db.meta.feeKeyed) || new Date().toISOString();
     fresh.meta.matrixImportedAt = new Date().toISOString();
     fresh.meta.matrixSource = sourceName || 'upload';
     const before = { people: Object.keys(db.people || {}).length, allocations: (db.allocations || []).length };
@@ -2945,7 +3055,7 @@
   function applyRoundTrip(plan) {
     const db = readDb(); const now = new Date().toISOString();
     let by = ''; try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u && u.username) by = u.username; } catch (e) {}
-    db.deleted = db.deleted || {}; db.mappings = db.mappings || { users: {}, projects: {} };
+    db.deleted = db.deleted || {}; db.mappings = db.mappings || { users: {}, clockify: {} };
     const byId = {}; db.allocations.forEach(a => { byId[a.id] = a; });
     const ensurePerson = (a, title) => {
       if (!a.personId) return;
@@ -2958,15 +3068,18 @@
       db.allocations = db.allocations.filter(x => x.id !== r.id); db.deleted[r.id] = now;
       rows.push('− ' + ((db.people[a.personId] || {}).name || a.personName || a.personId) + ' · ' + (a.project || ''));
     });
+    const applyRef = (a) => { if (a.project && !a.feeId && !a.internal) { const t = projectRefToTarget(a.project); if (t) { Object.assign(a, t); delete a.legacyName; } else a.legacyName = a.project; } };
     (plan.updates || []).forEach(u => {
       const a = byId[u.id]; if (!a) return;
-      Object.assign(a, u.next); a.pct = clampPct(a.pct); a.updatedAt = now; if (by) a.updatedBy = by;
+      if (u.next.project != null) { delete a.feeId; delete a.internal; }
+      Object.assign(a, u.next); applyRef(a); a.pct = clampPct(a.pct); a.updatedAt = now; if (by) a.updatedBy = by;
       ensurePerson(a, u.title);
       rows.push('~ ' + (u.person || '') + ' · ' + (a.project || '') + ': ' + (u.summary || ''));
     });
     (plan.adds || []).forEach(r => {
       const a = Object.assign({ id: 'al_' + Math.random().toString(36).slice(2, 9) }, r.next, { updatedAt: now });
       if (by) a.updatedBy = by;
+      applyRef(a);
       a.pct = clampPct(a.pct);
       ensurePerson(a, r.title);
       db.allocations.push(a);
@@ -3005,15 +3118,17 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan, feeProjectPlan, matrixProjectsForFee, feeProjectActuals,
+    // the fee-keyed model
+    INTERNAL_LINES, INTERNAL_ORDER, allocKey, keyParts, describeKey, keyForRef, labelIndex, planProjects, projectRefToTarget, resolveClockify, actualsIndex, clockifyNamesFor, unmappedClockify, clockifyProjectRows, legacyProjects, retargetLegacy, placeName, resolveLegacyName, pickFeeId, migrateToFeeKeys, ensureModel,
     mappingFlags, flagMapping, clearMappingFlag, unclaimedClockifyProjects, claimClockifyForFee, applyMappingSeeds, MAPPING_SEEDS, mergePeople, surnameSimilarity, applyCleanupSeed, applyCleanupSeeds, CLEANUP_SEEDS,
-    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, addPersonFromClockify, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
+    unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, addPersonFromClockify, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
-    analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
-    getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
+    analyzeClockify, commitClockify, clearActuals,
+    getMappings, setUserMapping, setProjectMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
     titleFamily, costRateForTitle, personCostRate, behindMonths, isBehind, missingCost, projectLabel, projectLabelText, allocContractDrift, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
-    proposeCanonical, commitRenames, parseCsvRows: parseCsv,
+    parseCsvRows: parseCsv,
     // helpers
     namesMatch, cleanName, isNewHireName, allocEnd, isOpenEnded, clampPct,
     clockifyStatusEmail, clockifyNudgeEmail, CLOCKIFY_URL,

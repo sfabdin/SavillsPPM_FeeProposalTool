@@ -10,9 +10,10 @@
                     project, then by month and by person. Excel out.
      My allocations the matrix rows on their projects, editable, plus
                     the contract bridge for their projects.
-     Mapping        which Clockify project feeds each of theirs:
-                    confirm an auto-match, claim an unclaimed one, or
-                    flag it for an admin.
+     Mapping        which Clockify project(s) feed each of theirs:
+                    confirm a guessed match, claim an unclaimed one, or
+                    flag it for an admin. Allocations are keyed on the
+                    fee project itself — there is no matrix name.
 
    Nothing here writes a fee project. Allocations, mappings and flags go
    to the staffing store and the trail; the proposal is edited in the
@@ -31,22 +32,22 @@
   const toast = (m, k) => { try { window.UFC_UI.toast(m, k); } catch (e) {} };
   const L = { tab: 'time', open: new Set(), search: '', ckNames: null, ckError: null };
 
-  /* ---------- scope: the leader's projects, and the matrix names linked to them ---------- */
+  /* ---------- scope: the leader's fee projects ---------- */
   function scope(user) {
     const st = STORE(); const u = user || st.getCurrentUser();
     const parents = st.listProjects().filter(p => !(st.isChangeOrder && st.isChangeOrder(p)));
     const fee = parents.filter(p => st.userOwnsProject(p, u))
       .sort((a, b) => (rank(a) - rank(b)) || ((a.project || {}).client || '').localeCompare((b.project || {}).client || '') || ((a.project || {}).name || '').localeCompare((b.project || {}).name || ''));
-    const matrixNames = new Set(); const matrixByFee = {};
-    fee.forEach(p => { const names = S().matrixProjectsForFee(p.id); matrixByFee[p.id] = names; names.forEach(n => matrixNames.add(n)); });
-    return { user: u, fee, matrixNames, matrixByFee, feeIds: new Set(fee.map(p => p.id)) };
+    return { user: u, fee, feeIds: new Set(fee.map(p => p.id)) };
   }
   const rank = (p) => { const st = (p.project || {}).status || ''; return st === 'active' ? 0 : st === 'won' ? 1 : /^(negotiation|submitted|draft|hold)$/.test(st) ? 2 : 3; };
   const nameOf = (p) => (p.project || {}).name || 'Untitled';
   const clientOf = (p) => (p.project || {}).client || '';
   const statusLabel = (p) => (STORE().STATUS_LABELS || {})[(p.project || {}).status] || (p.project || {}).status || '';
   const calcLink = (p, text) => `<a href="Universal Fee Calculator.html?id=${encodeURIComponent(p.id)}" target="_blank" rel="noopener" style="color:inherit;font-weight:700" title="Open the proposal in the calculator (new tab)">${esc(text || nameOf(p))}</a>`;
-  const allowedProject = (sc, name) => sc.matrixNames.has(name) || sc.fee.some(p => nameOf(p) === name || (clientOf(p) ? clientOf(p) + ' — ' : '') + nameOf(p) === name);
+  const labelOf = (p) => S().describeKey('fee:' + p.id).label;
+  const allowedProject = (sc, ref) => { const t = S().projectRefToTarget(ref); return !!(t && t.feeId && sc.feeIds.has(t.feeId)); };
+  const mine = (sc, a) => !!(a && a.feeId && sc.feeIds.has(a.feeId));
 
   /* ---------- Time vs Plan ---------- */
   function timeRows(sc, months) {
@@ -67,7 +68,7 @@
       const hasActuals = Object.values(actBy).some(v => v > 0);
       let tone = 'n', text = '';
       if (!plan) { tone = 'n'; text = 'no plan — roster not priced in the calculator'; }
-      else if (!act.matrixNames.length) { tone = 'w'; text = 'no Clockify project mapped'; }
+      else if (!act.clockifyNames.length) { tone = 'w'; text = 'no Clockify project mapped'; }
       else if (!hasActuals) { tone = 'w'; text = 'nothing logged in this window'; }
       else if (pace == null) { tone = 'n'; text = 'plan starts later'; }
       else if (pace > 1.1) { tone = 'r'; text = 'over plan · ' + Math.round((pace - 1) * 100) + '% over'; }
@@ -86,7 +87,7 @@
     const q = L.search.toLowerCase();
     const shown = rows.filter(r => !q || (nameOf(r.p) + ' ' + clientOf(r.p)).toLowerCase().includes(q));
     const tot = shown.reduce((t, r) => { t.plan += r.plannedToDate; t.log += r.logged; t.alloc += r.allocToDate; return t; }, { plan: 0, log: 0, alloc: 0 });
-    const over = shown.filter(r => r.tone === 'r').length, under = shown.filter(r => r.tone === 'a').length, noPlan = shown.filter(r => !r.plan).length, noMap = shown.filter(r => r.plan && !r.act.matrixNames.length).length;
+    const over = shown.filter(r => r.tone === 'r').length, under = shown.filter(r => r.tone === 'a').length, noPlan = shown.filter(r => !r.plan).length, noMap = shown.filter(r => r.plan && !r.act.clockifyNames.length).length;
     const nowLbl = st.ymLabel(st.currentYM());
     let html = `<div class="lv-head"><div><div class="eyebrow">Your projects · ${esc(st.ymLabel(months[0]))} – ${esc(st.ymLabel(months[months.length - 1]))}</div>
         <h2>Time vs plan</h2>
@@ -107,7 +108,7 @@
       shown.forEach(r => {
         const open = L.open.has(r.p.id);
         const v = r.logged - r.plannedToDate;
-        html += `<tr class="lv-row" data-open="${esc(r.p.id)}"><td>${esc(clientOf(r.p))}</td><td class="pname">${esc(nameOf(r.p))}<div class="vmini">${r.act.matrixNames.length ? 'matrix: ' + esc(r.act.matrixNames.join(', ')) : '<span style="color:#8a6d00">no matrix project linked</span>'}</div></td>
+        html += `<tr class="lv-row" data-open="${esc(r.p.id)}"><td>${esc(clientOf(r.p))}</td><td class="pname">${esc(nameOf(r.p))}<div class="vmini">${r.act.clockifyNames.length ? 'Clockify: ' + esc(r.act.clockifyNames.join(', ')) : '<span style="color:#8a6d00">no Clockify project mapped</span>'}</div></td>
           <td><span class="badge ${/active|won/.test((r.p.project || {}).status) ? 'active' : 'pursuit'}">${esc(statusLabel(r.p))}</span></td>
           <td class="num">${fmtH(r.plannedToDate)}</td><td class="num">${fmtH(r.allocToDate)}</td><td class="num">${fmtH(r.logged)}</td>
           <td class="num" style="color:${v > 0 ? 'var(--sav-red)' : 'var(--sav-navy)'}">${r.plan ? (v > 0 ? '+' : '') + fmtH(v) : '—'}</td>
@@ -168,9 +169,9 @@
   }
   function renderAllocs(sc, host) {
     const st = S(); const now = st.currentYM();
-    const rows = st.listAllocations().filter(a => sc.matrixNames.has(a.project))
+    const rows = st.listAllocations().filter(a => mine(sc, a))
       .sort((a, b) => (a.project || '').localeCompare(b.project || '') || ((st.getPerson(a.personId) || {}).name || '').localeCompare((st.getPerson(b.personId) || {}).name || ''));
-    const gaps = (st.contractStaffingGaps() || []).filter(g => !g.dismissed && (sc.matrixNames.has(g.project) || sc.fee.some(p => nameOf(p) === g.project)));
+    const gaps = (st.contractStaffingGaps() || []).filter(g => !g.dismissed && g.feeId && sc.feeIds.has(g.feeId));
     const rosterOptions = st.listPeople().filter(p => p.active !== false).map(p => `<option value="${esc(p.name)}">`).join('');
     let html = `<div class="lv-head"><div><div class="eyebrow">Your projects</div><h2>My allocations</h2>
         <p>Who is on your projects, at what percent, from when. Edits here change the staffing matrix only — never a fee. <b>Load</b> is the person's total allocation across every project this month; the other projects stay with their leaders.</p></div>
@@ -187,7 +188,7 @@
       });
       html += `</details>`;
     }
-    if (!rows.length) html += `<div class="empty">No allocations on your projects yet.${sc.matrixNames.size ? '' : ' Your projects have no matrix project linked — add an allocation and the project name links by itself, or confirm the link on Mapping.'}</div>`;
+    if (!rows.length) html += `<div class="empty">No allocations on your projects yet — add one; it is filed under the fee project you pick.</div>`;
     else {
       html += `<table class="dt"><thead><tr><th>Client</th><th>Project</th><th>Person</th><th class="num" title="Total allocation across all projects this month">Load ${esc(st.ymLabel(now))}</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note</th><th></th></tr></thead><tbody>`;
       rows.forEach(a => {
@@ -202,16 +203,16 @@
       html += `</tbody></table>`;
     }
     host.innerHTML = html;
-    const add = $('#lv-add', host); if (add) add.onclick = () => H().openAllocModal(null, { project: sc.matrixNames.size === 1 ? [...sc.matrixNames][0] : (sc.fee.length === 1 ? nameOf(sc.fee[0]) : null), client: sc.fee.length === 1 ? clientOf(sc.fee[0]) : null });
+    const add = $('#lv-add', host); if (add) add.onclick = () => H().openAllocModal(null, { project: sc.fee.length === 1 ? labelOf(sc.fee[0]) : null, client: sc.fee.length === 1 ? clientOf(sc.fee[0]) : null });
     $$('[data-edit]', host).forEach(b => b.onclick = () => H().openAllocModal(b.dataset.edit));
-    $$('[data-del]', host).forEach(b => b.onclick = () => { const a = st.listAllocations().find(x => x.id === b.dataset.del); if (!a || !sc.matrixNames.has(a.project)) return; if (confirm(`Remove ${(st.getPerson(a.personId) || {}).name || ''}'s allocation on ${a.project}?\n\nOnly the plan goes — logged Clockify hours stay.`)) { st.deleteAllocation(a.id); H().renderAll(); } });
+    $$('[data-del]', host).forEach(b => b.onclick = () => { const a = st.listAllocations().find(x => x.id === b.dataset.del); if (!a || !mine(sc, a)) return; if (confirm(`Remove ${(st.getPerson(a.personId) || {}).name || ''}'s allocation on ${a.project}?\n\nOnly the plan goes — logged Clockify hours stay.`)) { st.deleteAllocation(a.id); H().renderAll(); } });
     $$('[data-gapply]', host).forEach(b => b.onclick = () => {
       const g = gaps[+b.dataset.gapply]; if (!g) return;
       const inp = $(`[data-gname="${b.dataset.gapply}"]`, host); let typed = inp ? inp.value.trim() : '';
       if (!typed) { if (g.open) { toast('Type a name for this open role first.'); if (inp) inp.focus(); return; } typed = g.resource; }
       const hit = st.listPeople().find(p => st.namesMatch(p.name, typed));
       const personId = hit ? hit.id : st.personIdForName(typed); const personName = hit ? hit.name : typed;
-      g.segments.forEach(sg => st.saveAllocation({ personId, personName, project: g.fileUnder || g.project, client: g.client, status: 'Active', type: 'Awarded', start: sg.start, end: sg.end, pct: sg.need,
+      g.segments.forEach(sg => st.saveAllocation({ personId, personName, feeId: g.feeId, project: g.project, client: g.client, status: 'Active', type: 'Awarded', start: sg.start, end: sg.end, pct: sg.need,
         contractRole: g.open ? g.roleTitle : undefined, contractResource: g.open ? undefined : g.resource,
         contract: { pct: sg.need, want: sg.want, have: sg.have, start: sg.start, end: sg.end },
         note: (g.open ? 'Open contract role staffed' : (g.topUp ? `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%)` : 'From contract staffing')) + ' · ' + g.roles.join(', ') }));
@@ -233,36 +234,32 @@
   function renderMapping(sc, host) {
     const st = S();
     if (L.ckNames === null) { host.innerHTML = '<div class="empty">Checking the Clockify project list…</div>'; pullClockifyNames().then(() => renderMapping(sc, host)); return; }
-    const maps = st.getMappings(); const flags = st.mappingFlags();
+    const flags = st.mappingFlags();
     const unclaimed = st.unclaimedClockifyProjects(L.ckNames);
-    const ckByMatrix = {};
-    Object.entries(maps.projects || {}).forEach(([ck, mp]) => { if (mp && mp !== '__ignore__') (ckByMatrix[mp] = ckByMatrix[mp] || []).push({ ck, via: 'mapped' }); });
-    const actualNames = new Set(Object.keys(st.readDb().actuals || {}).map(k => k.split('|')[1]));
-    [...actualNames, ...L.ckNames].forEach(raw => { const k = String(raw).toLowerCase().replace(/\s+/g, ' ').trim(); if ((maps.projects || {})[k]) return; const r = st.resolveClockifyProject(raw); if (r && r.name && !(ckByMatrix[r.name] || []).some(x => x.ck === raw)) (ckByMatrix[r.name] = ckByMatrix[r.name] || []).push({ ck: raw, via: r.via }); });
+    // every Clockify project (hours in the store + the live list) with where it lands
+    const ckRows = st.clockifyProjectRows(L.ckNames);
+    const landing = {}; ckRows.forEach(r => { if (r.feeId) (landing[r.feeId] = landing[r.feeId] || []).push(r); });
     let html = `<div class="lv-head"><div><div class="eyebrow">Your projects</div><h2>Mapping — which Clockify project feeds each of yours</h2>
-        <p>Hours only land on your project when its Clockify project is mapped to it. <b>Confirm</b> a link that was matched by name, <b>claim</b> a Clockify project nothing has claimed, or <b>flag</b> one that is wrong and belongs to someone else — an admin resolves flags.</p></div></div>
+        <p>Hours only land on your project when its Clockify project(s) are mapped to it — several Clockify projects can feed one of yours. <b>Confirm</b> a link that was guessed from the name, <b>claim</b> a Clockify project nothing has claimed, or <b>flag</b> one that is wrong and belongs to someone else — an admin resolves flags.</p></div></div>
       ${L.ckError ? `<div class="note-txt lv-note">Could not pull the live Clockify list (${esc(L.ckError)}) — the names below come from hours already imported.</div>` : ''}
       <datalist id="lv-unclaimed">${unclaimed.map(n => `<option value="${esc(n)}">`).join('')}</datalist>`;
     if (!sc.fee.length) { host.innerHTML = html + '<div class="empty">No projects list you as revenue leader.</div>'; return; }
-    html += `<table class="dt lv-map"><thead><tr><th style="width:26%">Your project</th><th style="width:30%">Matrix project · fee link</th><th>Clockify project(s) landing there</th><th style="width:22%">Claim · flag</th></tr></thead><tbody>`;
+    html += `<table class="dt lv-map"><thead><tr><th style="width:30%">Your project</th><th>Clockify project(s) landing there</th><th style="width:26%">Claim · flag</th></tr></thead><tbody>`;
     sc.fee.forEach(p => {
-      const names = sc.matrixByFee[p.id] || [];
       const client = clientOf(p);
-      const linkCell = names.length ? names.map(mp => { const via = (st.matchFeeProjects(mp, client).find(l => l.id === p.id) || {}).via || 'name'; const confirmed = via === 'mapped';
-          return `<div class="lv-link"><span class="badge ${confirmed ? 'active' : 'pursuit'}" title="${confirmed ? 'confirmed link' : 'matched by ' + esc(via) + ' — not confirmed'}">${esc(mp)}</span> ${confirmed ? '<span class="vmini">✓ confirmed</span>' : `<button class="btn sm" data-confirm="${esc(mp)}" data-fee="${esc(p.id)}">Confirm</button>`}</div>`; }).join('')
-        : '<span class="no-link" style="margin:0">no matrix project linked</span>';
-      const cks = names.flatMap(mp => ckByMatrix[mp] || []);
-      const ckCell = cks.length ? cks.map(c => `<span class="badge ${c.via === 'mapped' || c.via === 'name' ? 'active' : 'pursuit'}" title="${esc(c.via)}">${esc(c.ck)}</span>`).join(' ') : '<span class="no-link" style="margin:0">nothing lands here</span>';
+      const cks = landing[p.id] || [];
+      const ckCell = cks.length ? cks.map(c => `<div class="lv-link"><span class="badge ${c.via === 'auto' ? 'pursuit' : 'active'}" title="${c.via === 'mapped' ? 'pinned' : c.via === 'auto' ? 'guessed from the name — not confirmed' : 'matched by ' + esc(c.via)}">${esc(c.name)}</span> <span class="vmini">${c.hours ? fmtH(c.hours) + ' h' : ''}</span> ${c.via === 'auto' ? `<button class="btn sm" data-confirm="${esc(c.name)}" data-fee="${esc(p.id)}">Confirm</button>` : c.via === 'mapped' ? '<span class="vmini">✓ pinned</span>' : ''}</div>`).join('')
+        : '<span class="no-link" style="margin:0">nothing lands here — claim the Clockify project →</span>';
       const sugg = unclaimed.filter(n => STORE().tokenScore(n, nameOf(p)) >= 0.5).slice(0, 3);
       const flag = flags[p.id];
       const actCell = `<input list="lv-unclaimed" data-claim="${esc(p.id)}" placeholder="Claim an unclaimed Clockify project…" title="Only Clockify projects no fee project has claimed appear here">
         ${sugg.length ? `<div class="vmini" style="margin-top:4px">Looks like yours: ${sugg.map(n => `<a href="#" data-claimname="${esc(n)}" data-claim-fee="${esc(p.id)}">${esc(n)}</a>`).join(' · ')}</div>` : ''}
         ${flag ? `<div class="lv-flag">⚑ flagged ${esc(new Date(flag.at).toLocaleDateString())}${flag.note ? ' — “' + esc(flag.note) + '”' : ''} · waiting on admin</div>` : `<div style="margin-top:6px;display:flex;gap:4px"><input data-flagnote="${esc(p.id)}" placeholder="What is wrong?"><button class="btn sm ghost" data-flag="${esc(p.id)}">⚑ Flag</button></div>`}`;
-      html += `<tr><td class="pname">${esc(nameOf(p))}<div class="vmini">${esc(client)} · ${esc(statusLabel(p))}</div></td><td>${linkCell}</td><td>${ckCell}</td><td>${actCell}</td></tr>`;
+      html += `<tr><td class="pname">${esc(nameOf(p))}<div class="vmini">${esc(client)} · ${esc(statusLabel(p))}</div></td><td>${ckCell}</td><td>${actCell}</td></tr>`;
     });
     html += `</tbody></table>`;
     host.innerHTML = html;
-    $$('[data-confirm]', host).forEach(b => b.onclick = () => { st.setFeeMapping(b.dataset.confirm, b.dataset.fee); toast('Link confirmed — it is pinned for everyone now.', 'ok'); H().renderAll(); });
+    $$('[data-confirm]', host).forEach(b => b.onclick = () => { st.setProjectMapping(b.dataset.confirm, b.dataset.fee); toast('Confirmed — that Clockify project is pinned to yours for everyone.', 'ok'); H().renderAll(); });
     const claim = (name, feeId) => { try { const mp = st.claimClockifyForFee(name, feeId); toast(`Claimed — “${name}” now lands on ${mp}. Hours already imported moved with it.`, 'ok'); H().renderAll(); } catch (e) { toast(e.message || String(e)); } };
     $$('[data-claim]', host).forEach(inp => inp.onchange = () => { const v = inp.value.trim(); if (!v) return; const hit = unclaimed.find(n => n.toLowerCase() === v.toLowerCase()) || (unclaimed.filter(n => n.toLowerCase().includes(v.toLowerCase())).length === 1 ? unclaimed.find(n => n.toLowerCase().includes(v.toLowerCase())) : null); if (!hit) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick from the list — only unclaimed Clockify projects can be taken here; flag anything else.'; return; } claim(hit, inp.dataset.claim); });
     $$('[data-claimname]', host).forEach(a => a.onclick = (e) => { e.preventDefault(); claim(a.dataset.claimname, a.dataset.claimFee); });

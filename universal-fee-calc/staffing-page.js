@@ -91,7 +91,6 @@
     expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
-    canonProposals: null,
     mapSearch: '', mapOnlyProblems: false, clockifyNames: null,
     compSearch: '', compSort: { key: 'behind', dir: -1 },   // Clockify Reporting table: filter + column sort
     compView: 'summary',                                    // 'summary' (grouped + sparklines) | 'grid' (month detail)
@@ -431,7 +430,7 @@
       g.segments.forEach(sg => {
         S.saveAllocation({
           personId, personName,
-          project: g.fileUnder || g.project, client: g.client,
+          feeId: g.feeId, project: g.project, client: g.client,
           status: 'Active', type: 'Awarded',
           start: sg.start, end: sg.end, pct: sg.need,
           // ties the row back to the contract slot/name it satisfies, so the
@@ -489,7 +488,7 @@
       g.segments.forEach(sg => {
         S.saveAllocation({
           personId: g.personId, personName: g.resource,
-          project: g.fileUnder || g.project, client: g.client,
+          feeId: g.feeId, project: g.project, client: g.client,
           status: 'Active', type: 'Awarded',
           start: sg.start, end: sg.end, pct: sg.need,
           contractResource: g.resource,
@@ -544,7 +543,7 @@
       <select id="al-status"><option value="">All statuses</option><option ${state.allocStatus === 'Active' ? 'selected' : ''}>Active</option><option ${state.allocStatus === 'Pursuit' ? 'selected' : ''}>Pursuit</option></select>
       <select id="al-project">${projOpts}</select>
       <span class="grow"></span>
-      <span class="note-txt">Excel round trip, sheet re-import &amp; name sync live in <a href="#" data-goto-tab="sources" style="font-weight:700">Data Sources</a></span>
+      <span class="note-txt">Excel round trip &amp; sheet re-import live in <a href="#" data-goto-tab="sources" style="font-weight:700">Data Sources</a></span>
       <button class="btn btn-primary" id="al-add">+ Add allocation</button>
     </div>`;
 
@@ -579,8 +578,8 @@
     });
     const table = list.length ? `<table class="dt"><thead><tr><th>Client</th><th>Project</th><th>Person</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note / decision</th><th></th></tr></thead><tbody>${body}</tbody></table>`
       : `<div class="empty">No allocations match. <a href="#" id="al-clear">Clear filters</a></div>`;
-    $('#p-allocations').innerHTML = dupAllocSectionHtml() + bridgeSectionHtml() + leaveSectionHtml() + toolbar + table;
-    wireBridge();
+    $('#p-allocations').innerHTML = legacySectionHtml() + dupAllocSectionHtml() + bridgeSectionHtml() + leaveSectionHtml() + toolbar + table;
+    wireBridge(); wireLegacy('#p-allocations', renderAll);
     const la = $('#leave-add');
     if (la) la.onclick = () => openAllocModal(null, { title: 'Log a leave of absence', project: 'Leaves of Absence', client: 'Internal', pct: 100, note: 'Leave of absence' });
 
@@ -633,7 +632,7 @@
     // Actual / variance views also show projects that have hours but no plan
     if (metric !== 'plan') {
       const have = new Set(rows.map(r => r.project));
-      Object.keys(AX.byProj).forEach(pn => { if (have.has(pn) || S.isLeaveProject(pn)) return; const ppl = Object.keys(AX.byPP).filter(pid => AX.byPP[pid][pn]); const client = (ppl.length && AX.byPP[ppl[0]][pn].client) || ''; rows.push({ project: pn, client, headcount: ppl.length, peakFte: 0, byMonth: {}, allocs: [], feeProject: S.matchFeeProject(pn, client), noPlan: true }); });
+      Object.keys(AX.byProj).forEach(pn => { if (have.has(pn) || S.isLeaveProject(pn)) return; const ppl = Object.keys(AX.byPP).filter(pid => AX.byPP[pid][pn]); const client = (ppl.length && AX.byPP[ppl[0]][pn].client) || ''; rows.push({ project: pn, client, headcount: ppl.length, peakFte: 0, byMonth: {}, allocs: [], feeProject: (S.projectLabel(pn, client).fee[0] || null), noPlan: true }); });
       rows.sort((a, b) => a.project.localeCompare(b.project));
     }
     const q = state.projSearch.toLowerCase();
@@ -649,6 +648,7 @@
     };
     rows.forEach(r => { r.vals = {}; let pk = 0; ms.forEach(m => { const v = cellVal(r, m); r.vals[m] = v; if (v != null && Math.abs(v) > Math.abs(pk)) pk = v; }); r.peakShown = pk; });
     const feeOpts = S.listFeeProjects().map(p => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+    const intOpts = S.INTERNAL_ORDER.map(k => `<option value="int:${k}">${esc(S.INTERNAL_LINES[k].label)}</option>`).join('');
     const unassignedByProj = {};
     S.unassignedRoles(ms).forEach(u => { (unassignedByProj[u.project] = unassignedByProj[u.project] || []).push(u); });
 
@@ -675,15 +675,20 @@
     let body = '';
     const fmtCell = (v) => v == null ? '·' : (metric === 'var' ? (v ? fmtSigned(v, 2) : '·') : (v ? v.toFixed(2) : '·'));
     rows.forEach(r => {
+      const L = S.projectLabel(r.project, r.client);
+      // Every planned row sits on a fee project or an internal line. The two
+      // exceptions are fixable right here: hours from a Clockify project no
+      // fee project claims, and rows still under an old matrix name.
       const link = r.feeProject
-        ? `<a class="link-fee" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.feeProject.id)}" title="Open in fee tool · matched by ${esc(r.feeProject.via || 'name')}${r.feeProject.score ? ' (' + r.feeProject.score + '%)' : ''}">fee ${r.feeProject.via === 'tokens' ? '≈' : r.feeProject.via === 'mapped' ? '⚯' : ''}↗</a>${r.feeProject.via === 'tokens' ? `<button class="row-act-link" data-fee-confirm="${esc(r.project)}" data-fee-id="${esc(r.feeProject.id)}" title="Confirm this smart match — saves it permanently">✓</button>` : ''}`
-        : `<select class="fee-link-sel" data-fee-link="${esc(r.project)}" title="Link this matrix project to a fee-tool project — saved once, shared"><option value="">link to fee…</option>${feeOpts}</select>`;
+        ? `<a class="link-fee" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.feeProject.id)}" title="Open in fee tool">fee ↗</a>`
+        : L.internal ? `<span class="badge" style="background:#e7eef0;color:#4a5560" title="Internal line — no fee project, by design">internal</span>`
+        : L.unmapped ? `<select class="fee-link-sel" data-ck-map="${esc(r.project)}" title="A Clockify project with hours and no fee project — pick where its hours belong"><option value="">Clockify project · map to…</option>${feeOpts}${intOpts}<option value="__ignore__">— ignore these hours —</option></select>`
+        : `<select class="fee-link-sel" data-legacy-move="${esc(r.project)}" title="Rows under an old matrix name — move them onto the fee project they staff"><option value="">needs a project · move to…</option>${feeOpts}${intOpts}</select>`;
       const un = unassignedByProj[r.project];
       const unBadge = un ? ` <span class="badge" style="color:#8f2418;background:#fbe9e7" title="${esc(un.map(u => u.role + ' — ' + fmtH(u.hours) + 'h unstaffed').join(' · '))}">⚠ ${un.length} unassigned</span>` : '';
       const noPlanBadge = r.noPlan ? ' <span class="badge" style="color:#8a6d00;background:#fdf3d7" title="Clockify hours exist for this project but nothing is allocated">hours, no plan</span>' : '';
       const peak = Math.max(1e-6, Math.abs(r.peakShown));
-      const L = S.projectLabel(r.project, r.client);
-      body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.project)}">${esc(L.name)}</div><div class="who-meta">${esc(r.client || L.client || '—')}${L.alias ? ` <span class="vmini" title="Matrix / Clockify name">⇐ ${esc(L.alias)}</span>` : ''} ${link}${unBadge}${noPlanBadge}</div></td>`;
+      body += `<tr><td class="who"><div class="who-name" data-exp="${esc(r.project)}">${esc(L.name)}</div><div class="who-meta">${esc(r.client || L.client || '—')} ${link}${unBadge}${noPlanBadge}</div></td>`;
       ms.forEach(m => {
         const v = r.vals[m]; const plan = r.byMonth[m] || 0;
         const hasPursuit = metric === 'plan' && r.allocs.some(a => isPursuitAlloc(a) && S.allocActiveIn(a, m));
@@ -730,8 +735,8 @@
       renderProjects();
     };
     $$('#p-projects .who-name').forEach(el => el.onclick = () => { const p = el.dataset.exp; if (state.expandedProjects.has(p)) state.expandedProjects.delete(p); else state.expandedProjects.add(p); renderProjects(); });
-    $$('#p-projects [data-fee-link]').forEach(sel => sel.onchange = () => { if (!sel.value) return; S.setFeeMapping(sel.dataset.feeLink, sel.value); toast('Linked — saved for everyone.'); renderProjects(); });
-    $$('#p-projects [data-fee-confirm]').forEach(b => b.onclick = () => { S.setFeeMapping(b.dataset.feeConfirm, b.dataset.feeId); toast('Match confirmed — saved.'); renderProjects(); });
+    $$('#p-projects [data-ck-map]').forEach(sel => sel.onchange = () => { if (!sel.value) return; try { S.setProjectMapping(sel.dataset.ckMap, sel.value); toast('Mapped — saved for everyone; the hours land there now.'); } catch (e) { toast(e.message || String(e)); } renderAll(); });
+    $$('#p-projects [data-legacy-move]').forEach(sel => sel.onchange = () => { if (!sel.value) return; try { const r = S.placeName(sel.dataset.legacyMove, sel.value); state._gapsKey = null; toast(`Moved ${r.rows} allocation${r.rows === 1 ? '' : 's'} onto ${r.label}.`); } catch (e) { toast(e.message || String(e)); } renderAll(); });
     $$('#p-projects [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
   }
 
@@ -891,7 +896,27 @@
     if (a.contract || a.contractRole || a.contractResource) return ` <span class="nh-tag ct-tag" title="Accepted from the contract staffing${a.contract ? ' at ' + a.contract.pct + '%' + (a.contract.want && a.contract.want !== a.contract.pct ? ' (contract total ' + a.contract.want + '%)' : '') : ''}">📄 contract</span>`;
     return '';
   }
-  function pLbl(name, client) { const L = S.projectLabel(name, client); return esc(L.name) + (L.alias ? ` <span class="vmini" title="Matrix / Clockify name">⇐ ${esc(L.alias)}</span>` : ''); }
+  function pLbl(name, client) { const L = S.projectLabel(name, client); return esc(L.name) + (L.legacy ? ' <span class="nh-tag" style="background:#fbe9e7;color:#8f2418" title="An old matrix name with no fee project chosen yet — move it from the banner at the top of Allocations">needs a project</span>' : ''); }
+  /* Rows the move to fee keys could not place: still under their old matrix
+     name, counted toward nobody's contract. One picker per name moves every
+     row at once; the engine's best guess is offered as a one-click take. */
+  function legacySectionHtml() {
+    const legacy = S.legacyProjects(); if (!legacy.length) return '';
+    return `<div style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid #C0392B;padding:12px 16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><span style="font-family:var(--font-display);font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#8f2418">⚠ ${legacy.length} project name${legacy.length === 1 ? '' : 's'} need a fee project</span><span class="note-txt">These rows still carry an old matrix name. Pick the fee project (or internal line) they staff and every row moves at once; until then they count toward nobody's contract.</span></div>
+      <table class="dt"><thead><tr><th>Old name</th><th class="num">Rows</th><th class="num">People</th><th>Looks like</th><th style="width:34%">Move to</th></tr></thead><tbody>
+      ${legacy.map(g => `<tr><td class="pname">${esc(g.name)}<div class="vmini">${esc(g.client || '')}</div></td><td class="num">${g.rows}</td><td class="num">${g.people}</td><td>${g.suggest ? `<span class="badge pursuit">${esc(g.suggest.label)}</span> <button class="btn sm" data-legacy-take="${esc(g.name)}" data-key="${esc(g.suggest.key)}">Use this</button>` : '<span class="vmini">no match</span>'}</td><td><input list="target-dl" data-legacy-move="${esc(g.name)}" class="fee-link-sel" style="width:95%" placeholder="type the fee project…"></td></tr>`).join('')}
+      </tbody></table>${targetDatalist()}</div>`;
+  }
+  /** Fee projects and internal lines, as a datalist every "where does this go" box shares. */
+  function targetDatalist() { return `<datalist id="target-dl">${S.listFeeProjects().map(p => `<option value="${esc(p.label)}"></option>`).join('')}${S.INTERNAL_ORDER.map(k => `<option value="${esc(S.INTERNAL_LINES[k].label)}" label="internal line"></option>`).join('')}</datalist>`; }
+  /** What someone typed in a target box → { feeId } | { internal } | null. */
+  function mapTargetFor(v) { const t = S.projectRefToTarget(v); if (t) return t; const h = resolveTyped(v, S.listFeeProjects(), ['label', 'name', 'client']); return h ? { feeId: h.id } : null; }
+  function wireLegacy(scope, rerender) {
+    const done = (r) => { state._gapsKey = null; toast(`Moved ${r.rows} allocation${r.rows === 1 ? '' : 's'} onto ${r.label}${r.pinned ? ' — and the Clockify hours under that name land there too' : ''}.`); rerender(); };
+    $$(`${scope} [data-legacy-move]`).forEach(inp => inp.onchange = () => { const v = inp.value.trim(); if (!v) return; const t = mapTargetFor(v); if (!t) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project or internal line from the list — or type more of the name/client, it only needs to be unique.'; return; } done(S.placeName(inp.dataset.legacyMove, t)); });
+    $$(`${scope} [data-legacy-take]`).forEach(b => b.onclick = () => { const t = S.projectRefToTarget(b.dataset.key); if (!t) return; done(S.placeName(b.dataset.legacyTake, t)); });
+  }
 
   /* ---------- ACTUALS vs EXPECTED ----------
      Just the comparison now. The Clockify import card, the ①②③ glossary and
@@ -963,7 +988,7 @@
       const lockedPerson = state.varPerson ? (S.getPerson(state.varPerson) || { name: state.varPerson }).name : '';
       const findBox = (id, q, list, chip, unlockKey, ph) => `<span class="cmp-find">${chip ? `<span class="lock-chip" title="Locked — click × to clear">🔒 ${esc(chip)}<button type="button" data-unlock="${unlockKey}" aria-label="Clear">×</button></span>` : `<input type="search" id="${id}" list="${id}-list" placeholder="${ph}" value="${esc(q)}" autocomplete="off"><datalist id="${id}-list">${list.map(v => typeof v === 'string' ? `<option value="${esc(v)}">` : `<option value="${esc(v.value)}" label="${esc(v.label)}">`).join('')}</datalist>`}</span>`;
       // Suggestions carry the fee name (what people know) with the matrix name as the value that locks.
-      const projSuggest = projList.map(x => { const L = S.projectLabel(x); return L.alias ? { value: x, label: L.name } : x; });
+      const projSuggest = projList;
       const findProject = findBox('var-project-q', state.varProjectQ, projSuggest, projFilter ? S.projectLabel(projFilter).name : '', 'project', 'Project… Enter locks');
       const findPerson = findBox('var-person-q', state.varPersonQ, pplList.map(x => x.name), lockedPerson, 'person', 'Person… Enter locks');
       // Contract only applies when grouped by project (the contract has no names)
@@ -1028,7 +1053,7 @@
         const pe = list.reduce((s, r) => s + r.expected, 0), pa = list.reduce((s, r) => s + r.actual, 0);
         const pL = byPerson ? null : S.projectLabel(pn, list[0].client || '');
         const cardTitle = byPerson ? (S.getPerson(pn) || { name: pn }).name : pL.name;
-        const cardSub = byPerson ? ((S.getPerson(pn) || {}).title || '') : ((list[0].client || pL.client || '') + (pL.alias ? ' · ⇐ ' + pL.alias : ''));
+        const cardSub = byPerson ? ((S.getPerson(pn) || {}).title || '') : (list[0].client || pL.client || '');
         const rowLabel = (r) => byPerson ? pLbl(r.project, r.client) : esc(r.person.name);
         const cp = byPerson ? null : contractByProj[pn];
         // Dollars: the yardstick is the FEE — what the client pays — not the
@@ -1231,7 +1256,7 @@
           <div class="rstat"><b>${rep.months && rep.months.length ? esc(S.ymLabel(rep.months[0]) + ' – ' + S.ymLabel(rep.months[rep.months.length - 1])) : '—'}</b><span>Period</span></div>
         </div>
         <div class="unmatched">${umUsers}${umProj}</div>
-        <datalist id="imp-proj-dl"><option value="Ignore"></option>${S.distinctProjects().map(p => `<option value="${esc(p)}"></option>`).join('')}</datalist>
+        <datalist id="imp-proj-dl"><option value="Ignore"></option>${S.listFeeProjects().map(p => `<option value="${esc(p.label)}"></option>`).join('')}${S.INTERNAL_ORDER.map(k => `<option value="${esc(S.INTERNAL_LINES[k].label)}" label="internal line"></option>`).join('')}</datalist>
         ${matchAudit(rep)}
         <div class="imp-actions">
           <button class="btn btn-primary" id="commit-merge">Commit — replace these months</button>
@@ -1248,15 +1273,15 @@
      sibling JPMC projects collapsing into one. */
   function matchAudit(rep) {
     if (!rep.matchDetail || !rep.matchDetail.length) return '';
-    const viaBadge = (v) => v === 'name' ? '<span class="badge active">exact</span>' : v === 'mapped' ? '<span class="badge active">mapped</span>' : v === 'salesforce' ? '<span class="badge active">SF ID</span>' : v === 'unmatched' ? '<span class="badge" style="color:#8f2418;background:#fbe9e7">unmatched</span>' : `<span class="badge pursuit">${esc(v)}</span>`;
+    const viaBadge = (v) => v === 'name' ? '<span class="badge active">exact</span>' : v === 'mapped' ? '<span class="badge active">pinned</span>' : v === 'salesforce' ? '<span class="badge active">SF ID</span>' : v === 'rule' ? '<span class="badge active">internal</span>' : (v === 'unmatched' || v === 'unmapped') ? '<span class="badge" style="color:#8f2418;background:#fbe9e7">unmapped</span>' : `<span class="badge pursuit" title="matched on words alone — confirm it on Mapping">≈ ${esc(v)}</span>`;
     const rows = rep.matchDetail.map(d => `<tr>
       <td>${esc(d.from)}</td><td>${viaBadge(d.via)}</td>
-      <td>${d.via === 'unmatched' ? '<span class="vmini">—</span>' : esc(d.to)}</td>
+      <td>${esc(d.to)}</td>
       <td class="num">${fmtH(d.hours)}</td>
       <td><input list="imp-proj-dl" data-map-proj="${esc(d.from)}" style="font-size:11px;max-width:190px;border:1px dashed rgba(37,39,58,0.3);padding:2px 5px" placeholder="type to remap…"></td>
     </tr>`).join('');
     return `<details style="margin-bottom:16px"><summary style="cursor:pointer;font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--sav-navy)">Where every Clockify project landed (${rep.matchDetail.length}) — check this if a project's actuals look wrong</summary>
-      <table class="dt" style="margin-top:10px"><thead><tr><th>Clockify project</th><th>Match</th><th>→ Matrix project</th><th class="num">Hours</th><th>Fix</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+      <table class="dt" style="margin-top:10px"><thead><tr><th>Clockify project</th><th>Match</th><th>→ Fee project / internal line</th><th class="num">Hours</th><th>Fix</th></tr></thead><tbody>${rows}</tbody></table></details>`;
   }
 
   function wireImport() {
@@ -1282,8 +1307,8 @@
     $$('#p-sources [data-map-proj]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;
       const isIgnore = v.toLowerCase() === 'ignore';
-      const hit = isIgnore ? '__ignore__' : S.distinctProjects().find(p => p.toLowerCase() === v.toLowerCase());
-      if (!hit) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a project from the list (or type Ignore)'; return; }
+      const hit = isIgnore ? '__ignore__' : mapTargetFor(v);
+      if (!hit) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project or internal line from the list (or type Ignore)'; return; }
       S.setProjectMapping(inp.dataset.mapProj, hit); toast('Mapping saved — re-checked.'); reanalyze();
     });
     const note = $('#pull-note');
@@ -1338,15 +1363,13 @@
     $('#am-title').textContent = a ? 'Edit allocation' : (preset && preset.title) || 'Add allocation';
     $('#am-people').innerHTML = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
     /* The project list is the FEE TOOL's projects — "Client — Project", the
-       names everyone knows — not the matrix's own designations. Picking one
-       fills the client and pins the fee link on save, so the new row lands on
-       the right project from the start. Matrix-only names (rows that exist
-       under a name no fee project carries) stay available, marked as such. */
+       names everyone knows — plus the internal lines (leave, time off, BD,
+       overhead). An allocation is keyed on the record it staffs, so there is
+       no free-text project any more. */
     const feeChoices = allocFeeChoices();
-    const feeNames = new Set(feeChoices.map(f => f.name));
-    const matrixOnly = (viewMode === 'leader' && LEADER() ? [...LEADER().scope().matrixNames] : S.distinctProjects()).filter(n => !feeNames.has(n)).sort();
+    const internalChoices = viewMode === 'leader' && LEADER() ? [] : S.INTERNAL_ORDER.map(k => S.INTERNAL_LINES[k].label);
     $('#am-projects').innerHTML = feeChoices.map(f => `<option value="${esc(f.label)}" label="${esc(STORE.STATUS_LABELS[(f.p.project || {}).status] || '')}">`).join('')
-      + matrixOnly.map(p => `<option value="${esc(p)}" label="matrix project · no fee project with this name">`).join('');
+      + internalChoices.map(l => `<option value="${esc(l)}" label="internal line · no fee project">`).join('');
     $('#am-clients').innerHTML = S.distinctClients().map(c => `<option value="${esc(c)}">`).join('');
     const person = a ? (S.getPerson(a.personId) || {}) : {};
     $('#am-person').value = a ? (person.name || '') : '';
@@ -1405,22 +1428,23 @@
     if (viewMode === 'leader' && LEADER() && !adminHere) {
       const sc = LEADER().scope();
       if (!LEADER().allowedProject(sc, project)) { UFC_UI.toast('That is not one of your projects — pick one of yours from the list.'); return; }
-      if (state.editingAlloc) { const cur = S.listAllocations().find(x => x.id === state.editingAlloc); if (cur && !sc.matrixNames.has(cur.project)) { UFC_UI.toast('That allocation is on another leader\'s project.'); return; } }
+      if (state.editingAlloc) { const cur = S.listAllocations().find(x => x.id === state.editingAlloc); if (cur && !(cur.feeId && sc.feeIds.has(cur.feeId))) { UFC_UI.toast('That allocation is on another leader\'s project.'); return; } }
     }
-    // A fee project picked by its "Client — Project" label files the row under
-    // the project's name, with its client, and pins the fee link.
+    // The row is keyed on the fee project (or internal line) picked. A row
+    // still under an old name may be edited without moving it; a NEW row
+    // must land on a real target.
     const fee = allocFeePick(project);
-    const projectName = fee ? fee.name : project;
-    const rec = {
+    const target = fee ? { feeId: fee.id } : mapTargetFor(project);
+    if (!target && !state.editingAlloc) { UFC_UI.toast('Pick a fee project (or an internal line) from the list — every allocation is keyed on one.'); return; }
+    const rec = Object.assign({
       id: state.editingAlloc || undefined,
       personId: S.personIdForName(name), personName: name,
-      project: projectName, client: $('#am-client').value.trim() || (fee ? fee.client : ''),
+      project: fee ? fee.label : project, client: $('#am-client').value.trim() || (fee ? fee.client : (target && target.internal ? 'Internal' : '')),
       status: $('#am-status').value, type: $('#am-type').value,
       start: $('#am-start').value || null, end: $('#am-end').value || null,
       pct: +$('#am-pct').value || 0, note: $('#am-note').value.trim(),
-    };
+    }, target || {});
     S.saveAllocation(rec);
-    if (fee && !S.matchFeeProjects(projectName, rec.client).some(l => l.id === fee.id)) S.setFeeMapping(projectName, fee.id);
     const wasEdit = !!state.editingAlloc;
     closeAllocModal(); renderAll();
     toast(wasEdit ? 'Allocation updated.' : 'Allocation added' + (fee ? ' on ' + fee.label + '.' : '.'));
@@ -1452,40 +1476,35 @@
     }
     const maps = S.getMappings();
     const feeList = S.listFeeProjects();
-    const feeByName = {}; feeList.forEach(p => { feeByName[p.label.toLowerCase()] = p.id; if (!feeByName[p.name.toLowerCase()]) feeByName[p.name.toLowerCase()] = p.id; });
     const ckList = state.clockifyNames;
-    const ckByName = {}; ckList.forEach(c => ckByName[c.name.toLowerCase()] = c.name);
-    // reverse index: which clockify names resolve to each matrix project
-    const ckResolved = {};
-    ckList.forEach(c => {
-      const m = maps.projects[c.name.toLowerCase().replace(/\s+/g, ' ').trim()];
-      const res = m ? { name: m, via: 'mapped' } : S.resolveClockifyProject ? S.resolveClockifyProject(c.name) : null;
-      if (res && res.name) (ckResolved[res.name] = ckResolved[res.name] || []).push({ ck: c.name, via: res.via });
-    });
-    let rows = '';
-    let problems = 0;
+    const ckClient = {}; ckList.forEach(c => { ckClient[c.name.toLowerCase()] = c.client || ''; });
+    /* One row per CLOCKIFY project: where its hours land. Many Clockify
+       projects may point at one fee project; nothing points the other way. */
+    const ckRows = S.clockifyProjectRows(ckList.map(c => c.name));
     const q = state.mapSearch.toLowerCase();
-    S.distinctProjects().forEach(mp => {
-      // client comes from the matrix rows for this project — disambiguates same-name projects
-      const mpClient = (S.listAllocations().find(a => a.project === mp) || {}).client || '';
-      const fees = S.matchFeeProjects(mp, mpClient);
-      const cks = ckResolved[mp] || [];
-      const isProblem = !fees.length || !cks.length;
+    let rows = ''; let problems = 0;
+    const viaBadge = (r) => r.ignored ? '<span class="badge" style="background:#e7eef0;color:#4a5560">ignored</span>'
+      : r.unmapped ? '<span class="badge" style="color:#8f2418;background:#fbe9e7">unmapped</span>'
+      : r.via === 'auto' ? '<span class="badge pursuit" title="Matched on words alone — confirm it, or pick another">≈ guess</span>'
+      : `<span class="badge active" title="${esc(r.via)}">${r.via === 'mapped' ? 'pinned' : r.via === 'salesforce' ? 'SF ID' : r.via === 'rule' ? 'rule' : 'exact name'}</span>`;
+    ckRows.forEach(r => {
+      const isProblem = r.unmapped || r.via === 'auto' || !!r.conflict;
       if (isProblem) problems++;
-      if (q && !mp.toLowerCase().includes(q)) return;
+      if (q && !(r.name + ' ' + r.label + ' ' + r.client).toLowerCase().includes(q)) return;
       if (state.mapOnlyProblems && !isProblem) return;
-      const feeCell = fees.length
-        ? fees.map(fee => `<span class="badge ${fee.via === 'tokens' ? 'pursuit' : 'active'}" title="matched by ${esc(fee.via || 'name')}">${esc(fee.client ? fee.client + ' — ' + fee.name : fee.name)}${fee.via === 'mapped' ? ` <a href="#" data-unmap-fee="${esc(mp)}" data-unmap-fee-id="${esc(fee.id)}" style="color:inherit;text-decoration:none;font-weight:800" title="Remove this fee link">✕</a>` : ''}</span>`).join(' ')
-        : '<span class="no-link" style="margin:0">not linked</span>';
-      const ckCell = cks.length
-        ? cks.map(c => `<span class="badge ${c.via === 'name' || c.via === 'mapped' ? 'active' : 'pursuit'}" title="${esc(c.via)}">${esc(c.ck)}</span>`).join(' ')
-        : (ckList.length ? '<span class="no-link" style="margin:0">no Clockify project resolves here</span>' : '<span class="vmini">list unavailable</span>');
+      const landing = r.ignored ? '<span class="vmini">hours not counted</span>'
+        : r.unmapped ? `<span class="no-link" style="margin:0">no fee project — ${r.plannedRows ? `planned under this name too (${r.plannedRows} row${r.plannedRows === 1 ? '' : 's'}); picking a project moves both` : 'hours show as “no project”'}</span>`
+        : `${esc(r.label)}${r.feeId ? ` <a class="link-fee" href="Universal Fee Calculator.html?id=${encodeURIComponent(r.feeId)}" title="Open in fee tool">↗</a>` : ''}`;
       rows += `<tr>
-        <td class="pname">${esc(mp)}</td>
-        <td>${feeCell}<br><input list="map-fee-dl" data-map-fee="${esc(mp)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${fees.length ? 'type to link another… (— unlink — clears all)' : 'type to link fee…'}"></td>
-        <td>${ckCell}<br><input list="map-ck-dl" data-map-ck="${esc(mp)}" class="fee-link-sel" style="margin:4px 0 0;width:90%" placeholder="${cks.length ? 'type to add another…' : 'type Clockify project…'}"></td>
+        <td class="pname">${esc(r.name)}<div class="vmini">${esc(ckClient[r.name.toLowerCase()] || '')}</div></td>
+        <td class="num">${r.hours ? fmtH(r.hours) : '<span class="vmini">—</span>'}</td>
+        <td>${viaBadge(r)} ${landing}${r.pinned ? ` <a href="#" data-unpin-ck="${esc(r.name)}" style="color:#8f2418;text-decoration:none;font-weight:800" title="Remove the pin — back to the automatic match">✕</a>` : ''}${r.conflict ? `<div class="vmini" style="color:#8f2418;margin-top:3px">⚠ the Salesforce id in this name belongs to <b>${esc(r.conflict)}</b> — remove the pin (✕) to follow the id, or leave it if the pin is deliberate</div>` : ''}</td>
+        <td><input list="target-dl" data-map-ck="${esc(r.name)}" class="fee-link-sel" style="width:${r.unmapped || r.via === 'auto' ? '60%' : '95%'}" placeholder="${r.unmapped ? 'type the fee project…' : r.via === 'auto' ? 'confirm, or type another…' : 'type to change…'}">${r.via === 'auto' && r.feeId ? ` <button class="btn sm" data-confirm-ck="${esc(r.name)}" data-fee="${esc(r.feeId)}" title="Pin this match">✓ Confirm</button>` : ''}${r.unmapped ? ` <button class="btn sm ghost" data-ignore-proj="${esc(r.name)}" title="Not project work — never count these hours">Ignore</button>` : ''}</td>
       </tr>`;
     });
+    // fee projects that are planned but hear nothing from Clockify
+    const silent = S.planProjects().filter(p => p.feeId && !S.clockifyNamesFor(p.key).length).filter(p => !q || p.label.toLowerCase().includes(q));
+    const silentNote = silent.length ? `<div class="note-txt" style="margin:10px 0 0;padding:8px 12px;background:#fdf6e3;border-left:3px solid #e8b563"><b>${silent.length} planned project${silent.length === 1 ? ' has' : 's have'} no Clockify project landing on ${silent.length === 1 ? 'it' : 'them'}</b> — logged hours cannot reach ${silent.length === 1 ? 'it' : 'them'} until one is mapped above: ${silent.slice(0, 12).map(p => esc(p.label)).join(' · ')}${silent.length > 12 ? ' · …' : ''}</div>` : '';
     // ---- PEOPLE mapping: roster ↔ Clockify users ----
     const ckUsers = state.clockifyUsers || [];
     const userMaps = maps.users || {};
@@ -1563,41 +1582,40 @@
     const titleSection = (cat && cat.hydrated) ? `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">Job titles ↔ rate grid <span class="note-txt" style="font-weight:400">(${titleProblems} unmatched · unmatched titles have no cost rate, so their hours are excluded from every $ view)</span></h3>
       <table class="dt"><thead><tr><th style="width:28%">Job title (from Clockify)</th><th>Rate-grid family · tier · cost rate</th></tr></thead><tbody>${titleRows || '<tr><td colspan="2"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
       <datalist id="map-title-dl">${rateOpts.map(o => `<option value="${esc(o.label)}" label="$${o.rate}/h cost"></option>`).join('')}</datalist>` : '';
-    const banner = state.clockifyNamesError ? `<div class="note-txt" style="color:#8f2418;margin-bottom:10px">Couldn't pull the Clockify list (${esc(state.clockifyNamesError)}) — fee links still work; Clockify column limited to saved mappings.</div>` : '';
+    const banner = state.clockifyNamesError ? `<div class="note-txt" style="color:#8f2418;margin-bottom:10px">Couldn't pull the Clockify list (${esc(state.clockifyNamesError)}) — the rows below are the Clockify projects with hours already imported, plus saved pins.</div>` : '';
     const flags = S.mappingFlags ? S.mappingFlags() : {};
     const flagIds = Object.keys(flags);
     const flagQueue = flagIds.length ? `<div class="lv-queue"><div class="lv-queue-h">⚑ ${flagIds.length} mapping flag${flagIds.length === 1 ? '' : 's'} from revenue leaders <span class="note-txt" style="font-weight:400">— they could not fix these from their view: the Clockify project belongs to another fee project, or the link is wrong. Fix the mapping below, then resolve.</span></div>
         <table class="dt"><thead><tr><th>Fee project</th><th>Flagged by</th><th>When</th><th>Note</th><th></th></tr></thead><tbody>${flagIds.map(id => { const f = flags[id]; const fp = feeList.find(x => x.id === id); return `<tr><td class="pname">${esc(fp ? fp.label : (f.feeName || id))}</td><td>${esc(f.byName || f.by || '')}</td><td>${esc(new Date(f.at).toLocaleString())}</td><td>${esc(f.note || '')}</td><td><button class="btn sm" data-flag-resolve="${esc(id)}">Resolved</button></td></tr>`; }).join('')}</tbody></table></div>` : '';
     $('#p-mapping').innerHTML = `${banner}${flagQueue}
       <div class="toolbar">
-        <input type="search" id="map-search" placeholder="Filter projects…" value="${esc(state.mapSearch)}">
+        <input type="search" id="map-search" placeholder="Filter Clockify or fee projects…" value="${esc(state.mapSearch)}">
         <label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" id="map-problems" ${state.mapOnlyProblems ? 'checked' : ''}> Only problems (${problems})</label>
         <span class="grow"></span>
         <button class="btn btn-ghost" id="map-refresh" title="Re-pull the Clockify project list">⟳ Refresh Clockify list</button>
-        <span class="note-txt">Every pick is saved to staff.json and applies to all future imports.</span>
+        <span class="note-txt">Clockify project → fee project, many to one. Every pick is saved for everyone and applies to all future pulls.</span>
       </div>
-      <table class="dt"><thead><tr><th style="width:28%">Matrix project (JS sheet)</th><th style="width:32%">② Fee tool</th><th>③ Clockify project(s) landing here</th></tr></thead><tbody>${rows || '<tr><td colspan="3"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
-      <datalist id="map-fee-dl"><option value="— unlink —"></option>${feeList.map(p => `<option value="${esc(p.label)}"></option>`).join('')}</datalist>
-      <datalist id="map-ck-dl">${ckList.map(c => `<option value="${esc(c.name)}"${c.client ? ` label="${esc(c.client)}"` : ''}></option>`).join('')}</datalist>
+      <table class="dt"><thead><tr><th style="width:30%">③ Clockify project</th><th class="num" style="width:80px">Hours</th><th style="width:34%">Lands on · ② fee project / internal line</th><th>Fix</th></tr></thead><tbody>${rows || '<tr><td colspan="4"><div class="empty" style="border:0">Nothing matches the filter.</div></td></tr>'}</tbody></table>
+      ${targetDatalist()}
+      ${silentNote}
+      <div style="margin-top:14px">${legacySectionHtml()}</div>
       ${pplSection}
       ${titleSection}`;
     $$('#p-mapping [data-flag-resolve]').forEach(b => b.onclick = () => { S.clearMappingFlag(b.dataset.flagResolve); toast('Flag resolved.', 'ok'); renderMapping(); });
     $('#map-search').oninput = searchBox('#map-search', v => { state.mapSearch = v; renderMapping(); });
     $('#map-problems').onchange = (e) => { state.mapOnlyProblems = e.target.checked; renderMapping(); };
     $('#map-refresh').onclick = () => { state.clockifyNames = null; state.clockifyNamesError = null; renderMapping(); };
-    $$('#p-mapping [data-map-fee]').forEach(inp => inp.onchange = () => {
+    $$('#p-mapping [data-map-ck]').forEach(inp => inp.onchange = () => {
       const v = inp.value.trim(); if (!v) return;
-      if (v === '— unlink —') { S.setFeeMapping(inp.dataset.mapFee, null); toast('Fee link removed.'); renderMapping(); return; }
-      let id = feeByName[v.toLowerCase()];
-      if (!id) { const hit = resolveTyped(v, feeList, ['label', 'name', 'client']); if (hit) id = hit.id; }
-      if (!id) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project from the list — or type more of the name/client, it only needs to be unique.'; return; }
-      S.setFeeMapping(inp.dataset.mapFee, id); toast('Fee link saved.'); renderMapping();
+      const target = mapTargetFor(v);
+      if (!target) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a fee project or internal line from the list — or type more of the name/client, it only needs to be unique.'; return; }
+      try { S.setProjectMapping(inp.dataset.mapCk, target); let moved = 0; if (S.legacyProjects().some(g => g.name.toLowerCase() === inp.dataset.mapCk.toLowerCase())) moved = S.retargetLegacy(inp.dataset.mapCk, target); state._gapsKey = null; toast('Mapping saved — the hours land there now and on every future pull.' + (moved ? ` ${moved} planned row${moved === 1 ? '' : 's'} under that name moved too.` : '')); } catch (e) { toast(e.message || String(e)); }
+      renderMapping(); renderCounts();
     });
-    $$('#p-mapping [data-unmap-fee]').forEach(a => a.onclick = (e) => {
-      e.preventDefault();
-      S.setFeeMapping(a.dataset.unmapFee, a.dataset.unmapFeeId, { remove: true });
-      toast('Fee link removed.'); renderMapping();
-    });
+    $$('#p-mapping [data-confirm-ck]').forEach(b => b.onclick = () => { S.setProjectMapping(b.dataset.confirmCk, b.dataset.fee); toast('Pinned — saved for everyone.'); renderMapping(); });
+    $$('#p-mapping [data-unpin-ck]').forEach(a => a.onclick = (e) => { e.preventDefault(); S.setProjectMapping(a.dataset.unpinCk, null); toast('Pin removed — back to the automatic match.'); renderMapping(); });
+    $$('#p-mapping [data-ignore-proj]').forEach(b => b.onclick = () => { S.setProjectMapping(b.dataset.ignoreProj, '__ignore__'); toast('Ignored — those hours are not counted anywhere.'); renderMapping(); });
+    wireLegacy('#p-mapping', () => { renderMapping(); renderCounts(); });
     $$('#p-mapping [data-unmap-user]').forEach(a => a.onclick = (e) => {
       e.preventDefault();
       const ck = a.dataset.unmapUser, pid = a.dataset.unmapPid;
@@ -1670,13 +1688,6 @@
     });
     $$('#p-mapping [data-unmap-title]').forEach(a => a.onclick = (e) => {
       e.preventDefault(); S.setTitleMapping(a.dataset.unmapTitle, null); toast('Pinned title mapping removed — back to auto-match.'); renderMapping();
-    });
-    $$('#p-mapping [data-map-ck]').forEach(inp => inp.onchange = () => {
-      const v = inp.value.trim(); if (!v) return;
-      let ck = ckByName[v.toLowerCase()];
-      if (!ck) { const hit = resolveTyped(v, ckList, ['name', 'client']); if (hit) ck = hit.name; }
-      if (!ck) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a Clockify project from the list — or type more of the name/client, it only needs to be unique.'; return; }
-      S.setProjectMapping(ck, inp.dataset.mapCk); toast('Clockify mapping saved — existing hours moved, applies to every future import.'); renderMapping();
     });
   }
 
@@ -2263,7 +2274,7 @@
       // and with the push hook attached, so they land in Box like any edit.
       try { const n = S.applyMappingSeeds ? S.applyMappingSeeds() : []; if (n.length) { toast(n.length + ' mapping fix' + (n.length === 1 ? '' : 'es') + ' applied and saved.', 'ok'); } } catch (e) { console.warn('mapping seeds', e); }
       // Data repairs shipped as code (the allocations deep dive) — same rule: once, here, logged.
-      try { const c = S.applyCleanupSeeds ? S.applyCleanupSeeds() : []; if (c.length) { const r = c[0]; toast(`Allocations cleanup applied: ${r.merges} people merged, ${r.renames} project names folded, ${r.deletes} duplicate rows removed, ${r.ended} row ended.`, 'ok'); renderAll(); } } catch (e) { console.warn('cleanup seeds', e); }
+      try { const c = S.applyCleanupSeeds ? S.applyCleanupSeeds() : []; if (c.length) { const r = c[0]; toast(`Allocations cleanup applied: ${r.merges} people merged, ${r.renames} project names folded, ${r.deletes} duplicate rows removed, ${r.ended} row ended.`, 'ok'); if (state.winStart) renderAll(); } } catch (e) { console.warn('cleanup seeds', e); }
       // Live refresh: when the tab regains focus (and every 3 min) check the file's
       // etag; if a teammate saved, hydrate + re-render — mappings flow to everyone.
       const refresh = async () => {
@@ -2285,53 +2296,6 @@
       document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
       setInterval(refresh, 180000);
     } catch (e) { setStoreNote('error', e.message); }
-  }
-
-  /* ---------- canonical name sync (Clockify → matrix renames) ---------- */
-  async function startCanonSync() {
-    const btn = $('#canon-sync'); if (btn) { btn.disabled = true; btn.textContent = 'Pulling project list…'; }
-    try {
-      const res = await fetch('/api/clockify?list=projects', { headers: await apiHeaders() });
-      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || j.error || ('HTTP ' + res.status)); }
-      const rows = S.parseCsvRows(await res.text()).map(o => ({ name: o.Project || o.project || Object.values(o)[0] || '', client: o.Client || o.client || '' }));
-      if (!rows.length) throw new Error('empty project list');
-      state.canonProposals = S.proposeCanonical(rows);
-      renderSources();
-    } catch (e) { UFC_UI.toast('Could not pull the Clockify project list: ' + e.message + '\n\nAlternative: export any Clockify report as CSV and drop it on the import card below — unmatched projects can be mapped there.'); if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync names from Clockify'; } }
-  }
-  function renderCanonReview() {
-    const props = state.canonProposals; if (!props) return;
-    const need = props.filter(p => p.kind !== 'exact');
-    const exact = props.length - need.length;
-    let rows = '';
-    need.forEach((p, i) => {
-      const badge = p.kind === 'strong' ? `<span class="badge active">${p.score}%</span>` : p.kind === 'weak' ? `<span class="badge pursuit">${p.score}%</span>` : p.kind === 'saved' ? `<span class="badge active">saved</span>` : `<span class="no-link" style="margin:0">no Clockify yet</span>`;
-      rows += `<tr>
-        <td class="pname">${esc(p.matrix)}</td>
-        <td>${badge}</td>
-        <td>${p.match ? esc(p.match) + (p.client ? ` <span class="vmini">· ${esc(p.client)}</span>` : '') : '<span class="vmini">keeps its JS-sheet name; will canonicalize once it exists in Clockify</span>'}</td>
-        <td>${p.match ? `<label class="chk" style="justify-content:flex-end"><input type="checkbox" data-canon-i="${i}" ${p.kind !== 'weak' ? 'checked' : ''}> rename</label>` : ''}</td>
-      </tr>`;
-    });
-    const panel = `<div class="import-card" id="canon-panel" style="margin-top:16px">
-      <h3>Sync names from Clockify — review</h3>
-      <p><b>${exact}</b> of ${props.length} matrix projects already match Clockify exactly. Review the rest: checked rows get renamed to the canonical Clockify name (allocations + actuals follow), and the old→new mapping is remembered so future JS-sheet imports auto-rename. Strong matches are pre-checked; weak ones (amber) need your eye.</p>
-      <table class="dt"><thead><tr><th>Matrix (JS sheet)</th><th>Match</th><th>Clockify canonical</th><th style="text-align:right">Rename?</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="imp-actions" style="margin-top:14px">
-        <button class="btn btn-primary" id="canon-commit">Commit renames</button>
-        <button class="btn btn-ghost" id="canon-cancel">Cancel</button>
-      </div>
-    </div>`;
-    $('#p-sources').insertAdjacentHTML('afterbegin', panel);
-    $('#canon-cancel').onclick = () => { state.canonProposals = null; renderSources(); };
-    $('#canon-commit').onclick = () => {
-      const pairs = [];
-      $$('#canon-panel [data-canon-i]').forEach(cb => { if (cb.checked) { const p = need[+cb.dataset.canonI]; if (p && p.match) pairs.push({ from: p.matrix, to: p.match }); } });
-      const n = S.commitRenames(pairs);
-      state.canonProposals = null;
-      renderAll();
-      toast(`Renamed ${pairs.length} projects (${n} allocations updated) — mapping saved.`);
-    };
   }
 
   /* ---------- matrix file re-import ---------- */
@@ -2361,9 +2325,8 @@
     if (d < 45) return d + ' days ago';
     return new Date(iso).toLocaleDateString();
   }
-  function unlinkedProjects() {
-    return S.distinctProjects().filter(pn => !S.isMacroProject(pn) && !S.isTimeOffProject(pn) && !S.isLeaveProject(pn) && !S.matchFeeProjects(pn, '').length);
-  }
+  /** Project names still without a fee project — rows parked under an old matrix name. */
+  function unlinkedProjects() { return S.legacyProjects().map(g => g.name); }
 
   function renderSources() {
     const meta = S.readDb().meta || {};
@@ -2374,7 +2337,8 @@
     const aAge = ageDays(am.importedAt);
     const aDot = aAge == null ? 'bad' : aAge <= 7 ? 'ok' : aAge <= 21 ? 'warn' : 'bad';
     const unlinked = unlinkedProjects();
-    const linkable = S.distinctProjects().filter(pn => !S.isMacroProject(pn) && !S.isTimeOffProject(pn) && !S.isLeaveProject(pn)).length;
+    const linkable = S.planProjects().filter(p => !p.internal).length;
+    const unmappedCk = S.unmappedClockify();
     const lAge = ageDays(late.at);
 
     const row = (name, feeds, lastHtml, statusHtml, actionHtml) => `<tr>
@@ -2398,8 +2362,7 @@
         dot('ok') + 'live',
         `<button class="btn btn-primary" id="rt-export" title="Every allocation plus every pending contract add (yellow rows — put ADD in Action to accept) in one editable workbook. Edit, then Put it back.">⇩ Excel round trip</button>
          <button class="btn btn-ghost" id="rt-import" title="Import the round-trip workbook you edited. You see every add, change and remove before anything is written.">⇪ Put it back</button><input type="file" id="rt-file" accept=".xlsx" hidden>
-         <button class="btn btn-ghost" id="src-reimport" title="Replace ALL allocations from a fresh export of the staffing sheet (Data tab or CSV). Actuals and roster edits are kept.">⇪ Re-import sheet</button>
-         <button class="btn btn-ghost" id="canon-sync" title="Pull Clockify's project list and rename matrix projects to the canonical names — one-time mapping, remembered for future sheet imports">⇄ Sync names</button>`)}
+         <button class="btn btn-ghost" id="src-reimport" title="Replace ALL allocations from a fresh export of the staffing sheet (Data tab or CSV). Actuals and roster edits are kept.">⇪ Re-import sheet</button>`)}
       ${row('② Fee-tool contract lines',
         'The priced roles behind &ldquo;② Contract&rdquo; in Compare and the contract-vs-staffing checks.',
         `${linkable - unlinked.length} of ${linkable} projects linked`,
@@ -2420,7 +2383,8 @@
       const bits = [];
       if (missEnd) bits.push(`<a href="#" data-goto-tab="allocations"><b>${missEnd}</b> allocation${missEnd === 1 ? '' : 's'} missing an end date</a>`);
       if (noTitle) bits.push(`<a href="#" data-goto-tab="mapping"><b>${noTitle}</b> ${noTitle === 1 ? 'person' : 'people'} without a title</a> (their cost rate reads $0)`);
-      if (unlinked.length) bits.push(`<a href="#" data-goto-tab="mapping"><b>${unlinked.length}</b> project${unlinked.length === 1 ? '' : 's'} not linked to the fee tool</a> (no ② Contract line)`);
+      if (unlinked.length) bits.push(`<a href="#" data-goto-tab="allocations"><b>${unlinked.length}</b> project name${unlinked.length === 1 ? '' : 's'} still need a fee project</a> (rows under an old matrix name — no ② Contract line)`);
+      if (unmappedCk.length) bits.push(`<a href="#" data-goto-tab="mapping"><b>${unmappedCk.length}</b> Clockify project${unmappedCk.length === 1 ? '' : 's'} with hours and no fee project</a> (${fmtH(unmappedCk.reduce((t, u) => t + u.hours, 0))} h shown as “no project”)`);
       if (bits.length) html += `<div class="note-txt" style="margin:0 0 14px;padding:8px 12px;background:#fdf6e3;border-left:3px solid #e8b563">🩺 Data health: ${bits.join(' · ')}</div>`;
     }
 
@@ -2432,8 +2396,6 @@
     wireGoto('#p-sources');
     const mr = $('#src-reimport'); if (mr) mr.onclick = () => $('#matrix-file').click();
     wireRoundTrip();
-    const cs2 = $('#canon-sync'); if (cs2) cs2.onclick = startCanonSync;
-    if (state.canonProposals) renderCanonReview();
     wireLateness();
   }
 
