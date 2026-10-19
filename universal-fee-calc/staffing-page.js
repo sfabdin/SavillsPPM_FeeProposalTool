@@ -431,7 +431,7 @@
       g.segments.forEach(sg => {
         S.saveAllocation({
           personId, personName,
-          project: g.project, client: g.client,
+          project: g.fileUnder || g.project, client: g.client,
           status: 'Active', type: 'Awarded',
           start: sg.start, end: sg.end, pct: sg.need,
           // ties the row back to the contract slot/name it satisfies, so the
@@ -489,7 +489,7 @@
       g.segments.forEach(sg => {
         S.saveAllocation({
           personId: g.personId, personName: g.resource,
-          project: g.project, client: g.client,
+          project: g.fileUnder || g.project, client: g.client,
           status: 'Active', type: 'Awarded',
           start: sg.start, end: sg.end, pct: sg.need,
           contractResource: g.resource,
@@ -2262,6 +2262,8 @@
       // Mapping decisions shipped as code — applied once, here, after the merge
       // and with the push hook attached, so they land in Box like any edit.
       try { const n = S.applyMappingSeeds ? S.applyMappingSeeds() : []; if (n.length) { toast(n.length + ' mapping fix' + (n.length === 1 ? '' : 'es') + ' applied and saved.', 'ok'); } } catch (e) { console.warn('mapping seeds', e); }
+      // Data repairs shipped as code (the allocations deep dive) — same rule: once, here, logged.
+      try { const c = S.applyCleanupSeeds ? S.applyCleanupSeeds() : []; if (c.length) { const r = c[0]; toast(`Allocations cleanup applied: ${r.merges} people merged, ${r.renames} project names folded, ${r.deletes} duplicate rows removed, ${r.ended} row ended.`, 'ok'); renderAll(); } } catch (e) { console.warn('cleanup seeds', e); }
       // Live refresh: when the tab regains focus (and every 3 min) check the file's
       // etag; if a teammate saved, hydrate + re-render — mappings flow to everyone.
       const refresh = async () => {

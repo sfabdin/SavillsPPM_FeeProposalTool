@@ -55,9 +55,26 @@
     if (x === y) return true;
     const xp = x.split(' '), yp = y.split(' ');
     const xl = xp[xp.length - 1], yl = yp[yp.length - 1];
-    if (xp.length > 1 && yp.length > 1) return xl === yl && xp[0][0] === yp[0][0];  // same surname + same first initial
+    if (xp.length > 1 && yp.length > 1) {
+      if (xl === yl && xp[0][0] === yp[0][0]) return true;              // same surname + same first initial
+      // Spelling drift on the surname — "Hasan / Hassan", "Sargent / Sargeant",
+      // "Guarnieri / Guarneri", "dePaulis / De Paulis" — is the same person.
+      // Same first initial, and the surnames (spaces squeezed) are near-identical.
+      const sx = xp.slice(1).join(''), sy = yp.slice(1).join('');
+      // one or two letters off (Sargent/Sargeant), never a longer different name (Newman/Newmanski)
+      return xp[0][0] === yp[0][0] && (sx === sy || (surnameSimilarity(sx, sy) >= 0.75 && Math.abs(sx.length - sy.length) <= 2));
+    }
     // one side is a single token: match against the other's surname only if distinctive
     return (xl === y || yl === x) && (xp.length === 1 ? x : y).length > 4;
+  }
+  /** Dice coefficient over letter bigrams — 1 = identical, 0 = nothing shared. */
+  function surnameSimilarity(a, b) {
+    if (!a || !b) return 0; if (a === b) return 1;
+    if (a.length < 3 || b.length < 3) return 0;
+    const grams = (s) => { const m = {}; for (let i = 0; i < s.length - 1; i++) { const g = s.slice(i, i + 2); m[g] = (m[g] || 0) + 1; } return m; };
+    const ga = grams(a), gb = grams(b); let hit = 0;
+    Object.keys(ga).forEach(g => { hit += Math.min(ga[g], gb[g] || 0); });
+    return 2 * hit / ((a.length - 1) + (b.length - 1));
   }
   /** Normalize a project name for cross-matching (drop spacing / punctuation). */
   function projKey(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
@@ -308,6 +325,34 @@
     if (isNew) logStaff('staff-person-add', { person: next.name || person.id });
     else if (changes.length) logStaff('staff-person', { person: next.name || person.id, changes });
     return next;
+  }
+  /** Fold one roster record into another: the duplicate's allocations,
+      logged hours, Clockify mapping and aliases move to the survivor, the
+      duplicate's name becomes an alias so it never comes back, and the
+      duplicate record goes. Returns what moved. */
+  function mergePeople(fromId, toId) {
+    const db = readDb();
+    const from = db.people[fromId], to = db.people[toId];
+    if (!fromId || !toId || fromId === toId || !to) return null;
+    let rows = 0, hours = 0;
+    db.allocations.forEach(a => { if (a.personId === fromId) { a.personId = toId; a.personName = to.name; rows++; } });
+    Object.keys(db.actuals || {}).forEach(k => { const parts = k.split('|'); if (parts[0] === fromId) { const nk2 = toId + '|' + parts[1] + '|' + parts[2]; db.actuals[nk2] = (db.actuals[nk2] || 0) + db.actuals[k]; hours += db.actuals[k]; delete db.actuals[k]; } });
+    db.mappings = db.mappings || { users: {}, projects: {} };
+    Object.keys(db.mappings.users || {}).forEach(k => { if (db.mappings.users[k] === fromId) db.mappings.users[k] = toId; });
+    db.mappings.personAliases = db.mappings.personAliases || {};
+    Object.keys(db.mappings.personAliases).forEach(k => { if (db.mappings.personAliases[k] === fromId) db.mappings.personAliases[k] = toId; });
+    if (from && from.name) db.mappings.personAliases[nkey(cleanName(from.name))] = toId;
+    if ((db.meta.lastWorked || {})[fromId]) { const lw = db.meta.lastWorked; if (!lw[toId] || lw[fromId] > lw[toId]) lw[toId] = lw[fromId]; delete lw[fromId]; }
+    // the survivor keeps its own details; fill blanks from the duplicate
+    if (from) ['title', 'homeTeam', 'joinedYm'].forEach(f => { if (!to[f] && from[f]) to[f] = from[f]; });
+    to.updatedAt = new Date().toISOString();
+    delete db.people[fromId];
+    // the same tombstone Data Repair writes — mergeDb() drops a person carrying one, so a stale tab cannot bring the duplicate back
+    db.deleted = db.deleted || {}; db.deleted['person:' + fromId] = to.updatedAt;
+    db.meta.mergedPeople = Object.assign({}, db.meta.mergedPeople, { [fromId]: { into: toId, at: to.updatedAt } });
+    writeDb(db);
+    logStaff('staff-person-merge', { from: (from && from.name) || fromId, into: to.name, rows, hours: Math.round(hours) });
+    return { rows, hours };
   }
   /** Mark a person as pure overhead (non-billable): their internal time is
       EXPECTED, so burn insights stop flagging it, and staffing-availability
@@ -1761,10 +1806,19 @@
     const ren = (db.mappings || {}).renames || {};
     const canonProjName = (n) => ren[nkey(n)] || n;
     const sameProj = (a, b) => nkey(canonProjName(a)) === nkey(canonProjName(b));
+    /* Coverage must see every matrix name that links to the same fee project.
+       A leader who planned "Exxon PMO" had the work covered; the bridge, looking
+       only at the fee record's own name, could not see it and accepted a
+       second row under "Workplace Strategy (2026)". feeIdsByName is computed
+       once per call so the lookup inside the allocation filter stays cheap. */
+    const feeIdsByName = {};
+    distinctProjects().forEach(n => { const cl = (db.allocations.find(a => a.project === n) || {}).client || ''; let ids = []; try { ids = matchFeeProjects(n, cl).map(l => l.id); } catch (e) {} feeIdsByName[nkey(n)] = new Set(ids); });
 
     // Diff ONE matrix project's contract demand (across its linked fee
     // projects) against existing allocations, pushing gap entries into out.
     const collect = (pn, client, links) => {
+      const linkIds = new Set(links.map(l => l.id));
+      const sameJob = (name) => sameProj(name, pn) || [...(feeIdsByName[nkey(name)] || [])].some(id => linkIds.has(id));
       // Contract demand per NAMED person, summed across roles and linked fee
       // projects (one person can hold two roles, or appear in two links).
       const byName = {};
@@ -1805,7 +1859,7 @@
           const rf = titleFamily(e.roleLabel);
           const covers = (pt) => { if (!pt) return false; const f = titleFamily(pt); return (f && rf && f.titleId === rf.titleId) || tokenScore(pt, e.roleLabel) >= 0.5; };
           const roleKey = String(e.roleLabel).toLowerCase();
-          existing = db.allocations.filter(a => sameProj(a.project, pn) && (
+          existing = db.allocations.filter(a => sameJob(a.project) && (
             // an allocation created FOR this open role always counts, whatever
             // the assignee's title says — otherwise confirming never clears it
             String(a.contractRole || '').toLowerCase() === roleKey ||
@@ -1822,15 +1876,18 @@
           if (person && !matches.some(m => m.id === person.id)) matches.push(person);
           const matchIds = new Set(matches.map(m => m.id));
           const nameKey = nkey(canonicalName(e.name));
-          existing = db.allocations.filter(a => sameProj(a.project, pn) && (
+          existing = db.allocations.filter(a => sameJob(a.project) && (
             matchIds.has(a.personId) ||
             // allocation created FOR this contract name (leader mapped it to
             // someone else) counts even before/without a saved alias
             nkey(canonicalName(a.contractResource || '')) === nameKey
           ));
-          const onProj = matches.find(m => db.allocations.some(a => a.personId === m.id && sameProj(a.project, pn)));
+          const onProj = matches.find(m => db.allocations.some(a => a.personId === m.id && sameJob(a.project)));
           if (onProj) person = onProj;
         }
+        // If the person is already planned on this job under another matrix
+        // name, a new row belongs under THAT name — never a second name.
+        const fileUnder = (() => { const mine = existing.filter(a => !person || a.personId === person.id); const other = mine.find(a => !sameProj(a.project, pn)); return other && !mine.some(a => sameProj(a.project, pn)) ? other.project : null; })();
         const covAt = (ym) => existing.reduce((s, a) => s + (allocActiveIn(a, ym) ? (a.pct || 0) : 0), 0);
         // Month-by-month shortfall (contract minus what's already allocated),
         // compressed into consecutive equal-% segments — Option A: one
@@ -1867,6 +1924,7 @@
           person, isNew: e.open ? false : !person,
           personId: e.open ? null : (person ? person.id : personIdForName(e.name)),
           topUp: existing.length > 0,
+          fileUnder,                                   // matrix name the row must be saved under (null = this project)
           via: e.via,
           rating, lead,
           segments: future,
@@ -2531,6 +2589,137 @@
     return applied;
   }
 
+  /* ---------- CLEANUP SEEDS ----------
+     Data repairs decided from a review of staff.json, shipped as code and
+     applied ONCE by the first browser that loads them (recorded in
+     meta.cleanupSeeds) — through the ordinary verbs, so every step lands in
+     the change log and carries a tombstone that survives a merge with a
+     teammate's copy. Row ids are checked; anything already gone is skipped.
+     2026-10-19: the allocations deep dive. Roster twins folded together,
+     three projects planned under two names folded onto the name Clockify
+     uses, the Excel-import rows left under hand-entered re-plans, pursuit
+     rows left behind once the work went active, zero-percent rows, and
+     contract accepts that landed on top of an existing plan. */
+  const CLEANUP_SEEDS = [
+    Object.assign({ id: '2026-10-19-allocations' }, {
+  "merges": {
+    "joe-guarneri": "joe-guarnieri",
+    "joseph-guarneri": "joe-guarnieri",
+    "beatriz-de-paulis": "beatriz-depaulis",
+    "zac-sargeant": "zac-sargent",
+    "nora-hassan": "nora-hasan",
+    "anthony-mallozzi": "anthony-malozzi",
+    "danica-woo-newhire": "newhire-danica-woo",
+    "ashlee-mejia-newhire": "newhire-ashlee-mejia"
+  },
+  "renames": {
+    "EM NALI": "Exxon NALI",
+    "Workplace Strategy (2026)": "Exxon PMO",
+    "TIAA PMO": "P007733 - TIAA-PMO Capital Planning"
+  },
+  "deletes": {
+    "al_fe5gtdb": "pursuit row left behind; the active row exists",
+    "al_z18b71o": "contract accept on top of an existing hand-entered plan",
+    "al_7ixucb2": "contract accept on top of an existing hand-entered plan",
+    "al_ka2fysy": "Excel import row under a later hand-entered plan",
+    "al_eex4lu8": "contract accept on top of an existing hand-entered plan",
+    "al_9vlwuls": "Excel import row under a later hand-entered plan",
+    "al_93svzl3": "pursuit row left behind; the active row exists",
+    "al_5tix9cb": "contract accept on top of an existing hand-entered plan",
+    "al_ztf0hpv": "contract accept on top of an existing hand-entered plan",
+    "al_q4u350d": "contract accept on top of an existing hand-entered plan",
+    "al_8w9m58l": "Excel import row under a later hand-entered plan",
+    "al_148tbnu": "Excel import row under a later hand-entered plan",
+    "al_lyj7nl9": "Excel import row under a later hand-entered plan",
+    "al_qwz0fot": "contract accept on top of an existing hand-entered plan",
+    "al_tn0a8mm": "Excel import row under a later hand-entered plan",
+    "al_jxsp4ig": "contract accept on top of an existing hand-entered plan",
+    "al_uypunkf": "Excel import row under a later hand-entered plan",
+    "al_id3721m": "Excel import row under a later hand-entered plan",
+    "al_lukbytw": "pursuit row left behind; the active row exists",
+    "al_be3oo7y": "zero-percent row",
+    "al_7wgthed": "zero-percent row",
+    "al_zml7sie": "Excel import row under a later hand-entered plan",
+    "al_zydj9bw": "zero-percent row",
+    "al_xnkcmu9": "Excel import row under a later hand-entered plan",
+    "al_a0pjj9b": "zero-percent row",
+    "al_7dapwea": "pursuit row left behind; the active row exists",
+    "al_0fdrefb": "contract accept on top of an existing hand-entered plan",
+    "al_r1dc8aq": "Excel import row under a later hand-entered plan",
+    "al_ui7np5g": "Excel import row under a later hand-entered plan",
+    "al_txqnhpf": "pursuit row left behind; the active row exists",
+    "al_919gh70": "pursuit row left behind; the active row exists",
+    "al_abiqtkw": "Excel import row under a later hand-entered plan",
+    "al_p10esre": "Excel import row under a later hand-entered plan",
+    "al_zyq6pxd": "Excel import row under a later hand-entered plan",
+    "al_2jtikhn": "Excel import row under a later hand-entered plan",
+    "al_uxkjcgh": "Excel import row under a later hand-entered plan",
+    "al_iwm91xx": "Excel import row under a later hand-entered plan",
+    "al_mvbf5or": "Excel import row under a later hand-entered plan",
+    "al_vsll6gz": "Excel import row under a later hand-entered plan",
+    "al_03ogg6n": "Excel import row under a later hand-entered plan",
+    "al_bnb8h7e": "Excel import row under a later hand-entered plan",
+    "al_roygcnc": "Excel import row under a later hand-entered plan",
+    "al_wbepmy3": "Excel import row under a later hand-entered plan",
+    "al_onirgls": "Excel import row under a later hand-entered plan",
+    "al_9leapid": "pursuit row left behind; the active row exists",
+    "al_5p40mh7": "Excel import row under a later hand-entered plan",
+    "al_sh76emw": "Excel import row under a later hand-entered plan",
+    "al_z7otqfj": "Excel import row under a later hand-entered plan",
+    "al_c64fxgp": "Excel import row under a later hand-entered plan",
+    "al_y8tt3nm": "Excel import row under a later hand-entered plan",
+    "al_ijxkrol": "Excel import row under a later hand-entered plan",
+    "al_1ge8cte": "Excel import row under a later hand-entered plan",
+    "al_ghbpkj1": "Excel import row under a later hand-entered plan",
+    "al_ik5d9mu": "Excel import row under a later hand-entered plan",
+    "al_jha1a7x": "Excel import row under a later hand-entered plan",
+    "al_f44f067": "Excel import row under a later hand-entered plan",
+    "al_0drtbue": "Excel import row under a later hand-entered plan",
+    "al_0ret1ke": "Excel import row under a later hand-entered plan",
+    "al_cswxvd4": "Excel import row under a later hand-entered plan",
+    "al_yc7uxar": "Excel import row under a later hand-entered plan",
+    "al_kqp5lpg": "Excel import row under a later hand-entered plan",
+    "al_qtg49n2": "pursuit row left behind; the active row exists",
+    "al_v05h4y7": "Excel import row under a later hand-entered plan",
+    "al_54qogop": "Excel import row under a later hand-entered plan",
+    "al_njeuh9z": "Excel import row under a later hand-entered plan",
+    "al_c1j288d": "Excel import row under a later hand-entered plan",
+    "al_7btvynf": "Excel import row under a later hand-entered plan",
+    "al_p9w5uz3": "pursuit row left behind; the active row exists",
+    "al_jzaam9g": "Excel import row under a later hand-entered plan",
+    "al_482lyvw": "Excel import row under a later hand-entered plan",
+    "al_9zl3jf5": "pursuit row left behind; the active row exists",
+    "al_bpz7qw5": "Excel import row under a later hand-entered plan"
+  },
+  "endRows": {
+    "al_wlfwugb": "2026-07"
+  }
+}),
+  ];
+  function applyCleanupSeed(seed) {
+    const result = { merges: 0, renames: 0, deletes: 0, ended: 0 };
+    Object.entries(seed.merges || {}).forEach(([from, to]) => { if (readDb().people[from] && readDb().people[to]) { if (mergePeople(from, to)) result.merges++; } else if (!readDb().people[from] && readDb().allocations.some(a => a.personId === from) && readDb().people[to]) { /* orphan id with no roster record: move its rows */ const db = readDb(); db.allocations.forEach(a => { if (a.personId === from) { a.personId = to; a.personName = db.people[to].name; } }); writeDb(db); result.merges++; } });
+    const pairs = Object.entries(seed.renames || {}).filter(([from]) => readDb().allocations.some(a => a.project === from) || Object.keys(readDb().actuals).some(k => k.split('|')[1] === from)).map(([from, to]) => ({ from, to }));
+    if (pairs.length) { commitRenames(pairs); result.renames = pairs.length; }
+    Object.keys(seed.deletes || {}).forEach(id => { if (storedAlloc(id)) { deleteAllocation(id); result.deletes++; } });
+    Object.entries(seed.endRows || {}).forEach(([id, end]) => { const a = storedAlloc(id); if (a && a.end !== end) { const row = Object.assign({}, a, { end }); saveAllocation(row); result.ended++; } });
+    return result;
+  }
+  function applyCleanupSeeds() {
+    const applied = [];
+    CLEANUP_SEEDS.forEach(seed => {
+      const done = (readDb().meta || {}).cleanupSeeds || {};
+      if (done[seed.id]) return;
+      let result;
+      try { result = applyCleanupSeed(seed); } catch (e) { console.warn('cleanup seed failed', seed.id, e); return; }
+      const db = readDb(); db.meta = db.meta || {}; db.meta.cleanupSeeds = Object.assign({}, db.meta.cleanupSeeds, { [seed.id]: Object.assign({ at: new Date().toISOString() }, result) });
+      writeDb(db);
+      logStaff('staff-cleanup', Object.assign({ seed: seed.id }, result));
+      applied.push(Object.assign({ id: seed.id }, result));
+    });
+    return applied;
+  }
+
   /** Persistent contract-name → roster-person link, shared via staff.json.
       Covers nicknames and spelling drift ("Anastasia Long" ↔ "Tasia Long"):
       once a leader maps a contract name onto an existing person, every
@@ -2816,7 +3005,7 @@
     // engine
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan, feeProjectPlan, matrixProjectsForFee, feeProjectActuals,
-    mappingFlags, flagMapping, clearMappingFlag, unclaimedClockifyProjects, claimClockifyForFee, applyMappingSeeds, MAPPING_SEEDS,
+    mappingFlags, flagMapping, clearMappingFlag, unclaimedClockifyProjects, claimClockifyForFee, applyMappingSeeds, MAPPING_SEEDS, mergePeople, surnameSimilarity, applyCleanupSeed, applyCleanupSeeds, CLEANUP_SEEDS,
     unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, pinAutoLinksFor, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, addPersonFromClockify, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,
     // clockify
