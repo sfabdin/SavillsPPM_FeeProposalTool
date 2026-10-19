@@ -1251,6 +1251,54 @@
       return true;
     });
 
+    test('Staffing · roster', 'spelling drift on a surname is the same person; a different surname is not', () => {
+      const ok = [['Nora Hasan', 'Nora Hassan'], ['Zac Sargent', 'Zac Sargeant'], ['Beatriz dePaulis', 'Beatriz De Paulis'], ['Joe Guarnieri', 'Joseph Guarneri'], ['Anthony Malozzi', 'Anthony Mallozzi']];
+      const bad = [['Chris Scala', 'Chris Hocker'], ['Nora Hasan', 'Mora Hasan'], ['Ian Lee', 'Ian Wach'], ['Alex He', 'Alex Hu'], ['Zed Newman', 'Zachary Newmanski']];
+      const m1 = ok.filter(([a, b]) => !ST.namesMatch(a, b)); if (m1.length) return 'should match: ' + m1.map(x => x.join(' ~ ')).join(', ');
+      const m2 = bad.filter(([a, b]) => ST.namesMatch(a, b)); if (m2.length) return 'should NOT match: ' + m2.map(x => x.join(' ~ ')).join(', ');
+      return true;
+    });
+
+    test('Staffing · roster', 'merging a duplicate person moves their rows, hours and mapping, and leaves an alias', () => {
+      freshTrail();
+      ST.savePerson({ id: 'mp_a', name: 'Nora Hasan', title: 'Associate Director' });
+      ST.savePerson({ id: 'mp_b', name: 'Nora Hassan' });
+      ST.saveAllocation({ id: 'mp_r1', personId: 'mp_b', personName: 'Nora Hassan', project: 'TIAA - Staff Aug', client: 'TIAA', start: '2026-01', end: '2026-06', pct: 100 });
+      ST.saveAllocation({ id: 'mp_r2', personId: 'mp_a', personName: 'Nora Hasan', project: 'Other', client: 'X', start: '2026-01', end: '2026-02', pct: 10 });
+      // seed hours + a Clockify mapping straight into the live db (readDb is cached; the verbs write it back)
+      const db0 = ST.readDb(); db0.actuals['mp_b|TIAA - Staff Aug|2026-03'] = 40; db0.actuals['mp_a|TIAA - Staff Aug|2026-03'] = 2; db0.mappings = db0.mappings || { users: {}, projects: {} }; db0.mappings.users['nora hassan'] = 'mp_b';
+      const r = ST.mergePeople('mp_b', 'mp_a');
+      if (!r || r.rows !== 1 || Math.round(r.hours) !== 40) return 'result: ' + JSON.stringify(r);
+      const rows = ST.listAllocations().filter(a => a.personId === 'mp_a'); if (rows.length !== 2 || rows.some(a => a.personName !== 'Nora Hasan')) return 'rows moved: ' + JSON.stringify(rows.map(a => [a.id, a.personId, a.personName]));
+      if (ST.getPerson('mp_b')) return 'duplicate record should be gone';
+      if (!(ST.readDb().deleted || {})['person:mp_b']) return 'person tombstone so a stale tab cannot resurrect the duplicate';
+      const db = JSON.parse(localStorage.getItem('savills-ppm-staff-db:v1'));
+      if (db.actuals['mp_a|TIAA - Staff Aug|2026-03'] !== 42 || db.actuals['mp_b|TIAA - Staff Aug|2026-03'] != null) return 'hours folded: ' + JSON.stringify(db.actuals);
+      if (db.mappings.users['nora hassan'] !== 'mp_a' || db.mappings.personAliases['nora hassan'] !== 'mp_a') return 'mapping + alias point at the survivor: ' + JSON.stringify(db.mappings);
+      if (ST.personIdForName('Nora Hassan') !== 'mp_a') return 'the old spelling resolves to the survivor';
+      if (!trail('staff-person-merge').length) return 'merge recorded in the trail';
+      return true;
+    });
+
+    test('Staffing · cleanup seed', 'a shipped repair deletes by id, folds names, ends a row, and skips what is already gone', () => {
+      freshTrail();
+      ST.savePerson({ id: 'cs_p', name: 'Pat Tester' });
+      ST.saveAllocation({ id: 'cs_1', personId: 'cs_p', personName: 'Pat Tester', project: 'EM NALI', client: 'Exxon', start: '2026-01', end: '2026-12', pct: 25 });
+      ST.saveAllocation({ id: 'cs_2', personId: 'cs_p', personName: 'Pat Tester', project: 'Exxon NALI', client: 'Exxon', start: '2026-03', end: '2026-11', pct: 25 });
+      ST.saveAllocation({ id: 'cs_3', personId: 'cs_p', personName: 'Pat Tester', project: 'JPMC - 383M', client: 'JPMC', start: '2026-02', end: '2027-12', pct: 50 });
+      const r = ST.applyCleanupSeed({ id: 't', merges: {}, renames: { 'EM NALI': 'Exxon NALI' }, deletes: { cs_1: 'import under re-plan', cs_missing: 'already gone' }, endRows: { cs_3: '2026-07' } });
+      if (r.renames !== 1 || r.deletes !== 1 || r.ended !== 1) return 'result: ' + JSON.stringify(r);
+      const rows = ST.listAllocations().filter(a => a.personId === 'cs_p');
+      if (rows.some(a => a.id === 'cs_1')) return 'cs_1 should be deleted';
+      if (rows.some(a => a.project === 'EM NALI')) return 'EM NALI should be folded onto Exxon NALI';
+      if (rows.find(a => a.id === 'cs_3').end !== '2026-07') return 'cs_3 should end Jul-26';
+      const db = JSON.parse(localStorage.getItem('savills-ppm-staff-db:v1'));
+      if (!db.deleted || !db.deleted.cs_1) return 'tombstone for cs_1 so a teammate copy cannot resurrect it';
+      if ((db.mappings.renames || {})['em nali'] !== 'Exxon NALI') return 'rename table saved for future imports';
+      if (!ST.CLEANUP_SEEDS.length || !ST.CLEANUP_SEEDS[0].deletes || Object.keys(ST.CLEANUP_SEEDS[0].deletes).length < 50) return 'the shipped seed carries the deep-dive deletions';
+      return true;
+    });
+
     test('Staffing · trail', 'a save that changes nothing logs nothing', () => {
       freshTrail();
       ST.saveAllocation({ id: 'tr_3', personId: 'stp_jane', personName: 'Jane Tester',

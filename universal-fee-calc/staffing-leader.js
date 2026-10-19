@@ -211,7 +211,7 @@
       if (!typed) { if (g.open) { toast('Type a name for this open role first.'); if (inp) inp.focus(); return; } typed = g.resource; }
       const hit = st.listPeople().find(p => st.namesMatch(p.name, typed));
       const personId = hit ? hit.id : st.personIdForName(typed); const personName = hit ? hit.name : typed;
-      g.segments.forEach(sg => st.saveAllocation({ personId, personName, project: g.project, client: g.client, status: 'Active', type: 'Awarded', start: sg.start, end: sg.end, pct: sg.need,
+      g.segments.forEach(sg => st.saveAllocation({ personId, personName, project: g.fileUnder || g.project, client: g.client, status: 'Active', type: 'Awarded', start: sg.start, end: sg.end, pct: sg.need,
         contractRole: g.open ? g.roleTitle : undefined, contractResource: g.open ? undefined : g.resource,
         contract: { pct: sg.need, want: sg.want, have: sg.have, start: sg.start, end: sg.end },
         note: (g.open ? 'Open contract role staffed' : (g.topUp ? `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%)` : 'From contract staffing')) + ' · ' + g.roles.join(', ') }));
