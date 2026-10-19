@@ -447,6 +447,18 @@
     a.updatedAt = new Date().toISOString();
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser(); if (u && u.username) a.updatedBy = u.username; } catch (e) {}
     const prev = a.id ? storedAlloc(a.id) : null;
+    /* A row accepted from the contract remembers what the contract said.
+       Editing it changes the staffing PLAN only — the fee record is never
+       touched — and the original figure rides along so every view can show
+       "contract 50% → now 30%". Rows accepted before this existed get their
+       pre-edit values frozen as the contract figure the first time someone
+       changes them (they were created straight from the contract). */
+    if (prev) {
+      if (!a.contractRole && prev.contractRole) a.contractRole = prev.contractRole;
+      if (!a.contractResource && prev.contractResource) a.contractResource = prev.contractResource;
+      if (prev.contract) a.contract = prev.contract;
+      else if ((prev.contractRole || prev.contractResource) && !a.contract) a.contract = { pct: clampPct(prev.pct), start: prev.start || null, end: prev.end || null, frozenAt: new Date().toISOString() };
+    }
     if (!a.id) { a.id = 'al_' + Math.random().toString(36).slice(2, 9); db.allocations.push(a); }
     else { const i = db.allocations.findIndex(x => x.id === a.id); if (i >= 0) db.allocations[i] = a; else db.allocations.push(a); }
     writeDb(db);
@@ -460,6 +472,15 @@
         client: a.client || '', changes }, feeIdForAlloc(a));
     }
     return a;
+  }
+  /** How an allocation differs from the contract it was accepted from —
+      null when it never came from a contract or still matches it. */
+  function allocContractDrift(a) {
+    const c = a && a.contract; if (!c) return null;
+    const pctChanged = clampPct(c.pct) !== clampPct(a.pct);
+    const datesChanged = (c.start || null) !== (a.start || null) || (c.end || null) !== (a.end || null);
+    if (!pctChanged && !datesChanged) return null;
+    return { pct: clampPct(c.pct), start: c.start || null, end: c.end || null, pctChanged, datesChanged };
   }
   /** Soft-delete: keep a tombstone so the deletion survives a merge with a
       teammate's copy instead of the row resurrecting from their file. */
@@ -2801,7 +2822,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals, resolveClockifyProject,
     getMappings, setUserMapping, setProjectMapping, setFeeMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
-    titleFamily, costRateForTitle, personCostRate, behindMonths, isBehind, missingCost, projectLabel, projectLabelText, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
+    titleFamily, costRateForTitle, personCostRate, behindMonths, isBehind, missingCost, projectLabel, projectLabelText, allocContractDrift, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
     proposeCanonical, commitRenames, parseCsvRows: parseCsv,
     // helpers

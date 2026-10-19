@@ -158,6 +158,14 @@
   }
 
   /* ---------- My allocations + the contract bridge, scoped ---------- */
+  /** Contract provenance on a row: plain tag, or the contract's figure when the plan has moved off it. */
+  function ctTag(a) {
+    const st = S(); const d = st.allocContractDrift ? st.allocContractDrift(a) : null;
+    const win = (x, y) => x ? st.ymLabel(x) + (y && y !== x ? ' – ' + st.ymLabel(y) : '') : '';
+    if (d) { const bits = []; if (d.pctChanged) bits.push(`${d.pct}% → ${a.pct}%`); if (d.datesChanged) bits.push(`${win(d.start, d.end)} → ${win(a.start, a.end)}`); return `<span class="nh-tag ct-tag changed" title="Accepted from the contract at ${d.pct}%; the plan was changed since. The contract itself is unchanged.">📄 contract ${esc(bits.join(' · '))}</span> `; }
+    if (a.contract || a.contractRole || a.contractResource) return `<span class="nh-tag ct-tag" title="Accepted from the contract staffing${a.contract ? ' at ' + a.contract.pct + '%' : ''}">📄 contract</span> `;
+    return '';
+  }
   function renderAllocs(sc, host) {
     const st = S(); const now = st.currentYM();
     const rows = st.listAllocations().filter(a => sc.matrixNames.has(a.project))
@@ -188,7 +196,7 @@
         html += `<tr><td>${esc(a.client || '—')}</td><td class="pname">${esc(st.projectLabel(a.project, a.client).name)}</td><td>${esc(person.name)}</td>
           <td class="num" style="color:${load > 100 ? 'var(--sav-red)' : 'inherit'}">${load}%</td>
           <td><span class="badge ${a.status === 'Pursuit' || a.type === 'Opportunity' ? 'pursuit' : 'active'}">${esc(a.status || '')}</span></td>
-          <td>${esc(a.start ? st.ymLabel(a.start) : '—')} – ${esc(a.end ? st.ymLabel(a.end) : 'open')}</td><td class="num">${a.pct}%</td><td class="vmini">${esc(a.note || '')}</td>
+          <td>${esc(a.start ? st.ymLabel(a.start) : '—')} – ${esc(a.end ? st.ymLabel(a.end) : 'open')}</td><td class="num">${a.pct}%</td><td class="vmini">${ctTag(a)}${esc(a.note || '')}</td>
           <td><span class="row-act"><button data-edit="${esc(a.id)}">Edit</button><button class="del" data-del="${esc(a.id)}">Del</button></span></td></tr>`;
       });
       html += `</tbody></table>`;
@@ -205,6 +213,7 @@
       const personId = hit ? hit.id : st.personIdForName(typed); const personName = hit ? hit.name : typed;
       g.segments.forEach(sg => st.saveAllocation({ personId, personName, project: g.project, client: g.client, status: 'Active', type: 'Awarded', start: sg.start, end: sg.end, pct: sg.need,
         contractRole: g.open ? g.roleTitle : undefined, contractResource: g.open ? undefined : g.resource,
+        contract: { pct: sg.need, want: sg.want, have: sg.have, start: sg.start, end: sg.end },
         note: (g.open ? 'Open contract role staffed' : (g.topUp ? `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%)` : 'From contract staffing')) + ' · ' + g.roles.join(', ') }));
       if (!g.open && g.resource) { const per = st.getPerson(personId); if (per && !st.namesMatch(per.name, g.resource)) st.setPersonAlias(g.resource, personId); }
       toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${personName}.`, 'ok'); H().renderAll();
