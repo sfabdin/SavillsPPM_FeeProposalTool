@@ -1536,6 +1536,36 @@
       ST.setProjectMapping('Exact Name Job', null);
       return (ST.resolveClockify('Exact Name Job') || {}).feeId === fp.id || 'clearing the pin brings the automatic match back';
     });
+    test('Staffing · identity', 'everyone has an address: Clockify\'s, the roster\'s, or the firm pattern as a flagged guess', () => {
+      cleanStaff();
+      ST.savePerson({ id: 'em_a', name: 'Brianna Sheppard King', active: true });
+      ST.savePerson({ id: 'em_b', name: 'Nora Hasan', active: true });
+      ST.savePerson({ id: 'em_c', name: 'Pooled Support', isPool: true, active: true });
+      const g = ST.personEmail(ST.getPerson('em_a'));
+      if (g.email !== 'bsheppardking@savills.us' || g.source !== 'directory') return 'the leader directory knows Brianna: ' + JSON.stringify(g);
+      ST.savePerson({ id: 'em_d', name: 'Rhonda Stallworth', active: true });
+      const g2 = ST.personEmail(ST.getPerson('em_d'));
+      if (g2.email !== 'rstallworth@savills.us' || g2.source !== 'guess') return 'guess: ' + JSON.stringify(g2);
+      if (ST.personEmail(ST.getPerson('em_c')).email) return 'a pool has no address';
+      ST.applyClockifyTitles([{ name: 'Nora Hassan', email: 'NHasan@savills.us', title: 'Project Manager' }]);
+      const r = ST.personEmail(ST.getPerson('em_b'));
+      if (r.email !== 'nhasan@savills.us' || r.source !== 'roster') return 'Clockify address should be kept on the roster: ' + JSON.stringify(r);
+      ST.setPersonEmail('em_a', 'bking@savills.us');
+      return ST.personEmail(ST.getPerson('em_a')).email === 'bking@savills.us' || 'a typed address should stick';
+    });
+    test('Staffing · identity', 'the Compare rows hide Clockify projects the fee tool does not know, and name the planned ones nothing lands on', () => {
+      cleanStaff();
+      const fp = S.saveProject(base({ project: { name: 'Quiet Project', client: 'Acme', status: 'active' } }));
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      ST.savePerson({ id: 'stp_x', name: 'X', capacityPct: 100, active: true });
+      ST.saveAllocation({ id: 'q_1', personId: 'stp_x', personName: 'X', project: fp.id, start: '2026-01', end: '2026-06', pct: 50 });
+      ST.commitClockify({ ok: true, months: ['2026-02'], agg: { 'stp_x|Stray Clockify Job|2026-02': 9 }, titles: {} }, 'merge');
+      const vm = ST.varianceMatrix(['2026-02'], {});
+      const stray = vm.find(r => r.project === 'Stray Clockify Job'), quiet = vm.find(r => r.feeId === fp.id);
+      if (!stray || !stray.unmapped) return 'the engine still reports the stray row (the page hides it): ' + JSON.stringify(vm.map(r => [r.project, r.unmapped]));
+      if (!quiet || ST.clockifyNamesFor(quiet.key).length) return 'the planned project has nothing landing on it';
+      return ST.unmappedClockify().some(u => u.name === 'Stray Clockify Job') || 'the stray job is on the Mapping worklist';
+    });
     test('Staffing · identity', 'merging two copies keeps every Clockify pin from both', () => {
       const mk = (ck) => ({ schemaVersion: 1, people: {}, allocations: [], actuals: {}, mappings: { users: {}, clockify: ck }, deleted: {}, meta: { monthHours: 172, feeKeyed: '2026-10-19T00:00:00Z' } });
       const merged = ST.mergeStaffDb(mk({ 'a job': { feeId: 'proj_a' } }), mk({ 'b job': { feeId: 'proj_b' }, 'c job': '__ignore__' }));
