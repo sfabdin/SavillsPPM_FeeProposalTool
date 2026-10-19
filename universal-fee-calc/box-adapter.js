@@ -1692,9 +1692,9 @@
   const NOTIFY_OUTBOX_KEY = 'ufc_notify_outbox_v1';
   const NOTIFY_STATUS = 'notify-status.json';
   const NOTIFY_STATUS_KEY = 'ufc_notify_status_id';
-  /* Copied on EVERY message the tool sends, for now — the owner wants to see
-     what goes out while the notices bed in. Drop an address here to stop. */
-  const NOTIFY_ALWAYS_CC = ['sabdin@savills.us'];
+  /* Copied on EVERY message the tool sends. Empty since Oct 2026 — each
+     notice names its own cc (the book watchers on the Clockify emails). */
+  const NOTIFY_ALWAYS_CC = [];
   Box.notifyAlwaysCc = () => NOTIFY_ALWAYS_CC.slice();
   let _notifyFolderId = null, _notifyFlushing = null;
   const readOutbox = () => { try { return JSON.parse(localStorage.getItem(NOTIFY_OUTBOX_KEY) || '[]') || []; } catch (e) { return []; } };

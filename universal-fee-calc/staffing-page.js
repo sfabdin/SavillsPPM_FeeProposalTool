@@ -983,6 +983,9 @@
       let rows = S.varianceMatrix(ms, { project: projFilter || undefined, person: state.varPerson || undefined });
       // Leaves consume capacity but bill nothing — plan-vs-actual noise here.
       rows = rows.filter(r => !S.isLeaveProject(r.project));
+      // A Clockify project nothing in the fee tool claims is not a project to
+      // compare against — it lives on the Mapping tab until someone maps it.
+      rows = rows.filter(r => !r.unmapped);
       // Type-to-search narrows live; Enter (or a pick from the list) locks it as a chip.
       const pq = String(state.varProjectQ || '').trim().toLowerCase(), qq = String(state.varPersonQ || '').trim().toLowerCase();
       if (pq) rows = rows.filter(r => (r.project + ' ' + (r.client || '') + ' ' + S.projectLabel(r.project, r.client).name).toLowerCase().includes(pq));
@@ -1080,6 +1083,9 @@
         const pL = byPerson ? null : S.projectLabel(pn, list[0].client || '');
         const cardTitle = byPerson ? (S.getPerson(pn) || { name: pn }).name : pL.name;
         const cardSub = byPerson ? ((S.getPerson(pn) || {}).title || '') : (list[0].client || pL.client || '');
+        // planned in the fee tool, but no Clockify project lands here yet — the hours cannot arrive
+        const noCk = !byPerson && pL.feeId && !S.clockifyNamesFor(pL.key).length;
+        const noCkTag = noCk ? ' <span class="badge" style="background:#fbe9e7;color:#8f2418;font-weight:800" title="No Clockify project is mapped to this fee project — logged hours cannot land here. Map one on the Mapping tab.">no Clockify project mapped</span>' : '';
         const rowLabel = (r) => byPerson ? pLbl(r.project, r.client) : esc(r.person.name);
         const cp = byPerson ? null : contractByProj[pn];
         // Dollars: the yardstick is the FEE — what the client pays — not the
@@ -1105,7 +1111,9 @@
         const linkBadge = cp ? (autoMatched
           ? ` <span title="Fee link is auto-matched by name — confirm it in Mapping" style="color:#8a6d00;cursor:help">≈ auto</span>`
           : ` <span title="Fee link confirmed in Mapping" style="color:#0E7C7B;cursor:help">🔗</span>`) : '';
-        const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cpTot(cp))}</b>${linkBadge}` : (byPerson ? `<span style="color:#b0b5bc">no contract staffing</span>` : `<a href="#" data-goto-tab="mapping" style="color:#b0b5bc" title="Link this project to its fee-tool record">no contract staffing — link in Mapping</a>`);
+        const contractCell = cp ? `contract <b style="color:var(--sav-navy)">${fmtH(cpTot(cp))}</b>${linkBadge}` : (byPerson ? `<span style="color:#b0b5bc">no contract staffing</span>`
+            : pL.feeId ? `<a href="Universal Fee Calculator.html?id=${encodeURIComponent(pL.feeId)}" style="color:#b0b5bc" title="The fee record has no priced roles — staff it in the calculator and the contract line appears here">no contract staffing priced ↗</a>`
+            : `<a href="#" data-goto-tab="allocations" style="color:#b0b5bc" title="These rows are under a name the fee tool does not know — map them from the banner on Allocations">no contract staffing — needs a fee project</a>`);
         const summaryLine = feeRef
           ? `② fee <b style="color:var(--sav-navy)">${fmtH(fee)}</b>${linkBadge} · ③ actual cost <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${fee - pa >= 0 ? '+' : ''}${fmtH(fee - pa)} margin · ${Math.round(pa / fee * 100)}% of fee spent</span> · <span style="color:#8a94a0">① plan cost ${fmtH(pe)}</span>`
           : `① matrix <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · ${contractCell} · ③ actual <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)} vs plan</span>`;
@@ -1121,7 +1129,7 @@
           : (cp ? refRow(dollars ? '② Contract fee $' : '② Contract (titles)', (m) => cpM(cp, m), cpTot(cp), pa, '') : '');
         html += `<details class="cmp-card" style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px">
           <summary style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;cursor:pointer">
-            <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span></div>
+            <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span>${noCkTag}</div>
             <div class="note-txt">${summaryLine}</div>
           </summary>
           <div style="border-top:1px solid rgba(37,39,58,0.1)">
@@ -2102,7 +2110,7 @@
      person who is behind, to the address Clockify holds for them. Every
      message is previewed exactly as it will land; nothing goes until Send is
      pressed, and then it goes through the same outbox as every other notice. */
-  const MAIL = { tab: 'digest', to: '', cc: '', subject: '', attach: true, picked: {}, emails: {}, preview: null, from: '', until: '', snap: null, edits: {} };
+  const MAIL = { tab: 'digest', to: '', cc: '', subject: '', attach: true, picked: {}, emails: {}, emailSrc: {}, preview: null, from: '', until: '', snap: null, edits: {} };
   /* edits: hand changes to a generated email, keyed 'digest' or a person id →
      { subject, html }. The preview is the editor: whatever it shows is what
      goes. A range change throws edits away (the numbers underneath moved). */
@@ -2145,17 +2153,24 @@
     const reasonFor = (r) => chaseReasonFor(r, { ms: comp.months, nowYm, expect, lagOf });
     return { comp, ms: comp.months, rows: comp.rows, untracked: comp.untracked, nowYm, dueLbl, teamLag, expect, lagOf, reasonFor, pulledAt: (S.readDb().meta || {}).clockifyImportedAt || null };
   }
+  /* The address for a nudge: the Clockify user pinned to this person, then a
+     Clockify user with the same name, then the roster, then the firm's
+     first-initial+surname pattern as a GUESS the sender should check. */
   function emailForPerson(p) {
     const users = state.clockifyUsers || [];
-    const hit = users.find(u => S.namesMatch(p.name, u.name) && u.email) || users.find(u => S.namesMatch(p.name, u.name));
-    return (hit && hit.email) ? String(hit.email).toLowerCase() : '';
+    const maps = (S.getMappings().users) || {};
+    const nk = (n) => String(n || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const pinned = users.find(u => maps[nk(u.name)] === p.id && u.email);
+    const hit = pinned || users.find(u => S.namesMatch(p.name, u.name) && u.email);
+    if (hit) { MAIL.emailSrc[p.id] = 'clockify'; return String(hit.email).toLowerCase(); }
+    const r = S.personEmail(p); MAIL.emailSrc[p.id] = r.source; return r.email;
   }
   async function openMailModal() {
     if (!mailSnap()) { toast('No Clockify hours loaded yet — pull them in Data Sources first.'); return; }
     const ov = $('#mail-modal'); ov.classList.add('open');
     MAIL.tab = 'digest';
     MAIL.to = MAIL.to || (STORE.adminEmails ? STORE.adminEmails().join('; ') : '');
-    MAIL.cc = MAIL.cc || ((window.UFC_Box && window.UFC_Box.notifyAlwaysCc) ? window.UFC_Box.notifyAlwaysCc().join('; ') : '');
+    MAIL.cc = MAIL.cc || (STORE.bookWatcherEmails ? STORE.bookWatcherEmails().join('; ') : '');   // Emily Glatt, Emily Sobel, Jeff Santoro — not the sender
     renderMailModal();
     if (!(state.clockifyUsers || []).length) { try { await pullClockifyNames(); } catch (e) {} renderMailModal(); }
   }
@@ -2202,13 +2217,13 @@
       const editedN = behind.filter(r => MAIL.edits[r.person.id]).length;
       $('#mm-title').textContent = 'Nudge ' + behind.length + ' ' + (behind.length === 1 ? 'person' : 'people') + ' who are behind';
       body.innerHTML = rangeRow + (behind.length ? `
-        <div class="note-txt">One short email each, to the address Clockify holds for them. Untick anyone you would rather speak to. Click a row to preview their email; click into the preview to reword it for that person only.${(state.clockifyUsers || []).length ? '' : ' Clockify addresses are loading…'}</div>
+        <div class="note-txt">One short email each, to the address Clockify holds for them (or the roster's). An amber address is the firm's first-initial-surname pattern guessed from the name — check it; whatever you type is kept on the roster. Untick anyone you would rather speak to. Click a row to preview their email; click into the preview to reword it for that person only.${(state.clockifyUsers || []).length ? '' : ' Clockify addresses are loading…'}</div>
         <div class="mm-pickbar"><span><b>${n}</b> of ${addressable} with an address selected${editedN ? ` · ${editedN} reworded` : ''}</span><a href="#" id="mm-all">Select all</a><a href="#" id="mm-none">Deselect all</a></div>
         <div class="mm-people"><table><tbody>${behind.map(r => `<tr class="${r.person.id === MAIL.preview ? 'sel' : ''}" data-pid="${esc(r.person.id)}">
           <td style="width:28px"><input type="checkbox" data-pick="${esc(r.person.id)}" ${MAIL.picked[r.person.id] ? 'checked' : ''} ${MAIL.emails[r.person.id] ? '' : 'disabled'}></td>
           <td><b>${esc(r.person.name)}</b>${MAIL.edits[r.person.id] ? ' <span class="nh-tag" title="You changed this person\'s email">reworded</span>' : ''}<div class="vmini">${esc(r.person.title || '')}</div></td>
           <td class="num" style="color:#8f2418;font-weight:800;white-space:nowrap">${fmtH(r.behindHrs)} h<div class="vmini" style="font-weight:400">≈ ${(Math.round(S.behindMonths(r) * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 })} mo</div></td>
-          <td style="width:40%"><input type="text" data-email="${esc(r.person.id)}" value="${esc(MAIL.emails[r.person.id] || '')}" placeholder="no Clockify email — type one">${MAIL.emails[r.person.id] ? '' : '<div class="miss">No address on the Clockify user list</div>'}</td>
+          <td style="width:40%"><input type="text" data-email="${esc(r.person.id)}" value="${esc(MAIL.emails[r.person.id] || '')}" placeholder="no address — type one"${MAIL.emailSrc[r.person.id] === 'guess' ? ' style="border-color:#e8b563;background:#fffbf0" title="Guessed from the name — not from Clockify or the roster"' : ''}>${MAIL.emails[r.person.id] ? (MAIL.emailSrc[r.person.id] === 'guess' ? '<div class="miss" style="color:#8a6d00">guessed from the name — check it</div>' : '') : '<div class="miss">No address on Clockify or the roster</div>'}</td>
         </tr>`).join('')}</tbody></table></div>
         <div class="mm-row"><label>Cc</label><input type="text" id="mm-cc" value="${esc(MAIL.cc)}"></div>
         ${pv ? `<div class="mm-row"><label>Subject</label><input type="text" id="mm-subject" value="${esc(mail.subject)}"></div>` : ''}
@@ -2218,7 +2233,7 @@
       const none = $('#mm-none'); if (none) none.onclick = (e) => { e.preventDefault(); setAll(false); };
       if (pv) wireEditor(pv.person.id, gen);
       $$('#mm-body [data-pick]').forEach(cb => cb.onchange = (e) => { MAIL.picked[cb.dataset.pick] = e.target.checked; renderMailModal(); });
-      $$('#mm-body [data-email]').forEach(inp => { inp.oninput = (e) => { MAIL.emails[inp.dataset.email] = e.target.value.trim().toLowerCase(); if (!MAIL.emails[inp.dataset.email]) MAIL.picked[inp.dataset.email] = false; else if (!(inp.dataset.email in MAIL.picked)) MAIL.picked[inp.dataset.email] = true; }; inp.onchange = () => renderMailModal(); inp.onclick = (e) => e.stopPropagation(); });
+      $$('#mm-body [data-email]').forEach(inp => { inp.oninput = (e) => { MAIL.emails[inp.dataset.email] = e.target.value.trim().toLowerCase(); if (!MAIL.emails[inp.dataset.email]) MAIL.picked[inp.dataset.email] = false; else if (!(inp.dataset.email in MAIL.picked)) MAIL.picked[inp.dataset.email] = true; }; inp.onchange = () => { const v = MAIL.emails[inp.dataset.email] || ''; if (v && /@/.test(v)) { S.setPersonEmail(inp.dataset.email, v); MAIL.emailSrc[inp.dataset.email] = 'roster'; } renderMailModal(); }; inp.onclick = (e) => e.stopPropagation(); });
       $$('#mm-body tr[data-pid]').forEach(tr => tr.onclick = (e) => { if (e.target.closest('input')) return; MAIL.preview = tr.dataset.pid; renderMailModal(); });
       const cc = $('#mm-cc'); if (cc) cc.oninput = (e) => { MAIL.cc = e.target.value; };
       send.textContent = 'Send ' + n + ' nudge' + (n === 1 ? '' : 's'); send.disabled = !authed || !n;

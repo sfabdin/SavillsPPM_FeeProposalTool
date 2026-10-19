@@ -2336,8 +2336,39 @@
       if (!person) person = Object.values(db.people).find(p => namesMatch(p.name, u.name));
       if (person && person.title !== t) { person.title = t; person.updatedAt = new Date().toISOString(); set++; }
     });
-    if (set) { writeDb(db); logStaff('staff-titles', { titles: set }); }
+    // Clockify's email is the address the nudges go to — keep it on the
+    // roster so it is there even when the live list cannot be pulled.
+    let mails = 0;
+    (users || []).forEach(u => {
+      const e = String(u.email || '').trim().toLowerCase(); if (!e || !/@/.test(e)) return;
+      const mapped = maps[nkey(u.name)];
+      const person = (mapped && db.people[mapped]) || Object.values(db.people).find(p => namesMatch(p.name, u.name));
+      if (person && person.email !== e) { person.email = e; person.updatedAt = new Date().toISOString(); mails++; }
+    });
+    if (set || mails) { writeDb(db); if (set) logStaff('staff-titles', { titles: set }); }
     return set;
+  }
+  /** The address a person is reached at: the roster's (filled from Clockify
+      or typed by an admin), else the firm's pattern — first initial + surname
+      @savills.us — marked as a guess so a sender can check it. */
+  function personEmail(person) {
+    if (!person) return { email: '', source: 'none' };
+    if (person.email && /@/.test(person.email)) return { email: String(person.email).toLowerCase(), source: 'roster' };
+    if (person.isPool || isNewHireName(person.name)) return { email: '', source: 'none' };
+    // the fee tool's own directory knows its leaders' logins (Brianna King is bsheppardking@, not bking@)
+    try { const S2 = window.UFC_Store; const L = (S2 && S2.REVENUE_LEADERS) || []; const hit = L.find(l => l.username && /@/.test(l.username) && (namesMatch(person.name, l.displayName || '') || (l.aliases || []).some(a => !/@/.test(a) && namesMatch(person.name, a)))); if (hit) return { email: String(hit.username).toLowerCase(), source: 'directory' }; } catch (e) {}
+    const parts = cleanName(flipComma(person.name)).toLowerCase().replace(/[^a-z\s'-]/g, '').split(/\s+/).filter(Boolean);
+    if (parts.length < 2) return { email: '', source: 'none' };
+    const first = parts[0], last = parts.slice(1).join('').replace(/['-]/g, '');
+    return { email: first[0] + last + '@savills.us', source: 'guess' };
+  }
+  function setPersonEmail(personId, email) {
+    const db = readDb(); const p = db.people[personId]; if (!p) return null;
+    const e = String(email || '').trim().toLowerCase();
+    if ((p.email || '') === e) return p;
+    p.email = e || undefined; if (!e) delete p.email; p.updatedAt = new Date().toISOString();
+    writeDb(db); logStaff('staff-person', { person: p.name, changes: [{ field: 'email', to: e || '(cleared)' }] });
+    return p;
   }
 
   /* ---------- dollars: internal cost rates by title ----------
@@ -3201,7 +3232,7 @@
     analyzeClockify, commitClockify, clearActuals,
     getMappings, setUserMapping, setProjectMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
     titleFamily, costRateForTitle, personCostRate, behindMonths, isBehind, missingCost, projectLabel, projectLabelText, allocContractDrift, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
-    setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles,
+    setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles, personEmail, setPersonEmail,
     parseCsvRows: parseCsv,
     // helpers
     namesMatch, cleanName, isNewHireName, allocEnd, isOpenEnded, clampPct,
