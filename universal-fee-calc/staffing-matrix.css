@@ -299,3 +299,25 @@ body.leader-view .admin-only, body.leader-view #fresh-strip, body.leader-view #s
 .modal .mm-people .miss { color:#CE181E; font-size:11px; }
 .modal .mm-range { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; }
 .modal .mm-range select { font-family:var(--font-body); font-size:13px; padding:6px 8px; border:1px solid rgba(37,39,58,0.25); }
+
+/* Compare tab cells: one number you read, the plan underneath, the variance as the tint. */
+.cmp-table td.cmp-c { padding:5px 6px; text-align:center; white-space:nowrap; min-width:72px; }
+.cmp-table td.cmp-c .cmp-a { font-weight:700; font-variant-numeric:tabular-nums; }
+.cmp-table td.cmp-c .cmp-p { font-size:10.5px; opacity:.72; font-variant-numeric:tabular-nums; }
+.cmp-table td.cmp-c.var-ok { background:#cfe6e4; color:#1f5a3e; font-weight:400; }
+.cmp-table td.cmp-c.var-over { background:#fce7c2; color:#7a5600; font-weight:400; }
+.cmp-table td.cmp-c.var-under { background:#eef4f4; color:#4a5560; font-weight:400; }
+.cmp-table td.cmp-c.cmp-e { color:#c9cdd3; }
+.cmp-table td.cmp-c.cmp-noplan { background:#f4f2ef; color:#79828C; }
+/* contract provenance on an allocation row */
+.ct-tag { background:#e7eef0; color:#4a5560; }
+.ct-tag.changed { background:#fdf3d7; color:#8a6d00; }
+#am-contract { background:#f4f6f7; border-left:3px solid var(--sav-steel); padding:8px 12px; font-size:12.5px; color:var(--sav-navy); }
+#am-contract b { color:var(--sav-navy); }
+/* variance cells on By Project / By Person */
+.cell.v0 { color:#c9cdd3; font-weight:400; }
+.cell.vok { background:#cfe6e4; }
+.cell.vover { background:#fce7c2; color:#7a5600; }
+.cell.vover2 { background:#f6c9c2; color:#8f2418; }
+.cell.vunder { background:#eef4f4; color:#4a5560; }
+.cell.nodata { color:#c9cdd3; font-weight:400; background:repeating-linear-gradient(45deg, #f7f6f3 0 4px, #fff 4px 8px); }

@@ -1230,6 +1230,27 @@
       return f.some(x => x.startsWith('End 2026-06→2026-09')) || 'end-date change missing: ' + f.join(', ');
     });
 
+    test('Staffing · contract', 'a row accepted from the contract keeps the contract figure when an admin changes it', () => {
+      freshTrail();
+      // accepted from the bridge: carries the contract snapshot
+      const acc = ST.saveAllocation({ id: 'ct_1', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Alpha', client: 'Acme', status: 'Active', type: 'Awarded', start: '2026-01', end: '2026-06', pct: 50, contractResource: 'Jane Tester', contract: { pct: 50, want: 50, have: 0, start: '2026-01', end: '2026-06' } });
+      if (ST.allocContractDrift(acc)) return 'fresh from the contract: no drift';
+      // an edit from the modal sends a bare record — the contract rides along
+      const edited = ST.saveAllocation({ id: 'ct_1', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Alpha', client: 'Acme', status: 'Active', type: 'Awarded', start: '2026-01', end: '2026-06', pct: 30, note: 'trimmed' });
+      if (!edited.contract || edited.contract.pct !== 50 || edited.contractResource !== 'Jane Tester') return 'contract snapshot survives the edit: ' + JSON.stringify(edited.contract);
+      const d = ST.allocContractDrift(edited);
+      if (!d || !d.pctChanged || d.pct !== 50 || d.datesChanged) return 'drift says 50 → 30: ' + JSON.stringify(d);
+      // a row accepted BEFORE snapshots existed: its pre-edit values become the contract figure on first edit
+      ST.saveAllocation({ id: 'ct_2', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Beta', client: 'Acme', status: 'Active', type: 'Awarded', start: '2026-03', end: '2026-05', pct: 40, contractRole: 'Project Manager' });
+      const e2 = ST.saveAllocation({ id: 'ct_2', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Beta', client: 'Acme', status: 'Active', type: 'Awarded', start: '2026-03', end: '2026-07', pct: 40 });
+      const d2 = ST.allocContractDrift(e2);
+      if (!e2.contract || e2.contract.pct !== 40 || !d2 || d2.pctChanged || !d2.datesChanged || d2.end !== '2026-05') return 'legacy contract row frozen on first edit: ' + JSON.stringify({ c: e2.contract, d: d2 });
+      // a plain allocation never grows a contract
+      const plain = ST.saveAllocation({ id: 'ct_3', personId: 'stp_jane', personName: 'Jane Tester', project: 'Tower Gamma', client: 'Acme', status: 'Active', type: 'Awarded', start: '2026-01', end: '2026-02', pct: 20 });
+      if (plain.contract || ST.allocContractDrift(plain)) return 'a hand-made row has no contract';
+      return true;
+    });
+
     test('Staffing · trail', 'a save that changes nothing logs nothing', () => {
       freshTrail();
       ST.saveAllocation({ id: 'tr_3', personId: 'stp_jane', personName: 'Jane Tester',

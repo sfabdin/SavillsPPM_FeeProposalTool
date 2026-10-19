@@ -87,7 +87,7 @@
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
     pplSearch: '', expandedRoster: new Set(), pplExpandInit: false,
-    varProject: '', varPerson: '', varProjectQ: '', varPersonQ: '', varGroup: 'project', varUnit: 'hours', showMacro: true, glossaryOpen: false,
+    varProject: '', varPerson: '', varProjectQ: '', varPersonQ: '', gridMetric: 'plan', varGroup: 'project', varUnit: 'hours', showMacro: true, glossaryOpen: false,
     expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
@@ -438,6 +438,7 @@
           // gap clears even when the assignee differs from the contract label
           contractRole: g.open ? g.roleTitle : undefined,
           contractResource: g.open ? undefined : g.resource,
+          contract: { pct: sg.need, want: sg.want, have: sg.have, start: sg.start, end: sg.end },
           note: (g.open ? `Open contract role staffed`
             : (g.topUp ? `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%)` : `From contract staffing`)) + ` · ${g.roles.join(', ')}`,
         });
@@ -492,6 +493,7 @@
           status: 'Active', type: 'Awarded',
           start: sg.start, end: sg.end, pct: sg.need,
           contractResource: g.resource,
+          contract: { pct: sg.need, want: sg.want, have: sg.have, start: sg.start, end: sg.end },
           note: `Contract top-up (matrix had ${sg.have}%, contract ${sg.want}%) · ${g.roles.join(', ')}`,
         });
       });
@@ -571,7 +573,7 @@
         <td>${isLeave ? '<span class="badge" style="background:#efe6f7;color:#6b3fa0">🌴 Leave</span>' : `<span class="badge ${isP ? 'pursuit' : 'active'}">${esc(a.status)}${a.type === 'Opportunity' ? ' · opp' : ''}</span>`}</td>
         <td>${esc(a.start ? S.ymLabel(a.start) : '—')} – ${esc(a.end ? S.ymLabel(a.end) : '—')}${isLeave && a.end ? ` <span class="vmini" style="color:#6b3fa0">back ${esc(S.ymLabel(S.ymAdd(a.end, 1)))}</span>` : ''}</td>
         <td class="num">${a.pct}%</td>
-        <td class="vmini">${esc(a.note || '')}${chip}</td>
+        <td class="vmini">${contractTag(a)}${a.note ? (contractTag(a) ? ' ' : '') + esc(a.note) : ''}${chip}</td>
         <td><span class="row-act"><button data-edit="${a.id}">Edit</button><button class="del" data-del="${a.id}">Del</button></span></td>
       </tr>`;
     });
@@ -642,7 +644,7 @@
           const isP = isPursuitAlloc(a);
           const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
           const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-          pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+          pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         });
         if (!pr) pr = `<tr class="drawer-tr"><td class="who dproj"><em class="note-txt">No allocations in this window.</em></td>${ms.map(() => '<td class="dcell">·</td>').join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         body += pr;
@@ -728,7 +730,7 @@
           const isP = isPursuitAlloc(a);
           const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
           const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-          return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${pLbl(a.project, a.client)}${stat}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
+          return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${pLbl(a.project, a.client)}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell"></td><td class="dcell"></td></tr>`;
         };
         const sumRow = (label, list, style, title) => {
           const cells = ms.map(m => {
@@ -779,6 +781,21 @@
 
   /** A project as people know it: the fee tool's name, with the matrix /
       Clockify name trailing in small type when it differs. Keys stay raw. */
+  /** Where an allocation came from: a contract tag, and the contract's own
+      figure when someone has since changed the row. */
+  function contractTag(a) {
+    if (!a) return '';
+    const d = S.allocContractDrift(a);
+    if (d) {
+      const win = (x, y) => x ? S.ymLabel(x) + (y && y !== x ? ' – ' + S.ymLabel(y) : '') : '';
+      const bits = [];
+      if (d.pctChanged) bits.push(`${d.pct}% → ${a.pct}%`);
+      if (d.datesChanged) bits.push(`${win(d.start, d.end)} → ${win(a.start, a.end)}`);
+      return ` <span class="nh-tag ct-tag changed" title="Accepted from the contract at ${d.pct}%${d.start ? ' for ' + win(d.start, d.end) : ''}; the plan was changed since. The contract itself is unchanged.">📄 contract ${esc(bits.join(' · '))}</span>`;
+    }
+    if (a.contract || a.contractRole || a.contractResource) return ` <span class="nh-tag ct-tag" title="Accepted from the contract staffing${a.contract ? ' at ' + a.contract.pct + '%' + (a.contract.want && a.contract.want !== a.contract.pct ? ' (contract total ' + a.contract.want + '%)' : '') : ''}">📄 contract</span>`;
+    return '';
+  }
   function pLbl(name, client) { const L = S.projectLabel(name, client); return esc(L.name) + (L.alias ? ` <span class="vmini" title="Matrix / Clockify name">⇐ ${esc(L.alias)}</span>` : ''); }
 
   /* ---------- ACTUALS vs EXPECTED ----------
@@ -1235,6 +1252,14 @@
     $('#am-end').value = a && a.end ? a.end : S.ymAdd(months()[0], 11);
     $('#am-pct').value = a ? a.pct : 25;
     $('#am-note').value = a ? (a.note || '') : '';
+    const ct = $('#am-contract');
+    if (ct) {
+      if (a && (a.contract || a.contractRole || a.contractResource)) {
+        const c = a.contract; const win = (x, y) => x ? S.ymLabel(x) + (y && y !== x ? ' – ' + S.ymLabel(y) : '') : '';
+        ct.hidden = false;
+        ct.innerHTML = `📄 <b>Per the contract:</b> ${c ? `<b>${c.pct}%</b>${c.want && c.want !== c.pct ? ` (of a ${c.want}% contract line${c.have ? `, ${c.have}% was already in the matrix` : ''})` : ''}${c.start ? ' · ' + esc(win(c.start, c.end)) : ''}` : 'accepted from the contract staffing'}${a.contractRole ? ' · role ' + esc(a.contractRole) : ''}${a.contractResource && a.contractResource !== (person.name || '') ? ' · named ' + esc(a.contractResource) : ''}.<div class="vmini" style="margin-top:3px">Changing this row changes the staffing plan only. The contract and the fee are not touched; the contract figure stays on the row so the difference is visible.</div>`;
+      } else { ct.hidden = true; ct.innerHTML = ''; }
+    }
     if (!a && preset) {   // prefilled add (e.g. "Log a leave")
       if (preset.project != null) $('#am-project').value = preset.project;
       if (preset.client != null) $('#am-client').value = preset.client;
@@ -1266,7 +1291,12 @@
     const name = $('#am-person').value.trim();
     const project = $('#am-project').value.trim();
     if (!name || !project) { UFC_UI.toast('Person and project are required.'); return; }
-    if (viewMode === 'leader' && LEADER()) {
+    // Leaders stay inside their own projects. An admin may edit any
+    // allocation from either view — the real sign-in decides, not the
+    // leader being impersonated.
+    const realU = (STORE.getRealIdentity && STORE.getRealIdentity()) || {};
+    const adminHere = (STORE.isAdmin && STORE.isAdmin()) || (realU.username && STORE.adminEmails && STORE.adminEmails().includes(String(realU.username).toLowerCase()));
+    if (viewMode === 'leader' && LEADER() && !adminHere) {
       const sc = LEADER().scope();
       if (!LEADER().allowedProject(sc, project)) { UFC_UI.toast('That is not one of your projects — pick one of yours from the list.'); return; }
       if (state.editingAlloc) { const cur = S.listAllocations().find(x => x.id === state.editingAlloc); if (cur && !sc.matrixNames.has(cur.project)) { UFC_UI.toast('That allocation is on another leader\'s project.'); return; } }
@@ -1285,8 +1315,9 @@
     };
     S.saveAllocation(rec);
     if (fee && !S.matchFeeProjects(projectName, rec.client).some(l => l.id === fee.id)) S.setFeeMapping(projectName, fee.id);
+    const wasEdit = !!state.editingAlloc;
     closeAllocModal(); renderAll();
-    toast(state.editingAlloc ? 'Allocation updated.' : 'Allocation added' + (fee ? ' on ' + fee.label + '.' : '.'));
+    toast(wasEdit ? 'Allocation updated.' : 'Allocation added' + (fee ? ' on ' + fee.label + '.' : '.'));
   }
 
   /* ---------- shell ---------- */
