@@ -2176,7 +2176,10 @@
   }
   function closeMailModal() { $('#mail-modal').classList.remove('open'); }
   function mailCtx() { const s = mailSnap(); return { nowYm: s.nowYm, expect: s.expect, dueLbl: s.dueLbl, teamLag: s.teamLag, lagOf: s.lagOf, reasonFor: s.reasonFor, lastEntry: (r) => S.lastTimeEntered(r, s.ms), toolUrl: location.origin + location.pathname, pulledAt: s.pulledAt ? new Date(s.pulledAt).toLocaleDateString() : null }; }
-  function behindRows() { const s = mailSnap(); return s.rows.filter(S.isBehind); }
+  /* Anyone with hours missing in the range can be nudged — the list is
+     everyone short, most-short first; the ones more than a month behind are
+     ticked by default, the rest are a click away. */
+  function behindRows() { const s = mailSnap(); return s.rows.filter(r => (r.behindHrs || 0) > 0).sort((a, b) => (S.isBehind(b) ? 1 : 0) - (S.isBehind(a) ? 1 : 0) || (b.behindHrs || 0) - (a.behindHrs || 0)); }
   function renderMailModal() {
     const s = mailSnap(); if (!s) return;
     const body = $('#mm-body'), note = $('#mm-note'), send = $('#mm-send');
@@ -2207,7 +2210,8 @@
       wireMailRange();
     } else {
       // Nudges: who, to which address, and a preview of the highlighted one.
-      behind.forEach(r => { if (!(r.person.id in MAIL.emails)) MAIL.emails[r.person.id] = emailForPerson(r.person); if (!(r.person.id in MAIL.picked)) MAIL.picked[r.person.id] = !!MAIL.emails[r.person.id]; });
+      behind.forEach(r => { if (!(r.person.id in MAIL.emails)) MAIL.emails[r.person.id] = emailForPerson(r.person); if (!(r.person.id in MAIL.picked)) MAIL.picked[r.person.id] = !!MAIL.emails[r.person.id] && S.isBehind(r); });
+      const overN = behind.filter(S.isBehind).length;
       if (!MAIL.preview || !behind.some(r => r.person.id === MAIL.preview)) MAIL.preview = behind.length ? behind[0].person.id : null;
       const pv = behind.find(r => r.person.id === MAIL.preview);
       const gen = pv ? S.clockifyNudgeEmail(pv, mailCtx()) : null;
@@ -2215,22 +2219,23 @@
       const n = behind.filter(r => MAIL.picked[r.person.id] && MAIL.emails[r.person.id]).length;
       const addressable = behind.filter(r => MAIL.emails[r.person.id]).length;
       const editedN = behind.filter(r => MAIL.edits[r.person.id]).length;
-      $('#mm-title').textContent = 'Nudge ' + behind.length + ' ' + (behind.length === 1 ? 'person' : 'people') + ' who are behind';
+      $('#mm-title').textContent = 'Nudge · ' + behind.length + ' ' + (behind.length === 1 ? 'person has' : 'people have') + ' hours missing' + (overN ? ' · ' + overN + ' more than a month behind' : '');
       body.innerHTML = rangeRow + (behind.length ? `
-        <div class="note-txt">One short email each, to the address Clockify holds for them (or the roster's). An amber address is the firm's first-initial-surname pattern guessed from the name — check it; whatever you type is kept on the roster. Untick anyone you would rather speak to. Click a row to preview their email; click into the preview to reword it for that person only.${(state.clockifyUsers || []).length ? '' : ' Clockify addresses are loading…'}</div>
-        <div class="mm-pickbar"><span><b>${n}</b> of ${addressable} with an address selected${editedN ? ` · ${editedN} reworded` : ''}</span><a href="#" id="mm-all">Select all</a><a href="#" id="mm-none">Deselect all</a></div>
+        <div class="note-txt">One short email each, to the address Clockify holds for them (or the roster's). An amber address is the firm's first-initial-surname pattern guessed from the name — check it; whatever you type is kept on the roster. Everyone with hours missing in this range is listed, most-short first; the <b>&gt;1 mo</b> rows are ticked to start with, tick anyone else you want to nudge. Click a row to preview their email; click into the preview to reword it for that person only.${(state.clockifyUsers || []).length ? '' : ' Clockify addresses are loading…'}</div>
+        <div class="mm-pickbar"><span><b>${n}</b> of ${addressable} with an address selected${editedN ? ` · ${editedN} reworded` : ''}</span><a href="#" id="mm-all">Select all</a><a href="#" id="mm-over" title="Only the people more than a month of their own hours behind">Select &gt;1 month behind</a><a href="#" id="mm-none">Deselect all</a></div>
         <div class="mm-people"><table><tbody>${behind.map(r => `<tr class="${r.person.id === MAIL.preview ? 'sel' : ''}" data-pid="${esc(r.person.id)}">
           <td style="width:28px"><input type="checkbox" data-pick="${esc(r.person.id)}" ${MAIL.picked[r.person.id] ? 'checked' : ''} ${MAIL.emails[r.person.id] ? '' : 'disabled'}></td>
-          <td><b>${esc(r.person.name)}</b>${MAIL.edits[r.person.id] ? ' <span class="nh-tag" title="You changed this person\'s email">reworded</span>' : ''}<div class="vmini">${esc(r.person.title || '')}</div></td>
+          <td><b>${esc(r.person.name)}</b>${S.isBehind(r) ? ' <span class="nh-tag" style="background:#fbe9e7;color:#8f2418" title="More than a month of their own hours missing">&gt;1 mo</span>' : ''}${MAIL.edits[r.person.id] ? ' <span class="nh-tag" title="You changed this person\'s email">reworded</span>' : ''}<div class="vmini">${esc(r.person.title || '')}</div></td>
           <td class="num" style="color:#8f2418;font-weight:800;white-space:nowrap">${fmtH(r.behindHrs)} h<div class="vmini" style="font-weight:400">≈ ${(Math.round(S.behindMonths(r) * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 })} mo</div></td>
           <td style="width:40%"><input type="text" data-email="${esc(r.person.id)}" value="${esc(MAIL.emails[r.person.id] || '')}" placeholder="no address — type one"${MAIL.emailSrc[r.person.id] === 'guess' ? ' style="border-color:#e8b563;background:#fffbf0" title="Guessed from the name — not from Clockify or the roster"' : ''}>${MAIL.emails[r.person.id] ? (MAIL.emailSrc[r.person.id] === 'guess' ? '<div class="miss" style="color:#8a6d00">guessed from the name — check it</div>' : '') : '<div class="miss">No address on Clockify or the roster</div>'}</td>
         </tr>`).join('')}</tbody></table></div>
         <div class="mm-row"><label>Cc</label><input type="text" id="mm-cc" value="${esc(MAIL.cc)}"></div>
         ${pv ? `<div class="mm-row"><label>Subject</label><input type="text" id="mm-subject" value="${esc(mail.subject)}"></div>` : ''}
-        ${mail ? editorHtml('Preview · ' + esc(pv.person.name), mail) : ''}` : '<div class="empty" style="border:0">Nobody is more than a month of their own hours behind in this range. Nothing to nudge.</div>');
+        ${mail ? editorHtml('Preview · ' + esc(pv.person.name), mail) : ''}` : '<div class="empty" style="border:0">Nobody has hours missing in this range. Nothing to nudge.</div>');
       const setAll = (v) => { behind.forEach(r => { if (MAIL.emails[r.person.id]) MAIL.picked[r.person.id] = v; }); renderMailModal(); };
       const all = $('#mm-all'); if (all) all.onclick = (e) => { e.preventDefault(); setAll(true); };
       const none = $('#mm-none'); if (none) none.onclick = (e) => { e.preventDefault(); setAll(false); };
+      const over = $('#mm-over'); if (over) over.onclick = (e) => { e.preventDefault(); behind.forEach(r => { MAIL.picked[r.person.id] = !!MAIL.emails[r.person.id] && S.isBehind(r); }); renderMailModal(); };
       if (pv) wireEditor(pv.person.id, gen);
       $$('#mm-body [data-pick]').forEach(cb => cb.onchange = (e) => { MAIL.picked[cb.dataset.pick] = e.target.checked; renderMailModal(); });
       $$('#mm-body [data-email]').forEach(inp => { inp.oninput = (e) => { MAIL.emails[inp.dataset.email] = e.target.value.trim().toLowerCase(); if (!MAIL.emails[inp.dataset.email]) MAIL.picked[inp.dataset.email] = false; else if (!(inp.dataset.email in MAIL.picked)) MAIL.picked[inp.dataset.email] = true; }; inp.onchange = () => { const v = MAIL.emails[inp.dataset.email] || ''; if (v && /@/.test(v)) { S.setPersonEmail(inp.dataset.email, v); MAIL.emailSrc[inp.dataset.email] = 'roster'; } renderMailModal(); }; inp.onclick = (e) => e.stopPropagation(); });
