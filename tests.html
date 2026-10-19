@@ -1485,6 +1485,57 @@
       if (!db.meta.legacyMappings || !db.meta.legacyMappings.fee['em nali']) return 'the old tables should be kept under meta.legacyMappings';
       return ST.actualHours('stp_x', fp.id, '2026-02') === 12 || 'the hours under the old Clockify pin should land on the fee project';
     });
+    test('Staffing · identity', 'a Salesforce id matches only as a whole token, and only when it looks like an id', () => {
+      cleanStaff();
+      const loose = S.saveProject(base({ project: { name: 'Workplace 2025', client: 'ExxonMobil', status: 'active', salesforceId: '2420' } }));
+      const real = S.saveProject(base({ project: { name: 'Site Survey', client: 'ExxonMobil', status: 'active', salesforceId: 'P001234' } }));
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      const r1 = ST.resolveClockify('2024_20001');
+      if (r1 && r1.feeId === loose.id) return 'a bare "2420" must not catch 2024_20001';
+      const r2 = ST.resolveClockify('P001234 - ExxonMobil - Global Site Survey'), r3 = ST.resolveClockify('exxon_p001234_survey'), r4 = ST.resolveClockify('XP0012345 misc');
+      if (!r2 || r2.feeId !== real.id || r2.via !== 'salesforce') return 'P001234 should match by Salesforce id: ' + JSON.stringify(r2);
+      if (!r3 || r3.feeId !== real.id) return 'the id inside a snake_case name should match: ' + JSON.stringify(r3);
+      return !(r4 && r4.via === 'salesforce') || 'an id embedded in a longer token must not match';
+    });
+    test('Staffing · identity', 'one Clockify project can feed several fee records — each month goes to the record active then, two at once split by plan', () => {
+      cleanStaff();
+      const A = S.saveProject(base({ project: { name: 'Base Contract', client: 'Acme', status: 'active' }, timeline: { startMonth: 1, startYear: 2026, endMonth: 6, endYear: 2026 } }));
+      const B = S.saveProject(base({ project: { name: 'Extension', client: 'Acme', status: 'active' }, timeline: { startMonth: 6, startYear: 2026, endMonth: 12, endYear: 2026 } }));
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      ST.setMonthHours(172);
+      ST.savePerson({ id: 'stp_x', name: 'X', capacityPct: 100, active: true });
+      ST.saveAllocation({ id: 'sh_a', personId: 'stp_x', personName: 'X', project: A.id, start: '2026-01', end: '2026-06', pct: 60 });
+      ST.saveAllocation({ id: 'sh_b', personId: 'stp_x', personName: 'X', project: B.id, start: '2026-06', end: '2026-12', pct: 20 });
+      ST.setProjectMapping('Shared Job', A.id);
+      ST.setProjectMapping('Shared Job', B.id, { add: true });
+      const res = ST.resolveClockify('Shared Job');
+      if (!res || (res.feeIds || []).join() !== [A.id, B.id].join()) return 'both records should be on the pin: ' + JSON.stringify(res);
+      ST.commitClockify({ ok: true, months: ['2026-03', '2026-06', '2026-09', '2027-02'], agg: { 'stp_x|Shared Job|2026-03': 50, 'stp_x|Shared Job|2026-06': 40, 'stp_x|Shared Job|2026-09': 30, 'stp_x|Shared Job|2027-02': 8 }, titles: {} }, 'merge');
+      const h = (id, ym) => Math.round(ST.actualHours('stp_x', id, ym) * 100) / 100;
+      if (h(A.id, '2026-03') !== 50 || h(B.id, '2026-03') !== 0) return 'March belongs to the base contract: ' + [h(A.id, '2026-03'), h(B.id, '2026-03')];
+      if (h(A.id, '2026-09') !== 0 || h(B.id, '2026-09') !== 30) return 'September belongs to the extension: ' + [h(A.id, '2026-09'), h(B.id, '2026-09')];
+      if (h(A.id, '2026-06') !== 30 || h(B.id, '2026-06') !== 10) return 'June (both active) splits 60:20 by plan: ' + [h(A.id, '2026-06'), h(B.id, '2026-06')];
+      if (h(B.id, '2027-02') !== 8) return 'a month nobody covers goes to the nearest record: ' + [h(A.id, '2027-02'), h(B.id, '2027-02')];
+      if (ST.clockifyNamesFor(A.id).join() !== 'Shared Job' || ST.clockifyNamesFor(B.id).join() !== 'Shared Job') return 'both records should list the Clockify project';
+      const row = ST.clockifyProjectRows().find(r => r.name === 'Shared Job');
+      if (!row || !row.shared || row.keys.length !== 2) return 'mapping row should show it shared: ' + JSON.stringify(row);
+      // take it off the extension → base only; off the base too → detached, not auto-matched
+      ST.setProjectMapping('Shared Job', B.id, { remove: true });
+      if ((ST.resolveClockify('Shared Job').feeIds || []).join() !== A.id) return 'removing one record should leave the other';
+      ST.setProjectMapping('Shared Job', A.id, { remove: true });
+      if (ST.resolveClockify('Shared Job') !== null || !ST.clockifyProjectRows().find(r => r.name === 'Shared Job').detached) return 'removing the last record should detach it';
+      return ST.unmappedClockify().some(u => u.name === 'Shared Job' && u.hours === 128) || 'a detached project is listed as unmapped with its hours';
+    });
+    test('Staffing · identity', 'unmapping an automatic match sticks until someone maps it again', () => {
+      cleanStaff();
+      const fp = S.saveProject(base({ project: { name: 'Exact Name Job', client: 'Acme', status: 'active' } }));
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      if ((ST.resolveClockify('Exact Name Job') || {}).via !== 'name') return 'should match by name first';
+      ST.setProjectMapping('Exact Name Job', '__detach__');
+      if (ST.resolveClockify('Exact Name Job') !== null) return 'detached must not re-match';
+      ST.setProjectMapping('Exact Name Job', null);
+      return (ST.resolveClockify('Exact Name Job') || {}).feeId === fp.id || 'clearing the pin brings the automatic match back';
+    });
     test('Staffing · identity', 'merging two copies keeps every Clockify pin from both', () => {
       const mk = (ck) => ({ schemaVersion: 1, people: {}, allocations: [], actuals: {}, mappings: { users: {}, clockify: ck }, deleted: {}, meta: { monthHours: 172, feeKeyed: '2026-10-19T00:00:00Z' } });
       const merged = ST.mergeStaffDb(mk({ 'a job': { feeId: 'proj_a' } }), mk({ 'b job': { feeId: 'proj_b' }, 'c job': '__ignore__' }));

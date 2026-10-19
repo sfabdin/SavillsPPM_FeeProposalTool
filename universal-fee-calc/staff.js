@@ -302,7 +302,7 @@
     db.schemaVersion = SCHEMA;
     safeSet(JSON.stringify(db));
     _dbCache = db;
-    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null;   // fee-tool project list may have changed too
     ensureModel(db);
     return true;
   }
@@ -310,7 +310,7 @@
     db.schemaVersion = SCHEMA;
     db.meta = db.meta || {};
     db.meta.updatedAt = new Date().toISOString();
-    _ckCache = null; _actIdx = null; _labelCache = null;
+    _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null;
     decorate(db); delete db.__decorated;
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser && window.UFC_Store.getCurrentUser(); if (u && u.username) db.meta.updatedBy = u.username; } catch (e) {}
     safeSet(JSON.stringify(db));
@@ -833,7 +833,7 @@
     const merged = isPristineSeed(local) ? remote : mergeStaffDb(remote, local);
     safeSet(JSON.stringify(merged));
     _dbCache = merged;
-    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null;   // fee-tool project list may have changed too
     ensureModel(merged);
     return merged;
   }
@@ -1044,7 +1044,7 @@
   // silently keep pointing at old data.
   if (typeof document !== 'undefined') {
     document.addEventListener('ufc:remote-updated', (e) => {
-      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; }
+      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; }
     });
   }
   /** Fee-tool project records, parsed ONCE per page load — UFC_Store.getProject
@@ -1054,7 +1054,7 @@
     // The store hands back the SAME projects object until the book changes,
     // so an identity check is a free staleness test — a record saved a moment
     // ago (a new pursuit, a test fixture) is seen on the very next call.
-    try { const S2 = window.UFC_Store; const raw = S2 && S2.allProjectsRaw ? S2.allProjectsRaw() : null; if (raw !== _feeRaw) { _feeRaw = raw; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; } } catch (e) {}
+    try { const S2 = window.UFC_Store; const raw = S2 && S2.allProjectsRaw ? S2.allProjectsRaw() : null; if (raw !== _feeRaw) { _feeRaw = raw; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; } } catch (e) {}
     if (_feeRecords) return _feeRecords;
     try { const S2 = window.UFC_Store; _feeRecords = (S2 && S2.listProjects) ? S2.listProjects() : []; } catch (e) { _feeRecords = []; }
     return _feeRecords;
@@ -1159,13 +1159,23 @@
     if (_sfIndex) return _sfIndex;
     _sfIndex = [];
     try {
-      feeRecords().forEach(p => {
+      feeRecords().forEach(p => {   // see sfHit() for how a name is matched
         const sf = String((p.project && p.project.salesforceId) || '').trim().toLowerCase();
-        if (sf.length >= 4) _sfIndex.push({ sf, id: p.id, name: (p.project && p.project.name) || '' });
+        // Only an id that LOOKS like one (P001234, M02570, MI0014, 0009051).
+        // A bare "2420" typed in that field used to catch every Clockify
+        // name whose digits happened to contain it ("2024_20001").
+        if (/^[a-z]{1,3}\d{4,}$/.test(sf) || /^\d{6,}$/.test(sf)) _sfIndex.push({ sf, id: p.id, name: (p.project && p.project.name) || '' });
       });
       _sfIndex.sort((a, b) => b.sf.length - a.sf.length);   // longest id first — avoids prefix collisions
     } catch (e) {}
     return _sfIndex;
+  }
+  /** The fee record whose Salesforce id appears in a Clockify name as a whole
+      token ("P001234 - Exxon…", "exxon_p001234"), never as a run of digits
+      inside a longer number. */
+  function sfHit(raw) {
+    const rawL = String(raw || '').toLowerCase();
+    return sfIndex().find(e => new RegExp('(^|[^a-z0-9])' + e.sf.replace(/[^a-z0-9]/g, '') + '([^a-z0-9]|$)').test(rawL)) || null;
   }
   /** Numeric/code tokens (383, 270p, fbg) distinguish sibling projects of the
       same client — "JPMC - 383M" vs "JPMC - 270P". If BOTH names carry such
@@ -1202,27 +1212,33 @@
   let _ckCache = null, _ckFee = null;
   function resolveClockify(ckName) {
     const k = nkey(ckName); if (!k) return null;
-    if (!_ckCache || _ckFee !== feeIndex()) { _ckCache = new Map(); _actIdx = null; _ckFee = feeIndex(); }
+    if (!_ckCache || _ckFee !== feeIndex()) { _ckCache = new Map(); _actIdx = null; _tlCache = null; _ckFee = feeIndex(); }
     if (_ckCache.has(k)) return _ckCache.get(k);
     let out = null;
     const m = ((readDb().mappings || {}).clockify || {})[k];
     if (m === '__ignore__') out = { key: null, ignore: true, via: 'mapped' };
-    else if (m && m.feeId) out = feeIndex().some(p => p.id === m.feeId) ? { key: 'fee:' + m.feeId, feeId: m.feeId, via: 'mapped' } : null;
+    else if (m && m.detached) { _ckCache.set(k, null); return null; }           // unmapped on purpose — no automatic match either
+    else if (m && (m.feeIds || m.feeId)) {
+      // several fee records may share one Clockify project (a base contract
+      // and its extension, say); the first is the key, actualsIndex splits
+      const ids = (m.feeIds || [m.feeId]).filter(id => feeIndex().some(p => p.id === id));
+      out = ids.length ? { key: 'fee:' + ids[0], feeId: ids[0], feeIds: ids, via: 'mapped' } : null;
+    }
     else if (m && m.internal) out = { key: 'int:' + m.internal, internal: m.internal, via: 'mapped' };
     if (!out) {
-      const raw = String(ckName); const rawL = raw.toLowerCase(); const pk = projKey(raw);
-      const sf = sfIndex().find(e => rawL.includes(e.sf) || pk.includes(projKey(e.sf)));
-      if (sf) out = { key: 'fee:' + sf.id, feeId: sf.id, via: 'salesforce' };
+      const raw = String(ckName); const pk = projKey(raw);
+      const sf = sfHit(raw);
+      if (sf) out = { key: 'fee:' + sf.id, feeId: sf.id, feeIds: [sf.id], via: 'salesforce' };
       else {
         const exact = feeIndex().filter(p => p.key && p.key === pk);
-        if (exact.length) { const id = exact.length === 1 ? exact[0].id : pickFeeId(exact.map(p => p.id)); out = { key: 'fee:' + id, feeId: id, via: 'name' }; }
+        if (exact.length) { const id = exact.length === 1 ? exact[0].id : pickFeeId(exact.map(p => p.id)); out = { key: 'fee:' + id, feeId: id, feeIds: [id], via: 'name' }; }
         else {
           const ik = internalKindFor(raw);
           if (ik) out = { key: 'int:' + ik, internal: ik, via: 'rule' };
           else {
             const auto = matchFeeProject(raw, '');
-            if (auto && auto.via === 'tokens') out = { key: 'fee:' + auto.id, feeId: auto.id, via: 'auto', score: auto.score };
-            else if (auto) out = { key: 'fee:' + auto.id, feeId: auto.id, via: 'name' };
+            if (auto && auto.via === 'tokens') out = { key: 'fee:' + auto.id, feeId: auto.id, feeIds: [auto.id], via: 'auto', score: auto.score };
+            else if (auto) out = { key: 'fee:' + auto.id, feeId: auto.id, feeIds: [auto.id], via: 'name' };
           }
         }
       }
@@ -1233,6 +1249,32 @@
   /* Logged hours folded onto keys: key → pid → ym → hours, plus every
      Clockify name per key and the unmapped names with their hours. Rebuilt
      after any write. */
+  /* A Clockify project shared by several fee records: a month's hours go to
+     the record(s) whose timeline covers that month — the base contract until
+     it ends, the extension after. Two active at once split by each one's
+     planned hours for that person, evenly when nothing is planned; a month
+     none covers goes to the record nearest in time. */
+  let _tlCache = null;
+  function recordMonths(id) {
+    if (!_tlCache) _tlCache = new Map();
+    if (_tlCache.has(id)) return _tlCache.get(id);
+    let set = null;
+    try { const p = feeRecords().find(x => x.id === id); const S2 = window.UFC_Store; if (p && p.timeline && S2 && S2.enumerateMonths) set = new Set(S2.enumerateMonths(p.timeline).map(m => m.year + '-' + String(m.month).padStart(2, '0'))); } catch (e) {}
+    _tlCache.set(id, set); return set;
+  }
+  function splitShares(ids, personId, ym) {
+    if (ids.length === 1) return { [ids[0]]: 1 };
+    let active = ids.filter(id => { const ms = recordMonths(id); return ms && ms.has(ym); });
+    if (!active.length) {
+      const dist = (id) => { const ms = recordMonths(id); if (!ms || !ms.size) return 1e9; let best = 1e9; ms.forEach(m => { const d = Math.abs((+m.slice(0, 4) - +ym.slice(0, 4)) * 12 + (+m.slice(5) - +ym.slice(5))); if (d < best) best = d; }); return best; };
+      const ranked = ids.slice().sort((a, b) => dist(a) - dist(b)); active = [ranked[0]];
+    }
+    if (active.length === 1) return { [active[0]]: 1 };
+    const w = {}; let tot = 0;
+    active.forEach(id => { const e = expectedHours(personId, 'fee:' + id, ym); w[id] = e; tot += e; });
+    const out = {}; active.forEach(id => { out[id] = tot > 0 ? w[id] / tot : 1 / active.length; });
+    return out;
+  }
   let _actIdx = null;
   function actualsIndex() {
     if (_ckFee !== feeIndex()) { _ckCache = null; _actIdx = null; }
@@ -1246,12 +1288,10 @@
       if (res && res.ignore) { ignored[ck] = (ignored[ck] || 0) + h; return; }
       // no fee project, but rows are planned under this very name: one job, still unplaced
       const legacy = !res && legacyKeys.has(nkey(ck));
-      const key = res ? res.key : legacy ? 'legacy:' + nkey(ck) : 'ck:' + ck;
       if (!res && !legacy) unmapped[ck] = (unmapped[ck] || 0) + h;
-      (names[key] = names[key] || new Set()).add(ck);
-      const kp = byKey[key] || (byKey[key] = {});
-      const pp = kp[pid] || (kp[pid] = {});
-      pp[ym] = (pp[ym] || 0) + h;
+      const land = (key, hrs) => { (names[key] = names[key] || new Set()).add(ck); const kp = byKey[key] || (byKey[key] = {}); const pp = kp[pid] || (kp[pid] = {}); pp[ym] = (pp[ym] || 0) + hrs; };
+      if (res && res.feeIds && res.feeIds.length > 1) { const sh = splitShares(res.feeIds, pid, ym); Object.entries(sh).forEach(([id, f]) => { if (f > 0) land('fee:' + id, h * f); }); }
+      else land(res ? res.key : legacy ? 'legacy:' + nkey(ck) : 'ck:' + ck, h);
     });
     _actIdx = { byKey, names, unmapped, ignored };
     return _actIdx;
@@ -1260,7 +1300,7 @@
   function clockifyNamesFor(ref) {
     const key = keyForRef(ref); if (!key) return [];
     const fromActuals = [...(actualsIndex().names[key] || [])];
-    const pinned = Object.entries((readDb().mappings || {}).clockify || {}).filter(([, v]) => v && ((v.feeId && 'fee:' + v.feeId === key) || (v.internal && 'int:' + v.internal === key))).map(([k, v]) => v.name || k);
+    const pinned = Object.entries((readDb().mappings || {}).clockify || {}).filter(([, v]) => v && (((v.feeIds || (v.feeId ? [v.feeId] : [])).some(id => 'fee:' + id === key)) || (v.internal && 'int:' + v.internal === key))).map(([k, v]) => v.name || k);
     const seen = new Set(); const out = [];
     [...fromActuals, ...pinned].forEach(n => { const nk2 = nkey(n); if (seen.has(nk2)) return; seen.add(nk2); out.push(n); });
     return out.sort();
@@ -1291,14 +1331,19 @@
       if (live && !hours[raw] && !live.has(k) && !Object.keys(hours).some(h => nkey(h) === k)) return;   // pinned name Clockify does not know and never logged — not a project
       seen.add(k);
       const res = resolveClockify(raw);
-      const row = { name: raw, hours: Math.round((hours[raw] || 0) * 10) / 10, key: null, label: '', client: '', via: res ? res.via : null, pinned: !!pins[k], ignored: !!(res && res.ignore), unmapped: !res };
-      if (res && res.key) { const d = describeKey(res.key); row.key = res.key; row.label = d.label; row.client = d.client; row.feeId = d.feeId || null; row.internal = d.internal || null; }
+      const pin = pins[k];
+      const row = { name: raw, hours: Math.round((hours[raw] || 0) * 10) / 10, key: null, label: '', client: '', via: res ? res.via : null, pinned: !!pin && pin !== '__ignore__' && !pin.detached, detached: !!(pin && pin.detached), ignored: !!(res && res.ignore), unmapped: !res };
+      if (res && res.key) {
+        const ids = res.feeIds || (res.feeId ? [res.feeId] : []);
+        const ds = ids.length ? ids.map(id => describeKey('fee:' + id)) : [describeKey(res.key)];
+        row.key = res.key; row.keys = ds.map(d => d.key); row.label = ds.map(d => d.label).join(' + '); row.labels = ds.map(d => d.label); row.client = ds[0].client; row.feeId = res.feeId || null; row.feeIds = ids.length ? ids : null; row.internal = res.internal || null; row.shared = ids.length > 1;
+      }
       if (row.unmapped && legacyRows[k]) row.plannedRows = legacyRows[k];   // planned under this very name too — placeName moves both
       // A pin that contradicts the Salesforce id in the Clockify name is the
       // old world's mistake carried forward — flagged, never silently fixed.
       if (row.pinned && row.feeId) {
-        const rawL = raw.toLowerCase(), pk = projKey(raw); const sf = sfIndex().find(e => rawL.includes(e.sf) || pk.includes(projKey(e.sf)));
-        if (sf && sf.id !== row.feeId && !sameJob(sf.id, row.feeId)) row.conflict = describeKey('fee:' + sf.id).label;
+        const sf = sfHit(raw); const ids = row.feeIds || [row.feeId];
+        if (sf && !ids.includes(sf.id) && !ids.some(id => sameJob(sf.id, id))) row.conflict = describeKey('fee:' + sf.id).label;
       }
       out.push(row);
     });
@@ -1733,16 +1778,19 @@
         addTo(kind === 'timeoff' ? timeOff : overhead, proj, pid, person, rate, ym, h);
         return;
       }
-      const link = res && res.feeId ? { id: res.feeId } : null;
-      const bucket = link ? (burnByFee[link.id] = burnByFee[link.id] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set() })
-                          : (burnLoose[proj] = burnLoose[proj] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set([proj]) });
-      if (link) bucket.srcNames.add(proj);
-      bucket.byMonth[ym] = (bucket.byMonth[ym] || 0) + h * rate;
-      bucket.hours += h; bucket.cost += h * rate;
-      const pp = bucket.ppl[pid] || (bucket.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0, byMonth: {} });
-      pp.hours += h; pp.cost += h * rate;
-      const pm = pp.byMonth[ym] || (pp.byMonth[ym] = { hours: 0, cost: 0 });
-      pm.hours += h; pm.cost += h * rate;
+      const shares = res && res.feeIds && res.feeIds.length ? splitShares(res.feeIds, pid, ym) : (res && res.feeId ? { [res.feeId]: 1 } : null);
+      const pour = (feeId, hrs) => {
+        const bucket = feeId ? (burnByFee[feeId] = burnByFee[feeId] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set() })
+                             : (burnLoose[proj] = burnLoose[proj] || { byMonth: {}, hours: 0, cost: 0, ppl: {}, srcNames: new Set([proj]) });
+        if (feeId) bucket.srcNames.add(proj);
+        bucket.byMonth[ym] = (bucket.byMonth[ym] || 0) + hrs * rate;
+        bucket.hours += hrs; bucket.cost += hrs * rate;
+        const pp = bucket.ppl[pid] || (bucket.ppl[pid] = { name: person.name, title: person.title || '', rate, hours: 0, cost: 0, byMonth: {} });
+        pp.hours += hrs; pp.cost += hrs * rate;
+        const pm = pp.byMonth[ym] || (pp.byMonth[ym] = { hours: 0, cost: 0 });
+        pm.hours += hrs; pm.cost += hrs * rate;
+      };
+      if (shares) Object.entries(shares).forEach(([id, f]) => { if (f > 0) pour(id, h * f); }); else pour(null, h);
     });
     // ---- revenue rows: SAME set + math as Revenue Projections ----
     const parents = (S2.listProjects() || []).filter(p => !(S2.isChangeOrder && S2.isChangeOrder(p)));
@@ -2436,20 +2484,40 @@
   /** Point a Clockify project at a fee project (id), an internal line
       ('int:<kind>' or the kind), '__ignore__', or null to unpin. Hours stay
       under the Clockify name; every view re-reads the join. */
-  function setProjectMapping(clockifyName, target) {
+  /** Point a Clockify project at a fee project (id / key / label), an internal
+      line ('int:<kind>' or the kind), '__ignore__' (hours not counted),
+      '__detach__' (unmapped on purpose — no automatic match either), or
+      null to drop the pin. opts.add adds a fee record beside the ones already
+      pinned (several records can share one Clockify project); opts.remove
+      takes one away — taking the last one away detaches. */
+  function setProjectMapping(clockifyName, target, opts) {
+    opts = opts || {};
     const db = readDb(); db.mappings = db.mappings || { users: {}, clockify: {} }; db.mappings.clockify = db.mappings.clockify || {};
     const k = nkey(clockifyName); if (!k) return;
+    const name = String(clockifyName).trim();
+    const prev = db.mappings.clockify[k];
+    const prevIds = prev && prev !== '__ignore__' ? (prev.feeIds || (prev.feeId ? [prev.feeId] : [])) : [];
     let value = null, toLabel = null;
+    const resolve = (target) => {
+      if (typeof target === 'object') return target;
+      if (String(target).startsWith('int:') && INTERNAL_LINES[String(target).slice(4)]) return { internal: String(target).slice(4) };
+      if (INTERNAL_LINES[target]) return { internal: target };
+      return projectRefToTarget(target);
+    };
+    const feeValue = (ids) => { const u = [...new Set(ids)]; return { name, feeId: u[0], feeIds: u }; };
     if (target === '__ignore__') { value = '__ignore__'; toLabel = 'ignored — hours not counted'; }
+    else if (target === '__detach__') { value = { name, detached: true }; toLabel = 'unmapped — detached from every fee project'; }
     else if (target) {
-      let t = null;
-      if (typeof target === 'object') t = target;
-      else if (String(target).startsWith('int:') && INTERNAL_LINES[String(target).slice(4)]) t = { internal: String(target).slice(4) };
-      else if (INTERNAL_LINES[target]) t = { internal: target };
-      else t = projectRefToTarget(target);
+      const t = resolve(target);
       if (!t) throw new Error('Pick a fee project or an internal line.');
-      value = Object.assign({ name: String(clockifyName).trim() }, t);   // the key is normalised; keep Clockify's own spelling for display
-      toLabel = describeKey(t.feeId ? 'fee:' + t.feeId : 'int:' + t.internal).label;
+      if (opts.remove) {
+        const left = t.feeId ? prevIds.filter(id => id !== t.feeId) : [];
+        if (left.length) { value = feeValue(left); toLabel = left.map(id => describeKey('fee:' + id).label).join(' + '); }
+        else { value = { name, detached: true }; toLabel = 'unmapped — detached from every fee project'; }
+      } else if (t.feeId) {
+        const ids = opts.add ? [...prevIds, t.feeId] : [t.feeId];
+        value = feeValue(ids); toLabel = ids.map(id => describeKey('fee:' + id).label).join(' + ');
+      } else { value = Object.assign({ name }, t); toLabel = describeKey('int:' + t.internal).label; }
     }
     if (value) db.mappings.clockify[k] = value; else delete db.mappings.clockify[k];
     writeDb(db);
@@ -2720,8 +2788,8 @@
   }
   /** Would the resolver place this name on its own (no mapping needed)? Migration pass only. */
   function resolveClockifyFresh(ckName) {
-    const raw = String(ckName || ''); const rawL = raw.toLowerCase(); const pk = projKey(raw);
-    if (sfIndex().some(e => rawL.includes(e.sf) || pk.includes(projKey(e.sf)))) return true;
+    const raw = String(ckName || ''); const pk = projKey(raw);
+    if (sfHit(raw)) return true;
     if (feeIndex().some(p => p.key && p.key === pk)) return true;
     if (internalKindFor(raw)) return true;
     return false;
@@ -3125,7 +3193,7 @@
     personLoad, personAllocationsIn, allocActiveIn, bandwidthGrid, projectRollup, matchFeeProject, matchFeeProjects, listFeeProjects,
     expectedHours, actualHours, varianceMatrix, hasActuals, actualsMeta, feePlanHours, contractPlan, feeProjectPlan, matrixProjectsForFee, feeProjectActuals,
     // the fee-keyed model
-    INTERNAL_LINES, INTERNAL_ORDER, allocKey, keyParts, describeKey, keyForRef, labelIndex, planProjects, projectRefToTarget, resolveClockify, actualsIndex, clockifyNamesFor, unmappedClockify, clockifyProjectRows, legacyProjects, retargetLegacy, placeName, resolveLegacyName, pickFeeId, migrateToFeeKeys, ensureModel,
+    INTERNAL_LINES, INTERNAL_ORDER, allocKey, keyParts, describeKey, keyForRef, labelIndex, planProjects, projectRefToTarget, resolveClockify, actualsIndex, clockifyNamesFor, unmappedClockify, clockifyProjectRows, legacyProjects, retargetLegacy, placeName, splitShares, sfHit, resolveLegacyName, pickFeeId, migrateToFeeKeys, ensureModel,
     mappingFlags, flagMapping, clearMappingFlag, unclaimedClockifyProjects, claimClockifyForFee, applyMappingSeeds, MAPPING_SEEDS, mergePeople, surnameSimilarity, applyCleanupSeed, applyCleanupSeeds, CLEANUP_SEEDS,
     unassignedRoles, contractStaffingGaps, dismissGap, restoreGap, dismissedGaps, gapKey, duplicateAllocations, loggingWithoutAllocation, comingAvailable, substantialMacroTime, setPersonNonBillable, setPersonEmployment, personEmploymentType, setPersonLeft, setPersonJoined, addPersonFromClockify, hasLeftBy, complianceRows, complianceNote, lastTimeEntered, currentMonthExpectation, lastWorkedDays, COMPLIANCE_GRACE_WORKING_DAYS,
     allocationsForFeeProject, shiftAllocationsForFeeProject, pendingContractShifts,

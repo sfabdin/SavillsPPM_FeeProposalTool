@@ -1484,7 +1484,7 @@
        to one fee project; nothing points the other way. */
     const ckRows = S.clockifyProjectRows(ckList.map(c => c.name));
     const q = state.mapSearch.toLowerCase();
-    const ckByKey = {}; ckRows.forEach(r => { if (r.key) (ckByKey[r.key] = ckByKey[r.key] || []).push(r); });
+    const ckByKey = {}; ckRows.forEach(r => (r.keys || (r.key ? [r.key] : [])).forEach(k => (ckByKey[k] = ckByKey[k] || []).push(r)));
     const AXk = S.actualsIndex().byKey;
     // rows: planned projects + anything hours land on + every fee project when asked (or when searching)
     const rowKeys = new Map();
@@ -1493,9 +1493,10 @@
     S.INTERNAL_ORDER.forEach(k => { if (!rowKeys.has('int:' + k)) rowKeys.set('int:' + k, S.describeKey('int:' + k)); });
     if (state.mapAllFee || q) feeList.forEach(p => { if (!rowKeys.has('fee:' + p.id) && (!q || (p.label + ' ' + p.client).toLowerCase().includes(q) || state.mapAllFee)) rowKeys.set('fee:' + p.id, S.describeKey('fee:' + p.id)); });
     const feeRows = [...rowKeys.values()].sort((a, b) => (a.internal ? 1 : 0) - (b.internal ? 1 : 0) || a.label.localeCompare(b.label));
-    const ckBadge = (c) => {
+    const ckBadge = (c, rowKey) => {
       const how = c.via === 'mapped' ? 'pinned' : c.via === 'salesforce' ? 'Salesforce id' : c.via === 'rule' ? 'internal rule' : c.via === 'auto' ? 'guessed from the name — not confirmed' : 'exact name';
-      return `<div class="lv-link" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0"><span class="badge ${c.via === 'auto' ? 'pursuit' : 'active'}" title="${how}">${esc(c.name)}</span><span class="vmini">${c.hours ? fmtH(c.hours) + ' h' : 'no hours yet'} · ${c.via === 'mapped' ? 'pinned' : c.via === 'salesforce' ? 'SF id' : c.via === 'rule' ? 'rule' : c.via === 'auto' ? 'guess' : 'name'}</span>${c.via === 'auto' ? `<button class="btn sm" data-confirm-ck="${esc(c.name)}" data-fee="${esc(c.key)}" title="Pin this match">✓ Confirm</button>` : ''}${c.pinned ? `<a href="#" data-unpin-ck="${esc(c.name)}" style="color:#8f2418;text-decoration:none;font-weight:800" title="Detach — back to the automatic match">✕</a>` : ''}${c.conflict ? `<span class="vmini" style="color:#8f2418">⚠ its Salesforce id belongs to <b>${esc(c.conflict)}</b></span>` : ''}</div>`;
+      const others = c.shared ? c.labels.filter((l, i) => c.keys[i] !== rowKey) : [];
+      return `<div class="lv-link" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0"><span class="badge ${c.via === 'auto' ? 'pursuit' : 'active'}" title="${how}">${esc(c.name)}</span><span class="vmini">${c.hours ? fmtH(c.hours) + ' h' : 'no hours yet'} · ${c.via === 'mapped' ? 'pinned' : c.via === 'salesforce' ? 'SF id' : c.via === 'rule' ? 'rule' : c.via === 'auto' ? 'guess' : 'name'}</span>${c.via === 'auto' ? `<button class="btn sm" data-confirm-ck="${esc(c.name)}" data-fee="${esc(rowKey)}" title="Pin this match">✓ Confirm</button>` : ''}<a href="#" data-unmap-ck="${esc(c.name)}" data-from="${esc(rowKey)}" data-pinned="${c.pinned ? 1 : 0}" style="color:#8f2418;text-decoration:none;font-weight:800" title="${c.pinned && c.shared ? 'Take this Clockify project off this fee project (it stays on the others)' : 'Unmap — the hours stop landing here and show as “no project” until mapped again'}">✕</a>${others.length ? `<span class="vmini" title="A month's hours go to whichever record is active then; two active at once split by planned hours">also feeds <b>${esc(others.join(', '))}</b> · split by month</span>` : ''}${c.conflict ? `<span class="vmini" style="color:#8f2418">⚠ its Salesforce id belongs to <b>${esc(c.conflict)}</b></span>` : ''}</div>`;
     };
     let rows = ''; let problems = 0; let shown = 0;
     feeRows.forEach(p => {
@@ -1507,7 +1508,7 @@
       if (q && !(p.label + ' ' + p.client + ' ' + cks.map(c => c.name).join(' ')).toLowerCase().includes(q)) return;
       if (state.mapOnlyProblems && !isProblem) return;
       shown++;
-      const ckCell = cks.length ? cks.map(ckBadge).join('') : `<span class="no-link" style="margin:0">${silent ? 'planned, but no Clockify project lands here — hours cannot reach it' : p.internal ? 'nothing lands here' : 'nothing lands here'}</span>`;
+      const ckCell = cks.length ? cks.map(c => ckBadge(c, p.key)).join('') : `<span class="no-link" style="margin:0">${silent ? 'planned, but no Clockify project lands here — hours cannot reach it' : p.internal ? 'nothing lands here' : 'nothing lands here'}</span>`;
       rows += `<tr>
         <td class="pname">${esc(p.label)}${p.feeId ? ` <a class="link-fee" href="Universal Fee Calculator.html?id=${encodeURIComponent(p.feeId)}" title="Open in fee tool">↗</a>` : ''}<div class="vmini">${p.internal ? 'internal line · no fee project by design' : esc(((STORE.STATUS_LABELS || {})[p.status] || p.status || '') + (planned ? ' · planned' : ''))}</div></td>
         <td>${ckCell}</td>
@@ -1521,7 +1522,7 @@
     const unmappedRows = ckRows.filter(r => r.unmapped).filter(r => !q || (r.name + ' ' + (ckClient[r.name.toLowerCase()] || '')).toLowerCase().includes(q));
     problems += ckRows.filter(r => r.unmapped).length;
     const unmappedSection = unmappedRows.length ? `<h3 style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy);margin:22px 0 8px">Clockify projects with no fee project <span class="note-txt" style="font-weight:400">(${unmappedRows.length} · ${fmtH(unmappedRows.reduce((t, r) => t + r.hours, 0))} h shown as “no project” until mapped — pick the fee project, or Ignore non-project time)</span></h3>
-      <table class="dt"><thead><tr><th style="width:34%">③ Clockify project</th><th class="num" style="width:80px">Hours</th><th>Map to ② fee project / internal line</th></tr></thead><tbody>${unmappedRows.map(r => `<tr><td class="pname">${esc(r.name)}<div class="vmini">${esc(ckClient[r.name.toLowerCase()] || '')}${r.plannedRows ? ` · planned under this name too (${r.plannedRows} row${r.plannedRows === 1 ? '' : 's'}) — mapping it moves both` : ''}</div></td><td class="num">${r.hours ? fmtH(r.hours) : '—'}</td><td><input list="target-dl" data-map-ck="${esc(r.name)}" class="fee-link-sel" style="width:60%" placeholder="type the fee project…"> <button class="btn sm ghost" data-ignore-proj="${esc(r.name)}" title="Not project work — never count these hours">Ignore</button></td></tr>`).join('')}</tbody></table>` : '';
+      <table class="dt"><thead><tr><th style="width:34%">③ Clockify project</th><th class="num" style="width:80px">Hours</th><th>Map to ② fee project / internal line</th></tr></thead><tbody>${unmappedRows.map(r => `<tr><td class="pname">${esc(r.name)}${r.detached ? ' <span class="nh-tag" style="background:#eee8e3;color:#79828c" title="Unmapped on purpose — no automatic match is applied">unmapped by hand</span>' : ''}<div class="vmini">${esc(ckClient[r.name.toLowerCase()] || '')}${r.plannedRows ? ` · planned under this name too (${r.plannedRows} row${r.plannedRows === 1 ? '' : 's'}) — mapping it moves both` : ''}${r.detached ? ` · <a href="#" data-automap-ck="${esc(r.name)}">try the automatic match again</a>` : ''}</div></td><td class="num">${r.hours ? fmtH(r.hours) : '—'}</td><td><input list="target-dl" data-map-ck="${esc(r.name)}" class="fee-link-sel" style="width:60%" placeholder="type the fee project…"> <button class="btn sm ghost" data-ignore-proj="${esc(r.name)}" title="Not project work — never count these hours">Ignore</button></td></tr>`).join('')}</tbody></table>` : '';
     // ---- PEOPLE mapping: roster ↔ Clockify users ----
     const ckUsers = state.clockifyUsers || [];
     const userMaps = maps.users || {};
@@ -1629,7 +1630,7 @@
       const v = inp.value.trim(); if (!v) return;
       let hit = ckNames.find(c => c.name.toLowerCase() === v.toLowerCase()) || resolveTyped(v, ckNames, ['name', 'client']);
       if (!hit) { inp.style.borderColor = '#C0392B'; inp.title = 'Pick a Clockify project from the list — or type more of its name, it only needs to be unique.'; return; }
-      try { S.setProjectMapping(hit.name, inp.dataset.attach); let moved = 0; if (S.legacyProjects().some(g => g.name.toLowerCase() === hit.name.toLowerCase())) moved = S.retargetLegacy(hit.name, S.projectRefToTarget(inp.dataset.attach)); state._gapsKey = null; toast(`“${hit.name}” now lands on ${S.describeKey(inp.dataset.attach).label}${moved ? ` — and ${moved} planned row${moved === 1 ? '' : 's'} under that name moved too` : ''}.`); } catch (e) { toast(e.message || String(e)); }
+      try { S.setProjectMapping(hit.name, inp.dataset.attach, { add: true }); let moved = 0; if (S.legacyProjects().some(g => g.name.toLowerCase() === hit.name.toLowerCase())) moved = S.retargetLegacy(hit.name, S.projectRefToTarget(inp.dataset.attach)); state._gapsKey = null; const now = S.resolveClockify(hit.name); const shared = now && now.feeIds && now.feeIds.length > 1; toast(`“${hit.name}” now lands on ${S.describeKey(inp.dataset.attach).label}${shared ? ` — shared with ${now.feeIds.filter(id => 'fee:' + id !== inp.dataset.attach).map(id => S.describeKey('fee:' + id).label).join(', ')}; each month's hours go to whichever record is active then` : ''}${moved ? ` — and ${moved} planned row${moved === 1 ? '' : 's'} under that name moved too` : ''}.`); } catch (e) { toast(e.message || String(e)); }
       renderMapping(); renderCounts();
     });
     $('#map-refresh').onclick = () => { state.clockifyNames = null; state.clockifyNamesError = null; renderMapping(); };
@@ -1640,8 +1641,18 @@
       try { S.setProjectMapping(inp.dataset.mapCk, target); let moved = 0; if (S.legacyProjects().some(g => g.name.toLowerCase() === inp.dataset.mapCk.toLowerCase())) moved = S.retargetLegacy(inp.dataset.mapCk, target); state._gapsKey = null; toast('Mapping saved — the hours land there now and on every future pull.' + (moved ? ` ${moved} planned row${moved === 1 ? '' : 's'} under that name moved too.` : '')); } catch (e) { toast(e.message || String(e)); }
       renderMapping(); renderCounts();
     });
-    $$('#p-mapping [data-confirm-ck]').forEach(b => b.onclick = () => { S.setProjectMapping(b.dataset.confirmCk, b.dataset.fee); toast('Pinned — saved for everyone.'); renderMapping(); });
-    $$('#p-mapping [data-unpin-ck]').forEach(a => a.onclick = (e) => { e.preventDefault(); S.setProjectMapping(a.dataset.unpinCk, null); toast('Pin removed — back to the automatic match.'); renderMapping(); });
+    $$('#p-mapping [data-confirm-ck]').forEach(b => b.onclick = () => { S.setProjectMapping(b.dataset.confirmCk, b.dataset.fee, { add: true }); toast('Pinned — saved for everyone.'); renderMapping(); });
+    $$('#p-mapping [data-unmap-ck]').forEach(a => a.onclick = (e) => {
+      e.preventDefault();
+      const ck = a.dataset.unmapCk, from = a.dataset.from;
+      // pinned → take this fee record off the pin (the last one away detaches);
+      // automatic → detach outright, so the match does not come straight back
+      if (a.dataset.pinned === '1') S.setProjectMapping(ck, from, { remove: true }); else S.setProjectMapping(ck, '__detach__');
+      const now = S.resolveClockify(ck);
+      toast(now && now.key ? `“${ck}” no longer feeds ${S.describeKey(from).label}; it still feeds ${(now.feeIds || []).map(id => S.describeKey('fee:' + id).label).join(' + ')}.` : `“${ck}” is unmapped — its hours show as “no project” until you map it again (bottom of this tab).`);
+      renderMapping();
+    });
+    $$('#p-mapping [data-automap-ck]').forEach(a => a.onclick = (e) => { e.preventDefault(); S.setProjectMapping(a.dataset.automapCk, null); toast('Back to the automatic match.'); renderMapping(); });
     $$('#p-mapping [data-ignore-proj]').forEach(b => b.onclick = () => { S.setProjectMapping(b.dataset.ignoreProj, '__ignore__'); toast('Ignored — those hours are not counted anywhere.'); renderMapping(); });
     wireLegacy('#p-mapping', () => { renderMapping(); renderCounts(); });
     $$('#p-mapping [data-unmap-user]').forEach(a => a.onclick = (e) => {

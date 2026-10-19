@@ -238,7 +238,7 @@
     const unclaimed = st.unclaimedClockifyProjects(L.ckNames);
     // every Clockify project (hours in the store + the live list) with where it lands
     const ckRows = st.clockifyProjectRows(L.ckNames);
-    const landing = {}; ckRows.forEach(r => { if (r.feeId) (landing[r.feeId] = landing[r.feeId] || []).push(r); });
+    const landing = {}; ckRows.forEach(r => (r.feeIds || (r.feeId ? [r.feeId] : [])).forEach(id => (landing[id] = landing[id] || []).push(r)));
     let html = `<div class="lv-head"><div><div class="eyebrow">Your projects</div><h2>Mapping — which Clockify project feeds each of yours</h2>
         <p>Hours only land on your project when its Clockify project(s) are mapped to it — several Clockify projects can feed one of yours. <b>Confirm</b> a link that was guessed from the name, <b>claim</b> a Clockify project nothing has claimed, or <b>flag</b> one that is wrong and belongs to someone else — an admin resolves flags.</p></div></div>
       ${L.ckError ? `<div class="note-txt lv-note">Could not pull the live Clockify list (${esc(L.ckError)}) — the names below come from hours already imported.</div>` : ''}
