@@ -183,6 +183,10 @@ table.dt tbody tr:hover { background:#fbfbfa; }
 .row-act button { border:0; background:transparent; cursor:pointer; font-family:var(--font-display); font-weight:700; font-size:11px; color:var(--sav-steel); padding:4px 7px; }
 .row-act button:hover { background:var(--sav-navy); color:#fff; }
 /* drawer rows: actions sit in the trailing columns, the add link closes the drawer */
+.dt th.sort-th { cursor:pointer; user-select:none; white-space:nowrap; }
+.dt th.sort-th:hover { color:var(--sav-navy); text-decoration:underline; }
+.dt th.sort-th.on { color:var(--sav-navy); }
+.dt th .sort-arrow { font-size:9px; margin-left:4px; }
 .hm td.dacts { text-align:right; white-space:nowrap; padding-right:8px; }
 .hm td.dacts .row-act button { font-size:10.5px; padding:2px 6px; }
 .hm tr.drawer-add td { background:#fbfbf9; border-bottom:2px solid rgba(37,39,58,0.15); padding:5px 10px 7px 26px; }
