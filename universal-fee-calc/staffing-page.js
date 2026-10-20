@@ -544,6 +544,7 @@
   }
 
   function renderAllocations() {
+    const restore = keepScroll();
     let list = S.listAllocations().filter(a => S.inView(a.personId));
     const q = state.allocSearch.toLowerCase();
     if (q) list = list.filter(a => (a.project + ' ' + a.client + ' ' + (S.getPerson(a.personId) || {}).name + ' ' + a.note).toLowerCase().includes(q));
@@ -618,6 +619,7 @@
     $$('#p-allocations [data-sort]').forEach(h => h.onclick = () => { const k = h.dataset.sort; if (state.allocSort.key === k) state.allocSort.dir = -state.allocSort.dir; else state.allocSort = { key: k, dir: 1 }; renderAllocations(); });
     $$('#p-allocations [data-edit]').forEach(b => b.onclick = () => openAllocModal(b.dataset.edit));
     $$('#p-allocations [data-del]').forEach(b => b.onclick = () => { const a = S.listAllocations().find(x => x.id === b.dataset.del); if (a && confirm(`Remove ${(S.getPerson(a.personId) || {}).name}'s planned allocation on ${a.project}?\n\nOnly the plan goes — their logged Clockify hours stay.`)) { S.deleteAllocation(b.dataset.del); renderAll(); } });
+    restore();
   }
 
   /* ---------- BY PROJECT ---------- */
@@ -652,6 +654,7 @@
   const fmtSigned = (v, d) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(d);
 
   function renderProjects() {
+    const restore = keepScroll();
     const ms = months();
     const metric = gridMetric();
     const AX = actualsIndex(ms); const MH = S.monthHours();
@@ -767,6 +770,7 @@
     $$('#p-projects [data-legacy-move]').forEach(sel => sel.onchange = () => { if (!sel.value) return; try { const r = S.placeName(sel.dataset.legacyMove, sel.value); state._gapsKey = null; toast(`Moved ${r.rows} allocation${r.rows === 1 ? '' : 's'} onto ${r.label}.`); } catch (e) { toast(e.message || String(e)); } renderAll(); });
     $$('#p-projects [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
     wireDrawerActs('#p-projects');
+    restore();
   }
 
   /* ---------- BY PERSON ---------- */
@@ -775,6 +779,7 @@
      expands to their project mix plus a Gantt-style timeline of each
      allocation's start/end so you can see people transfer project → project. */
   function renderPeople() {
+    const restore = keepScroll();
     const ms = months();
     const metric = gridMetric();
     const AX = actualsIndex(ms);
@@ -910,6 +915,7 @@
     $$('#p-people .who-name').forEach(el => el.onclick = () => { const id = el.dataset.exp; if (state.expandedRoster.has(id)) state.expandedRoster.delete(id); else state.expandedRoster.add(id); renderPeople(); });
     $$('#p-people [data-edit-alloc]').forEach(tr => tr.onclick = () => openAllocModal(tr.dataset.editAlloc));
     wireDrawerActs('#p-people');
+    restore();
   }
 
   /* ---------- edit · delete · add straight from a drawer ----------
@@ -1531,6 +1537,7 @@
   }
 
   function renderMapping() {
+    const restore = keepScroll();
     if (state.clockifyNames === null) {
       $('#p-mapping').innerHTML = '<div class="empty">Pulling the Clockify project list…</div>';
       pullClockifyNames().then(renderMapping);
@@ -1790,6 +1797,7 @@
     $$('#p-mapping [data-unmap-title]').forEach(a => a.onclick = (e) => {
       e.preventDefault(); S.setTitleMapping(a.dataset.unmapTitle, null); toast('Pinned title mapping removed — back to auto-match.'); renderMapping();
     });
+    restore();
   }
 
   /* ---------- INSIGHTS — where the heat is ---------- */
@@ -2579,8 +2587,23 @@
     $('#cnt-proj').textContent = '(' + (state.group ? new Set(allocs.map(a => a.project).filter(Boolean)).size : S.distinctProjects().length) + ')';
     $('#cnt-ppl').textContent = '(' + S.listPeople().filter(S.inView).length + ')';
   }
+  /* Re-rendering a tab replaces its HTML, which used to throw the page back
+     to the top after every edit. Remember where the reader was — the page's
+     vertical scroll and the grid's horizontal scroll — and put it back once
+     the new HTML is in, so an edit in the middle of By Person leaves you in
+     the middle of By Person. */
+  function keepScroll() {
+    const y = window.scrollY;
+    const grids = $$('#p-' + state.tab + ' .hm-wrap, #p-' + state.tab + ' .cmp-scroll').map(el => el.scrollLeft);
+    return () => {
+      window.scrollTo(0, y);
+      $$('#p-' + state.tab + ' .hm-wrap, #p-' + state.tab + ' .cmp-scroll').forEach((el, i) => { if (grids[i] != null) el.scrollLeft = grids[i]; });
+      requestAnimationFrame(() => { if (Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y); });
+    };
+  }
   function renderActive() {
     const panel = $('#p-' + state.tab);
+    const restore = keepScroll();
     try {
       if (state.tab === 'allocations') renderAllocations();
       else if (state.tab === 'projects') renderProjects();
@@ -2590,6 +2613,7 @@
       else if (state.tab === 'insights') renderInsights();
       else if (state.tab === 'compliance') renderCompliance();
       else if (state.tab === 'sources') renderSources();
+      restore();
     } catch (e) {
       console.error('render failed', e);
       if (panel) panel.innerHTML = `<div class="empty" style="color:#8f2418"><b>This view hit an error:</b> ${esc(e.message)}<br><span class="vmini">${esc((e.stack || '').split('\n')[1] || '')}</span></div>`;
