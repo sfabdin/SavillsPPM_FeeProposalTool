@@ -283,21 +283,26 @@
         <span class="note-txt">click to review</span>
       </summary>
       <div style="padding:0 16px 12px">
-        <div class="note-txt" style="margin:0 0 8px">These people hold more than one allocation to the same project over the same months, so their load is counted twice. Two genuine concurrent roles are possible — nothing is removed automatically. Delete the row that shouldn't be there.</div>
+        <div class="note-txt" style="margin:0 0 8px">These people hold more than one allocation to the same project over the same months, so their load is counted twice. Two genuine concurrent roles are possible — nothing is removed automatically. <b>Edit</b> a row to change its window or percentage, <b>End before next</b> closes it the month before the next row starts, or delete the one that shouldn't be there.</div>
         ${dups.map(d => `<div style="border-bottom:1px dashed rgba(37,39,58,0.12);padding:8px 0">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px">
             <b>${esc(d.person.name)}</b><span class="note-txt">on</span><span style="font-weight:600">${pLbl(d.project)}</span>
             <span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">${d.worstPct}% in ${esc(S.ymLabel(d.worstMonth))}</span>
             ${d.identical ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Same window, same percentage — almost certainly one row saved twice">identical rows</span>' : ''}
           </div>
-          <table class="dt" style="max-width:620px"><thead><tr><th>Window</th><th class="num">%</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>
-          ${d.rows.map(r => `<tr>
-            <td>${esc(S.ymLabel(r.start))}${r.end && r.end !== r.start ? ' → ' + esc(S.ymLabel(r.end)) : ''}</td>
+          <table class="dt" style="max-width:760px"><thead><tr><th>Window</th><th class="num">%</th><th>Status</th><th>Note</th><th style="width:300px"></th></tr></thead><tbody>
+          ${d.rows.slice().sort((x, y) => String(x.start).localeCompare(String(y.start))).map((r, i, arr) => {
+            // the next row that starts after this one — "end before next" trims this row to the month before it
+            const next = arr.slice(i + 1).find(x => x.start > r.start);
+            const trimTo = next ? S.ymAdd(next.start, -1) : null;
+            const canTrim = trimTo && trimTo >= r.start && (!r.end || r.end > trimTo);
+            return `<tr>
+            <td>${esc(S.ymLabel(r.start))}${r.end && r.end !== r.start ? ' → ' + esc(S.ymLabel(r.end)) : (r.end ? '' : ' → open')}</td>
             <td class="num">${Math.round(parseFloat(r.pct) || 0)}%</td>
             <td class="note-txt">${esc(r.status || '')}${r.type ? ' · ' + esc(r.type) : ''}</td>
             <td class="note-txt">${esc((r.note || '').slice(0, 60))}</td>
-            <td><button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" data-dup-del="${esc(r.id)}">Delete this row</button></td>
-          </tr>`).join('')}
+            <td style="white-space:nowrap"><button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" data-dup-edit="${esc(r.id)}">Edit</button>${canTrim ? ` <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" data-dup-trim="${esc(r.id)}" data-to="${esc(trimTo)}" title="Set this row's end to ${esc(S.ymLabel(trimTo))}, so it hands over to the row starting ${esc(S.ymLabel(next.start))}">End before next → ${esc(S.ymLabel(trimTo))}</button>` : ''} <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;color:#8f2418" data-dup-del="${esc(r.id)}">Delete</button></td>
+          </tr>`; }).join('')}
           </tbody></table>
         </div>`).join('')}
       </div>
@@ -450,6 +455,12 @@
       }
       toast(`Created ${g.segments.length} allocation${g.segments.length === 1 ? '' : 's'} for ${personName}`);
       renderCounts(); renderAllocations();
+    });
+    $$('#p-allocations [data-dup-edit]').forEach(b => b.onclick = () => openAllocModal(b.dataset.dupEdit));
+    $$('#p-allocations [data-dup-trim]').forEach(b => b.onclick = () => {
+      const a = S.listAllocations().find(x => x.id === b.dataset.dupTrim); if (!a) return;
+      S.saveAllocation(Object.assign({}, a, { end: b.dataset.to }));
+      state._gapsKey = null; toast(`Row now ends ${S.ymLabel(b.dataset.to)}.`); renderCounts(); renderAllocations();
     });
     $$('#p-allocations [data-dup-del]').forEach(b => b.onclick = () => {
       const id = b.dataset.dupDel;

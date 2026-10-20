@@ -17,6 +17,24 @@
 .kpi-card .k-num{font-family:var(--font-display);font-weight:800;font-size:30px;line-height:1;color:var(--sav-navy)}
 .kpi-card .k-lbl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#79828C;margin-top:8px}
 .kpi-card.accent .k-num{color:var(--sav-teal)}
+.presence{background:#fff;border:1px solid rgba(37,39,58,.10);border-left:4px solid var(--sav-teal);padding:12px 18px 10px;margin-bottom:18px}
+.presence .ph{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.presence .ph b{font-family:var(--font-display);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--sav-teal)}
+.presence .ph .n{font-family:var(--font-display);font-weight:800;font-size:22px;line-height:1;color:var(--sav-navy)}
+.presence .ph .note{font-size:11.5px;color:#79828C}
+.presence .ph .grow{flex:1}
+.presence .ph button{border:1px solid rgba(37,39,58,.2);background:#fff;font-family:var(--font-display);font-weight:700;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding:5px 10px;cursor:pointer}
+.presence .who{display:flex;flex-wrap:wrap;gap:6px}
+.presence .chip{display:inline-flex;align-items:center;gap:6px;background:#eef4f4;border-radius:14px;padding:4px 10px 4px 6px;font-size:12px}
+.presence .chip .dot{width:8px;height:8px;border-radius:50%;background:#2e8b57;box-shadow:0 0 0 2px rgba(46,139,87,.2)}
+.presence .chip.idle .dot{background:#c9a227;box-shadow:none}
+.presence .chip .pg{color:#4a5560}
+.presence .chip .ago{color:#79828C;font-size:11px}
+.presence details{margin-top:8px}
+.presence summary{cursor:pointer;font-size:11.5px;color:#79828C}
+.presence .earlier{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.presence .earlier .chip{background:#f4f4f2}
+.presence .earlier .chip .dot{background:#b0b5bc;box-shadow:none}
 .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .toolbar input[type=search]{font-family:var(--font-body);font-size:13px;padding:8px 12px;border:1px solid rgba(37,39,58,.22);min-width:230px}
 .toolbar select{font-family:var(--font-body);font-size:12.5px;padding:7px 10px;border:1px solid rgba(37,39,58,.22);background:#fff;color:var(--sav-navy)}
@@ -99,6 +117,7 @@
     <span class="id-note" id="id-note"></span>
   </div>
 
+  <div id="presence" hidden></div>
   <div class="kpi-strip" id="kpis"></div>
 
   <div class="toolbar">
@@ -113,6 +132,7 @@
       <option value="ledger">Reconciliation</option>
       <option value="staff">Staffing</option>
       <option value="system">Admin &amp; system</option>
+      <option value="open">Opened (page views)</option>
       <option value="delete">Deleted</option>
     </select>
     <select id="f-range">
@@ -159,7 +179,7 @@
      renders, under its own raw name — a trail that silently hides entries it
      does not recognise is worse than one that shows an odd word. */
   const ACTION_LABEL = {
-    create: 'Created', edit: 'Edited', status: 'Status', book: 'Booked',
+    open: 'Opened', create: 'Created', edit: 'Edited', status: 'Status', book: 'Booked',
     delete: 'Deleted', restore: 'Restored', purge: 'Purged',
     'co-create': 'Change order', 'co-approve': 'CO approved', 'co-detach': 'CO → project',
     'reconcile-commit': 'Reconciled to actuals',
@@ -195,6 +215,7 @@
     : /^(delete|purge|ledger-remove|baseline-delete|scenario-delete)$/.test(a) ? 'delete'
     : /^(book|co-approve|confirm-book)$/.test(a) ? 'book'
     : /^(status|slip|slip-remove)$/.test(a) ? 'status'
+    : /^open$/.test(a) ? 'open'
     : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-name|cycle-period|cycle-lock|cycle-reopen|cycle-review|cycle-delete|report-years|pt-months-cleanup|recon-lock|recon-reopen|recon-flash)$/.test(a) ? 'system'
     : /^staff-/.test(a) ? 'staff'
     : /^(ledger-|plan-adjust$|schedule-shift$|reconcile-commit$)/.test(a) ? 'ledger'
@@ -500,9 +521,36 @@
     noteEl.textContent = cur.impersonating ? 'Previewing ' + (cur.name || 'this person') : '';
   }
 
+  /* Who has a window open — presence files written by every open tab (box-adapter
+     Box.heartbeat). Open = seen in the last 10 minutes; a tab that went quiet
+     for longer is listed as "earlier today". Admins only. */
+  let _presenceTimer = null;
+  async function renderPresence(fresh) {
+    const host = $('#presence'); if (!host) return;
+    const B = window.UFC_Box;
+    if (!B || !B.enabled || !B.listPresence || !STORE.seesAllProjects(STORE.getCurrentUser())) { host.hidden = true; return; }
+    host.hidden = false;
+    if (!host.innerHTML) host.innerHTML = '<div class="presence"><div class="ph"><b>Who has a window open</b><span class="note">checking…</span></div></div>';
+    let list = [];
+    try { list = await B.listPresence({ fresh: !!fresh }); } catch (e) { host.innerHTML = '<div class="presence"><div class="ph"><b>Who has a window open</b><span class="note">could not read the presence folder (' + esc(e.message || e) + ')</span></div></div>'; return; }
+    const me = (STORE.getCurrentUser() || {}).username;
+    const ago = (m) => m < 1 ? 'just now' : m === 1 ? '1 min ago' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago';
+    const open = list.filter(p => p.minutesAgo <= 10);
+    const earlier = list.filter(p => p.minutesAgo > 10 && p.minutesAgo <= 24 * 60);
+    const chip = (p, cls) => '<span class="chip ' + (cls || (p.minutesAgo > 5 ? 'idle' : '')) + '" title="' + esc(p.login) + (p.since ? ' · open since ' + esc(new Date(p.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) : '') + '"><span class="dot"></span><b>' + esc(p.name) + (p.login === me ? ' (you)' : '') + '</b><span class="pg">· ' + esc(p.page || '—') + '</span><span class="ago">' + esc(ago(p.minutesAgo)) + '</span></span>';
+    host.innerHTML = '<div class="presence"><div class="ph"><b>Who has a window open</b><span class="n">' + open.length + '</span>'
+      + '<span class="note">seen in the last 10 minutes · each open tab reports its page every few minutes, so a closed tab drops off within about ten · the trail below records every page opening as <b>Opened</b></span><span class="grow"></span><button id="presence-refresh">⟳ Refresh</button></div>'
+      + '<div class="who">' + (open.length ? open.map(p => chip(p)).join('') : '<span class="note">nobody else right now</span>') + '</div>'
+      + (earlier.length ? '<details><summary>' + earlier.length + ' more seen earlier today</summary><div class="earlier">' + earlier.map(p => chip(p, 'gone')).join('') + '</div></details>' : '')
+      + '</div>';
+    const rb = $('#presence-refresh'); if (rb) rb.onclick = () => renderPresence(true);
+    if (!_presenceTimer) _presenceTimer = setInterval(() => { if (!document.hidden) renderPresence(true); }, 60000);
+  }
+
   function render() {
     _scoped = null;                    // one read of the trail per render
     buildIdentityBar();
+    renderPresence(false);
     const rows = filtered();
     buildWhoFilter(rows);
 

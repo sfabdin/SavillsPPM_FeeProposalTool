@@ -155,6 +155,24 @@
     };
     document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
     setInterval(refresh, 180000);   // same 3-min cadence as staff.json's live refresh
+    startPresence();
+  }
+  /* Presence: this tab announces itself (Box.heartbeat → presence/<login>.json)
+     on load, when it comes back into view, and every few minutes while
+     visible; the Change Log shows who was seen recently. Once per page per
+     browser session the trail also gets an "Opened" entry — that is the
+     access history; the heartbeat is only the live view. */
+  function startPresence() {
+    if (!Box || !Box.heartbeat) return;
+    const page = (document.title || location.pathname).replace(/\s*[·|—-]\s*Savills.*$/i, '').trim() || decodeURIComponent(location.pathname.split('/').pop() || '').replace(/\.html$/i, '');
+    const beat = (force) => { try { Box.heartbeat(page, { force }); } catch (e) {} };
+    beat(true);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) beat(true); });
+    setInterval(() => beat(false), 60000);
+    try {
+      const key = 'ufc_opened:' + location.pathname;
+      if (!sessionStorage.getItem(key) && window.UFC_Store && window.UFC_Store.logSystem) { sessionStorage.setItem(key, '1'); window.UFC_Store.logSystem('open', { page }); }
+    } catch (e) {}
   }
 
   window.ufcReady = run().then((r) => {

@@ -1806,6 +1806,80 @@
     }
   }
   Box.writeNotifyStatus = (status) => writeNotifyFile('status', status);
+
+  /* ===== Presence — who has a window open =====
+     Nothing here holds a session: the app is static files and Box is the
+     store. So each open tab says so itself — one small file per person in a
+     `presence` subfolder, rewritten every few minutes while the tab is
+     visible — and the Change Log lists everyone seen in the last few minutes.
+     A closed tab simply stops writing. Admins see the list; the trail gets
+     one "Opened" entry per page per browser session (boot.js). */
+  const PRESENCE_FOLDER = 'presence', PRESENCE_FOLDER_KEY = 'ufc_presence_folder_id', PRESENCE_FILE_KEY = 'ufc_presence_file_id';
+  const PRESENCE_EVERY_MS = 4 * 60 * 1000;
+  let _presenceFolderId = null, _presenceLast = 0, _presenceSince = null, _presenceBusy = false, _presenceList = null, _presenceListAt = 0;
+  async function resolvePresenceFolderId() {
+    if (_presenceFolderId) return _presenceFolderId;
+    try { const c = localStorage.getItem(PRESENCE_FOLDER_KEY); if (c) return (_presenceFolderId = c); } catch (e) {}
+    try {
+      const items = await rootItems(true);
+      const hit = items.find(e => e.type === 'folder' && String(e.name || '').toLowerCase() === PRESENCE_FOLDER);
+      if (hit) { _presenceFolderId = hit.id; try { localStorage.setItem(PRESENCE_FOLDER_KEY, hit.id); } catch (e) {} return hit.id; }
+    } catch (e) {}
+    const mk = await boxFetch('/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: PRESENCE_FOLDER, parent: { id: BOX_CONFIG.folderId } }) });
+    let id = null;
+    if (mk.status === 409) { try { const j = await mk.json(); const c = j.context_info && j.context_info.conflicts; id = c && ((Array.isArray(c) ? c[0] : c) || {}).id; } catch (e) {} }
+    else if (mk.ok) { try { const j = await mk.json(); id = j.id; } catch (e) {} }
+    if (!id) throw new Error('could not create the presence folder: HTTP ' + mk.status);
+    _presenceFolderId = id; try { localStorage.setItem(PRESENCE_FOLDER_KEY, id); } catch (e) {}
+    return id;
+  }
+  const presenceFileName = (login) => String(login || 'unknown').toLowerCase().replace(/[^a-z0-9@._-]+/g, '_') + '.json';
+  /** Say "this person has <page> open". Debounced to one write per PRESENCE_EVERY_MS unless forced. */
+  Box.heartbeat = async function (page, opts) {
+    opts = opts || {};
+    if (!BOX_CONFIG.enabled || !getToken() || _presenceBusy) return false;
+    if (typeof document !== 'undefined' && document.hidden && !opts.force) return false;
+    const now = Date.now();
+    if (!opts.force && now - _presenceLast < PRESENCE_EVERY_MS) return false;
+    let u = {}; try { u = Store.getCurrentUser() || {}; } catch (e) {}
+    const login = String(u.username || '').toLowerCase(); if (!login) return false;
+    _presenceBusy = true;
+    try {
+      _presenceSince = _presenceSince || new Date(now).toISOString();
+      const body = JSON.stringify({ schemaVersion: 1, login, name: u.name || login, page: String(page || document.title || ''), at: new Date(now).toISOString(), since: _presenceSince, url: (typeof location !== 'undefined' ? location.pathname : '') });
+      const folder = await resolvePresenceFolderId();
+      const name = presenceFileName(login);
+      let id = null; try { id = localStorage.getItem(PRESENCE_FILE_KEY); } catch (e) {}
+      let res = null;
+      if (id) { res = await overwriteFile(id, name, body); if (res.status === 404) id = null; }
+      if (!id) {
+        // another browser of theirs may already own the file — reuse it rather than fail on the name
+        const items = await listFolder(folder); const hit = (items || []).find(e => e.type === 'file' && e.name === name);
+        if (hit) { id = hit.id; res = await overwriteFile(id, name, body); }
+        else { res = await uploadNewFile(folder, name, body); if (res.ok) { try { const j = await res.json(); id = j.entries && j.entries[0] && j.entries[0].id; } catch (e) {} } }
+      }
+      if (id) { try { localStorage.setItem(PRESENCE_FILE_KEY, id); } catch (e) {} }
+      _presenceLast = now;
+      return !!(res && res.ok);
+    } catch (e) { return false; }
+    finally { _presenceBusy = false; }
+  };
+  /** Everyone with a presence file: [{ login, name, page, at, since, minutesAgo }], newest first. Cached for a minute. */
+  Box.listPresence = async function (opts) {
+    opts = opts || {};
+    if (!BOX_CONFIG.enabled || !getToken()) return [];
+    if (_presenceList && !opts.fresh && Date.now() - _presenceListAt < 60000) return _presenceList;
+    const folder = await resolvePresenceFolderId();
+    const items = (await listFolder(folder) || []).filter(e => e.type === 'file' && /\.json$/i.test(e.name || ''));
+    const out = [];
+    await Promise.all(items.map(async (f) => {
+      try { const r = await boxFetch('/files/' + f.id + '/content'); if (!r.ok) return; const j = await r.json(); if (j && j.login && j.at) out.push({ login: j.login, name: j.name || j.login, page: j.page || '', url: j.url || '', at: j.at, since: j.since || j.at, minutesAgo: Math.max(0, Math.round((Date.now() - new Date(j.at).getTime()) / 60000)) }); } catch (e) {}
+    }));
+    out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    _presenceList = out; _presenceListAt = Date.now();
+    return out;
+  };
+  Box.PRESENCE_EVERY_MS = PRESENCE_EVERY_MS;
   Box.writeNotifyDigest = (digest) => writeNotifyFile('digest', digest);
   Box.flushNotify = async function () {
     Object.values(_named).forEach(st => clearTimeout(st.timer));
