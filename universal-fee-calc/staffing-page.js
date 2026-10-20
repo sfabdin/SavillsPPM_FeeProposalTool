@@ -95,6 +95,8 @@
     compSearch: '', compSort: { key: 'behind', dir: -1 },   // Clockify Reporting table: filter + column sort
     compView: 'summary',                                    // 'summary' (grouped + sparklines) | 'grid' (month detail)
     bridgeOpen: false,                                      // "contract staffing" card starts rolled up — it can dwarf the page
+    dupOpen: false,                                         // "double-counted allocations" stays open while you work through it
+    allocSort: { key: 'project', dir: 1 },                  // the allocations log: click a column to sort, again to flip
   };
 
   /* Practice-group picker. The short names are what people say out loud;
@@ -275,7 +277,7 @@
     const dups = S.duplicateAllocations();
     if (!dups.length) return '';
     const n = dups.length;
-    return `<details id="dup-roll" style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid #C0392B;margin-bottom:14px">
+    return `<details id="dup-roll" ${state.dupOpen ? 'open' : ''} style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid #C0392B;margin-bottom:14px">
       <summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:11px 16px">
         <span style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy)">⚠ Double-counted allocations</span>
         <span class="mv-chip" style="background:#C0392B;color:#fff;font-weight:800">${n} person·project pair${n === 1 ? '' : 's'}</span>
@@ -402,6 +404,7 @@
     const root = $('#p-allocations');
     if (!root) return;
     // Roll-up state survives re-renders (every allocation edit re-renders the tab).
+    const dr = $('#dup-roll'); if (dr) dr.ontoggle = () => { state.dupOpen = dr.open; };
     const roll = $('#bridge-roll');
     if (roll) roll.ontoggle = () => {
       state.bridgeOpen = roll.open;
@@ -546,7 +549,19 @@
     if (q) list = list.filter(a => (a.project + ' ' + a.client + ' ' + (S.getPerson(a.personId) || {}).name + ' ' + a.note).toLowerCase().includes(q));
     if (state.allocStatus) list = list.filter(a => a.status === state.allocStatus);
     if (state.allocProject) list = list.filter(a => a.project === state.allocProject);
-    list.sort((a, b) => a.project.localeCompare(b.project) || ((S.getPerson(a.personId) || {}).name || '').localeCompare((S.getPerson(b.personId) || {}).name || ''));
+    const pname = (a) => (S.getPerson(a.personId) || {}).name || a.personName || '';
+    const SORTERS = {
+      client: (a, b) => (a.client || '').localeCompare(b.client || ''),
+      project: (a, b) => (a.project || '').localeCompare(b.project || ''),
+      person: (a, b) => pname(a).localeCompare(pname(b)),
+      status: (a, b) => (a.status || '').localeCompare(b.status || '') || (a.type || '').localeCompare(b.type || ''),
+      window: (a, b) => String(a.start || '').localeCompare(String(b.start || '')) || String(a.end || '9999').localeCompare(String(b.end || '9999')),
+      pct: (a, b) => (parseFloat(a.pct) || 0) - (parseFloat(b.pct) || 0),
+      note: (a, b) => (a.note || '').localeCompare(b.note || ''),
+    };
+    const srt = SORTERS[state.allocSort.key] || SORTERS.project;
+    list.sort((a, b) => (srt(a, b) * state.allocSort.dir) || SORTERS.project(a, b) || SORTERS.person(a, b) || SORTERS.window(a, b));
+    const th = (key, label, cls) => `<th class="${cls || ''} sort-th ${state.allocSort.key === key ? 'on' : ''}" data-sort="${key}" title="Sort by ${label.toLowerCase()}${state.allocSort.key === key ? (state.allocSort.dir === 1 ? ' · ascending — click to flip' : ' · descending — click to flip') : ''}">${label}${state.allocSort.key === key ? `<span class="sort-arrow">${state.allocSort.dir === 1 ? '▲' : '▼'}</span>` : ''}</th>`;
 
     const projOpts = ['<option value="">All projects</option>'].concat(S.distinctProjects().map(p => `<option ${state.allocProject === p ? 'selected' : ''}>${esc(p)}</option>`)).join('');
     const toolbar = `<div class="toolbar">
@@ -587,7 +602,7 @@
         <td><span class="row-act"><button data-edit="${a.id}">Edit</button><button class="del" data-del="${a.id}">Del</button></span></td>
       </tr>`;
     });
-    const table = list.length ? `<table class="dt"><thead><tr><th>Client</th><th>Project</th><th>Person</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note / decision</th><th></th></tr></thead><tbody>${body}</tbody></table>`
+    const table = list.length ? `<table class="dt"><thead><tr>${th('client', 'Client')}${th('project', 'Project')}${th('person', 'Person')}${th('status', 'Status')}${th('window', 'Window')}${th('pct', 'Alloc', 'num')}${th('note', 'Note / decision')}<th></th></tr></thead><tbody>${body}</tbody></table>`
       : `<div class="empty">No allocations match. <a href="#" id="al-clear">Clear filters</a></div>`;
     $('#p-allocations').innerHTML = legacySectionHtml() + dupAllocSectionHtml() + bridgeSectionHtml() + leaveSectionHtml() + toolbar + table;
     wireBridge(); wireLegacy('#p-allocations', renderAll);
@@ -600,6 +615,7 @@
     $('#al-add').onclick = () => openAllocModal(null);
     wireGoto('#p-allocations');
     const clr = $('#al-clear'); if (clr) clr.onclick = (e) => { e.preventDefault(); state.allocSearch = state.allocStatus = state.allocProject = ''; renderAllocations(); };
+    $$('#p-allocations [data-sort]').forEach(h => h.onclick = () => { const k = h.dataset.sort; if (state.allocSort.key === k) state.allocSort.dir = -state.allocSort.dir; else state.allocSort = { key: k, dir: 1 }; renderAllocations(); });
     $$('#p-allocations [data-edit]').forEach(b => b.onclick = () => openAllocModal(b.dataset.edit));
     $$('#p-allocations [data-del]').forEach(b => b.onclick = () => { const a = S.listAllocations().find(x => x.id === b.dataset.del); if (a && confirm(`Remove ${(S.getPerson(a.personId) || {}).name}'s planned allocation on ${a.project}?\n\nOnly the plan goes — their logged Clockify hours stay.`)) { S.deleteAllocation(b.dataset.del); renderAll(); } });
   }
