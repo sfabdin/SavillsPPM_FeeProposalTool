@@ -459,6 +459,20 @@
       '<p style="font-size:12px;color:#79828C;margin-top:20px">Sent automatically by the fee tool when the confirmed book changed.</p></div>';
   }
   function sendNotice(evt) { try { const B = window.UFC_Box; if (B && B.enabled && B.notify) return B.notify(evt); } catch (e) { /* mail is never on the critical path */ } return null; }
+  /** THE RECEIPT. A few hundred bytes written to Box as its own file the
+      moment Confirm is pressed — not the trail, not the book, nothing a merge
+      or a full cache can touch. The Tracker reads receipts as a second source
+      beside the trail, and a restore can start from one. */
+  function sendReceipt(r) { try { const B = window.UFC_Box; if (B && B.enabled && B.writeReceipt) B.writeReceipt(r); } catch (e) { /* never on the critical path */ } }
+  let _receipts = {};
+  /** Receipts Box holds for a book, as trail-shaped entries. Returns true when the set changed. */
+  function setReceipts(ym, list) {
+    const next = (list || []).filter(r => r && r.cycle === ym && r.leaderId && r.at).map(r => ({ id: 'receipt:' + (r.id || r.cycle + '|' + r.leaderId + '|' + r.at), ts: r.at, actor: r.by || '', actorName: r.name || '', action: r.kind === 'ack' ? 'cycle-acknowledge' : 'confirm-book', projectId: null, receipt: true,
+      meta: { cycle: r.cycle, leaderId: r.leaderId, projects: r.projects, fee: r.fee, late: !!r.late, afterLock: !!r.afterLock, reason: r.reason || '' } }));
+    const before = JSON.stringify((_receipts[ym] || []).map(e => e.id).sort()), after = JSON.stringify(next.map(e => e.id).sort());
+    _receipts[ym] = next; _trailIdx = null;
+    return before !== after;
+  }
   /** Where the open book stands, for the daily reminder flow: who still owes
       a confirmation, and from when to remind them (three days out). */
   function publishStatus(records) {
@@ -528,6 +542,7 @@
       c.updatedAt = now;
       recordStamp(ym, leaderId, 'confirm', c.confirmations[leaderId], { carriedIds: carried.map(p => p.id) });
       markDirty(db, ym); writeDb(db);
+      sendReceipt({ kind: 'confirm', cycle: ym, leaderId, at: now, by: a.by, name: c.confirmations[leaderId].name, projects: copies.length, fee, late: true, afterLock: true, reason });
       st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: copies.length, fee, late: true, afterLock: true, stamped: true, reason });
       const who = c.confirmations[leaderId].name, title = bookTitle(c);
       sendNotice({ event: 'book-confirmed-late', at: now, to: adminEmails(), data: { cycle: ym, leaderId, reason },
@@ -555,6 +570,7 @@
     c.updatedAt = now;
     recordStamp(ym, leaderId, 'confirm', c.confirmations[leaderId], { projectIds: records.map(r => r.id) });
     markDirty(db, ym); writeDb(db);
+    sendReceipt({ kind: 'confirm', cycle: ym, leaderId, at: now, by: a.by, name: c.confirmations[leaderId].name, projects: records.length, fee, late: c.confirmations[leaderId].late, afterLock: false, reason: reason || '' });
     st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: records.length, fee, late: c.confirmations[leaderId].late, afterLock: false, reason: reason || undefined });
     {
       const k = c.confirmations[leaderId]; const title = bookTitle(c);
@@ -597,6 +613,7 @@
     c.updatedAt = now;
     recordStamp(ym, leaderId, 'ack', c.acknowledgements[leaderId], { carriedIds: copies.map(p => p.id) });
     markDirty(db, ym); writeDb(db);
+    sendReceipt({ kind: 'ack', cycle: ym, leaderId, at: now, by: a.by, name: c.acknowledgements[leaderId].name, projects: copies.length });
     st.logSystem('cycle-acknowledge', { cycle: ym, name: c.name, period: c.period, leaderId, projects: copies.length });
     {
       const who = c.acknowledgements[leaderId].name, title = bookTitle(c);
@@ -724,6 +741,7 @@
     _trailRaw = raw;
     const idx = {};
     try { (S().listActivity(null) || []).forEach(e => { if (!e || e.action !== 'confirm-book' || !e.meta || !e.meta.cycle) return; const k = e.meta.cycle + '|' + (e.meta.leaderId || ''); (idx[k] = idx[k] || []).push(e); }); } catch (e) {}
+    Object.keys(_receipts).forEach(ym => (_receipts[ym] || []).forEach(e => { if (e.action !== 'confirm-book') return; const k = ym + '|' + e.meta.leaderId; const have = idx[k] || (idx[k] = []); if (!have.some(x => Math.abs(new Date(x.ts) - new Date(e.ts)) < 5000)) have.push(e); }));
     Object.values(idx).forEach(list => list.sort((a, b) => String(b.ts).localeCompare(String(a.ts))));
     _trailIdx = idx; _trailIdxAt = Date.now();
     return idx;
@@ -949,7 +967,7 @@
   window.UFC_Confirm = {
     KEY, UNASSIGNED,
     readDb, defaultDb, attachRemote, dirtyCycles, markCycleClean, rememberKnown, knownCycles, listedAt, _resetCache,
-    pendingStamps, queueStamped, applyStamps, clearStamps, isShed, STAMPS_KEY, trailConfirmations, missingFromBook, restoreFromTrail, restoreAllFromTrail,
+    pendingStamps, queueStamped, applyStamps, clearStamps, isShed, STAMPS_KEY, trailConfirmations, missingFromBook, restoreFromTrail, restoreAllFromTrail, setReceipts,
     ymShort, ymLong, monthName, isYm, daysUntil, pastDeadline, defaultDeadline, nextYm, fmtDay, fmtDayTime, fmtStamp,
     bookTitle, periodLabel, bookYear, normalize,
     leadersOf, isActiveRecord, bookFor, expectedLeaders, leaderName, myLeaderId, feeInYear, isLeadership,
