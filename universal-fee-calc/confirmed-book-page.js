@@ -324,15 +324,13 @@
 
     let reviews = '';
     if (lead) {
-      // confirmations the trail recorded that never reached the book
+      // confirmations the trail recorded that never reached the book: an
+      // admin's browser puts them back as soon as it sees them, and the
+      // tracker already shows them green from the trail meanwhile
       ensureTrailLoaded(cycles.filter(Boolean));
-      const lost = [];
-      cycles.forEach(c => { if (!c) return; leaders.forEach(id => { if (c.confirmations[id]) return; const e = C.trailConfirmations(c.id, id)[0]; if (e) lost.push({ c, id, e }); }); });
-      if (lost.length) reviews += '<div class="panel"><div class="ph"><h3>In the trail, not in the book</h3><span class="sub">these people pressed Confirm — the trail recorded it — but the book file never received it. Restoring puts the confirmation back with the trail\'s time; the figures stay as the book holds them.</span></div>' +
-        '<div class="tw"><table class="cb-table"><thead><tr><th>Book</th><th>Leader</th><th>Confirmed (trail)</th><th></th></tr></thead><tbody>' +
-        lost.map(x => '<tr><td>' + esc(C.bookTitle(x.c)) + '</td><td>' + esc(C.leaderName(x.id)) + '</td><td>' + esc(C.fmtStamp(x.e.ts)) + (x.e.meta && x.e.meta.late ? ' <span class="pill y"><i></i>after the deadline</span>' : '') + '</td>' +
-          '<td><button class="btn btn-ghost small" data-restore="' + esc(x.c.id) + '" data-l="' + esc(x.id) + '" data-e="' + esc(x.e.id || '') + '">Restore from trail</button></td></tr>').join('') +
-        '</tbody></table></div></div>';
+      const restored = [];
+      cycles.forEach(c => { if (!c) return; C.restoreAllFromTrail(c.id).forEach(id => restored.push({ c, id })); });
+      if (restored.length) { setTimeout(() => saveToBox(null, restored.length + ' confirmation' + (restored.length === 1 ? '' : 's') + ' the trail recorded ' + (restored.length === 1 ? 'is' : 'are') + ' back in the book: ' + restored.map(x => C.leaderName(x.id)).join(', ') + '.'), 0); }
       const items = [];
       cycles.forEach(c => { if (!c) return;
         Object.keys(c.confirmations).forEach(id => { const k = c.confirmations[id]; if (k.afterLock || k.restoredFromTrail) items.push({ c, id, k }); });
@@ -361,6 +359,7 @@
       else {
         const k = c.confirmations[id]; const s = C.statusFor(c, id, recs); const title = C.bookTitle(c);
         if (s.k === 'none') detail = '<b>' + esc(nm) + '</b> had no active projects when “' + esc(title) + '” was open, so nothing was expected.';
+        else if (!k && s.fromTrail) detail = '<b>' + esc(nm) + '</b> confirmed “' + esc(title) + '” on <b>' + esc(C.fmtStamp(s.at)) + '</b> — the trail recorded it; the book file missed it. It is restored into the book the next time a leadership admin opens this page.';
         else if (!k) { const a = (c.acknowledgements || {})[id];
           detail = '<b>' + esc(nm) + '</b> has not confirmed “' + esc(title) + '”. ' + (c.lockedAt ? 'The book was locked on ' + esc(C.fmtDay(c.lockedAt)) + ' with their live projects carried in and flagged.' + (a ? ' <span class="pill rr"><i></i>Acknowledged ' + esc(C.fmtStamp(a.at)) + '</span> — they recorded that they did not confirm and that invoicing may be delayed.' : '') : 'Confirm by ' + esc(fmtDate(c.deadline)) + '.'); }
         else detail = '<b>' + esc(nm) + '</b> confirmed “' + esc(title) + '” on <b>' + esc(C.fmtStamp(k.at)) + '</b> · ' + plural(k.projects, 'project') + ' · ' + money(k.fee) + ' ' + C.bookYear(c) + ' fee' +

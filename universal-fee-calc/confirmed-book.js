@@ -714,9 +714,36 @@
 
   /** The trail's confirm-book entries for a book, newest first — the record of
       who pressed Confirm, whatever became of the book file afterwards. */
+  let _trailIdx = null, _trailIdxAt = 0, _trailRaw = null;
+  function trailIndex() {
+    // the tracker asks per cell: one read per draw, refreshed the moment the trail's cache changes
+    let raw = null; try { raw = localStorage.getItem('savills-ppm-activity-db:v1'); } catch (e) {}
+    if (_trailIdx && raw === _trailRaw && Date.now() - _trailIdxAt < 3000) return _trailIdx;
+    _trailRaw = raw;
+    const idx = {};
+    try { (S().listActivity(null) || []).forEach(e => { if (!e || e.action !== 'confirm-book' || !e.meta || !e.meta.cycle) return; const k = e.meta.cycle + '|' + (e.meta.leaderId || ''); (idx[k] = idx[k] || []).push(e); }); } catch (e) {}
+    Object.values(idx).forEach(list => list.sort((a, b) => String(b.ts).localeCompare(String(a.ts))));
+    _trailIdx = idx; _trailIdxAt = Date.now();
+    return idx;
+  }
   function trailConfirmations(ym, leaderId) {
-    let all = []; try { all = S().listActivity(null) || []; } catch (e) { all = []; }
-    return all.filter(e => e && e.action === 'confirm-book' && e.meta && e.meta.cycle === ym && (!leaderId || e.meta.leaderId === leaderId));
+    const idx = trailIndex();
+    if (leaderId) return (idx[ym + '|' + leaderId] || []).slice();
+    return Object.keys(idx).filter(k => k.startsWith(ym + '|')).flatMap(k => idx[k]);
+  }
+  /** Every leader whose confirmation the trail holds and this book does not. */
+  function missingFromBook(ym) {
+    const c = getCycle(ym); if (!c) return [];
+    const seen = new Set(); const out = [];
+    trailConfirmations(ym).forEach(e => { const id = e.meta.leaderId; if (!id || seen.has(id) || c.confirmations[id]) return; seen.add(id); out.push({ leaderId: id, entry: e }); });
+    return out;
+  }
+  /** An admin's browser puts every such confirmation back, no click needed. */
+  function restoreAllFromTrail(ym) {
+    if (!isLeadership()) return [];
+    const done = [];
+    missingFromBook(ym).forEach(x => { try { restoreFromTrail(ym, x.leaderId, x.entry); done.push(x.leaderId); } catch (e) { /* the next draw tries again */ } });
+    return done;
   }
   /** An admin puts a confirmation the trail recorded back into the book it
       never reached. The stamp carries the trail's time; the figures stay as
@@ -773,6 +800,10 @@
         text: when + ' · ' + changed.length + ' edited since' };
       return { k: 'confirmed', tone: 'g', at: k.at, text: when + (k.afterLock ? ' · late · after lock' : k.late ? ' · late' : '') + (k.restoredFromTrail ? ' · restored from trail' : '') };
     }
+    // The trail holds the confirmation the book file missed: say so, with
+    // its time — the book catches up when an admin's browser restores it.
+    const te = trailConfirmations(cycle.id || cycle.cycle, leaderId)[0];
+    if (te) return { k: 'confirmed', tone: 'g', at: te.ts, fromTrail: true, text: fmtDayTime(te.ts) + ' · late · in the trail, book catching up' };
     if (cycle.lockedAt) {
       const ack = (cycle.acknowledgements || {})[leaderId];
       if (ack) return { k: 'missed', tone: 'r', bold: false, acknowledged: true, at: ack.at, text: 'not confirmed · acknowledged ' + fmtDayTime(ack.at) };
@@ -916,7 +947,7 @@
   window.UFC_Confirm = {
     KEY, UNASSIGNED,
     readDb, defaultDb, attachRemote, dirtyCycles, markCycleClean, rememberKnown, knownCycles, listedAt, _resetCache,
-    pendingStamps, queueStamped, applyStamps, clearStamps, isShed, STAMPS_KEY, trailConfirmations, restoreFromTrail,
+    pendingStamps, queueStamped, applyStamps, clearStamps, isShed, STAMPS_KEY, trailConfirmations, missingFromBook, restoreFromTrail, restoreAllFromTrail,
     ymShort, ymLong, monthName, isYm, daysUntil, pastDeadline, defaultDeadline, nextYm, fmtDay, fmtDayTime, fmtStamp,
     bookTitle, periodLabel, bookYear, normalize,
     leadersOf, isActiveRecord, bookFor, expectedLeaders, leaderName, myLeaderId, feeInYear, isLeadership,

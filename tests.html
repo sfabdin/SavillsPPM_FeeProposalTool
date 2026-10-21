@@ -2278,7 +2278,10 @@
     ];
     const prevId = S.getRealIdentity();
     const as = (login, name) => S.setRealIdentity({ username: login, name });
-    const reset = () => { localStorage.removeItem(C.KEY); };
+    // every book test starts with an empty book store AND an empty trail — the
+    // tracker now reads confirmations out of the trail, and the fixture books
+    // share an id from test to test
+    const reset = () => { localStorage.removeItem(C.KEY); localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] })); };
     const open = () => { reset(); as('sabdin@savills.us', 'Sarah Abdin'); const c = C.createCycle({ name: 'Revenue Projections #12', period: YM, deadline: '2026-09-15', now: '2026-09-01T13:00:00Z', records: book() }); ID = c.id; return c; };   // the book, not whatever an earlier test left in the store
     const restore = () => { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); };
 
@@ -2449,6 +2452,9 @@
         if (!e) return 'the trail entry should be readable';
         let refused = false; try { C.restoreFromTrail(ID, 'mglatt'); } catch (err) { refused = /no confirmation/.test(err.message); }
         if (!refused) return 'a leader the trail does not mention cannot be restored';
+        const pre = C.statusFor(C.getCycle(ID), 'esobel', book(), '2026-09-19T12:00:00');
+        if (pre.k !== 'confirmed' || !pre.fromTrail || pre.at !== e.ts || !/in the trail/.test(pre.text)) return 'before the restore the tracker already shows the trail\'s confirmation: ' + JSON.stringify(pre);
+        if (C.missingFromBook(ID).map(x => x.leaderId).join() !== 'esobel') return 'missingFromBook: ' + JSON.stringify(C.missingFromBook(ID));
         const k = C.restoreFromTrail(ID, 'esobel', e);
         const c = C.getCycle(ID);
         if (k.at !== e.ts || !k.late || !k.restoredFromTrail || k.projects !== 2 || k.fee !== 1234) return 'stamp: ' + JSON.stringify(k);
@@ -2458,7 +2464,9 @@
         if (st.k !== 'confirmed' || !/restored from trail/.test(st.text)) return 'tracker: ' + JSON.stringify(st);
         if (!C.pendingStamps(ID).some(x => x.leaderId === 'esobel')) return 'the restore is stamped apart like any confirmation';
         let twice = false; try { C.restoreFromTrail(ID, 'esobel', e); } catch (err) { twice = /already holds/.test(err.message); }
-        return twice || 'a second restore is refused';
+        if (!twice) return 'a second restore is refused';
+        if (C.missingFromBook(ID).length) return 'nothing left to restore';
+        return sq(C.restoreAllFromTrail(ID).length, 0, 'auto-restore has nothing to do');
       } finally { localStorage.removeItem(C.STAMPS_KEY); C._resetCache(); restore(); }
     });
     test('Confirmed book', 'lock carries the unconfirmed in, flagged, without touching a peer\'s confirmed copy', () => {
