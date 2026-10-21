@@ -119,9 +119,9 @@
      cache keeps their header only (projects shed, flagged _shed) and a page
      that needs their rows pulls them on demand. The open book(s) and the
      latest locked one (Executive Reporting's default) stay whole. */
-  function shedForStorage(db) {
+  function shedForStorage(db, all) {
     const locked = Object.values(db.cycles).filter(c => c && c.lockedAt).sort((a, b) => String(a.lockedAt).localeCompare(String(b.lockedAt)));
-    const keepFull = new Set(locked.length ? [locked[locked.length - 1].id] : []);
+    const keepFull = new Set(locked.length && !all ? [locked[locked.length - 1].id] : []);
     const out = Object.assign({}, db, { cycles: {} });
     Object.keys(db.cycles).forEach(id => {
       const c = db.cycles[id];
@@ -166,9 +166,11 @@
     let raw = JSON.stringify(shedForStorage(db));
     let ok = trySet(raw);
     if (!ok) {
-      /* Out of storage: shed the oldest LOCKED cycle (safe in Box) and retry. */
-      const yms = Object.keys(db.cycles).filter(k => db.cycles[k].lockedAt && db.dirty.indexOf(k) < 0).sort();
-      if (yms.length) { delete db.cycles[yms[0]]; raw = JSON.stringify(shedForStorage(db)); ok = trySet(raw); }
+      /* Out of storage: keep every locked book as header only (their rows
+         are safe in Box and pulled on demand) and retry. Nothing is ever
+         dropped from MEMORY — that used to evict the very book a page had
+         just pulled, which left its column saying "loading…" for good. */
+      raw = JSON.stringify(shedForStorage(db, true)); ok = trySet(raw);
     }
     if (ok) {
       _cache = db; _raw = raw;

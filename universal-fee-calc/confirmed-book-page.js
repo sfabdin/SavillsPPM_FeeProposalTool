@@ -280,12 +280,16 @@
     const known = C.knownCycles().filter(id => loaded.indexOf(id) < 0);
     return known.concat(loaded).slice(-BOOKS_SHOWN);
   }
+  const loadFailed = {};
   function ensureMonthsLoaded(yms) {
     if (!Box || !Box.enabled || !Box.pullConfirmCycle) return;
     const missing = yms.filter(y => (!C.getCycle(y) || (C.isShed && C.isShed(y))) && !pulled.has(y));
     if (!missing.length) return;
-    missing.forEach(y => pulled.add(y));
-    Promise.all(missing.map(y => Box.pullConfirmCycle(y).catch(() => null))).then(() => { if (tab === 'tracker') render(); });
+    missing.forEach(y => { pulled.add(y); delete loadFailed[y]; });
+    Promise.all(missing.map(y => Box.pullConfirmCycle(y).then(c => { if (!c) throw new Error('not in Box'); }).catch(e => {
+      // a failed pull is said out loud and retried on the next draw, never left as "loading…"
+      loadFailed[y] = (e && e.message) || 'could not load'; pulled.delete(y);
+    }))).then(() => { if (tab === 'tracker' || tab === 'months') softRender(); });
   }
   function paneTracker() {
     const recs = records(); const yms = trackerMonths();
@@ -312,7 +316,7 @@
         '<div class="kpi"><div class="v"' + (over ? ' style="color:var(--sav-red)"' : '') + '>' + (cur.lockedAt ? 'Locked' : over ? 'Passed' : d) + '</div><div class="s">' + (cur.lockedAt ? 'locked ' + esc(C.fmtDay(cur.lockedAt)) : (over ? 'deadline was ' : 'days until ') + esc(fmtDate(cur.deadline))) + '</div></div></div>';
     }
     const head = '<tr><th>Revenue leader</th>' + yms.map((y, i) => '<th>' + esc(cycles[i] ? C.bookTitle(cycles[i]) : y) + '<span class="st">' +
-      (!cycles[i] ? 'loading…' : (C.periodLabel(cycles[i]) && C.periodLabel(cycles[i]) !== C.bookTitle(cycles[i]) ? esc(C.periodLabel(cycles[i])) + ' · ' : '') +
+      (!cycles[i] ? (loadFailed[y] ? '<span style="color:var(--sav-red)">not loaded · ' + esc(loadFailed[y]) + '</span> · <a href="#" data-retry="' + esc(y) + '">retry</a>' : 'loading…') : (C.periodLabel(cycles[i]) && C.periodLabel(cycles[i]) !== C.bookTitle(cycles[i]) ? esc(C.periodLabel(cycles[i])) + ' · ' : '') +
         (cycles[i].lockedAt ? 'locked ' + esc(C.fmtDay(cycles[i].lockedAt)) : 'open · by ' + esc(C.fmtDay(cycles[i].deadline + 'T12:00:00')))) + '</span></th>').join('') + '</tr>';
     const body = leaders.map(id => '<tr' + (id === me ? ' class="me"' : '') + '><td>' + esc(C.leaderName(id)) + (id === me ? ' <span class="sub">(you)</span>' : '') + '</td>' +
       yms.map((y, i) => {
@@ -363,11 +367,12 @@
         else if (!k) { const a = (c.acknowledgements || {})[id];
           detail = '<b>' + esc(nm) + '</b> has not confirmed “' + esc(title) + '”. ' + (c.lockedAt ? 'The book was locked on ' + esc(C.fmtDay(c.lockedAt)) + ' with their live projects carried in and flagged.' + (a ? ' <span class="pill rr"><i></i>Acknowledged ' + esc(C.fmtStamp(a.at)) + '</span> — they recorded that they did not confirm and that invoicing may be delayed.' : '') : 'Confirm by ' + esc(fmtDate(c.deadline)) + '.'); }
         else detail = '<b>' + esc(nm) + '</b> confirmed “' + esc(title) + '” on <b>' + esc(C.fmtStamp(k.at)) + '</b> · ' + plural(k.projects, 'project') + ' · ' + money(k.fee) + ' ' + C.bookYear(c) + ' fee' +
-          (k.stamped ? ' · <span class="pill y"><i></i>confirmed late · figures as locked</span>' : k.afterLock ? ' · <span class="pill y"><i></i>after lock</span>' : k.late ? ' · <span class="pill y"><i></i>after the deadline</span>' : '') +
+          (k.restoredFromTrail ? ' · <span class="pill y"><i></i>confirmed late · restored from the trail</span> — their projections were carried in at the lock on ' + esc(C.fmtDay(c.lockedAt)) + ' and now carry this confirmation' : k.stamped ? ' · <span class="pill y"><i></i>confirmed late · figures as locked</span>' : k.afterLock ? ' · <span class="pill y"><i></i>after lock</span>' : k.late ? ' · <span class="pill y"><i></i>after the deadline</span>' : '') +
           (s.k === 'changed' ? ' · <span class="pill y"><i></i>' + plural(s.changed, 'project') + ' edited since</span>' : '');
       }
       $('#tr-detail', host).innerHTML = detail;
     }));
+    host.querySelectorAll('a[data-retry]').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); pulled.delete(a.dataset.retry); delete loadFailed[a.dataset.retry]; render(); }));
     host.querySelectorAll('button[data-review]').forEach(b => b.addEventListener('click', () => {
       try { C.reviewLate(b.dataset.review, b.dataset.l); toast('Marked as reviewed.', 'ok'); render(); } catch (e) { toast(e.message); }
     }));
@@ -396,13 +401,20 @@
 
   /* ================= BOOKS (admin) ================= */
   function paneMonths() {
-    const recs = records(); const cycles = C.listCycles().slice().reverse();
+    const recs = records();
+    // every book Box knows about, newest first — not just what this browser holds
+    const known = C.knownCycles(); ensureMonthsLoaded(known);
+    const loaded = C.listCycles();
+    const order = known.concat(loaded.map(c => c.id).filter(id => known.indexOf(id) < 0));
+    const cycles = order.map(id => C.getCycle(id) || { id, _pending: true }).sort((a, b) => String(b.openedAt || b.id).localeCompare(String(a.openedAt || a.id)));
     const years = S.getReportYears();
     const today = new Date().toISOString().slice(0, 7);
-    const last = cycles.length ? cycles[0] : null;
+    const last = cycles.find(c => !c._pending) || null;
     const nextYm = last && C.isYm(last.period) && last.period >= today ? C.nextYm(last.period) : today;
     const rows = cycles.map(c => {
-      const y = c.id; const year = C.bookYear(c);
+      const y = c.id;
+      if (c._pending) return '<tr><td><b>' + esc(y) + '</b><div class="mono" style="margin-top:4px">confirmed-' + esc(y) + '.json</div></td><td colspan="8" class="sub">' + (loadFailed[y] ? '<span style="color:var(--sav-red)">not loaded · ' + esc(loadFailed[y]) + '</span> · <a href="#" data-retry="' + esc(y) + '">retry</a>' : 'loading from Box…') + '</td></tr>';
+      const year = C.bookYear(c);
       const exp = C.expectedLeaders(recs).filter(id => C.statusFor(c, id, recs).k !== 'none');
       const done = exp.filter(id => c.confirmations[id]).length;
       const copies = Object.values(c.projects);
@@ -505,6 +517,7 @@
     return true;
   }
   function wireMonths(host) {
+    host.querySelectorAll('a[data-retry]').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); pulled.delete(a.dataset.retry); delete loadFailed[a.dataset.retry]; render(); }));
     const monthEl = $('#ad-month', host), dlEl = $('#ad-deadline', host), createBtn = $('#ad-create', host), nameEl = $('#ad-name', host);
     if (monthEl) monthEl.addEventListener('input', () => { if (C.isYm(monthEl.value)) dlEl.value = C.defaultDeadline(monthEl.value); });
     if (createBtn) createBtn.addEventListener('click', () => {

@@ -314,7 +314,7 @@
     if (pick) pick.addEventListener('change', async () => {
       const v = pick.value === 'live' ? null : pick.value;
       const C = Confirm(); const Box = window.UFC_Box;
-      if (v && C && !C.getCycle(v) && Box && Box.pullConfirmCycle) { try { await Box.pullConfirmCycle(v); } catch (e) { /* falls back to live below */ } }
+      if (v && C && (!C.getCycle(v) || (C.isShed && C.isShed(v))) && Box && Box.pullConfirmCycle) { try { await Box.pullConfirmCycle(v); } catch (e) { /* falls back to live below */ } }
       setBook(v);
       assemble(); render(root, dev);
     });

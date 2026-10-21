@@ -602,7 +602,14 @@
   function attachActivityRemote(fn) { _actRemote = typeof fn === 'function' ? fn : null; }
   function defaultActivityDb() { return { schemaVersion: 1, shards: {}, dirty: [] }; }
 
+  /* When storage refuses the trail (full), this page keeps the whole trail
+     in memory and serves it from there — a pulled month must not vanish
+     between the pull and the read that needed it. Memory is trusted only
+     while storage still holds what was last written; a reset from outside
+     (a test, another tab clearing data) is noticed and read fresh. */
+  let _actMem = null, _actMemRaw = null;
   function readActivityDb() {
+    if (_actMem) { let raw = null; try { raw = localStorage.getItem(ACT_KEY); } catch (e) {} if (raw === _actMemRaw) return _actMem; _actMem = null; }
     try {
       const raw = localStorage.getItem(ACT_KEY);
       const parsed = raw ? JSON.parse(raw) : null;
@@ -622,17 +629,21 @@
   }
   function writeActivityDb(db, opts) {
     db.schemaVersion = 1;
-    try { localStorage.setItem(ACT_KEY, JSON.stringify(db)); }
+    let stored = false;
+    try { localStorage.setItem(ACT_KEY, JSON.stringify(db)); stored = true; }
     catch (e) {
       /* Out of local storage. The trail must not take the app down with it,
-         and it must not silently drop the entry either — so shed the OLDEST
-         shard (which is safely in Box) and try once more. */
+         and it must not silently drop the entry either. The STORAGE copy
+         keeps only the months this browser still owes Box and the newest
+         month; nothing leaves memory. */
       const months = Object.keys(db.shards || {}).sort();
-      if (months.length > 1) {
-        delete db.shards[months[0]];
-        try { localStorage.setItem(ACT_KEY, JSON.stringify(db)); } catch (e2) { return db; }
-      } else return db;
+      const slim = Object.assign({}, db, { shards: {} });
+      months.forEach(m => { if ((db.dirty || []).indexOf(m) >= 0 || m === months[months.length - 1]) slim.shards[m] = db.shards[m]; });
+      try { localStorage.setItem(ACT_KEY, JSON.stringify(slim)); stored = 'partial'; } catch (e2) { stored = false; }
+      if (!stored) console.warn('activity trail: local cache write failed (storage full?) — holding the trail in memory for this page');
     }
+    if (stored === true) { _actMem = null; _actMemRaw = null; }
+    else { _actMem = db; try { _actMemRaw = localStorage.getItem(ACT_KEY); } catch (e) { _actMemRaw = null; } }
     if (!(opts && opts.quiet) && _actRemote) { try { _actRemote(db, (db.dirty || []).slice()); } catch (e) { console.warn('activity push failed', e); } }
     return db;
   }
