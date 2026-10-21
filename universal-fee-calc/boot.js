@@ -25,6 +25,8 @@
   const Box = window.UFC_Box;
 
   async function run() {
+    // the cache layer may hold a big document in IndexedDB — have it in memory before anything reads
+    try { if (window.UFC_Cache && window.UFC_Cache.ready) await window.UFC_Cache.ready; } catch (e) {}
     if (!Box || !Box.enabled) return { backend: 'local' };
     const res = await Box.boot();
     if (res && res.needsDevToken) {

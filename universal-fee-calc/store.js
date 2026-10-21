@@ -420,7 +420,7 @@
     2: (db) => { if (!Array.isArray(db.activity)) db.activity = []; },
   };
   function runMigrations() {
-    const raw = localStorage.getItem(KEY);
+    const raw = cacheGet(KEY);
     if (!raw) return 0;
     let db;
     try { db = JSON.parse(raw); } catch (e) { return 0; }
@@ -453,10 +453,14 @@
      Callers mutate the object they get back and then writeDb() it; that is
      the existing contract (staff.js has worked this way all along) and it is
      why the cached object is returned rather than a clone. */
+  /* Every big document goes through the cache layer (cache-store.js): a
+     synchronous read, and a write that never fails for want of room. */
+  const cacheGet = (k) => (window.UFC_Cache ? window.UFC_Cache.get(k) : localStorage.getItem(k));
+  const cacheSet = (k, v) => { if (window.UFC_Cache) { window.UFC_Cache.set(k, v); return; } localStorage.setItem(k, v); };
   let _dbCache = null, _dbRaw = null;
   function readDb() {
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = cacheGet(KEY);
       if (!raw) { _dbCache = null; _dbRaw = null; return defaultDb(); }
       if (_dbCache && raw === _dbRaw) return _dbCache;
       const parsed = JSON.parse(raw);
@@ -508,7 +512,7 @@
      Everything that used to call setItem bare goes through here, gets the same
      loud sync-bar message writeDb already had, and never throws. */
   function safeSet(key, value, what) {
-    try { localStorage.setItem(key, value); return true; }
+    try { cacheSet(key, value); return true; }
     catch (e) {
       console.error('Local cache write failed for ' + (what || key) + ' (storage full?)', e);
       try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error',
@@ -532,7 +536,7 @@
     // and the failure is surfaced loudly instead of silently.
     try {
       const raw = JSON.stringify(db);
-      localStorage.setItem(KEY, raw);
+      cacheSet(KEY, raw);
       // Prime the cache with what we just wrote, so the next read is free
       // instead of re-parsing our own output.
       _dbCache = db; _dbRaw = raw;
@@ -609,9 +613,9 @@
      (a test, another tab clearing data) is noticed and read fresh. */
   let _actMem = null, _actMemRaw = null;
   function readActivityDb() {
-    if (_actMem) { let raw = null; try { raw = localStorage.getItem(ACT_KEY); } catch (e) {} if (raw === _actMemRaw) return _actMem; _actMem = null; }
+    if (_actMem) { let raw = null; try { raw = cacheGet(ACT_KEY); } catch (e) {} if (raw === _actMemRaw) return _actMem; _actMem = null; }
     try {
-      const raw = localStorage.getItem(ACT_KEY);
+      const raw = cacheGet(ACT_KEY);
       const parsed = raw ? JSON.parse(raw) : null;
       if (!parsed || typeof parsed !== 'object' || !parsed.shards) return defaultActivityDb();
       if (!Array.isArray(parsed.dirty)) parsed.dirty = [];
@@ -630,7 +634,7 @@
   function writeActivityDb(db, opts) {
     db.schemaVersion = 1;
     let stored = false;
-    try { localStorage.setItem(ACT_KEY, JSON.stringify(db)); stored = true; }
+    try { cacheSet(ACT_KEY, JSON.stringify(db)); stored = true; }
     catch (e) {
       /* Out of local storage. The trail must not take the app down with it,
          and it must not silently drop the entry either. The STORAGE copy
@@ -639,11 +643,11 @@
       const months = Object.keys(db.shards || {}).sort();
       const slim = Object.assign({}, db, { shards: {} });
       months.forEach(m => { if ((db.dirty || []).indexOf(m) >= 0 || m === months[months.length - 1]) slim.shards[m] = db.shards[m]; });
-      try { localStorage.setItem(ACT_KEY, JSON.stringify(slim)); stored = 'partial'; } catch (e2) { stored = false; }
+      try { cacheSet(ACT_KEY, JSON.stringify(slim)); stored = 'partial'; } catch (e2) { stored = false; }
       if (!stored) console.warn('activity trail: local cache write failed (storage full?) — holding the trail in memory for this page');
     }
     if (stored === true) { _actMem = null; _actMemRaw = null; }
-    else { _actMem = db; try { _actMemRaw = localStorage.getItem(ACT_KEY); } catch (e) { _actMemRaw = null; } }
+    else { _actMem = db; try { _actMemRaw = cacheGet(ACT_KEY); } catch (e) { _actMemRaw = null; } }
     if (!(opts && opts.quiet) && _actRemote) { try { _actRemote(db, (db.dirty || []).slice()); } catch (e) { console.warn('activity push failed', e); } }
     return db;
   }
@@ -935,7 +939,7 @@
   function defaultStudio() { return { schemaVersion: SCHEMA, baselines: {}, scenarios: {} }; }
   function readStudio() {
     try {
-      const raw = localStorage.getItem(STUDIO_KEY);
+      const raw = cacheGet(STUDIO_KEY);
       if (!raw) return defaultStudio();
       const p = JSON.parse(raw);
       if (!p.baselines) p.baselines = {};
@@ -3164,7 +3168,7 @@
   const HIST_KEY = 'savills-ppm-history-db:v1';
   function readHistory() {
     try {
-      const raw = localStorage.getItem(HIST_KEY);
+      const raw = cacheGet(HIST_KEY);
       const parsed = raw ? JSON.parse(raw) : null;
       if (!parsed || !parsed.snapshots) return { schemaVersion: 1, snapshots: {} };
       return parsed;
@@ -3173,14 +3177,14 @@
   let _histRemote = null;
   function attachHistoryRemote(fn) { _histRemote = fn; }
   function writeHistory(db) {
-    try { localStorage.setItem(HIST_KEY, JSON.stringify(db)); }
+    try { cacheSet(HIST_KEY, JSON.stringify(db)); }
     catch (e) { console.error('History write failed', e); }
     if (_histRemote) { try { _histRemote(db); } catch (e) { console.warn('history push failed', e); } }
     return db;
   }
   function hydrateHistoryFromRemote(db) {
     if (!db || !db.snapshots) return;
-    try { localStorage.setItem(HIST_KEY, JSON.stringify(db)); } catch (e) {}
+    try { cacheSet(HIST_KEY, JSON.stringify(db)); } catch (e) {}
   }
 
   /** Snapshots newest first. Each is {id, asOf, source, label, cycle, ...}. */

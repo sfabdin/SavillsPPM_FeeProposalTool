@@ -133,7 +133,7 @@
   function readDb() {
     if (_memOnly && _cache) return _cache;           // storage is full: memory is the truth, see writeDb
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = window.UFC_Cache ? window.UFC_Cache.get(KEY) : localStorage.getItem(KEY);
       if (!raw) { _cache = null; _raw = null; return defaultDb(); }
       if (_cache && raw === _raw) return _cache;
       const p = JSON.parse(raw);
@@ -160,7 +160,7 @@
     try { applyStamps(c); } catch (e) { /* a stamp must never break a read */ }
     return c;
   }
-  const trySet = (raw) => { try { localStorage.setItem(KEY, raw); return true; } catch (e) { return false; } };
+  const trySet = (raw) => { try { if (window.UFC_Cache) window.UFC_Cache.set(KEY, raw); else localStorage.setItem(KEY, raw); return true; } catch (e) { return false; } };
   function writeDb(db, opts) {
     db.schemaVersion = 1;
     let raw = JSON.stringify(shedForStorage(db));
@@ -719,7 +719,7 @@
   let _trailIdx = null, _trailIdxAt = 0, _trailRaw = null;
   function trailIndex() {
     // the tracker asks per cell: one read per draw, refreshed the moment the trail's cache changes
-    let raw = null; try { raw = localStorage.getItem('savills-ppm-activity-db:v1'); } catch (e) {}
+    let raw = null; try { raw = window.UFC_Cache ? window.UFC_Cache.get('savills-ppm-activity-db:v1') : localStorage.getItem('savills-ppm-activity-db:v1'); } catch (e) {}
     if (_trailIdx && raw === _trailRaw && Date.now() - _trailIdxAt < 3000) return _trailIdx;
     _trailRaw = raw;
     const idx = {};
