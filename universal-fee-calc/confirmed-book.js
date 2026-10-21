@@ -51,6 +51,85 @@
      the key behind our back. Callers mutate the object and writeDb() it; that
      is the contract, so the cached object itself is handed out. */
   let _cache = null, _raw = null, _memOnly = false;
+
+  /* ===== THE STAMP STORE =====
+     A confirmation is a few hundred bytes; the book it lands in is a
+     megabyte, and the browser's cache of that book is the first thing to
+     fail when storage runs short. So every confirmation (and acknowledgement,
+     and restore) is ALSO written to its own small key the moment it is made,
+     and stays there until Box has accepted a book that contains it. Any read
+     of the book puts the pending stamps back in (normalize → applyStamps), so
+     a lost cache, a reload, a fresh pull from Box, a push from another tab —
+     none of them can lose a confirmation that was made. */
+  const STAMPS_KEY = 'savills-ppm-confirm-stamps:v1';
+  let _memStamps = null;
+  function readStamps() { if (_memStamps) return _memStamps; try { return JSON.parse(localStorage.getItem(STAMPS_KEY) || '[]') || []; } catch (e) { return []; } }
+  function writeStamps(list) { try { localStorage.setItem(STAMPS_KEY, JSON.stringify(list)); _memStamps = null; } catch (e) { _memStamps = list; } }
+  function recordStamp(ym, leaderId, kind, k, extra) {
+    const list = readStamps().filter(x => !(x.ym === ym && x.leaderId === leaderId && x.kind === kind));
+    list.push(Object.assign({ ym, leaderId, kind, k: JSON.parse(JSON.stringify(k)), savedAt: new Date().toISOString() }, extra || {}));
+    writeStamps(list);
+  }
+  const pendingStamps = (ym) => readStamps().filter(x => !ym || x.ym === ym);
+  /** Put every pending stamp for this book back into it. Idempotent: a stamp
+      the book already carries (from this or any other browser) is left alone. */
+  function applyStamps(c) {
+    const mine = readStamps().filter(x => x.ym === c.id || x.ym === c.cycle); if (!mine.length) return 0;
+    let applied = 0;
+    mine.forEach(st => {
+      if (st.kind === 'ack') {
+        c.acknowledgements = c.acknowledgements || {};
+        if (c.acknowledgements[st.leaderId]) return;
+        c.acknowledgements[st.leaderId] = st.k;
+        Object.values(c.projects || {}).forEach(p => { if (p._carried && (st.carriedIds || []).indexOf(p.id) >= 0) { p._acknowledgedBy = st.leaderId; p._acknowledgedAt = st.k.at; } });
+        applied++; return;
+      }
+      if (c.confirmations[st.leaderId]) return;
+      c.confirmations[st.leaderId] = st.k;
+      if (st.k.afterLock || st.k.restoredFromTrail || c.lockedAt) {
+        // signature on the carried copies — the figures do not change
+        Object.values(c.projects || {}).forEach(p => { if (p._carried && (st.carriedIds || []).indexOf(p.id) >= 0) { p._lateConfirmedBy = st.leaderId; p._lateConfirmedAt = st.k.at; if (st.k.reason) p._lateReason = st.k.reason; if (st.k.restoredFromTrail) p._restoredFromTrail = true; } });
+      } else {
+        // the open book: the leader's live projects, stamped as they were when confirmed
+        const live = (() => { try { return S().listProjects(); } catch (e) { return []; } })();
+        (st.projectIds || []).forEach(id => {
+          const have = c.projects[id]; if (have && !have._carried) return;
+          const rec = live.find(r => r.id === id); if (rec) c.projects[id] = stampCopy(rec, st.leaderId, st.k.at, false);
+        });
+      }
+      c.carried = (c.carried || []).filter(x => x !== st.leaderId);
+      if (!c.updatedAt || String(st.k.updatedAt || st.k.at) > String(c.updatedAt)) c.updatedAt = st.k.updatedAt || st.k.at;
+      applied++;
+    });
+    return applied;
+  }
+  /** Box holds a book that carries these stamps: they have done their job. */
+  function clearStamps(ym, c) {
+    const keep = readStamps().filter(x => {
+      if (x.ym !== ym) return true;
+      if (x.kind === 'ack') return !(c && c.acknowledgements && c.acknowledgements[x.leaderId]);
+      return !(c && c.confirmations && c.confirmations[x.leaderId]);
+    });
+    if (keep.length !== readStamps().length) writeStamps(keep);
+  }
+
+  /* ===== WHAT THE CACHE KEEPS =====
+     A book is a full copy of every project — a megabyte each — and the
+     browser's storage holds about five. Older locked books live in Box; the
+     cache keeps their header only (projects shed, flagged _shed) and a page
+     that needs their rows pulls them on demand. The open book(s) and the
+     latest locked one (Executive Reporting's default) stay whole. */
+  function shedForStorage(db) {
+    const locked = Object.values(db.cycles).filter(c => c && c.lockedAt).sort((a, b) => String(a.lockedAt).localeCompare(String(b.lockedAt)));
+    const keepFull = new Set(locked.length ? [locked[locked.length - 1].id] : []);
+    const out = Object.assign({}, db, { cycles: {} });
+    Object.keys(db.cycles).forEach(id => {
+      const c = db.cycles[id];
+      if (!c || !c.lockedAt || keepFull.has(c.id) || db.dirty.indexOf(id) >= 0) { out.cycles[id] = c; return; }
+      out.cycles[id] = Object.assign({}, c, { projects: {}, _shed: true });
+    });
+    return out;
+  }
   function readDb() {
     if (_memOnly && _cache) return _cache;           // storage is full: memory is the truth, see writeDb
     try {
@@ -76,17 +155,20 @@
     if (!c.period) c.period = isYm(c.cycle) ? c.cycle : (isYm(String(c.deadline || '').slice(0, 7)) ? String(c.deadline).slice(0, 7) : '');
     if (c.name == null) c.name = '';
     if (!c.acknowledgements || typeof c.acknowledgements !== 'object') c.acknowledgements = {};
+    if (!c.confirmations || typeof c.confirmations !== 'object') c.confirmations = {};
+    if (!c.projects || typeof c.projects !== 'object') c.projects = {};
+    try { applyStamps(c); } catch (e) { /* a stamp must never break a read */ }
     return c;
   }
   const trySet = (raw) => { try { localStorage.setItem(KEY, raw); return true; } catch (e) { return false; } };
   function writeDb(db, opts) {
     db.schemaVersion = 1;
-    let raw = JSON.stringify(db);
+    let raw = JSON.stringify(shedForStorage(db));
     let ok = trySet(raw);
     if (!ok) {
       /* Out of storage: shed the oldest LOCKED cycle (safe in Box) and retry. */
       const yms = Object.keys(db.cycles).filter(k => db.cycles[k].lockedAt && db.dirty.indexOf(k) < 0).sort();
-      if (yms.length) { delete db.cycles[yms[0]]; raw = JSON.stringify(db); ok = trySet(raw); }
+      if (yms.length) { delete db.cycles[yms[0]]; raw = JSON.stringify(shedForStorage(db)); ok = trySet(raw); }
     }
     if (ok) {
       _cache = db; _raw = raw;
@@ -111,8 +193,19 @@
   function dirtyCycles() { return readDb().dirty.slice(); }
   function markCycleClean(ym) {
     const db = readDb(); const i = db.dirty.indexOf(ym);
+    clearStamps(ym, db.cycles[ym]);
     if (i >= 0) { db.dirty.splice(i, 1); writeDb(db, { quiet: true }); }
   }
+  /** Books with a stamp Box has not been seen to hold: queued for a push. */
+  function queueStamped() {
+    const yms = [...new Set(pendingStamps().map(x => x.ym))]; if (!yms.length) return [];
+    const db = readDb(); let changed = false;
+    yms.forEach(ym => { if (db.dirty.indexOf(ym) < 0) { db.dirty.push(ym); changed = true; } });
+    if (changed) writeDb(db, { quiet: true });
+    return yms;
+  }
+  /** A book whose rows were shed from the cache — pull before reading its projects or pushing it. */
+  const isShed = (ym) => { const c = getCycle(ym); return !!(c && c._shed); };
   /** Months Box holds, from the last folder listing (ids live in the adapter). */
   function rememberKnown(yms, at) {
     const db = readDb();
@@ -431,6 +524,7 @@
       };
       c.carried = (c.carried || []).filter(x => x !== leaderId);
       c.updatedAt = now;
+      recordStamp(ym, leaderId, 'confirm', c.confirmations[leaderId], { carriedIds: carried.map(p => p.id) });
       markDirty(db, ym); writeDb(db);
       st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: copies.length, fee, late: true, afterLock: true, stamped: true, reason });
       const who = c.confirmations[leaderId].name, title = bookTitle(c);
@@ -457,6 +551,7 @@
     };
     c.carried = (c.carried || []).filter(x => x !== leaderId);
     c.updatedAt = now;
+    recordStamp(ym, leaderId, 'confirm', c.confirmations[leaderId], { projectIds: records.map(r => r.id) });
     markDirty(db, ym); writeDb(db);
     st.logSystem('confirm-book', { cycle: ym, name: c.name, period: c.period, leaderId, projects: records.length, fee, late: c.confirmations[leaderId].late, afterLock: false, reason: reason || undefined });
     {
@@ -498,6 +593,7 @@
       projects: copies.length, updatedAt: now,
     };
     c.updatedAt = now;
+    recordStamp(ym, leaderId, 'ack', c.acknowledgements[leaderId], { carriedIds: copies.map(p => p.id) });
     markDirty(db, ym); writeDb(db);
     st.logSystem('cycle-acknowledge', { cycle: ym, name: c.name, period: c.period, leaderId, projects: copies.length });
     {
@@ -616,6 +712,43 @@
     return k;
   }
 
+  /** The trail's confirm-book entries for a book, newest first — the record of
+      who pressed Confirm, whatever became of the book file afterwards. */
+  function trailConfirmations(ym, leaderId) {
+    let all = []; try { all = S().listActivity(null) || []; } catch (e) { all = []; }
+    return all.filter(e => e && e.action === 'confirm-book' && e.meta && e.meta.cycle === ym && (!leaderId || e.meta.leaderId === leaderId));
+  }
+  /** An admin puts a confirmation the trail recorded back into the book it
+      never reached. The stamp carries the trail's time; the figures stay as
+      the book holds them (carried at the lock, if it was locked), because the
+      copies made that day were never saved. */
+  function restoreFromTrail(ym, leaderId, entry) {
+    const st = S();
+    if (!isLeadership()) throw new Error('Only a leadership admin can restore a confirmation from the trail.');
+    const db = readDb(); const c = db.cycles[ym];
+    if (!c) throw new Error('No such book.');
+    if (c.confirmations[leaderId]) throw new Error('“' + bookTitle(c) + '” already holds a confirmation from ' + leaderName(leaderId) + '.');
+    const e = entry || trailConfirmations(ym, leaderId)[0];
+    if (!e || e.action !== 'confirm-book' || !e.meta || e.meta.cycle !== ym || e.meta.leaderId !== leaderId) throw new Error('The trail has no confirmation of “' + bookTitle(c) + '” by ' + leaderName(leaderId) + '.');
+    const m = e.meta; const at = e.ts; const now = new Date().toISOString(); const a = actorStamp();
+    const copies = bookFor(leaderId, Object.values(c.projects)); const carried = copies.filter(p => p._carried);
+    carried.forEach(p => { p._lateConfirmedBy = leaderId; p._lateConfirmedAt = at; p._restoredFromTrail = true; if (m.reason) p._lateReason = m.reason; });
+    c.confirmations[leaderId] = {
+      at, by: e.actor || '', name: leaderName(leaderId),
+      projects: m.projects != null ? m.projects : copies.length, fee: m.fee != null ? m.fee : feeInYear(copies, bookYear(c)),
+      late: !!m.late || pastDeadline(c.deadline, at), afterLock: !!m.afterLock, stamped: !!c.lockedAt, carriedProjects: carried.length,
+      reason: m.reason || '', restoredFromTrail: true, restoredAt: now, restoredBy: a.name || a.by, trailId: e.id || null,
+      reviewedAt: null, reviewedBy: '', updatedAt: now,
+    };
+    c.carried = (c.carried || []).filter(x => x !== leaderId);
+    c.updatedAt = now;
+    recordStamp(ym, leaderId, 'confirm', c.confirmations[leaderId], { carriedIds: carried.map(p => p.id) });
+    markDirty(db, ym); writeDb(db);
+    st.logSystem('cycle-restore', { cycle: ym, name: c.name, period: c.period, leaderId, at, projects: c.confirmations[leaderId].projects, from: 'trail' });
+    publishStatus();
+    return c.confirmations[leaderId];
+  }
+
   /* ---------- status ---------- */
   /** The tracker's answer for one leader in one month.
         confirmed · green — confirmed, nothing edited since
@@ -638,7 +771,7 @@
       // locked they belong to the next book, so a locked book stays green.
       if (changed.length && !cycle.lockedAt) return { k: 'changed', tone: 'y', at: k.at, changed: changed.length,
         text: when + ' · ' + changed.length + ' edited since' };
-      return { k: 'confirmed', tone: 'g', at: k.at, text: when + (k.afterLock ? ' · late · after lock' : k.late ? ' · late' : '') };
+      return { k: 'confirmed', tone: 'g', at: k.at, text: when + (k.afterLock ? ' · late · after lock' : k.late ? ' · late' : '') + (k.restoredFromTrail ? ' · restored from trail' : '') };
     }
     if (cycle.lockedAt) {
       const ack = (cycle.acknowledgements || {})[leaderId];
@@ -778,11 +911,12 @@
     return db.cycles[m];
   }
   /** The body the adapter uploads. */
-  const serialize = (ym) => { const c = getCycle(ym); return c ? JSON.stringify(c) : null; };
+  const serialize = (ym) => { const c = getCycle(ym); return c && !c._shed ? JSON.stringify(c) : null; };
 
   window.UFC_Confirm = {
     KEY, UNASSIGNED,
     readDb, defaultDb, attachRemote, dirtyCycles, markCycleClean, rememberKnown, knownCycles, listedAt, _resetCache,
+    pendingStamps, queueStamped, applyStamps, clearStamps, isShed, STAMPS_KEY, trailConfirmations, restoreFromTrail,
     ymShort, ymLong, monthName, isYm, daysUntil, pastDeadline, defaultDeadline, nextYm, fmtDay, fmtDayTime, fmtStamp,
     bookTitle, periodLabel, bookYear, normalize,
     leadersOf, isActiveRecord, bookFor, expectedLeaders, leaderName, myLeaderId, feeInYear, isLeadership,
