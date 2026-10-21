@@ -2435,9 +2435,15 @@
         if (!stored[first]._shed || Object.keys(stored[first].projects).length) return 'the older locked book should be shed from storage';
         if (stored[second]._shed || !Object.keys(stored[second].projects).length) return 'the latest locked book stays whole';
         if (stored[third]._shed) return 'an open book stays whole';
+        // storage refuses: every locked book goes header-only in STORAGE, nothing leaves memory
+        const setItem = localStorage.setItem; let tries = 0;
+        try { localStorage.setItem = function (k, v) { if (k === C.KEY && tries++ === 0) throw new Error('QuotaExceededError'); return setItem.call(this, k, v); }; C.setName(third, 'Revenue Projections #14 (renamed)'); }
+        finally { localStorage.setItem = setItem; }
+        if (!C.getCycle(first) || !Object.keys(C.getCycle(first).projects).length || !C.getCycle(second) || !Object.keys(C.getCycle(second).projects).length) return 'a full store must not evict a book from memory';
+        if (!JSON.parse(localStorage.getItem(C.KEY)).cycles[second]._shed) return 'under pressure the latest locked book is header-only in storage too';
         C._resetCache();                                   // a fresh page: reads storage
         if (!C.isShed(first) || C.serialize(first) !== null) return 'a shed book must never be pushed hollow';
-        if (C.isShed(second) || C.serialize(second) === null) return 'the latest locked book pushes as usual';
+        if (!C.isShed(second) || C.serialize(second) !== null) return 'after the squeeze the latest locked book is shed as well, and pulled on demand';
         return true;
       } finally { restore(); }
     });
