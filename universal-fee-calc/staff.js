@@ -249,7 +249,7 @@
   function readDb() {
     if (_dbCache) { if (_decoratedFee !== feeIndex()) decorate(_dbCache); return _dbCache; }
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = window.UFC_Cache ? window.UFC_Cache.get(KEY) : localStorage.getItem(KEY);
       if (!raw) { const db = seedFromMatrix(defaultDb()); writeDb(db); return db; }
       const p = JSON.parse(raw);
       if (!p.people || !p.allocations) return (_dbCache = seedFromMatrix(defaultDb()));
@@ -272,7 +272,7 @@
         if (p.mappings && p.mappings.users) Object.keys(p.mappings.users).forEach(k => { if (p.mappings.users[k] === oldId) p.mappings.users[k] = newId; });
         remapped = true;
       });
-      if (remapped) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch (e) {} }
+      if (remapped) { try { if (window.UFC_Cache) window.UFC_Cache.set(KEY, JSON.stringify(p)); else localStorage.setItem(KEY, JSON.stringify(p)); } catch (e) {} }
       _dbCache = p;
       ensureModel(p);
       return decorate(p);
@@ -285,7 +285,7 @@
   /* Same reason as store.js: a bare setItem on a full browser throws inside
      boot. Loud, and never fatal. */
   function safeSet(value) {
-    try { localStorage.setItem(KEY, value); return true; }
+    try { if (window.UFC_Cache) window.UFC_Cache.set(KEY, value); else localStorage.setItem(KEY, value); return true; }
     catch (e) {
       console.error('Local cache write failed for the staffing matrix (storage full?)', e);
       try { document.dispatchEvent(new CustomEvent('ufc:sync', { detail: { state: 'error', message: 'Browser storage is full — the staffing matrix could not be cached locally.', at: Date.now() } })); } catch (e2) {}
@@ -351,7 +351,7 @@
   }
   /** The staff db as it is ON DISK — no cache, shared with no caller. */
   function storedStaff() {
-    try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
+    try { const raw = window.UFC_Cache ? window.UFC_Cache.get(KEY) : localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
     catch (e) { return null; }
   }
   const storedPerson = (id) => { const d = storedStaff(); return (d && d.people && d.people[id]) || null; };

@@ -57,6 +57,7 @@
 </script>
 <script src="universal-fee-calc/ui.js"></script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/cache-store.js"></script>
 <script src="universal-fee-calc/store.js"></script>
 <script src="universal-fee-calc/confirmed-book.js"></script>
 <script src="universal-fee-calc/projections-xlsx.js"></script>
@@ -2281,10 +2282,27 @@
     // every book test starts with an empty book store AND an empty trail — the
     // tracker now reads confirmations out of the trail, and the fixture books
     // share an id from test to test
-    const reset = () => { localStorage.removeItem(C.KEY); localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] })); };
+    const reset = () => { if (window.UFC_Cache) window.UFC_Cache.remove(C.KEY); else localStorage.removeItem(C.KEY); localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] })); };
     const open = () => { reset(); as('sabdin@savills.us', 'Sarah Abdin'); const c = C.createCycle({ name: 'Revenue Projections #12', period: YM, deadline: '2026-09-15', now: '2026-09-01T13:00:00Z', records: book() }); ID = c.id; return c; };   // the book, not whatever an earlier test left in the store
     const restore = () => { if (prevId) S.setRealIdentity(prevId); else S.setRealIdentity(null); };
 
+    test('Cache', 'a document localStorage refuses lives on in memory and IndexedDB, reads back, and can be removed', () => {
+      const K = window.UFC_Cache; if (!K) return 'UFC_Cache not present';
+      const setItem = localStorage.setItem; const key = 'savills-ppm-fee-db:v1';
+      const before = localStorage.getItem(key);
+      try {
+        K.set(key, '{"fits":1}');
+        if (K.where(key) !== 'localStorage' || K.get(key) !== '{"fits":1}') return 'a write that fits takes the fast path: ' + K.where(key);
+        localStorage.setItem = function (k, v) { if (k === key) throw new Error('QuotaExceededError'); return setItem.call(this, k, v); };
+        const fast = K.set(key, '{"big":1}');
+        localStorage.setItem = setItem;
+        if (fast !== false || K.where(key) !== 'memory+indexeddb' || K.get(key) !== '{"big":1}' || localStorage.getItem(key) !== null) return 'a refused write moves the key off localStorage and still reads back: ' + K.where(key);
+        K.set(key, '{"fits":2}');
+        if (K.where(key) !== 'localStorage' || K.get(key) !== '{"fits":2}') return 'a later write that fits goes back to the fast path';
+        K.remove(key);
+        return sq(K.get(key), null, 'removed everywhere') && sq(typeof K.stats.idb, 'boolean', 'IndexedDB availability is reported');
+      } finally { localStorage.setItem = setItem; if (before == null) K.remove(key); else K.set(key, before); }
+    });
     test('Confirmed book', 'everyone with an active project is expected; unassigned when a project has no leader', () => {
       const e = C.expectedLeaders(book());
       return sq(e.join(','), 'esobel,jsantoro,unassigned', 'expected');
@@ -2391,10 +2409,13 @@
         C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
         const live = !!(C.getCycle(ID) && C.getCycle(ID).confirmations.esobel);
         const dirty = C.dirtyCycles().indexOf(ID) >= 0;
-        const stored = JSON.parse(localStorage.getItem(C.KEY)).cycles[ID].confirmations.esobel;
+        const whereNow = window.UFC_Cache.where(C.KEY);
+        const kept = JSON.parse(window.UFC_Cache.get(C.KEY)).cycles[ID].confirmations.esobel;
         return sq(live, true, 'the page still sees the confirmation') && sq(dirty, true, 'it is queued for Box') &&
                sq(pushed.length >= 1 && pushed[pushed.length - 1].indexOf(ID) >= 0, true, 'the push went out') &&
-               sq(stored, undefined, 'and storage really was refused');
+               sq(localStorage.getItem(C.KEY), null, 'localStorage really was refused') &&
+               sq(whereNow, 'memory+indexeddb', 'so the book moved to the IndexedDB-backed cache') &&
+               sq(!!kept, true, 'where it still carries the confirmation');
       } finally { localStorage.setItem = setItem; C.attachRemote(null); C._resetCache(); restore(); }
     });
     test('Confirmed book', 'a confirmation survives a lost book cache: its stamp is kept apart, put back on every read, cleared once Box holds it', () => {
@@ -2409,7 +2430,7 @@
         if (st.length !== 1 || st[0].leaderId !== 'esobel' || st[0].k.at !== '2026-09-08T21:14:00Z') return 'stamp not kept apart: ' + JSON.stringify(st);
         // the browser cache goes (storage full, cleared site data, another device) — Box's copy has nobody in it yet
         const remote = JSON.parse(JSON.stringify(C.getCycle(ID))); remote.confirmations = {}; remote.projects = {}; remote.carried = [];
-        localStorage.removeItem(C.KEY); C._resetCache();
+        window.UFC_Cache.remove(C.KEY); C._resetCache();
         if (C.getCycle(ID)) return 'the cache should be gone';
         const c = C.hydrateCycle(ID, remote);
         if (!c.confirmations.esobel || c.confirmations.esobel.at !== '2026-09-08T21:14:00Z') return 'the stamp did not go back in: ' + JSON.stringify(Object.keys(c.confirmations));
@@ -2431,7 +2452,7 @@
         const third = C.createCycle({ name: 'Revenue Projections #14', period: '2026-11', deadline: '2026-11-15', now: '2026-11-01T13:00:00Z' }).id;
         [first, second].forEach(C.markCycleClean);          // Box has them — a book still queued for a push is never shed
         if (!Object.keys(C.getCycle(first).projects).length) return 'in memory the old book is whole';
-        const stored = JSON.parse(localStorage.getItem(C.KEY)).cycles;
+        const stored = JSON.parse(window.UFC_Cache.get(C.KEY)).cycles;
         if (!stored[first]._shed || Object.keys(stored[first].projects).length) return 'the older locked book should be shed from storage';
         if (stored[second]._shed || !Object.keys(stored[second].projects).length) return 'the latest locked book stays whole';
         if (stored[third]._shed) return 'an open book stays whole';
@@ -2440,10 +2461,10 @@
         try { localStorage.setItem = function (k, v) { if (k === C.KEY && tries++ === 0) throw new Error('QuotaExceededError'); return setItem.call(this, k, v); }; C.setName(third, 'Revenue Projections #14 (renamed)'); }
         finally { localStorage.setItem = setItem; }
         if (!C.getCycle(first) || !Object.keys(C.getCycle(first).projects).length || !C.getCycle(second) || !Object.keys(C.getCycle(second).projects).length) return 'a full store must not evict a book from memory';
-        if (!JSON.parse(localStorage.getItem(C.KEY)).cycles[second]._shed) return 'under pressure the latest locked book is header-only in storage too';
-        C._resetCache();                                   // a fresh page: reads storage
+        if (window.UFC_Cache.where(C.KEY) !== 'memory+indexeddb') return 'when localStorage refuses, the book lives on in the IndexedDB-backed cache: ' + window.UFC_Cache.where(C.KEY);
+        C._resetCache();                                   // a fresh page: reads the cache
         if (!C.isShed(first) || C.serialize(first) !== null) return 'a shed book must never be pushed hollow';
-        if (!C.isShed(second) || C.serialize(second) !== null) return 'after the squeeze the latest locked book is shed as well, and pulled on demand';
+        if (C.isShed(second) || C.serialize(second) === null) return 'the latest locked book pushes as usual';
         return true;
       } finally { restore(); }
     });

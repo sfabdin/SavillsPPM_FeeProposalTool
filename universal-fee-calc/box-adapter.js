@@ -628,7 +628,7 @@
   Box.refreshProjectsIfChanged = async function () {
     const remote = await pullRemoteIfChanged();
     if (!remote) return false;
-    const local = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1') || 'null') || Store.defaultDb();
+    const local = JSON.parse((window.UFC_Cache ? window.UFC_Cache.get('savills-ppm-fee-db:v1') : localStorage.getItem('savills-ppm-fee-db:v1')) || 'null') || Store.defaultDb();
     const merged = mergeDb(remote, local);
     Store.hydrateFromRemote(merged);
     return true;
@@ -768,7 +768,7 @@
   // Manual "Sync now": flush pending, or re-push the current local db if nothing is pending.
   async function syncNow() {
     let db = _pending;
-    if (!db) { try { db = JSON.parse(localStorage.getItem('savills-ppm-fee-db:v1') || 'null'); } catch (e) {} }
+    if (!db) { try { db = JSON.parse((window.UFC_Cache ? window.UFC_Cache.get('savills-ppm-fee-db:v1') : localStorage.getItem('savills-ppm-fee-db:v1')) || 'null'); } catch (e) {} }
     if (!db) { emitSync('synced', ''); return; }
     _pending = db;
     await pushNow();
