@@ -2496,6 +2496,29 @@
         return sq(C.restoreAllFromTrail(ID).length, 0, 'auto-restore has nothing to do');
       } finally { localStorage.removeItem(C.STAMPS_KEY); C._resetCache(); restore(); }
     });
+    test('Confirmed book', 'a receipt Box holds counts as the record of a press — the tracker shows it, a restore can start from it, the trail\'s own entry is not doubled', () => {
+      const B = window.UFC_Box; const sent = [];
+      const prevWrite = B && B.writeReceipt; const prevEnabled = B && B.enabled;
+      try {
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        if (B) { B.enabled = true; B.writeReceipt = (r) => sent.push(r); }
+        C.confirm(ID, 'esobel', { records: book() });                 // real time: the receipt and the trail entry carry the same moment
+        if (!sent.length || sent[0].cycle !== ID || sent[0].leaderId !== 'esobel' || !sent[0].at || sent[0].kind !== 'confirm') return 'confirm writes a receipt: ' + JSON.stringify(sent);
+        // Jeff's press reached Box only as a receipt: the book and the trail never got it
+        const changed = C.setReceipts(ID, [{ kind: 'confirm', cycle: ID, leaderId: 'jsantoro', at: '2026-09-09T14:41:00Z', by: 'jsantoro@savills.us', name: 'Jeff Santoro', projects: 2, fee: 500, late: false }]);
+        if (!changed) return 'setReceipts reports a change';
+        const st = C.statusFor(C.getCycle(ID), 'jsantoro', book(), '2026-09-10T12:00:00');
+        if (st.k !== 'confirmed' || !st.fromTrail || st.at !== '2026-09-09T14:41:00Z') return 'the tracker shows the receipt: ' + JSON.stringify(st);
+        // Emily's receipt matches her trail entry within seconds — one record, not two
+        C.setReceipts(ID, [{ kind: 'confirm', cycle: ID, leaderId: 'esobel', at: sent[0].at, by: 'esobel@savills.us', name: 'Emily Sobel', projects: 2, fee: 1 }, { kind: 'confirm', cycle: ID, leaderId: 'jsantoro', at: '2026-09-09T14:41:00Z', by: 'jsantoro@savills.us', name: 'Jeff Santoro', projects: 2, fee: 500 }]);
+        if (C.trailConfirmations(ID, 'esobel').length !== 1) return 'a receipt beside its trail entry is one record: ' + C.trailConfirmations(ID, 'esobel').length;
+        as('sabdin@savills.us', 'Sarah Abdin');
+        C.lockCycle(ID, { records: book(), now: '2026-09-18T15:00:00Z' });
+        const k = C.restoreFromTrail(ID, 'jsantoro');
+        if (!k || k.at !== '2026-09-09T14:41:00Z' || !k.restoredFromTrail || k.projects !== 2) return 'a restore starts from the receipt: ' + JSON.stringify(k);
+        return sq(!!C.getCycle(ID).confirmations.jsantoro, true, 'and the book holds it');
+      } finally { if (B) { B.writeReceipt = prevWrite; B.enabled = prevEnabled; } C.setReceipts(ID, []); restore(); }
+    });
     test('Confirmed book', 'lock carries the unconfirmed in, flagged, without touching a peer\'s confirmed copy', () => {
       try {
         open(); as('esobel@savills.us', 'Emily Sobel');

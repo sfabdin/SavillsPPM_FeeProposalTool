@@ -1691,6 +1691,7 @@
       catch (e) { console.warn('confirmed-book pull failed', y, e); }
     }
     try { if (C.queueStamped) C.queueStamped(); } catch (e) {}     // a stamp Box has not been seen to hold → push
+    try { Box.flushReceipts().catch(() => {}); } catch (e) {}      // receipts still in the outbox → Box
     if (C.dirtyCycles().length) scheduleConfirmPush();
     return yms;
   };
@@ -1901,6 +1902,66 @@
     return out;
   };
   Box.PRESENCE_EVERY_MS = PRESENCE_EVERY_MS;
+
+  /* ===== Confirmation receipts =====
+     One tiny file per Confirm press, in a `confirmations` subfolder:
+     confirm-<book>-<leader>-<time>.json. Written from a small outbox that
+     retries on every page load until Box has taken it, so the record of
+     the press does not depend on the megabyte book file, the trail, or the
+     browser's cache surviving. The Tracker reads them as a second source. */
+  const RECEIPT_FOLDER = 'confirmations', RECEIPT_FOLDER_KEY = 'ufc_receipt_folder_id', RECEIPT_OUTBOX_KEY = 'ufc_receipt_outbox_v1';
+  let _receiptFolderId = null, _receiptFlushing = null; const _receiptLists = {};
+  async function resolveReceiptFolderId() {
+    if (_receiptFolderId) return _receiptFolderId;
+    try { const c = localStorage.getItem(RECEIPT_FOLDER_KEY); if (c) return (_receiptFolderId = c); } catch (e) {}
+    try {
+      const items = await rootItems(true);
+      const hit = items.find(e => e.type === 'folder' && String(e.name || '').toLowerCase() === RECEIPT_FOLDER);
+      if (hit) { _receiptFolderId = hit.id; try { localStorage.setItem(RECEIPT_FOLDER_KEY, hit.id); } catch (e) {} return hit.id; }
+    } catch (e) {}
+    const mk = await boxFetch('/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: RECEIPT_FOLDER, parent: { id: BOX_CONFIG.folderId } }) });
+    let id = null;
+    if (mk.status === 409) { try { const j = await mk.json(); const c = j.context_info && j.context_info.conflicts; id = c && ((Array.isArray(c) ? c[0] : c) || {}).id; } catch (e) {} }
+    else if (mk.ok) { try { const j = await mk.json(); id = j.id; } catch (e) {} }
+    if (!id) throw new Error('could not create the confirmations folder: HTTP ' + mk.status);
+    _receiptFolderId = id; try { localStorage.setItem(RECEIPT_FOLDER_KEY, id); } catch (e) {}
+    return id;
+  }
+  const readReceiptOutbox = () => { try { return JSON.parse(localStorage.getItem(RECEIPT_OUTBOX_KEY) || '[]') || []; } catch (e) { return []; } };
+  const writeReceiptOutbox = (q) => { try { localStorage.setItem(RECEIPT_OUTBOX_KEY, JSON.stringify(q.slice(-100))); } catch (e) {} };
+  const receiptName = (r) => ('confirm-' + r.cycle + '-' + r.leaderId + '-' + String(r.at).replace(/[^0-9]/g, '').slice(0, 14) + '.json').replace(/[^a-z0-9.\-_]/gi, '_');
+  Box.writeReceipt = function (r) {
+    if (!BOX_CONFIG.enabled || !r || !r.cycle || !r.leaderId || !r.at) return;
+    const item = Object.assign({ schemaVersion: 1, id: r.cycle + '|' + r.leaderId + '|' + r.at, app: (typeof location !== 'undefined' ? location.origin : '') }, r);
+    const q = readReceiptOutbox(); if (!q.some(x => x.id === item.id)) q.push(item); writeReceiptOutbox(q);
+    Box.flushReceipts().catch(() => {});
+  };
+  Box.flushReceipts = async function () {
+    if (_receiptFlushing) return _receiptFlushing;
+    _receiptFlushing = (async () => {
+      let q = readReceiptOutbox(); if (!q.length || !getToken()) return;
+      const folder = await resolveReceiptFolderId();
+      for (const item of q.slice()) {
+        try {
+          const res = await uploadNewFile(folder, receiptName(item), JSON.stringify(item));
+          if (res.ok || res.status === 409) { q = q.filter(x => x.id !== item.id); writeReceiptOutbox(q); delete _receiptLists[item.cycle]; }
+        } catch (e) { /* stays queued; the next page load tries again */ }
+      }
+    })().finally(() => { _receiptFlushing = null; });
+    return _receiptFlushing;
+  };
+  /** Every receipt Box holds for a book. Cached a minute. */
+  Box.listReceipts = async function (bookId) {
+    if (!BOX_CONFIG.enabled || !getToken()) return [];
+    const hit = _receiptLists[bookId]; if (hit && Date.now() - hit.at < 60000) return hit.list;
+    const folder = await resolveReceiptFolderId();
+    const prefix = 'confirm-' + bookId + '-';
+    const items = (await listFolder(folder) || []).filter(e => e.type === 'file' && String(e.name || '').startsWith(prefix));
+    const out = [];
+    await Promise.all(items.map(async (f) => { try { const r = await boxFetch('/files/' + f.id + '/content'); if (r.ok) { const j = await r.json(); if (j && j.cycle === bookId) out.push(j); } } catch (e) {} }));
+    _receiptLists[bookId] = { at: Date.now(), list: out };
+    return out;
+  };
   Box.writeNotifyDigest = (digest) => writeNotifyFile('digest', digest);
   Box.flushNotify = async function () {
     Object.values(_named).forEach(st => clearTimeout(st.timer));

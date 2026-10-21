@@ -393,11 +393,14 @@
     const have = new Set((S.activityMonths && S.activityMonths()) || []);
     const want = new Set();
     cycles.forEach(c => { const from = String(c.openedAt || c.createdAt || c.id).slice(0, 7); const to = String(c.lockedAt || new Date().toISOString()).slice(0, 7); if (!/^\d{4}-\d{2}$/.test(from)) return; let m = from; let guard = 0; while (m <= to && guard++ < 24) { want.add(m); const y = +m.slice(0, 4), mo = +m.slice(5, 7); m = mo === 12 ? (y + 1) + '-01' : y + '-' + String(mo + 1).padStart(2, '0'); } });
+    // the receipts each confirmation wrote to Box the moment it was pressed
+    if (Box.listReceipts && C.setReceipts) cycles.forEach(c => { if (receiptsPulled.has(c.id)) return; receiptsPulled.add(c.id); Box.listReceipts(c.id).then(list => { if (C.setReceipts(c.id, list) && tab === 'tracker') softRender(); }).catch(() => { receiptsPulled.delete(c.id); }); });
     const missing = [...want].filter(m => !have.has(m) && !trailPulled.has(m));
     if (!missing.length) return;
     missing.forEach(m => trailPulled.add(m));
     Box.pullActivityMonths(missing).then(() => { if (tab === 'tracker') softRender(); }).catch(() => {});
   }
+  const receiptsPulled = new Set();
 
   /* ================= BOOKS (admin) ================= */
   function paneMonths() {
@@ -422,9 +425,12 @@
       const fee = C.feeInYear(copies, year);
       const state = c.lockedAt ? '<span class="pill n"><i></i>Locked ' + esc(C.fmtDay(c.lockedAt)) + '</span>' : (C.pastDeadline(c.deadline) ? '<span class="pill rr"><i></i>Open · past deadline</span>' : '<span class="pill g"><i></i>Open</span>');
       const dl = c.lockedAt ? esc(fmtDate(c.deadline)) : '<input type="date" value="' + esc(c.deadline) + '" data-dl="' + esc(y) + '" aria-label="Confirm-by date"> <button class="btn btn-ghost small" data-savedl="' + esc(y) + '">Save</button>';
-      const nameCell = '<input type="text" value="' + esc(c.name || '') + '" data-name="' + esc(y) + '" placeholder="' + esc(C.bookTitle(c)) + '" aria-label="Book name" style="font:inherit;font-weight:700;font-size:13px;padding:4px 6px;border:1px solid rgba(37,39,58,.25);width:210px"> <button class="btn btn-ghost small" data-savename="' + esc(y) + '">Save</button>' +
+      // a locked book's name and period are part of the record — read-only
+      const nameCell = c.lockedAt
+        ? '<b>' + esc(C.bookTitle(c)) + '</b><div class="mono" style="margin-top:4px">confirmed-' + esc(y) + '.json</div>'
+        : '<input type="text" value="' + esc(c.name || '') + '" data-name="' + esc(y) + '" placeholder="' + esc(C.bookTitle(c)) + '" aria-label="Book name" style="font:inherit;font-weight:700;font-size:13px;padding:4px 6px;border:1px solid rgba(37,39,58,.25);width:210px"> <button class="btn btn-ghost small" data-savename="' + esc(y) + '">Save</button>' +
         '<div class="mono" style="margin-top:4px">confirmed-' + esc(y) + '.json</div>';
-      const periodCell = '<input type="month" value="' + esc(c.period || '') + '" data-period="' + esc(y) + '" aria-label="Period month" style="font:inherit;font-size:12px;padding:4px 6px;border:1px solid rgba(37,39,58,.25)"> <button class="btn btn-ghost small" data-saveperiod="' + esc(y) + '">Save</button>';
+      const periodCell = c.lockedAt ? esc(C.periodLabel(c) || '—') : '<input type="month" value="' + esc(c.period || '') + '" data-period="' + esc(y) + '" aria-label="Period month" style="font:inherit;font-size:12px;padding:4px 6px;border:1px solid rgba(37,39,58,.25)"> <button class="btn btn-ghost small" data-saveperiod="' + esc(y) + '">Save</button>';
       const act = c.lockedAt
         ? '<button class="btn btn-ghost small" data-reopen="' + esc(y) + '">Reopen</button> '
         : '<button class="btn small btn-secondary" data-lock="' + esc(y) + '">Lock book</button> ' +
