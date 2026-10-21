@@ -2394,6 +2394,73 @@
                sq(stored, undefined, 'and storage really was refused');
       } finally { localStorage.setItem = setItem; C.attachRemote(null); C._resetCache(); restore(); }
     });
+    test('Confirmed book', 'a confirmation survives a lost book cache: its stamp is kept apart, put back on every read, cleared once Box holds it', () => {
+      const setItem = localStorage.setItem;
+      try {
+        localStorage.removeItem(C.STAMPS_KEY);
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        localStorage.setItem = function (k, v) { if (k === C.KEY) throw new Error('QuotaExceededError'); return setItem.call(this, k, v); };
+        C.confirm(ID, 'esobel', { records: book(), now: '2026-09-08T21:14:00Z' });
+        localStorage.setItem = setItem;
+        const st = C.pendingStamps(ID);
+        if (st.length !== 1 || st[0].leaderId !== 'esobel' || st[0].k.at !== '2026-09-08T21:14:00Z') return 'stamp not kept apart: ' + JSON.stringify(st);
+        // the browser cache goes (storage full, cleared site data, another device) — Box's copy has nobody in it yet
+        const remote = JSON.parse(JSON.stringify(C.getCycle(ID))); remote.confirmations = {}; remote.projects = {}; remote.carried = [];
+        localStorage.removeItem(C.KEY); C._resetCache();
+        if (C.getCycle(ID)) return 'the cache should be gone';
+        const c = C.hydrateCycle(ID, remote);
+        if (!c.confirmations.esobel || c.confirmations.esobel.at !== '2026-09-08T21:14:00Z') return 'the stamp did not go back in: ' + JSON.stringify(Object.keys(c.confirmations));
+        // her copies are re-stamped from the live store when it holds them (the fixture book is not in the store here)
+        if (S.getProject('cb_a') && (!c.projects.cb_a || c.projects.cb_a._confirmedBy !== 'esobel')) return 'her copies should be re-stamped from the live records';
+        if (!C.serialize(ID).includes('"esobel"')) return 'what goes to Box must carry it';
+        const q = C.queueStamped(); if (q.indexOf(ID) < 0 || C.dirtyCycles().indexOf(ID) < 0) return 'a pending stamp queues the book for a push';
+        C.markCycleClean(ID);
+        return sq(C.pendingStamps(ID).length, 0, 'Box holds it: stamp cleared');
+      } finally { localStorage.setItem = setItem; localStorage.removeItem(C.STAMPS_KEY); C._resetCache(); restore(); }
+    });
+    test('Confirmed book', 'older locked books keep only their header in the browser cache; the latest locked and the open ones stay whole', () => {
+      try {
+        open(); as('sabdin@savills.us', 'Sarah Abdin');
+        const first = ID;
+        C.lockCycle(first, { records: book(), now: '2026-09-18T15:00:00Z' });
+        const second = C.createCycle({ name: 'Revenue Projections #13', period: '2026-10', deadline: '2026-10-15', now: '2026-10-01T13:00:00Z' }).id;
+        C.lockCycle(second, { records: book(), now: '2026-10-20T15:00:00Z' });
+        const third = C.createCycle({ name: 'Revenue Projections #14', period: '2026-11', deadline: '2026-11-15', now: '2026-11-01T13:00:00Z' }).id;
+        [first, second].forEach(C.markCycleClean);          // Box has them — a book still queued for a push is never shed
+        if (!Object.keys(C.getCycle(first).projects).length) return 'in memory the old book is whole';
+        const stored = JSON.parse(localStorage.getItem(C.KEY)).cycles;
+        if (!stored[first]._shed || Object.keys(stored[first].projects).length) return 'the older locked book should be shed from storage';
+        if (stored[second]._shed || !Object.keys(stored[second].projects).length) return 'the latest locked book stays whole';
+        if (stored[third]._shed) return 'an open book stays whole';
+        C._resetCache();                                   // a fresh page: reads storage
+        if (!C.isShed(first) || C.serialize(first) !== null) return 'a shed book must never be pushed hollow';
+        if (C.isShed(second) || C.serialize(second) === null) return 'the latest locked book pushes as usual';
+        return true;
+      } finally { restore(); }
+    });
+    test('Confirmed book', 'an admin restores a confirmation the trail recorded but the book never received', () => {
+      try {
+        open(); as('esobel@savills.us', 'Emily Sobel');
+        // what happened on Oct 16: the trail got the entry, the book did not
+        S.logSystem('confirm-book', { cycle: ID, name: 'Revenue Projections #12', period: YM, leaderId: 'esobel', projects: 2, fee: 1234, late: true, afterLock: false });
+        as('sabdin@savills.us', 'Sarah Abdin');
+        C.lockCycle(ID, { records: book(), now: '2026-09-18T15:00:00Z' });
+        const e = C.trailConfirmations(ID, 'esobel')[0];
+        if (!e) return 'the trail entry should be readable';
+        let refused = false; try { C.restoreFromTrail(ID, 'mglatt'); } catch (err) { refused = /no confirmation/.test(err.message); }
+        if (!refused) return 'a leader the trail does not mention cannot be restored';
+        const k = C.restoreFromTrail(ID, 'esobel', e);
+        const c = C.getCycle(ID);
+        if (k.at !== e.ts || !k.late || !k.restoredFromTrail || k.projects !== 2 || k.fee !== 1234) return 'stamp: ' + JSON.stringify(k);
+        if (c.carried.indexOf('esobel') >= 0) return 'she is no longer carried';
+        if (!c.projects.cb_a._carried || c.projects.cb_a._lateConfirmedBy !== 'esobel' || !c.projects.cb_a._restoredFromTrail) return 'her carried copies are signed, figures untouched: ' + JSON.stringify(c.projects.cb_a);
+        const st = C.statusFor(c, 'esobel', book(), '2026-09-19T12:00:00');
+        if (st.k !== 'confirmed' || !/restored from trail/.test(st.text)) return 'tracker: ' + JSON.stringify(st);
+        if (!C.pendingStamps(ID).some(x => x.leaderId === 'esobel')) return 'the restore is stamped apart like any confirmation';
+        let twice = false; try { C.restoreFromTrail(ID, 'esobel', e); } catch (err) { twice = /already holds/.test(err.message); }
+        return twice || 'a second restore is refused';
+      } finally { localStorage.removeItem(C.STAMPS_KEY); C._resetCache(); restore(); }
+    });
     test('Confirmed book', 'lock carries the unconfirmed in, flagged, without touching a peer\'s confirmed copy', () => {
       try {
         open(); as('esobel@savills.us', 'Emily Sobel');

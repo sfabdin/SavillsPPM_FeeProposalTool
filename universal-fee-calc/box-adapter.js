@@ -1558,7 +1558,7 @@
     /* "Unchanged" only counts when this browser still HOLDS the book: the
        cache can be shed or cleared while the etag survives. */
     const C = Confirm();
-    const held = !!(C && C.getCycle(ym)) && !!_confEtags[ym];
+    const held = !!(C && C.getCycle(ym)) && !(C.isShed && C.isShed(ym)) && !!_confEtags[ym];
     if (opts && opts.ifChanged && held && _listedEtags[ym] && _listedEtags[ym] === _confEtags[ym]) return 'unchanged';
     const meta = await boxFetch('/files/' + id + '?fields=etag');
     let tag = null;
@@ -1584,14 +1584,18 @@
     if (tag) { _confEtags[ym] = tag; persistConfEtags(); }
   }
   async function uploadConfCycle(ym, depth) {
-    const C = Confirm(); if (!C || !C.getCycle(ym)) return;
-    if (!_confEtags[ym]) {                                   // never seen Box's copy — merge first
+    const C = Confirm(); if (!C) return;
+    // Not held here (a lost cache, a stamp for a book this browser never
+    // loaded) or held without its rows (shed): take Box's copy first — the
+    // pending stamps go back in as it is read — and never push a hollow book.
+    if (!C.getCycle(ym) || (C.isShed && C.isShed(ym)) || !_confEtags[ym]) {
       const remote = await pullConfCycle(ym);
       if (remote) { C.hydrateCycle(ym, remote); confMerged(ym, remote); }
     }
+    if (!C.getCycle(ym) || (C.isShed && C.isShed(ym))) { C.markCycleClean(ym); return; }
     const id = await resolveConfId(ym, true);
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
-    const body = C.serialize(ym);
+    const body = C.serialize(ym); if (!body) return;
     const form = new FormData();
     form.append('attributes', JSON.stringify({ name: confName(ym) }));
     form.append('file', new Blob([body], { type: 'application/json' }), confName(ym));
@@ -1633,7 +1637,23 @@
     clearTimeout(_confTimer);
     _confTimer = setTimeout(confirmPushNow, BOX_CONFIG.pushDebounceMs);
   }
-  Box.flushConfirm = async function () { clearTimeout(_confTimer); await confirmPushNow(); };
+  /** Push now and SAY whether it landed: { ok, pending: [book ids still queued] }. */
+  Box.flushConfirm = async function () {
+    clearTimeout(_confTimer);
+    try { await confirmPushNow(); } catch (e) { /* reported through pending */ }
+    const C = Confirm(); const pending = C ? C.dirtyCycles() : [];
+    return { ok: !pending.length, pending };
+  };
+  Box.confirmPending = function () { const C = Confirm(); return C ? C.dirtyCycles() : []; };
+  if (typeof window !== 'undefined') {
+    // A confirmation still queued for Box is the one thing worth stopping a close for.
+    window.addEventListener('beforeunload', (e) => {
+      const C = Confirm(); if (!C || !C.dirtyCycles().length) return;
+      clearTimeout(_confTimer); confirmPushNow().catch(() => {});
+      e.preventDefault(); e.returnValue = '';
+    });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { const C = Confirm(); if (C && C.dirtyCycles().length) { clearTimeout(_confTimer); confirmPushNow().catch(() => {}); } } });
+  }
   /** Delete a book's file in Box. The store has already refused if anyone
       confirmed into it; here the file simply goes. */
   Box.deleteConfirmCycle = async function (ym) {
@@ -1670,6 +1690,7 @@
       try { await Box.pullConfirmCycle(y, { ifChanged: true }); }
       catch (e) { console.warn('confirmed-book pull failed', y, e); }
     }
+    try { if (C.queueStamped) C.queueStamped(); } catch (e) {}     // a stamp Box has not been seen to hold → push
     if (C.dirtyCycles().length) scheduleConfirmPush();
     return yms;
   };

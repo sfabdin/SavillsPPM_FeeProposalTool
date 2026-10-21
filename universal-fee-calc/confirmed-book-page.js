@@ -28,6 +28,28 @@
   const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
   const announce = () => { try { document.dispatchEvent(new CustomEvent('ufc:confirmed-updated')); } catch (e) {} };
 
+  /* A confirmation is not done until Box has it. The button says "Saving…",
+     the green toast waits for Box, and a failure is a red banner that stays
+     until the push lands — with the tab warned against closing meanwhile. */
+  async function saveToBox(btn, okMsg) {
+    if (btn) { btn.disabled = true; btn.dataset.label = btn.dataset.label || btn.textContent; btn.textContent = 'Saving to Box…'; }
+    let r = { ok: true, pending: [] };
+    if (Box && Box.enabled && Box.flushConfirm) { try { r = await Box.flushConfirm(); } catch (e) { r = { ok: false, pending: Box.confirmPending ? Box.confirmPending() : [] }; } }
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; }
+    if (r.ok) toast(okMsg, 'ok');
+    else toast('Not saved to Box yet — keep this tab open; it keeps retrying and the banner at the top will clear when it lands.', 'err');
+    renderPendingBanner();
+    return r.ok;
+  }
+  function renderPendingBanner() {
+    let el = $('#cb-pending');
+    const pend = (Box && Box.enabled && Box.confirmPending) ? Box.confirmPending() : [];
+    if (!pend.length) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'cb-pending'; el.style.cssText = 'margin:0 0 14px;padding:12px 16px;background:#fbe9e7;border-left:4px solid var(--sav-red);color:#8f2418;font-size:13px;display:flex;align-items:center;gap:12px;flex-wrap:wrap'; const anchor = $('.cb-pane') || document.body; anchor.parentNode.insertBefore(el, anchor); }
+    el.innerHTML = '<b>Not saved to Box yet:</b> ' + esc(pend.map(y => C.bookTitle(C.getCycle(y)) || y).join(', ')) + '. Keep this tab open — it retries by itself. <button class="btn btn-ghost small" id="cb-pending-retry">Retry now</button>';
+    const b = $('#cb-pending-retry'); if (b) b.onclick = async () => { b.disabled = true; b.textContent = 'Retrying…'; const r = await Box.flushConfirm(); if (r.ok) toast('Saved to Box.', 'ok'); renderPendingBanner(); };
+  }
+
   /* ---------- identity bar (same control as the Change Log) ---------- */
   function buildIdentityBar() {
     const sel = $('#id-user'); const label = $('.identity-bar .id-label');
@@ -229,9 +251,8 @@
         const ym = ackBtn.dataset.ym, l = ackBtn.dataset.l; const title = C.bookTitle(C.getCycle(ym));
         try {
           C.acknowledgeMissed(ym, l);
-          toast('Acknowledged — “' + title + '” stays as locked. You can confirm the open book now.', 'ok');
-          if (Box && Box.flushConfirm) Box.flushConfirm().catch(() => {});
           announce(); render();
+          saveToBox(null, 'Acknowledged — “' + title + '” stays as locked. You can confirm the open book now.');
         } catch (e) { toast(e.message || String(e)); }
       });
     }
@@ -244,9 +265,9 @@
       if (!window.confirm('Confirm ' + plural(n, 'project') + ' into “' + title + '”? This is your one confirmation for this book — it cannot be redone.')) return;
       try {
         const k = C.confirm(ym, l, { reason });
-        toast(k && k.stamped ? '“' + title + '” confirmed late — your reason is stamped on ' + plural(k.carriedProjects || 0, 'carried project') + '; the locked figures stand.' : '“' + title + '” confirmed — ' + plural(n, 'project') + ' stamped.', 'ok');
-        if (Box && Box.flushConfirm) Box.flushConfirm().catch(() => {});
+        const okMsg = (k && k.stamped ? '“' + title + '” confirmed late — your reason is stamped on ' + plural(k.carriedProjects || 0, 'carried project') + '; the locked figures stand.' : '“' + title + '” confirmed — ' + plural(n, 'project') + ' stamped.');
         announce(); render();
+        saveToBox(null, okMsg);
       } catch (e) { toast(e.message || String(e)); }
     }); });
   }
@@ -261,7 +282,7 @@
   }
   function ensureMonthsLoaded(yms) {
     if (!Box || !Box.enabled || !Box.pullConfirmCycle) return;
-    const missing = yms.filter(y => !C.getCycle(y) && !pulled.has(y));
+    const missing = yms.filter(y => (!C.getCycle(y) || (C.isShed && C.isShed(y))) && !pulled.has(y));
     if (!missing.length) return;
     missing.forEach(y => pulled.add(y));
     Promise.all(missing.map(y => Box.pullConfirmCycle(y).catch(() => null))).then(() => { if (tab === 'tracker') render(); });
@@ -303,16 +324,25 @@
 
     let reviews = '';
     if (lead) {
+      // confirmations the trail recorded that never reached the book
+      ensureTrailLoaded(cycles.filter(Boolean));
+      const lost = [];
+      cycles.forEach(c => { if (!c) return; leaders.forEach(id => { if (c.confirmations[id]) return; const e = C.trailConfirmations(c.id, id)[0]; if (e) lost.push({ c, id, e }); }); });
+      if (lost.length) reviews += '<div class="panel"><div class="ph"><h3>In the trail, not in the book</h3><span class="sub">these people pressed Confirm — the trail recorded it — but the book file never received it. Restoring puts the confirmation back with the trail\'s time; the figures stay as the book holds them.</span></div>' +
+        '<div class="tw"><table class="cb-table"><thead><tr><th>Book</th><th>Leader</th><th>Confirmed (trail)</th><th></th></tr></thead><tbody>' +
+        lost.map(x => '<tr><td>' + esc(C.bookTitle(x.c)) + '</td><td>' + esc(C.leaderName(x.id)) + '</td><td>' + esc(C.fmtStamp(x.e.ts)) + (x.e.meta && x.e.meta.late ? ' <span class="pill y"><i></i>after the deadline</span>' : '') + '</td>' +
+          '<td><button class="btn btn-ghost small" data-restore="' + esc(x.c.id) + '" data-l="' + esc(x.id) + '" data-e="' + esc(x.e.id || '') + '">Restore from trail</button></td></tr>').join('') +
+        '</tbody></table></div></div>';
       const items = [];
       cycles.forEach(c => { if (!c) return;
-        Object.keys(c.confirmations).forEach(id => { const k = c.confirmations[id]; if (k.afterLock) items.push({ c, id, k }); });
+        Object.keys(c.confirmations).forEach(id => { const k = c.confirmations[id]; if (k.afterLock || k.restoredFromTrail) items.push({ c, id, k }); });
         Object.keys(c.acknowledgements || {}).forEach(id => { items.push({ c, id, a: c.acknowledgements[id] }); });
       });
       if (items.length) reviews = '<div class="panel"><div class="ph"><h3>Late confirmations &amp; acknowledgements</h3><span class="sub">confirmed late after the lock (figures unchanged, reason stamped) · or acknowledged as not confirmed once the next book opened</span></div>' +
         '<div class="tw"><table class="cb-table"><thead><tr><th>Book</th><th>Leader</th><th>When</th><th>What</th><th>Review</th></tr></thead><tbody>' +
         items.map(x => x.a
           ? '<tr><td>' + esc(C.bookTitle(x.c)) + '</td><td>' + esc(C.leaderName(x.id)) + '</td><td>' + esc(C.fmtStamp(x.a.at)) + '</td><td><span class="pill rr"><i></i>Not confirmed · acknowledged</span> <span class="sub">invoicing may be delayed · ' + plural(x.a.projects || 0, 'carried project') + '</span></td><td><span class="sub">—</span></td></tr>'
-          : '<tr><td>' + esc(C.bookTitle(x.c)) + '</td><td>' + esc(C.leaderName(x.id)) + '</td><td>' + esc(C.fmtStamp(x.k.at)) + '</td><td><span class="pill y"><i></i>Confirmed late</span> ' + esc(x.k.reason || '') + '</td>' +
+          : '<tr><td>' + esc(C.bookTitle(x.c)) + '</td><td>' + esc(C.leaderName(x.id)) + '</td><td>' + esc(C.fmtStamp(x.k.at)) + '</td><td><span class="pill y"><i></i>' + (x.k.restoredFromTrail ? 'Restored from trail' : 'Confirmed late') + '</span> ' + esc(x.k.reason || '') + (x.k.restoredFromTrail ? ' <span class="sub">by ' + esc(x.k.restoredBy || '') + ' · ' + esc(C.fmtStamp(x.k.restoredAt)) + '</span>' : '') + '</td>' +
           '<td>' + (x.k.reviewedAt ? '<span class="pill g"><i></i>Reviewed · ' + esc(x.k.reviewedBy) + '</span>' : '<button class="btn btn-ghost small" data-review="' + esc(x.c.id) + '" data-l="' + esc(x.id) + '">Mark reviewed</button>') + '</td></tr>').join('') +
         '</tbody></table></div></div>';
     }
@@ -342,6 +372,27 @@
     host.querySelectorAll('button[data-review]').forEach(b => b.addEventListener('click', () => {
       try { C.reviewLate(b.dataset.review, b.dataset.l); toast('Marked as reviewed.', 'ok'); render(); } catch (e) { toast(e.message); }
     }));
+    host.querySelectorAll('button[data-restore]').forEach(b => b.addEventListener('click', () => {
+      const ym = b.dataset.restore, l = b.dataset.l; const title = C.bookTitle(C.getCycle(ym));
+      const e = C.trailConfirmations(ym, l).find(x => x.id === b.dataset.e) || C.trailConfirmations(ym, l)[0];
+      if (!e) { toast('That trail entry is no longer loaded.'); return; }
+      if (!window.confirm('Restore ' + C.leaderName(l) + '\'s confirmation of “' + title + '” from the trail?\n\nStamped ' + C.fmtStamp(e.ts) + '. The figures stay as the book holds them now.')) return;
+      try { C.restoreFromTrail(ym, l, e); announce(); render(); saveToBox(null, C.leaderName(l) + '\'s confirmation of “' + title + '” is back in the book.'); }
+      catch (err) { toast(err.message || String(err)); }
+    }));
+  }
+  /* The trail months a book spans — pulled once so the tracker can see
+     confirmations that never reached the book. */
+  const trailPulled = new Set();
+  function ensureTrailLoaded(cycles) {
+    if (!Box || !Box.enabled || !Box.pullActivityMonths) return;
+    const have = new Set((S.activityMonths && S.activityMonths()) || []);
+    const want = new Set();
+    cycles.forEach(c => { const from = String(c.openedAt || c.createdAt || c.id).slice(0, 7); const to = String(c.lockedAt || new Date().toISOString()).slice(0, 7); if (!/^\d{4}-\d{2}$/.test(from)) return; let m = from; let guard = 0; while (m <= to && guard++ < 24) { want.add(m); const y = +m.slice(0, 4), mo = +m.slice(5, 7); m = mo === 12 ? (y + 1) + '-01' : y + '-' + String(mo + 1).padStart(2, '0'); } });
+    const missing = [...want].filter(m => !have.has(m) && !trailPulled.has(m));
+    if (!missing.length) return;
+    missing.forEach(m => trailPulled.add(m));
+    Box.pullActivityMonths(missing).then(() => { if (tab === 'tracker') softRender(); }).catch(() => {});
   }
 
   /* ================= BOOKS (admin) ================= */
@@ -521,7 +572,7 @@
 
   /* ================= render ================= */
   function render() {
-    buildIdentityBar(); showTab();
+    buildIdentityBar(); showTab(); renderPendingBanner();
     if (tab === 'book') { const h = $('#pane-book'); h.innerHTML = paneBook(); wireBook(h); }
     else if (tab === 'tracker') { const h = $('#pane-tracker'); h.innerHTML = paneTracker(); wireTracker(h); }
     else { const h = $('#pane-months'); h.innerHTML = paneMonths(); wireMonths(h); }
