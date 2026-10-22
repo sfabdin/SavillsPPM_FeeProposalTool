@@ -91,20 +91,84 @@
   .rangebar .racktick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--sav-steel); opacity: 0.5; }
   .rangelabels { display: flex; justify-content: space-between; font-family: var(--font-body); font-size: 10px; color: var(--sav-steel); margin-top: 3px; }
 
-  /* Project comparison */
-  .projpick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
-  .projchip { font-family: var(--font-display); font-weight: 600; font-size: 12px; padding: 8px 12px; border: 1px solid var(--hair-strong); background: #fff; cursor: pointer; }
-  .projchip.on { background: var(--sav-navy); color: #fff; border-color: var(--sav-navy); }
-  .projchip:hover:not(.on) { background: var(--sav-cream); }
+  /* Benchmark a proposal */
+  .controls { display: grid; grid-template-columns: 2.2fr 1fr 1fr 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+  .controls .field select { width: 100%; max-width: 100%; }
+  .bench-head { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: start; background: #fff; border: 1px solid var(--hair); border-left: 6px solid var(--sav-yellow); padding: 20px 24px; margin-bottom: 22px; }
+  .bh-name { font-weight: 900; font-size: 21px; letter-spacing: -0.01em; display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+  .bh-open { font-family: var(--font-body); font-size: 12px; font-weight: 400; color: var(--sav-steel); text-decoration: none; }
+  .bh-open:hover { color: var(--sav-navy); text-decoration: underline; }
+  .bh-meta { font-family: var(--font-body); font-size: 13px; color: var(--sav-steel); margin-top: 6px; }
+  .bh-cohort { text-align: right; min-width: 220px; }
+  .bh-cohort .lbl { font-weight: 700; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--sav-steel); }
+  .bh-cohort .val { font-weight: 900; font-size: 30px; line-height: 1.05; }
+  .bh-cohort .val .unit { font-size: 13px; color: var(--sav-steel); }
+  .bh-cohort .sub { font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); margin-top: 4px; max-width: 320px; }
+  .bh-cohort.warn .val { color: var(--sav-red); }
+  .pos-grid { display: grid; }
+  .pos-row { display: grid; grid-template-columns: 1.4fr 1fr 0.8fr 0.8fr 0.8fr 2fr; border-bottom: 1px solid var(--hair); align-items: center; }
+  .pos-row.head { background: var(--sav-navy); color: #fff; }
+  .pos-row.head .pos-cell { font-weight: 700; font-size: 10px; letter-spacing: 0.10em; text-transform: uppercase; padding: 11px 12px; }
+  .pos-row.head .pos-cell.lbl, .pos-row.head .pos-cell.mine { color: #fff; }
+  .pos-row:not(.head):hover { background: var(--sav-cream); }
+  .pos-cell { padding: 11px 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .pos-cell.lbl { font-weight: 700; }
+  .pos-cell.mine { font-weight: 900; font-size: 17px; letter-spacing: -0.01em; }
+  .pos-cell.num { text-align: right; color: var(--sav-steel); }
+  .pos-cell.num.med { color: var(--sav-navy); font-weight: 700; }
+  .poswrap { display: grid; grid-template-columns: 1fr 44px; gap: 10px; align-items: center; }
+  .posbar { position: relative; height: 22px; background: var(--sav-cream); }
+  .posbar.empty { opacity: 0.4; }
+  .posbar .iqr { position: absolute; top: 6px; height: 10px; background: var(--sav-navy); opacity: 0.18; }
+  .posbar .medtick { position: absolute; top: 2px; height: 18px; width: 2px; background: var(--sav-navy); }
+  .posbar .dot { position: absolute; top: 4px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--sav-yellow); border: 2px solid var(--sav-navy); box-sizing: border-box; }
+  .posbar .dot.high { background: var(--sav-teal); }
+  .posbar .dot.low { background: #fff; }
+  .posbar .dot.hot { background: var(--sav-red); border-color: var(--sav-red); }
+  .posbar .dot.cool { background: #1f8a4c; border-color: #1f8a4c; }
+  .pctl { font-weight: 800; font-size: 12px; text-align: right; color: var(--sav-steel); }
+  .pctl.high, .pctl.low { color: var(--sav-navy); }
+  .pctl.hot { color: var(--sav-red); }
+  .pctl.cool { color: #1f8a4c; }
+  .mixcell { width: 18%; }
+  .mixbar { position: relative; height: 12px; background: var(--sav-cream); }
+  .mixbar.thin { height: 6px; margin-top: 6px; }
+  .mixbar .fill { position: absolute; left: 0; top: 0; bottom: 0; }
+  .mixbar .fill.mine { background: var(--sav-navy); }
+  .mixbar .fill.co { background: var(--sav-teal); opacity: 0.7; }
+  .delta { display: inline-block; font-family: var(--font-body); font-size: 11px; font-weight: 700; margin-left: 6px; color: var(--sav-steel); white-space: nowrap; }
+  .delta.up { color: #1f8a4c; }
+  .delta.down { color: var(--sav-red); }
+  .card-head .btn { margin-left: 14px; padding: 8px 12px; font-size: 11px; }
+
+  /* Side by side */
+  .slots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 14px; }
+  .slots .field select { width: 100%; max-width: 100%; }
+  .slots .field:first-child select { border-bottom-width: 3px; }
+  .cmp-options { display: flex; gap: 22px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 20px; padding-top: 6px; }
+  .cmp-options .field { min-width: 190px; }
+  .check { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 12px; padding-bottom: 10px; cursor: pointer; }
+  .check input { width: 16px; height: 16px; accent-color: var(--sav-navy); }
   .cmp-grid { display: grid; gap: 0; }
   .cmp-row { display: grid; border-bottom: 1px solid var(--hair); }
   .cmp-row.head .cmp-cell { background: var(--sav-navy); color: #fff; font-weight: 700; }
-  .cmp-cell { padding: 12px 14px; font-size: 13px; border-left: 1px solid var(--hair); }
+  .cmp-row.head .cmp-cell a { color: rgba(255,255,255,0.75); }
+  .cmp-cell { padding: 12px 14px; font-size: 13px; border-left: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
   .cmp-cell:first-child { border-left: 0; font-weight: 700; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--sav-steel); background: var(--sav-cream); }
   .cmp-row.head .cmp-cell:first-child { background: #1a1c2c; color: rgba(255,255,255,0.7); }
   .cmp-big { font-weight: 900; font-size: 20px; letter-spacing: -0.01em; }
+  .cmp-sub { font-family: var(--font-body); font-size: 11px; font-weight: 400; color: var(--sav-steel); margin-top: 3px; }
+  .cmp-row.head .cmp-sub { color: rgba(255,255,255,0.75); }
   .cmp-yes { color: #1f8a4c; font-weight: 800; font-size: 15px; }
   .cmp-no { color: #c4cad3; font-weight: 700; font-size: 14px; }
+  .tbl a { color: var(--sav-navy); }
+
+  @media (max-width: 1100px) {
+    .controls, .slots { grid-template-columns: 1fr 1fr; }
+    .pos-row { grid-template-columns: 1.2fr 1fr 0.7fr 0.7fr 0.7fr 1.4fr; }
+    .bench-head { grid-template-columns: 1fr; }
+    .bh-cohort { text-align: left; }
+  }
 
   .empty { text-align: center; color: var(--sav-steel); font-family: var(--font-body); padding: 50px 20px; }
   .footnote { font-family: var(--font-body); font-size: 12px; line-height: 1.6; color: var(--sav-steel); margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--hair); }
@@ -120,7 +184,7 @@
     <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
     <div>
       <div class="lbl"><a href="Fee Generator.html">Home</a> &nbsp;·&nbsp; <a href="Projects Index.html">Projects Index</a> &nbsp;·&nbsp; Benchmarking</div>
-      <h1>What have we charged before?</h1>
+      <h1>How does this proposal compare?</h1>
     </div>
     <div class="actions">
       <a class="btn" href="Ingestion Studio.html">Ingest more</a>
@@ -138,13 +202,61 @@
 
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab on" data-tab="comp">Comparables finder</button>
+    <button class="tab on" data-tab="bench">Benchmark a proposal</button>
+    <button class="tab" data-tab="cmp">Side by side</button>
+    <button class="tab" data-tab="comp">Comparables finder</button>
     <button class="tab" data-tab="rates">Rates explorer</button>
-    <button class="tab" data-tab="cmp">Project comparison</button>
   </div>
 
-  <!-- TAB 1 — Comparables -->
-  <section class="panel on" id="panel-comp">
+  <!-- TAB — Benchmark a proposal -->
+  <section class="panel on" id="panel-bench">
+    <div class="card">
+      <div class="card-head"><h2>Benchmark a proposal.</h2><span class="hint">Pick the record, then shape the cohort it is read against. Each dropdown defaults to the proposal's own type; widen it when the cohort runs small.</span></div>
+      <div class="controls">
+        <div class="field"><label>Proposal</label><select id="b-proj"></select></div>
+        <div class="field"><label>Cohort · project type</label><select id="b-ptype"></select></div>
+        <div class="field"><label>Cohort · industry</label><select id="b-industry"></select></div>
+        <div class="field"><label>Cohort · size band</label><select id="b-size"></select></div>
+        <div class="field"><label>Cohort · outcome</label><select id="b-outcome">
+          <option value="">All proposals</option>
+          <option value="realised">Won, active or closed only</option>
+          <option value="pursuit">Still pursuits only</option>
+        </select></div>
+      </div>
+    </div>
+    <div id="bench-out"></div>
+  </section>
+
+  <!-- TAB — Side by side -->
+  <section class="panel" id="panel-cmp">
+    <div class="card">
+      <div class="card-head"><h2>Side by side.</h2><span class="hint">Up to five projects. Differences read against the first column.</span></div>
+      <div class="slots">
+        <div class="field"><label>Project 1 · baseline</label><select class="cmp-slot" data-slot="0"></select></div>
+        <div class="field"><label>Project 2</label><select class="cmp-slot" data-slot="1"></select></div>
+        <div class="field"><label>Project 3</label><select class="cmp-slot" data-slot="2"></select></div>
+        <div class="field"><label>Project 4</label><select class="cmp-slot" data-slot="3"></select></div>
+        <div class="field"><label>Project 5</label><select class="cmp-slot" data-slot="4"></select></div>
+      </div>
+      <div class="cmp-options">
+        <div class="field"><label>Show staffing as</label><select id="c-staff">
+          <option value="fte">FTE-months</option>
+          <option value="pct">% of team</option>
+          <option value="avg">Average FTE</option>
+        </select></div>
+        <div class="field"><label>Show fee as</label><select id="c-fee">
+          <option value="abs">Net fee</option>
+          <option value="month">Net fee per month</option>
+          <option value="ftemonth">Net fee per FTE-month</option>
+        </select></div>
+        <label class="check"><input type="checkbox" id="c-diff"> Show difference vs project 1</label>
+      </div>
+      <div id="cmp-out"></div>
+    </div>
+  </section>
+
+  <!-- TAB — Comparables -->
+  <section class="panel" id="panel-comp">
     <div class="card">
       <div class="card-head"><h2>Find comparable rates.</h2><span class="hint">Filter past work, then read the rate spread for the matching roles.</span></div>
       <div class="filters">
@@ -172,7 +284,7 @@
     </div>
   </section>
 
-  <!-- TAB 2 — Rates explorer -->
+  <!-- TAB — Rates explorer -->
   <section class="panel" id="panel-rates">
     <div class="card">
       <div class="card-head"><h2>Rate spread by staff title.</h2><span class="hint">Quoted = before discount · Effective = what the client paid · hatched zone = below cost floor.</span></div>
@@ -184,15 +296,6 @@
         </tr></thead>
         <tbody id="rates-tbody"></tbody>
       </table>
-    </div>
-  </section>
-
-  <!-- TAB 3 — Project comparison -->
-  <section class="panel" id="panel-cmp">
-    <div class="card">
-      <div class="card-head"><h2>Compare projects side by side.</h2><span class="hint">Pick up to three.</span></div>
-      <div class="projpick" id="proj-pick"></div>
-      <div id="cmp-out"></div>
     </div>
   </section>
 
