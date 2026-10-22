@@ -67,6 +67,7 @@
 <script src="universal-fee-calc/bulk-excel.js"></script>
 <script src="universal-fee-calc/staffing-roundtrip.js"></script>
 <script src="universal-fee-calc/staffing-leader.js"></script>
+<script src="universal-fee-calc/bench-data.js"></script>
 <!-- Pulled in for its workbook parser only; it renders nothing without the
      reconciliation page's markup. -->
 <script src="exec-reporting/core.js"></script>
@@ -2169,6 +2170,69 @@
     test('Placeholder', 'flipping the flag is recorded in the change log', () => {
       const fields = S.describeChanges(mk(4, false), mk(4, true)).map(d => d.field);
       return eq(fields.indexOf('Placeholder estimate') >= 0, true, 'got: ' + fields.join(', '));
+    });
+  })();
+
+  /* ============ BENCHMARKING · what counts, and the cohort maths ============ */
+  (function () {
+    const B = window.BENCH;
+    if (!B) { test('Benchmarking', 'module loads', () => 'BENCH not present'); return; }
+    const rec = (over) => base(Object.assign({ project: { name: 'B', client: 'C', status: 'active', projectType: 'T', industry: 'I' } }, over || {}));
+
+    test('Benchmarking', 'change orders and dead pursuits never enter a benchmark', () => {
+      const plain = rec({ id: 'b_plain' });
+      const co = rec({ id: 'b_co', changeOrder: { parentId: 'b_plain', coNumber: 1 } });
+      const lost = rec({ id: 'b_lost', project: { name: 'L', client: 'C', status: 'lost' } });
+      const dead = rec({ id: 'b_dead', project: { name: 'D', client: 'C', status: 'submitted', rating: 7 } });
+      const ids = B.benchmarkable([plain, co, lost, dead]).map(p => p.id).join(',');
+      return ids === 'b_plain' || 'kept: ' + ids;
+    });
+
+    test('Benchmarking', 'a $0 contracted role is in neither the rates nor the team mix', () => {
+      const p = rec({ roles: [
+        { id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'core', fte: { p1: 100 }, fteMonthly: {} },
+        { id: 'r2', titleId: 'pm', tierId: 'mid', rateSource: 'contracted', contractedRate: 0, groupId: 'core', fte: { p1: 100 }, fteMonthly: {} },
+      ] });
+      const f = B.projectFacts([p])[0];
+      if (f.pricedRoles !== 1) return 'priced roles ' + f.pricedRoles;
+      if (Math.abs(f.fteMonths - 4) > 1e-9) return 'fteMonths ' + f.fteMonths;
+      if (f.mix.length !== 1 || Math.abs(f.mix[0].pct - 100) > 1e-9) return 'mix ' + JSON.stringify(f.mix);
+      return Math.abs(f.avgFte - 1) < 1e-9 && Math.abs(f.peakFte - 1) < 1e-9 || 'team size ' + f.avgFte + '/' + f.peakFte;
+    });
+
+    test('Benchmarking', 'fee intensity: per month, per FTE-month and the blended rate agree with the net fee', () => {
+      const f = B.projectFacts([rec()])[0];
+      const r = [eq(f.feePerMonth * f.durationMonths, f.net, 'per month'), eq(f.feePerFteMonth * f.fteMonths, f.net, 'per FTE-month'),
+        eq(f.blendedRate * f.fteMonths * f.hrsPerMo, f.net, 'blended')].find(x => x !== true);
+      return r || true;
+    });
+
+    test('Benchmarking', 'cohort stats: spreads, percentile position, how often a title is staffed', () => {
+      const mk = (id, disc, roles) => rec({ id, assumptions: { discount: disc }, roles });
+      const pmRole = { id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'core', fte: { p1: 100 }, fteMonthly: {} };
+      const fs = B.projectFacts([
+        mk('c1', 0, [pmRole]), mk('c2', 20, [pmRole]),
+        mk('c3', 40, [pmRole, Object.assign({}, pmRole, { id: 'r2', titleId: C.titles[0].id === 'pm' ? C.titles[1].id : C.titles[0].id })]),
+      ]);
+      const S2 = B.cohortStats(fs);
+      if (S2.n !== 3) return 'n ' + S2.n;
+      const d = S2.metrics.discountPct;
+      if (d.med !== 20 || d.p25 !== 10 || d.p75 !== 30) return 'discount spread ' + JSON.stringify([d.p25, d.med, d.p75]);
+      if (B.percentileOf(20, d.values) !== 50 || B.percentileOf(0, d.values) !== 17 || B.percentileOf(99, d.values) !== 100) return 'percentiles';
+      if (B.percentileOf(1, []) !== null) return 'empty sample must be null';
+      const pm = S2.mix.pm;
+      if (!pm || pm.usedOn !== 3 || Math.round(pm.usedPct) !== 100) return 'pm staffed on ' + JSON.stringify(pm && [pm.usedOn, pm.usedPct]);
+      const other = Object.keys(S2.mix).filter(k => k !== 'pm')[0];
+      return S2.mix[other] && S2.mix[other].usedOn === 1 && Math.round(S2.mix[other].usedPct) === 33 && Math.round(S2.mix[other].med) === 50 || 'other title ' + JSON.stringify(S2.mix[other]);
+    });
+
+    test('Benchmarking', 'nearest comparables rank by fee, duration and team size and never return the target', () => {
+      const pmRole = { id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'core', fte: { p1: 100 }, fteMonthly: {} };
+      const mk = (id, endMonth) => rec({ id, timeline: { startMonth: 1, startYear: 2026, endMonth, endYear: 2026 }, phases: [{ id: 'p1', name: 'D', length: endMonth }], roles: [pmRole] });
+      const fs = B.projectFacts([mk('n_t', 6), mk('n_a', 7), mk('n_b', 12), mk('n_c', 5)]);
+      const t = fs.find(f => f.id === 'n_t');
+      const ids = B.nearest(t, fs, 2).map(f => f.id).join(',');
+      return ids === 'n_c,n_a' || ids === 'n_a,n_c' ? true : 'got ' + ids;
     });
   })();
 
