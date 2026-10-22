@@ -1978,6 +1978,21 @@
       return eq(plan.byMonth['2026-04'], 0.5 * 160, 'April: 50% FTE × 160 contract hrs/mo');
     });
 
+    test('Staffing', 'a priced pursuit is suggested the moment it exists — as a pursuit; a dead one is not', () => {
+      const ym = (() => { const d = new Date(); return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1 }; })();
+      const next = ym.m === 12 ? { y: ym.y + 1, m: 1 } : { y: ym.y, m: ym.m + 1 };
+      const mk = (id, name, status, rating) => S.saveProject(base({ id, project: { name, client: 'Convene', status, rating },
+        timeline: { startMonth: next.m, startYear: next.y, endMonth: next.m, endYear: next.y }, phases: [{ id: 'p1', name: 'Delivery', length: 1 }], groups: [{ id: 'g1', name: 'Core' }],
+        roles: [{ id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'g1', fte: { p1: 50 }, fteMonthly: { [next.y + '-' + next.m]: 50 }, resource: 'Jane Tester', projectRole: 'Project Manager' }] }), { force: true });
+      mk('gp_draft', 'Neuehouse MSQ (Fee Adj. & Extension)', 'draft', 3);
+      mk('gp_dead', 'Neuehouse MSQ (dead)', 'negotiation', 7);
+      document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+      const gaps = ST.contractStaffingGaps();
+      const g = gaps.find(x => x.feeId === 'gp_draft');
+      if (!g) return 'the draft with a staffed roster should be suggested: ' + JSON.stringify(gaps.map(x => x.feeId));
+      if (!g.pursuit || g.status !== 'draft') return 'and marked as a pursuit: ' + JSON.stringify([g.pursuit, g.status]);
+      return gaps.some(x => x.feeId === 'gp_dead') ? 'a rating-7 pursuit demands nothing' : true;
+    });
     test('Staffing', 'contractStaffingGaps flags contract months the matrix has not staffed', () => {
       const gaps = ST.contractStaffingGaps();
       const g = gaps.find(x => (x.feeName || x.project || '').includes('Tower Alpha'));
