@@ -95,6 +95,8 @@
     compSearch: '', compSort: { key: 'behind', dir: -1 },   // Clockify Reporting table: filter + column sort
     compView: 'summary',                                    // 'summary' (grouped + sparklines) | 'grid' (month detail)
     bridgeOpen: false,                                      // "contract staffing" card starts rolled up — it can dwarf the page
+    bridgeGroup: 'client',                                  // the bridge reads grouped: client · revenue leader · project
+    bridgeGroupsOpen: new Set(),                            // which groups are unfolded (survives every re-render)
     dupOpen: false,                                         // "double-counted allocations" stays open while you work through it
     allocSort: { key: 'project', dir: 1 },                  // the allocations log: click a column to sort, again to flip
   };
@@ -328,31 +330,15 @@
     const nOpen = shown.filter(g => g.open).length;
     const nNew = shown.filter(g => !g.open && g.isNew).length;
     const nLinked = shown.filter(g => !g.open && !g.isNew).length;
-    const nSigned = shown.filter(g => g.via === 'direct' && !g.possibleDupFee).length;
+    const nSigned = shown.filter(g => g.via === 'direct' && !g.pursuit && !g.possibleDupFee).length;
+    const nPursuit = shown.filter(g => g.pursuit).length;
     const nDup = shown.filter(g => g.possibleDupFee).length;
     const fteMo = Math.round(shown.reduce((s2, g) => s2 + (parseFloat(g.totalNeedFteMo) || 0), 0) * 10) / 10;
     const nProj = new Set(shown.map(g => g.project)).size;
     const stat = (n, label, bg, fg, title) => n ? `<span class="mv-chip" style="background:${bg};color:${fg};font-weight:700" title="${esc(title || '')}">${n} ${label}</span>` : '';
     const segRow = (sg) => `<tr><td>${esc(S.ymLabel(sg.start))}${sg.start !== sg.end ? ' → ' + esc(S.ymLabel(sg.end)) : ''}</td><td class="num">${sg.want}%</td><td class="num">${sg.have ? sg.have + '%' : '—'}</td><td class="num" style="font-weight:800;color:var(--sav-teal)">+${sg.need}%</td></tr>`;
     const rosterOptions = S.listPeople().map(p => `<option value="${esc(p.name)}">`).join('');
-    return `<details id="bridge-roll" ${state.bridgeOpen ? 'open' : ''} style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid var(--sav-teal);margin-bottom:14px">
-      <summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:11px 16px">
-        <span id="bridge-caret" style="font-size:10px;color:var(--sav-steel);transition:transform .15s;display:inline-block;${state.bridgeOpen ? 'transform:rotate(90deg)' : ''}">▶</span>
-        <span style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy)">🤝 Contract staffing to be allocated</span>
-        <span class="mv-chip" style="background:var(--sav-navy);color:#fff;font-weight:800">${shown.length} item${shown.length === 1 ? '' : 's'} · ${nProj} project${nProj === 1 ? '' : 's'}</span>
-        <span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700" title="Total contract staffing not yet reflected in the matrix, in full-time-equivalent months">${fteMo} FTE-mo missing</span>
-        ${stat(nOpen, 'open role' + (nOpen === 1 ? '' : 's'), '#fdf3d7', '#8a6d00', 'Unstaffed contract slots that need a name')}
-        ${stat(nNew, 'not on roster', '#fdf3d7', '#8a6d00', 'Contract names that don’t match anyone here — map the nickname or create them')}
-        ${stat(nLinked, 'ready to confirm', '#e7f0ee', '#0E7C7B', 'Contract names that already resolve to a roster person — one click each')}
-        ${stat(nSigned, 'signed · nobody staffed', '#fbe9ea', '#b3151b', 'Won projects with zero matrix staffing — the most urgent kind')}
-        ${stat(nDup, 'possible dup ⚠', '#fdf3d7', '#8a6d00', 'Demand from a fee record that may duplicate another — check before staffing')}
-        <span class="grow"></span>
-        <span class="note-txt" id="bridge-roll-hint">${state.bridgeOpen ? 'click to roll up' : 'click to review'}</span>
-      </summary>
-      <div style="padding:0 16px 12px">
-      <div class="note-txt" style="margin:0 0 6px">Every under-covered contract role — named people AND open slots. Review the segments, adjust the name if it maps to someone already here (nicknames count — the link is remembered), then confirm. Nothing is created without your OK.</div>
-      <datalist id="bridge-people">${rosterOptions}</datalist>
-      ${gaps.map((g, i) => isHidden(g, i) ? '' : `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
+    const gapCard = (g, i) => `<details style="border-bottom:1px dashed rgba(37,39,58,0.12)">
         <summary style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 4px;cursor:pointer">
           <b>${g.open ? 'Open role: ' + esc(g.roleTitle) : esc(g.resource)}</b><span class="note-txt">on</span><span style="font-weight:600">${pLbl(g.project, g.client)}</span>
           ${g.open
@@ -383,7 +369,60 @@
             <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" data-bridge-dismiss="${esc(g.key)}" title="Take this off the list without creating anything. Recorded with your name and reason, and reopenable from the dismissed roll-up.">✕ Not staffing this</button>
           </div>
         </div>
-      </details>`).join('')}
+      </details>`;
+    // ---- grouped: the list reads by client, revenue leader or project ----
+    const groupKeyOf = (g) => state.bridgeGroup === 'lead' ? (g.lead || 'No revenue leader') : state.bridgeGroup === 'project' ? (S.projectLabel(g.project, g.client).name || g.project) : (g.client || S.projectLabel(g.project, g.client).client || 'No client');
+    const groups = {};
+    gaps.forEach((g, i) => { if (isHidden(g, i)) return; const k = groupKeyOf(g); (groups[k] = groups[k] || []).push(i); });
+    const groupOrder = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+    const byUrgency = (i, j) => { const a = gaps[i], b = gaps[j]; return (a.pursuit ? 1 : 0) - (b.pursuit ? 1 : 0) || (parseFloat(b.totalNeedFteMo) || 0) - (parseFloat(a.totalNeedFteMo) || 0); };
+    const groupHtml = (k) => {
+      const idx = groups[k].slice().sort(byUrgency);
+      const items = idx.map(i => gaps[i]);
+      const fte = Math.round(items.reduce((t, g) => t + (parseFloat(g.totalNeedFteMo) || 0), 0) * 10) / 10;
+      const projs = new Set(items.map(g => g.project)).size, signed = items.filter(g => !g.pursuit).length, purs = items.length - signed;
+      const leads = state.bridgeGroup === 'lead' ? '' : [...new Set(items.map(g => g.lead).filter(Boolean))].join(', ');
+      const open = state.bridgeGroupsOpen.has(k);
+      return `<details class="bridge-group" data-bgroup-key="${esc(k)}" ${open ? 'open' : ''} style="border:1px solid rgba(37,39,58,0.12);margin:8px 0;background:#fcfcfb">
+        <summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 12px;background:#f4f6f7">
+          <span style="font-size:10px;color:var(--sav-steel);display:inline-block;transition:transform .15s;${open ? 'transform:rotate(90deg)' : ''}">▶</span>
+          <b style="font-family:var(--font-display);font-size:13px;color:var(--sav-navy)">${esc(k)}</b>
+          <span class="mv-chip" style="background:var(--sav-navy);color:#fff;font-weight:800">${items.length} item${items.length === 1 ? '' : 's'}${state.bridgeGroup === 'project' ? '' : ' · ' + projs + ' project' + (projs === 1 ? '' : 's')}</span>
+          <span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700">${fte} FTE-mo</span>
+          ${signed ? `<span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">${signed} signed</span>` : ''}
+          ${purs ? `<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">${purs} pursuit${purs === 1 ? '' : 's'}</span>` : ''}
+          ${leads ? `<span class="note-txt">· ${esc(leads)}</span>` : ''}
+        </summary>
+        <div style="padding:0 10px 4px">${idx.map(i => gapCard(gaps[i], i)).join('')}</div>
+      </details>`;
+    };
+    const seg = (key, label) => `<button type="button" class="seg-btn ${state.bridgeGroup === key ? 'active' : ''}" data-bgroup="${key}">${label}</button>`;
+    const groupBar = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 8px">
+        <span class="note-txt" style="font-weight:700">Group by</span>
+        <div class="seg-toggle" role="group" aria-label="Group the contract staffing by">${seg('client', 'Client')}${seg('lead', 'Revenue leader')}${seg('project', 'Project')}</div>
+        <span class="grow"></span>
+        <a href="#" class="note-txt" data-bgroups="open" style="font-weight:700">Expand all</a><a href="#" class="note-txt" data-bgroups="close" style="font-weight:700">Collapse all</a>
+      </div>`;
+    return `<details id="bridge-roll" ${state.bridgeOpen ? 'open' : ''} style="background:#fff;border:1px solid rgba(37,39,58,0.12);border-left:4px solid var(--sav-teal);margin-bottom:14px">
+      <summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:11px 16px">
+        <span id="bridge-caret" style="font-size:10px;color:var(--sav-steel);transition:transform .15s;display:inline-block;${state.bridgeOpen ? 'transform:rotate(90deg)' : ''}">▶</span>
+        <span style="font-family:var(--font-display);font-weight:700;font-size:13px;color:var(--sav-navy)">🤝 Contract staffing to be allocated</span>
+        <span class="mv-chip" style="background:var(--sav-navy);color:#fff;font-weight:800">${shown.length} item${shown.length === 1 ? '' : 's'} · ${nProj} project${nProj === 1 ? '' : 's'}</span>
+        <span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700" title="Total contract staffing not yet reflected in the matrix, in full-time-equivalent months">${fteMo} FTE-mo missing</span>
+        ${stat(nOpen, 'open role' + (nOpen === 1 ? '' : 's'), '#fdf3d7', '#8a6d00', 'Unstaffed contract slots that need a name')}
+        ${stat(nNew, 'not on roster', '#fdf3d7', '#8a6d00', 'Contract names that don’t match anyone here — map the nickname or create them')}
+        ${stat(nLinked, 'ready to confirm', '#e7f0ee', '#0E7C7B', 'Contract names that already resolve to a roster person — one click each')}
+        ${stat(nSigned, 'signed · nobody staffed', '#fbe9ea', '#b3151b', 'Won projects with zero matrix staffing — the most urgent kind')}
+        ${stat(nPursuit, 'from pursuits', '#fdf3d7', '#8a6d00', 'Priced but unsigned — accepted as pursuit rows, hatched in the grids')}
+        ${stat(nDup, 'possible dup ⚠', '#fdf3d7', '#8a6d00', 'Demand from a fee record that may duplicate another — check before staffing')}
+        <span class="grow"></span>
+        <span class="note-txt" id="bridge-roll-hint">${state.bridgeOpen ? 'click to roll up' : 'click to review'}</span>
+      </summary>
+      <div style="padding:0 16px 12px">
+      <div class="note-txt" style="margin:0 0 6px">Every under-covered contract role — named people AND open slots. Review the segments, adjust the name if it maps to someone already here (nicknames count — the link is remembered), then confirm. Nothing is created without your OK.</div>
+      <datalist id="bridge-people">${rosterOptions}</datalist>
+      ${groupBar}
+      ${groupOrder.map(groupHtml).join('')}
       ${dropped.length ? `<details style="margin-top:10px;border-top:1px solid rgba(37,39,58,0.12);padding-top:8px">
         <summary style="cursor:pointer;font-size:12px;color:var(--sav-steel)">${dropped.length} dismissed — not being staffed <span class="note-txt">· click to review or put back</span></summary>
         <table class="dt" style="margin-top:6px"><thead><tr><th>Who / role</th><th>Project</th><th>Reason</th><th>By</th><th></th></tr></thead><tbody>
@@ -405,6 +444,9 @@
     if (!root) return;
     // Roll-up state survives re-renders (every allocation edit re-renders the tab).
     const dr = $('#dup-roll'); if (dr) dr.ontoggle = () => { state.dupOpen = dr.open; };
+    $$('#p-allocations [data-bgroup]').forEach(b => b.onclick = () => { state.bridgeGroup = b.dataset.bgroup; state.bridgeGroupsOpen = new Set(); renderAllocations(); });
+    $$('#p-allocations .bridge-group').forEach(d => d.ontoggle = () => { const k = d.dataset.bgroupKey; if (d.open) state.bridgeGroupsOpen.add(k); else state.bridgeGroupsOpen.delete(k); const c = d.querySelector('summary > span'); if (c) c.style.transform = d.open ? 'rotate(90deg)' : ''; });
+    $$('#p-allocations [data-bgroups]').forEach(a => a.onclick = (e) => { e.preventDefault(); const all = $$('#p-allocations .bridge-group').map(d => d.dataset.bgroupKey); state.bridgeGroupsOpen = new Set(a.dataset.bgroups === 'open' ? all : []); renderAllocations(); });
     const roll = $('#bridge-roll');
     if (roll) roll.ontoggle = () => {
       state.bridgeOpen = roll.open;
