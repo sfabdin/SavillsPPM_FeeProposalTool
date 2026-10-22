@@ -361,7 +361,7 @@
               ? '<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700">not on the roster — map or create below</span>'
               : `<span class="mv-chip" style="background:#e7f0ee;color:#0E7C7B;font-weight:700">links to existing: ${esc(g.person.name)}</span>`)}
           ${g.topUp ? `<span class="mv-chip" style="background:#e7eef0">${g.open ? 'partially covered by matching titles' : 'top-up — partial allocation exists'}</span>` : ''}
-          ${g.via === 'direct' && !g.possibleDupFee ? '<span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">signed project — nobody staffed yet</span>' : ''}
+          ${g.pursuit ? `<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Not signed yet — accepting creates pursuit rows (shown hatched, counted only when “include pursuits” is on)">pursuit · ${esc((STORE.STATUS_LABELS || {})[g.status] || g.status || 'unsigned')}</span>` : g.via === 'direct' && !g.possibleDupFee ? '<span class="mv-chip" style="background:#fbe9ea;color:#b3151b;font-weight:700">signed project — nobody staffed yet</span>' : ''}
           ${g.possibleDupFee ? `<span class="mv-chip" style="background:#fdf3d7;color:#8a6d00;font-weight:700" title="Two fee-tool records appear to describe this same work — check Projects Index and archive or merge the spare before staffing against it (its revenue may also double-count).">⚠ from fee record “${esc(g.possibleDupFee)}” — possible duplicate of the linked one</span>` : ''}
           ${g.rating ? `<span class="mv-chip" style="background:${g.rating <= 1 ? '#e7f0ee' : g.rating <= 4 ? '#eef1f3' : '#f5f4f1'};color:${g.rating <= 1 ? '#0E7C7B' : g.rating <= 4 ? '#4a5560' : '#8a8f98'};font-weight:700" title="Projection rating of the linked fee project. 1 = booked, 2-4 = weighted pipeline, 5-7 = low likelihood — a rating 5-7 naming someone is rarely a staffing decision.">rating ${g.rating}</span>` : ''}
           ${g.lead ? `<span class="mv-chip" style="background:#f4f2ef;color:#4a5560" title="Revenue leader on the linked fee project — who to ask whether this is real">${esc(g.lead)}</span>` : ''}
@@ -439,7 +439,7 @@
         S.saveAllocation({
           personId, personName,
           feeId: g.feeId, project: g.project, client: g.client,
-          status: 'Active', type: 'Awarded',
+          status: g.pursuit ? 'Pursuit' : 'Active', type: g.pursuit ? 'Opportunity' : 'Awarded',
           start: sg.start, end: sg.end, pct: sg.need,
           // ties the row back to the contract slot/name it satisfies, so the
           // gap clears even when the assignee differs from the contract label
@@ -503,7 +503,7 @@
         S.saveAllocation({
           personId: g.personId, personName: g.resource,
           feeId: g.feeId, project: g.project, client: g.client,
-          status: 'Active', type: 'Awarded',
+          status: g.pursuit ? 'Pursuit' : 'Active', type: g.pursuit ? 'Opportunity' : 'Awarded',
           start: sg.start, end: sg.end, pct: sg.need,
           contractResource: g.resource,
           contract: { pct: sg.need, want: sg.want, have: sg.have, start: sg.start, end: sg.end },

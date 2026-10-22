@@ -51,7 +51,7 @@
         person: g.open ? '' : (g.person ? g.person.name : (g.resource || '')),
         title: g.person ? (g.person.title || '') : '',
         client: g.client || '', project: g.project || '',
-        status: 'Active', type: 'Awarded',
+        status: g.pursuit ? 'Pursuit' : 'Active', type: g.pursuit ? 'Opportunity' : 'Awarded',
         start: sg.start, end: sg.end, pct: sg.need,
         note: (g.open ? 'Open contract role staffed' : (g.topUp ? 'Contract top-up (matrix had ' + sg.have + '%, contract ' + sg.want + '%)' : 'From contract staffing')) + ' · ' + (g.roles || []).join(', '),
         contractRole: g.open ? (g.roleTitle || '') : '',

@@ -2182,18 +2182,20 @@
         /* Judgement context, so "is this real?" can be answered on the row.
            A rating-6 pursuit naming someone is not a staffing decision; a
            rated-1 booked project is. The revenue leader is who to ask. */
-        let rating = null, lead = '';
+        let rating = null, lead = '', status = '';
         try {
           const lp = links.map(l => feeRecords().find(x => x.id === l.id)).filter(Boolean)
             .sort((a, b) => (S2.ratingFor ? S2.ratingFor(a) : 9) - (S2.ratingFor ? S2.ratingFor(b) : 9))[0];
           if (lp) {
             rating = S2.ratingFor ? S2.ratingFor(lp) : null;
             const pj = lp.project || {};
+            status = pj.status || '';
             lead = (S2.leaderDisplay ? S2.leaderDisplay(pj.leadId || pj.lead) : (pj.lead || '')) || '';
           }
         } catch (err) {}
         const row = {
           feeId, project: pn, client,
+          pursuit: !(status === 'won' || status === 'active'), status,
           open: !!e.open, roleTitle: e.roleLabel || [...e.roles][0] || 'Role',
           resource: e.name, roles: [...e.roles],
           person, isNew: e.open ? false : !person,
@@ -2210,16 +2212,18 @@
       });
     };
 
-    // Every fee project that is signed (won / active) or that someone is
-    // already planning against. Unsigned work nobody has staffed demands
-    // nothing; a pursuit a leader is staffing is checked against its roster.
+    // Every live fee project with a staffed roster: signed work AND the
+    // pursuits — a new proposal's staffing is the earliest signal the
+    // bandwidth plan gets, so it is suggested the moment it is priced,
+    // flagged as a pursuit and accepted as pursuit rows. Only dead work
+    // (lost, rating 7) and closed work demand nothing.
     const planned = new Set(db.allocations.map(a => a.feeId).filter(Boolean));
     feeRecords().forEach(p => {
       if (!p.roles || !p.roles.length || !p.timeline) return;
       const st = (p.project && p.project.status) || '';
-      if (st === 'lost') return;
-      const signed = st === 'won' || st === 'active';
-      if (!signed && !planned.has(p.id)) return;
+      if (st === 'lost' || st === 'closed') return;
+      if (S2.isDeadPursuit && S2.isDeadPursuit(p)) return;
+      if (S2.isChangeOrder && S2.isChangeOrder(p)) return;
       collect(p.id, [{ id: p.id, via: planned.has(p.id) ? 'mapped' : 'direct' }]);
     });
 
