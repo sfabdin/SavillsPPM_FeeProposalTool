@@ -781,12 +781,14 @@
           /* Alphabetical by person, then by start month — so a person who
              appears twice (ramping up, ramping down) sits on adjacent rows. */
           const nameOf = (a) => ((S.getPerson(a.personId) || {}).name || a.personName || a.personId || '').toLowerCase();
+          let prevPerson = null;
           inWinAllocs.slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b)) || String(a.start || '').localeCompare(String(b.start || '')) || (b.pct - a.pct)).forEach(a => {
             const person = S.getPerson(a.personId) || { name: a.personId };
             const isP = isPursuitAlloc(a);
             const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
             const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-            pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell dacts" colspan="2">${drawerActs(a)}</td></tr>`;
+            const again = a.personId === prevPerson; prevPerson = a.personId;
+            pr += `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''} ${again ? 'same-again' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation${again ? ' · same person as the row above' : ''}"><td class="who dproj">${again ? '<span class="again">↳ </span>' : ''}${esc(person.name)}${person.isNewHire ? ' <span class="nh-tag">NH</span>' : ''}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell dacts" colspan="2">${drawerActs(a)}</td></tr>`;
           });
         } else {
           // one row per person who is planned OR logged time here
@@ -902,11 +904,13 @@
              its own, the pursuits totalled on their own, then the combined line —
              so "what are they actually committed to" and "what if it all lands"
              are two separate readings rather than one blended number. */
+          let prevLabel = null;
           const rowFor = (a) => {
             const isP = isPursuitAlloc(a);
             const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
             const note = a.note ? ` <span class="vmini" title="${esc(a.note)}">— ${esc(a.note.length > 40 ? a.note.slice(0, 40) + '…' : a.note)}</span>` : '';
-            return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation"><td class="who dproj">${pLbl(a.project, a.client)}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell dacts" colspan="2">${drawerActs(a)}</td></tr>`;
+            const lbl = labelOf(a); const again = lbl === prevLabel; prevLabel = lbl;
+            return `<tr class="drawer-tr alloc-row ${isP ? 'pursuit-row' : ''} ${again ? 'same-again' : ''}" data-edit-alloc="${esc(a.id)}" title="Click to edit this allocation${again ? ' · same project as the row above' : ''}"><td class="who dproj">${again ? '<span class="again">↳ </span>' : ''}${pLbl(a.project, a.client)}${stat}${contractTag(a)}${note}</td>${ms.map(m => `<td class="dcell">${S.allocActiveIn(a, m) ? a.pct + '%' : '·'}</td>`).join('')}<td class="dcell dacts" colspan="2">${drawerActs(a)}</td></tr>`;
           };
           const sumRow = (label, list, style, title) => {
             const cells = ms.map(m => {
@@ -915,15 +919,19 @@
             }).join('');
             return `<tr class="drawer-tr"${title ? ` title="${esc(title)}"` : ''}><td class="who dproj" style="${style}">${esc(label)}</td>${cells}<td class="dcell"></td><td class="dcell"></td></tr>`;
           };
-          const byPct = (a, b) => b.pct - a.pct;
-          const firm = inWin.filter(a => !isPursuitAlloc(a)).sort(byPct);
-          const purs = inWin.filter(a => isPursuitAlloc(a)).sort(byPct);
+          /* Alphabetical by project, then by start month — a project that
+             appears twice (ramping up, ramping down) sits on adjacent rows.
+             The signed / pursuit split and its subtotals stay. */
+          const labelOf = (a) => String((S.projectLabel(a.project, a.client) || {}).name || a.project || '').toLowerCase();
+          const byProj = (a, b) => labelOf(a).localeCompare(labelOf(b)) || String(a.start || '').localeCompare(String(b.start || '')) || (b.pct - a.pct);
+          const firm = inWin.filter(a => !isPursuitAlloc(a)).sort(byProj);
+          const purs = inWin.filter(a => isPursuitAlloc(a)).sort(byProj);
           const SUB = 'font-weight:700;background:#f4f6f7';
           const ALL = 'font-weight:800;background:#eceff1;border-top:1px solid rgba(37,39,58,0.25)';
-          pr += firm.map(rowFor).join('');
+          prevLabel = null; pr += firm.map(rowFor).join('');
           if (firm.length && purs.length) pr += sumRow('Subtotal · signed work', firm, SUB, 'Confirmed commitments only — what they are actually on the hook for');
           if (purs.length) {
-            pr += purs.map(rowFor).join('');
+            prevLabel = null; pr += purs.map(rowFor).join('');
             pr += sumRow('Subtotal · pursuits', purs, SUB, 'Unsigned work — only lands if these convert');
             pr += sumRow('Total · if every pursuit lands', inWin, ALL, 'Signed plus pursuit — the worst case for their capacity');
           } else if (firm.length > 1) {
@@ -932,7 +940,7 @@
         } else {
           // one row per project they are planned on OR logged time to, in % of their capacity
           const cap = capOf(r.person);
-          const names = [...projSet].map(pn => { const planM = {}, actM = {}; ms.forEach(m => { planM[m] = inWin.filter(a => a.project === pn && S.allocActiveIn(a, m)).reduce((t, a) => t + (parseFloat(a.pct) || 0), 0) * AX.planFrac(m); actM[m] = (((AX.byPP[r.person.id] || {})[pn] || { m: {} }).m[m] || 0) / cap * 100; }); const alloc = inWin.find(a => a.project === pn); return { pn, client: alloc ? alloc.client : (((AX.byPP[r.person.id] || {})[pn] || {}).client || ''), planM, actM, alloc, tot: ms.reduce((t, m) => t + actM[m], 0) }; }).sort((a, b) => b.tot - a.tot);
+          const names = [...projSet].map(pn => { const planM = {}, actM = {}; ms.forEach(m => { planM[m] = inWin.filter(a => a.project === pn && S.allocActiveIn(a, m)).reduce((t, a) => t + (parseFloat(a.pct) || 0), 0) * AX.planFrac(m); actM[m] = (((AX.byPP[r.person.id] || {})[pn] || { m: {} }).m[m] || 0) / cap * 100; }); const alloc = inWin.find(a => a.project === pn); return { pn, client: alloc ? alloc.client : (((AX.byPP[r.person.id] || {})[pn] || {}).client || ''), planM, actM, alloc, tot: ms.reduce((t, m) => t + actM[m], 0) }; }).sort((a, b) => String((S.projectLabel(a.pn, a.client) || {}).name || a.pn).toLowerCase().localeCompare(String((S.projectLabel(b.pn, b.client) || {}).name || b.pn).toLowerCase()));
           names.forEach(x => {
             const cells = ms.map(m => { if (!AX.covered.has(m)) return '<td class="dcell" style="color:#c9cdd3">·</td>'; const v = metric === 'actual' ? x.actM[m] : x.actM[m] - x.planM[m]; const rv = Math.round(v); const txt = metric === 'actual' ? (rv ? rv + '%' : '·') : (rv ? fmtSigned(rv, 0) : '·'); const col = metric === 'var' && rv ? (v > Math.max(0.1 * x.planM[m], 5) ? 'color:#7a5600' : v < -Math.max(0.1 * x.planM[m], 5) ? 'color:#4a5560' : '') : ''; return `<td class="dcell" style="${col}" title="${metric === 'actual' ? `${Math.round(x.actM[m])}% actual · ${Math.round(x.planM[m])}% projected` : `${fmtSigned(rv, 0)} pts vs ${Math.round(x.planM[m])}% projected`}">${txt}</td>`; }).join('');
             pr += `<tr class="drawer-tr ${x.alloc ? 'alloc-row' : ''}" ${x.alloc ? `data-edit-alloc="${esc(x.alloc.id)}" title="Click to edit this allocation"` : 'title="Logged time, no allocation"'}><td class="who dproj">${pLbl(x.pn, x.client)}${x.alloc ? '' : ' <span class="nh-tag" style="background:#fdf3d7;color:#8a6d00">no plan</span>'}</td>${cells}<td class="dcell dacts" colspan="2">${x.alloc ? drawerActs(x.alloc) : ''}</td></tr>`;

@@ -331,3 +331,7 @@ body.leader-view .admin-only, body.leader-view #fresh-strip, body.leader-view #s
 .cell.vover2 { background:#f6c9c2; color:#8f2418; }
 .cell.vunder { background:#eef4f4; color:#4a5560; }
 .cell.nodata { color:#c9cdd3; font-weight:400; background:repeating-linear-gradient(45deg, #f7f6f3 0 4px, #fff 4px 8px); }
+
+/* A second (third…) row for the same person / project under one drawer: the label is muted and arrowed so the group reads as one. */
+.drawer-tr.same-again td.who.dproj { color:var(--sav-steel); }
+.drawer-tr.same-again td.who.dproj .again { color:#c9cdd3; font-weight:400; }
