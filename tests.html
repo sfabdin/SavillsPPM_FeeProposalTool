@@ -488,6 +488,13 @@
       const cf = S.completenessOf(f);
       if (!cf.finished || cf.chase.length || cf.fields.Staffing !== true || !cf.info.staffingNotNeeded) return 'finished: staffing not required, nothing chased: ' + JSON.stringify([cf.finished, cf.chase, cf.fields.Staffing]);
       if (cf.missing.indexOf('Location') < 0) return 'the blank is still visible as a blank on a finished project';
+      const sw = S.completenessOf(base({ project: { name: 'SMALLWORKS - OH_1111 Polaris_1F - Office Coat Rack', client: 'JPMC', status: 'submitted', leadId: 'bking' }, timeline: { startMonth: 1, startYear: new Date().getFullYear() + 1, endMonth: 1, endYear: new Date().getFullYear() + 1 }, roles: [] }));
+      if (!sw.smallWorks || sw.fields.Staffing !== true || !sw.info.staffingSmallWorks || sw.missing.indexOf('Staffing') >= 0) return 'Small Works never needs staffing: ' + JSON.stringify([sw.smallWorks, sw.fields.Staffing, sw.missing]);
+      if (sw.missing.indexOf('Fee $') < 0) return 'a Small Works shell with no pass-through line still shows Fee $ as missing';
+      const sw2 = S.completenessOf(base({ project: { name: 'Lobby', client: 'JPMC', status: 'submitted' }, source: { origin: 'smallworks' }, roles: [] }));
+      if (!sw2.smallWorks || sw2.fields.Staffing !== true) return 'the import marker counts too';
+      const plain = S.completenessOf(base({ project: { name: 'Lobby', client: 'JPMC', status: 'submitted' }, timeline: { startMonth: 1, startYear: new Date().getFullYear() + 1, endMonth: 4, endYear: new Date().getFullYear() + 1 }, roles: [] }));
+      if (plain.fields.Staffing) return 'an ordinary unstaffed record is still missing staffing';
       if (S.isFinished(a)) return 'a live project with a future end month is not finished';
       if (!S.isFinished(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 3, endYear: 2026 } }), '2026-04-15') || S.isFinished(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 4, endYear: 2026 } }), '2026-04-15')) return 'finished = the end month has fully passed';
       if (em.html.indexOf('Universal%20Fee%20Calculator.html?id=' + encodeURIComponent(a.id)) < 0) return 'the email links straight to the project';

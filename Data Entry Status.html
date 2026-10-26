@@ -106,7 +106,7 @@
 
   <div class="legend">
     <span>Tracked fields: <b>Leader</b>, <b>Client</b>, <b>Location</b>, <b>Industry</b>, <b>Type</b>, <b>Rating</b>, <b>Staffing</b>, <b>Fee $</b>, <b>Date</b></span>
-    <span><b>Staffing</b> = priced roles allocated, or pass-through lines entered (imported-$-only projects count as missing until built).</span>
+    <span><b>Staffing</b> = priced roles allocated, or pass-through lines entered (imported-$-only projects count as missing until built). <b>Small Works</b> projects bill as pass-through only, so staffing is never required on them.</span>
     <span><b>Finished</b> = closed out, lost, or the last month of the timeline has passed. Nothing on a finished project is chased: blanks are grandfathered, staffing is not required, and the weekly digest skips it.</span>
   </div>
 
@@ -308,6 +308,8 @@
           const ok = r.a.fields[f];
           const cell = (f === 'Staffing' && info.staffingViaPt)
             ? `<td class="center"><span class="fchip na" title="Staffing: not required — this project bills as pass-through (${esc(fmtMoney(info.ptBilled))} through Savills)">n/a</span></td>`
+            : (f === 'Staffing' && info.staffingSmallWorks)
+            ? `<td class="center"><span class="fchip na" title="Staffing: not required — Small Works bills as pass-through only, there is nothing to staff">n/a</span></td>`
             : (f === 'Staffing' && info.staffingNotNeeded)
             ? `<td class="center"><span class="fchip na" title="Staffing: not required — the work is finished">n/a</span></td>`
             : `<td class="center"><span class="fchip ${ok?'ok':'no'}" title="${esc(f)}: ${ok?'present':(done ? 'blank, grandfathered (finished project)' : 'missing')}">${ok?'✓':'✗'}</span></td>`;
