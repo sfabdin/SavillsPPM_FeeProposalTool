@@ -3697,10 +3697,20 @@
     const d = now ? new Date(now) : new Date();
     return (t.endYear * 100 + t.endMonth) < (d.getFullYear() * 100 + (d.getMonth() + 1));
   }
+  /** SMALL WORKS. The JPMC Small Works programme bills as pass-through only
+      (contractor work orders and managed vendors, cost plus a markup) — there
+      is never a staffing plan to enter, whether or not the pass-through line
+      has been filled in yet. Known by the import marker, or by the name the
+      programme uses. */
+  function isSmallWorks(p) {
+    const src = (p && p.source) || {}; const pj = (p && p.project) || {};
+    return src.origin === 'smallworks' || pj.smallWorks === true || /small\s*works/i.test(String(pj.name || ''));
+  }
   function completenessOf(p, catalog) {
     const cat = catalog || window.RATES_CATALOG;
     const pj = p.project || {}; const roles = p.roles || []; const pt = p.passthrough || {};
     const finished = isFinished(p);
+    const smallWorks = isSmallWorks(p);
     const hasAlloc = roles.some(r => (r.fteMonthly && Object.values(r.fteMonthly).some(v => v > 0)) || (r.fte && Object.values(r.fte).some(v => v > 0)));
     const ptLines = pt.enabled && Array.isArray(pt.lines) ? pt.lines.filter(l => (parseFloat(l.cost) || 0) > 0) : [];
     const ptBilled = ptLines.reduce((a, l) => { const c = parseFloat(l.cost) || 0; return a + c + c * ((parseFloat(l.markupPct) || 0) / 100); }, 0);
@@ -3713,11 +3723,12 @@
     const fields = {
       Leader: !!(pj.leadId || pj.lead), Client: !!(pj.client && String(pj.client).trim()), Location: !!(pj.location && String(pj.location).trim()),
       Industry: !!pj.industry, Type: !!pj.projectType, Rating: !!(typeof ratingFor === 'function' ? ratingFor(p) : pj.rating),
-      Staffing: hasAlloc || staffingViaPt || finished, 'Fee $': fee > 0 || ptBilled > 0, Date: !!(pj.firstProposalDate || pj.proposalDate),
+      Staffing: hasAlloc || staffingViaPt || smallWorks || finished, 'Fee $': fee > 0 || ptBilled > 0, Date: !!(pj.firstProposalDate || pj.proposalDate),
     };
     const missing = COMPLETENESS_FIELDS.filter(k => !fields[k]);
     // `missing` is what is blank; `chase` is what anyone is asked to fill — empty once the work is finished.
-    return { fields, missing, chase: finished ? [] : missing, finished, fee, info: { passthrough: ptLines.length > 0, staffingViaPt, staffingNotNeeded: finished && !hasAlloc && !staffingViaPt, ptBilled } };
+    return { fields, missing, chase: finished ? [] : missing, finished, smallWorks, fee, info: { passthrough: ptLines.length > 0, staffingViaPt,
+      staffingSmallWorks: smallWorks && !hasAlloc && !staffingViaPt, staffingNotNeeded: finished && !hasAlloc && !staffingViaPt && !smallWorks, ptBilled } };
   }
   /** The weekly digest, pre-rendered per leader so the sending flow only
       loops and mails: who, how many, and an email with one deep link per
@@ -3984,7 +3995,7 @@
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries, revenueSeries, isDeadPursuit,
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
+    getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, isSmallWorks, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
