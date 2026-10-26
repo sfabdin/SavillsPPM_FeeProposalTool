@@ -28,6 +28,8 @@
     // ── Operations — running the business (admin) ──
     { href: 'Staffing Matrix.html',          label: 'Staffing & Bandwidth', group: 'Operations', admin: true,
       desc: 'Who is working on what and how loaded they are — allocations, bandwidth, and contract-vs-staffing checks.' },
+    { href: 'Staffing & Bandwidth (Preview).html', label: 'Staffing & Bandwidth · preview', group: 'Operations', admin: true,
+      desc: 'A proposed redesign, read-only: My team, Bandwidth, Data room. The current page stays live.' },
     { href: 'Revenue Reconciliation.html',   label: 'Revenue Reconciliation', group: 'Operations', admin: true,
       desc: 'Finance\'s monthly book, built from the fee tool: a status on every fee, pass-through and fee-share line, the monthly flash, and a lock per month — a project edit that moves a locked month is flagged red.' },
     { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Operations', admin: true,
