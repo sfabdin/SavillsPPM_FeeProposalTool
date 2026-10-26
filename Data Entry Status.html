@@ -14,7 +14,7 @@
   .head .title-block h1 a { color: inherit; text-decoration: none; }
 
   /* KPI strip */
-  .kpi-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 30px; }
+  .kpi-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 30px; }
   .kpi-card { background: #fff; border: 1px solid rgba(37,39,58,0.10); padding: 16px 18px; }
   .kpi-card .k-num { font-family: var(--font-display); font-weight: 800; font-size: 30px; line-height: 1; color: var(--sav-navy); }
   .kpi-card .k-lbl { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #79828C; margin-top: 8px; }
@@ -64,6 +64,10 @@
   .miss-n { font-family: var(--font-display); font-weight: 800; font-size: 13px; }
   .miss-n.zero { color: #1f7a44; }
   .miss-n.some { color: #C0392B; }
+  .miss-n.gf { font-family: var(--font-body); font-weight: 700; font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: #79828C; white-space: nowrap; }
+  tr.done td { color: #79828C; }
+  tr.done .pj-name { color: #79828C; }
+  .fin-tag { font-family: var(--font-body); font-weight: 700; font-size: 8.5px; letter-spacing: 0.05em; text-transform: uppercase; color: #79828C; border: 1px solid rgba(121,130,140,0.45); padding: 1px 5px; margin-left: 6px; border-radius: 3px; vertical-align: middle; white-space: nowrap; }
   td.center { text-align: center; }
   .empty { padding: 40px; text-align: center; color: #79828C; font-size: 13px; }
   .legend { font-size: 11.5px; color: #79828C; margin: 4px 0 20px; display: flex; gap: 18px; flex-wrap: wrap; }
@@ -94,6 +98,7 @@
     <input type="search" id="search" placeholder="Filter by project or client…">
     <label class="chk"><input type="checkbox" id="only-incomplete"> Only projects missing data</label>
     <label class="chk"><input type="checkbox" id="only-imported"> Only imported</label>
+    <label class="chk"><input type="checkbox" id="show-finished"> Show finished projects</label>
     <span class="grow"></span>
     <button class="btn" id="expand-all">Expand all</button>
     <button class="btn ghost" id="collapse-all">Collapse all</button>
@@ -102,6 +107,7 @@
   <div class="legend">
     <span>Tracked fields: <b>Leader</b>, <b>Client</b>, <b>Location</b>, <b>Industry</b>, <b>Type</b>, <b>Rating</b>, <b>Staffing</b>, <b>Fee $</b>, <b>Date</b></span>
     <span><b>Staffing</b> = priced roles allocated, or pass-through lines entered (imported-$-only projects count as missing until built).</span>
+    <span><b>Finished</b> = closed out, lost, or the last month of the timeline has passed. Nothing on a finished project is chased: blanks are grandfathered, staffing is not required, and the weekly digest skips it.</span>
   </div>
 
   <div id="groups"></div>
@@ -128,6 +134,7 @@
   let search = '';
   let onlyIncomplete = false;
   let onlyImported = false;
+  let showFinished = false;
 
   /* ---------- Fee (mirrors Projects Index) ---------- */
   function projectFee(p) {
@@ -232,18 +239,24 @@
       const q = search.toLowerCase();
       rows = rows.filter(r => (((r.p.project||{}).name||'') + ' ' + ((r.p.project||{}).client||'')).toLowerCase().includes(q));
     }
-    if (onlyIncomplete) rows = rows.filter(r => r.a.missing.length > 0);
+    // Finished work (closed, lost, timeline past) is grandfathered: hidden unless asked for, never counted as needing data.
+    const chase = (r) => r.a.chase || (r.a.finished ? [] : r.a.missing);
+    if (!showFinished) rows = rows.filter(r => !r.a.finished);
+    if (onlyIncomplete) rows = rows.filter(r => chase(r).length > 0);
     if (onlyImported) rows = rows.filter(r => r.imported);
 
-    // KPIs (over the filtered-by-search set, not the incomplete toggle)
-    let kpiRows = all.map(p => ({ p, a: assess(p), imported: isImported(p) }));
-    const total = kpiRows.length;
-    const importedN = kpiRows.filter(r => r.imported).length;
-    const complete = kpiRows.filter(r => r.a.missing.length === 0).length;
+    // KPIs over every project you can see: finished ones are set aside, the rest are what needs data
+    const kpiRows = all.map(p => ({ p, a: assess(p), imported: isImported(p) }));
+    const finishedN = kpiRows.filter(r => r.a.finished).length;
+    const liveRows = kpiRows.filter(r => !r.a.finished);
+    const total = liveRows.length;
+    const importedN = liveRows.filter(r => r.imported).length;
+    const complete = liveRows.filter(r => r.a.missing.length === 0).length;
     const needData = total - complete;
-    const totalMissing = kpiRows.reduce((s, r) => s + r.a.missing.length, 0);
+    const totalMissing = liveRows.reduce((s, r) => s + r.a.missing.length, 0);
     $('#kpis').innerHTML = [
-      { n: total, l: 'Projects', c: '' },
+      { n: total, l: 'Live projects', c: '' },
+      { n: finishedN, l: 'Finished · grandfathered', c: '' },
       { n: importedN, l: 'Imported', c: 'accent' },
       { n: complete, l: 'Fully complete', c: 'accent' },
       { n: needData, l: 'Need data', c: needData ? 'warn' : '' },
@@ -275,37 +288,42 @@
     }
 
     cont.innerHTML = order.map(g => {
-      const n = g.rows.length;
+      const live = g.rows.filter(r => !r.a.finished), finishedN = g.rows.length - live.length;
+      const n = live.length;
       const fieldsPerProj = FIELD_ORDER.length;
-      const filled = g.rows.reduce((s, r) => s + (fieldsPerProj - r.a.missing.length), 0);
-      const pct = Math.round((filled / (n * fieldsPerProj)) * 100);
-      const importedN = g.rows.filter(r => r.imported).length;
-      const missTotal = g.rows.reduce((s, r) => s + r.a.missing.length, 0);
-      const complete = g.rows.filter(r => r.a.missing.length === 0).length;
+      const filled = live.reduce((s, r) => s + (fieldsPerProj - r.a.missing.length), 0);
+      const pct = n ? Math.round((filled / (n * fieldsPerProj)) * 100) : 100;
+      const importedN = live.filter(r => r.imported).length;
+      const missTotal = live.reduce((s, r) => s + r.a.missing.length, 0);
+      const complete = live.filter(r => r.a.missing.length === 0).length;
       const barCls = pct >= 85 ? '' : pct >= 55 ? 'mid' : 'low';
       const isUnassigned = g.key === '__unassigned__';
       const openAttr = (isUnassigned || onlyIncomplete || search) ? ' open' : '';
 
-      const body = g.rows.slice().sort((a, b) => b.a.missing.length - a.a.missing.length).map(r => {
+      const body = g.rows.slice().sort((a, b) => (a.a.finished - b.a.finished) || (b.a.missing.length - a.a.missing.length)).map(r => {
         const pj = r.p.project || {};
         const info = r.a.info || {};
+        const done = !!r.a.finished;
         const chips = FIELD_ORDER.map(f => {
           const ok = r.a.fields[f];
           const cell = (f === 'Staffing' && info.staffingViaPt)
             ? `<td class="center"><span class="fchip na" title="Staffing: not required — this project bills as pass-through (${esc(fmtMoney(info.ptBilled))} through Savills)">n/a</span></td>`
-            : `<td class="center"><span class="fchip ${ok?'ok':'no'}" title="${esc(f)}: ${ok?'present':'missing'}">${ok?'✓':'✗'}</span></td>`;
+            : (f === 'Staffing' && info.staffingNotNeeded)
+            ? `<td class="center"><span class="fchip na" title="Staffing: not required — the work is finished">n/a</span></td>`
+            : `<td class="center"><span class="fchip ${ok?'ok':'no'}" title="${esc(f)}: ${ok?'present':(done ? 'blank, grandfathered (finished project)' : 'missing')}">${ok?'✓':'✗'}</span></td>`;
           // Pass-through sits next to Staffing: grey, informational, never counted.
           return f === 'Staffing'
             ? cell + `<td class="center"><span class="fchip ${info.passthrough ? 'info' : 'off'}" title="${info.passthrough ? 'Pass-through billing on: ' + esc(fmtMoney(info.ptBilled)) + ' billed through Savills' : 'No pass-through billing'}">${info.passthrough ? '✓' : '·'}</span></td>`
             : cell;
         }).join('');
         const mc = r.a.missing.length;
-        return `<tr>
+        const ended = done && !(STORE.ENDED_STATUSES ? STORE.ENDED_STATUSES.has(pj.status) : /^(lost|closed)$/.test(pj.status || ''));
+        return `<tr class="${done ? 'done' : ''}">
           <td>${esc(pj.client || '—')}</td>
           <td><a class="pj-name" href="Universal Fee Calculator.html?id=${esc(r.p.id)}">${esc(pj.name || 'Untitled')}</a>${r.imported?'<span class="imp-tag">Imported</span>':''}</td>
-          <td>${esc((STORE.STATUS_LABELS && STORE.STATUS_LABELS[pj.status]) || pj.status || '—')}</td>
+          <td>${esc((STORE.STATUS_LABELS && STORE.STATUS_LABELS[pj.status]) || pj.status || '—')}${ended ? '<span class="fin-tag" title="The last month of the timeline has passed">Finished</span>' : ''}</td>
           ${chips}
-          <td class="center"><span class="miss-n ${mc?'some':'zero'}">${mc || '✓'}</span></td>
+          <td class="center">${done ? `<span class="miss-n gf" title="${mc ? mc + ' blank field' + (mc === 1 ? '' : 's') + ', grandfathered — the work is finished' : 'Complete'}">${mc ? 'grandfathered' : '✓'}</span>` : `<span class="miss-n ${mc?'some':'zero'}">${mc || '✓'}</span>`}</td>
         </tr>`;
       }).join('');
 
@@ -314,7 +332,7 @@
           <span class="lg-caret">▶</span>
           <span>
             <span class="lg-name ${isUnassigned?'unassigned':''}">${esc(g.name)}</span>
-            <div class="lg-sub">${n} project${n===1?'':'s'} · ${complete} complete · ${importedN} imported${missTotal?` · ${missTotal} missing field${missTotal===1?'':'s'}`:''}</div>
+            <div class="lg-sub">${n} live project${n===1?'':'s'} · ${complete} complete · ${importedN} imported${missTotal?` · ${missTotal} missing field${missTotal===1?'':'s'}`:''}${finishedN ? ` · ${finishedN} finished` : ''}</div>
           </span>
         </summary>
         <div style="padding:0 20px 14px;">
@@ -343,6 +361,7 @@
     $('#search').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { search = e.target.value.trim(); render(); }, 160); });
     $('#only-incomplete').addEventListener('change', e => { onlyIncomplete = e.target.checked; render(); });
     $('#only-imported').addEventListener('change', e => { onlyImported = e.target.checked; render(); });
+    $('#show-finished').addEventListener('change', e => { showFinished = e.target.checked; render(); });
     $('#expand-all').addEventListener('click', () => document.querySelectorAll('details.lgroup').forEach(d => d.open = true));
     $('#collapse-all').addEventListener('click', () => document.querySelectorAll('details.lgroup').forEach(d => d.open = false));
   }

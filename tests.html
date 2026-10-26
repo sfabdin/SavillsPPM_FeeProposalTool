@@ -469,9 +469,11 @@
     return true;
   });
 
-  test('Notices · completeness digest', 'one pre-rendered email per leader, a deep link per project, lost/closed left out', () => {
-    const a = S.saveProject(base({ project: { name: 'Lobby Repositioning', client: 'Acme', status: 'active', leadId: 'esobel', industry: 'Financial Services', projectType: 'Program & Project Management', proposalDate: '2026-01-01' } }));
+  test('Notices · completeness digest', 'one pre-rendered email per leader, a deep link per project, finished work left out', () => {
+    const a = S.saveProject(base({ timeline: { startMonth: 1, startYear: new Date().getFullYear(), endMonth: 12, endYear: new Date().getFullYear() + 1 }, phases: [{ id: 'p1', name: 'Delivery', length: 24 }], project: { name: 'Lobby Repositioning', client: 'Acme', status: 'active', leadId: 'esobel', industry: 'Financial Services', projectType: 'Program & Project Management', proposalDate: '2026-01-01' } }));
     const b = S.saveProject(base({ project: { name: 'Old Pursuit', client: 'Acme', status: 'lost', leadId: 'esobel' } }));
+    const f = S.saveProject(base({ project: { name: 'Done Last Year', client: 'Acme', status: 'active', leadId: 'esobel' }, timeline: { startMonth: 1, startYear: 2024, endMonth: 6, endYear: 2024 }, roles: [] }));
+    const g = S.saveProject(base({ project: { name: 'Closed Out', client: 'Acme', status: 'closed', leadId: 'esobel' } }));
     try {
       const c = S.completenessOf(a);
       if (c.missing.indexOf('Location') < 0) return 'Location should be missing: ' + c.missing.join(',');
@@ -481,12 +483,19 @@
       if (em.email !== 'esobel@savills.us') return 'leader email: ' + em.email;
       if (!em.projects.some(p => p.id === a.id)) return 'the incomplete project is listed';
       if (em.projects.some(p => p.id === b.id)) return 'a lost pursuit must not be nagged';
+      if (em.projects.some(p => p.id === f.id)) return 'finished work (timeline already past) must not be nagged';
+      if (em.projects.some(p => p.id === g.id)) return 'a closed-out project must not be nagged';
+      const cf = S.completenessOf(f);
+      if (!cf.finished || cf.chase.length || cf.fields.Staffing !== true || !cf.info.staffingNotNeeded) return 'finished: staffing not required, nothing chased: ' + JSON.stringify([cf.finished, cf.chase, cf.fields.Staffing]);
+      if (cf.missing.indexOf('Location') < 0) return 'the blank is still visible as a blank on a finished project';
+      if (S.isFinished(a)) return 'a live project with a future end month is not finished';
+      if (!S.isFinished(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 3, endYear: 2026 } }), '2026-04-15') || S.isFinished(base({ timeline: { startMonth: 1, startYear: 2026, endMonth: 4, endYear: 2026 } }), '2026-04-15')) return 'finished = the end month has fully passed';
       if (em.html.indexOf('Universal%20Fee%20Calculator.html?id=' + encodeURIComponent(a.id)) < 0) return 'the email links straight to the project';
       if (em.html.indexOf('Data%20Entry%20Status.html') < 0) return 'the email links to Data Entry Status';
       if (!/need(s)? a detail filled in/.test(em.subject)) return 'subject: ' + em.subject;
       if (d.fields.join(',') !== 'Leader,Client,Location,Industry,Type,Rating,Staffing,Fee $,Date') return 'fields: ' + d.fields.join(',');
       return true;
-    } finally { S.deleteProject(a.id); S.deleteProject(b.id); }
+    } finally { S.deleteProject(a.id); S.deleteProject(b.id); S.deleteProject(f.id); S.deleteProject(g.id); }
   });
 
   test('Notices · project closed', 'active → closed mails PPM marketing with the lead in copy; any other change is silent', () => {
