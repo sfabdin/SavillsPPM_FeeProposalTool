@@ -3684,9 +3684,23 @@
      what the email asks for.
      ------------------------------------------------------------ */
   const COMPLETENESS_FIELDS = ['Leader', 'Client', 'Location', 'Industry', 'Type', 'Rating', 'Staffing', 'Fee $', 'Date'];
+  /** FINISHED WORK. Closed out, lost, or a timeline whose last month has
+      already passed: the work is done, so nothing about it is chased any
+      more. Whatever is still blank on such a record is grandfathered — the
+      weekly digest never lists it and Data Entry Status shows it as done,
+      with Staffing not required (there is nothing left to staff). */
+  function isFinished(p, now) {
+    const pj = (p && p.project) || {};
+    if (ENDED_STATUSES.has(String(pj.status || ''))) return true;
+    const t = (p && p.timeline) || {};
+    if (!(t.endYear && t.endMonth)) return false;
+    const d = now ? new Date(now) : new Date();
+    return (t.endYear * 100 + t.endMonth) < (d.getFullYear() * 100 + (d.getMonth() + 1));
+  }
   function completenessOf(p, catalog) {
     const cat = catalog || window.RATES_CATALOG;
     const pj = p.project || {}; const roles = p.roles || []; const pt = p.passthrough || {};
+    const finished = isFinished(p);
     const hasAlloc = roles.some(r => (r.fteMonthly && Object.values(r.fteMonthly).some(v => v > 0)) || (r.fte && Object.values(r.fte).some(v => v > 0)));
     const ptLines = pt.enabled && Array.isArray(pt.lines) ? pt.lines.filter(l => (parseFloat(l.cost) || 0) > 0) : [];
     const ptBilled = ptLines.reduce((a, l) => { const c = parseFloat(l.cost) || 0; return a + c + c * ((parseFloat(l.markupPct) || 0) / 100); }, 0);
@@ -3699,17 +3713,19 @@
     const fields = {
       Leader: !!(pj.leadId || pj.lead), Client: !!(pj.client && String(pj.client).trim()), Location: !!(pj.location && String(pj.location).trim()),
       Industry: !!pj.industry, Type: !!pj.projectType, Rating: !!(typeof ratingFor === 'function' ? ratingFor(p) : pj.rating),
-      Staffing: hasAlloc || staffingViaPt, 'Fee $': fee > 0 || ptBilled > 0, Date: !!(pj.firstProposalDate || pj.proposalDate),
+      Staffing: hasAlloc || staffingViaPt || finished, 'Fee $': fee > 0 || ptBilled > 0, Date: !!(pj.firstProposalDate || pj.proposalDate),
     };
     const missing = COMPLETENESS_FIELDS.filter(k => !fields[k]);
-    return { fields, missing, fee, info: { passthrough: ptLines.length > 0, staffingViaPt, ptBilled } };
+    // `missing` is what is blank; `chase` is what anyone is asked to fill — empty once the work is finished.
+    return { fields, missing, chase: finished ? [] : missing, finished, fee, info: { passthrough: ptLines.length > 0, staffingViaPt, staffingNotNeeded: finished && !hasAlloc && !staffingViaPt, ptBilled } };
   }
   /** The weekly digest, pre-rendered per leader so the sending flow only
       loops and mails: who, how many, and an email with one deep link per
-      project. Lost and closed projects are history and are not nagged. */
+      project. Finished work (closed, lost, or a timeline already past) is
+      history and is not nagged — see isFinished. */
   function buildCompletenessDigest(opts) {
     const o = opts || {}; const cat = o.catalog || window.RATES_CATALOG;
-    const live = listProjects().filter(p => !(isChangeOrder && isChangeOrder(p)) && !/^(lost|closed)$/.test(String((p.project || {}).status || '')));
+    const live = listProjects().filter(p => !(isChangeOrder && isChangeOrder(p)) && !isFinished(p));
     const groups = {};   // leaderId|'unassigned' -> rows
     const ledCount = {}; // leaderId|'unassigned' -> every live project they lead, complete or not
     live.forEach(p => {
@@ -3968,7 +3984,7 @@
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries, revenueSeries, isDeadPursuit,
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
+    getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
