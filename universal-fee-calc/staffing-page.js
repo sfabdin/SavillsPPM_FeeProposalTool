@@ -778,7 +778,10 @@
         const outside = r.allocs.length - inWinAllocs.length;
         const outsideNote = outside ? `<tr class="drawer-tr"><td class="who dproj" colspan="${ms.length + 3}"><em class="note-txt">${outside} allocation${outside === 1 ? '' : 's'} on this project ${outside === 1 ? 'sits' : 'sit'} outside this window${(() => { const o = r.allocs.filter(a => !inWinAllocs.includes(a)).map(a => a.start).filter(Boolean).sort(); return o.length ? ' · ' + esc([...new Set(o.map(x => S.ymLabel(x)))].slice(0, 3).join(', ')) + (o.length > 3 ? '…' : '') : ''; })()} — move the window to see or edit ${outside === 1 ? 'it' : 'them'}.</em></td></tr>` : '';
         if (metric === 'plan') {
-          inWinAllocs.slice().sort((a, b) => b.pct - a.pct).forEach(a => {
+          /* Alphabetical by person, then by start month — so a person who
+             appears twice (ramping up, ramping down) sits on adjacent rows. */
+          const nameOf = (a) => ((S.getPerson(a.personId) || {}).name || a.personName || a.personId || '').toLowerCase();
+          inWinAllocs.slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b)) || String(a.start || '').localeCompare(String(b.start || '')) || (b.pct - a.pct)).forEach(a => {
             const person = S.getPerson(a.personId) || { name: a.personId };
             const isP = isPursuitAlloc(a);
             const stat = isP ? ' <span class="status-p">pursuit</span>' : '';
@@ -788,7 +791,7 @@
         } else {
           // one row per person who is planned OR logged time here
           const pids = new Set(inWinAllocs.map(a => a.personId)); Object.keys(AX.byPP).forEach(pid => { if (AX.byPP[pid][r.project]) pids.add(pid); });
-          const prow = [...pids].map(pid => { const person = S.getPerson(pid) || { name: pid }; const planM = {}, actM = {}; ms.forEach(m => { planM[m] = r.allocs.filter(a => a.personId === pid && S.allocActiveIn(a, m)).reduce((t, a) => t + (parseFloat(a.pct) || 0) / 100, 0) * AX.planFrac(m); actM[m] = (((AX.byPP[pid] || {})[r.project] || { m: {} }).m[m] || 0) / MH; }); return { pid, person, planM, actM, tot: ms.reduce((t, m) => t + actM[m], 0) }; }).sort((a, b) => b.tot - a.tot);
+          const prow = [...pids].map(pid => { const person = S.getPerson(pid) || { name: pid }; const planM = {}, actM = {}; ms.forEach(m => { planM[m] = r.allocs.filter(a => a.personId === pid && S.allocActiveIn(a, m)).reduce((t, a) => t + (parseFloat(a.pct) || 0) / 100, 0) * AX.planFrac(m); actM[m] = (((AX.byPP[pid] || {})[r.project] || { m: {} }).m[m] || 0) / MH; }); return { pid, person, planM, actM, tot: ms.reduce((t, m) => t + actM[m], 0) }; }).sort((a, b) => String(a.person.name || '').localeCompare(String(b.person.name || '')));
           prow.forEach(x => {
             const alloc = inWinAllocs.find(a => a.personId === x.pid) || r.allocs.find(a => a.personId === x.pid);
             const cells = ms.map(m => { if (!AX.covered.has(m)) return '<td class="dcell" style="color:#c9cdd3">·</td>'; const v = metric === 'actual' ? x.actM[m] : x.actM[m] - x.planM[m]; const txt = metric === 'actual' ? (v ? v.toFixed(2) : '·') : (v ? fmtSigned(v, 2) : '·'); const col = metric === 'var' && v ? (v > 0.1 * Math.max(x.planM[m], 0.05) ? 'color:#7a5600' : v < -0.1 * Math.max(x.planM[m], 0.05) ? 'color:#4a5560' : '') : ''; return `<td class="dcell" style="${col}" title="${metric === 'actual' ? `${x.actM[m].toFixed(2)} FTE actual · ${x.planM[m].toFixed(2)} projected` : `${fmtSigned(v, 2)} vs ${x.planM[m].toFixed(2)} projected`}">${txt}</td>`; }).join('');
