@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Savills PPM Fee &amp; Revenue System">
+<title>Savills PPM · Staffing &amp; Bandwidth (Preview)</title>
+<link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Book.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Bold.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+  :root { --hair: rgba(37,39,58,0.10); --hair-strong: rgba(37,39,58,0.18); --ok: #1f7a44; --warn: #b7791f; --bad: #c0392b; --ok-bg: #e6f3ea; --warn-bg: #fdf3d7; --bad-bg: #fbe9ea; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; padding: 0; background: #f3f3f0; font-family: var(--font-display); color: var(--sav-navy); }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 28px 40px 96px; }
+  a { color: var(--sav-navy); }
+
+  /* Preview ribbon */
+  .ribbon { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--sav-navy); color: #fff; padding: 10px 16px; margin-bottom: 20px; font-family: var(--font-body); font-size: 12.5px; }
+  .ribbon b { font-family: var(--font-display); background: var(--sav-yellow); color: var(--sav-navy); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; padding: 4px 8px; }
+  .ribbon a { color: #fff; }
+  .ribbon .grow { flex: 1; }
+
+  /* Header */
+  .head { display: grid; grid-template-columns: auto 1fr auto; gap: 24px; align-items: center; padding-bottom: 18px; border-bottom: 4px solid var(--sav-navy); margin-bottom: 18px; }
+  .head .logo { width: 60px; height: 60px; }
+  .head .lbl { font-weight: 700; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 6px; }
+  .head h1 { font-weight: 900; font-size: 28px; letter-spacing: -.015em; margin: 0; line-height: 1.05; }
+  .head .who { text-align: right; font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); }
+  .head .who b { font-family: var(--font-display); color: var(--sav-navy); }
+
+  /* Mode switch + global controls */
+  .bar { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; margin-bottom: 22px; }
+  .modes { display: inline-flex; border: 2px solid var(--sav-navy); }
+  .modes button { font-family: var(--font-display); font-weight: 800; font-size: 13px; letter-spacing: .02em; padding: 12px 22px; border: 0; background: #fff; color: var(--sav-navy); cursor: pointer; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 150px; }
+  .modes button small { font-family: var(--font-body); font-weight: 400; font-size: 11px; color: var(--sav-steel); }
+  .modes button.on { background: var(--sav-navy); color: #fff; }
+  .modes button.on small { color: rgba(255,255,255,.72); }
+  .modes button[disabled] { opacity: .45; cursor: not-allowed; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-weight: 700; font-size: 9px; letter-spacing: .15em; text-transform: uppercase; color: var(--sav-steel); }
+  .field select { font-family: var(--font-display); font-weight: 600; font-size: 13px; padding: 9px 10px; border: 0; border-bottom: 2px solid var(--sav-navy); background: #fff; color: var(--sav-navy); min-width: 180px; }
+  .bar .grow { flex: 1; }
+  .btn { font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; padding: 10px 14px; border: 0; cursor: pointer; background: var(--sav-cream); color: var(--sav-navy); text-decoration: none; display: inline-block; }
+  .btn.ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--hair-strong); }
+  .btn.primary { background: var(--sav-navy); color: #fff; }
+  .btn:hover { filter: brightness(.96); }
+
+  /* Verdict strip */
+  .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .v { background: #fff; border: 1px solid var(--hair); border-left: 6px solid var(--sav-steel); padding: 14px 16px; display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; text-decoration: none; color: inherit; }
+  .v:hover { background: #fffdf3; }
+  .v .n { font-weight: 900; font-size: 30px; letter-spacing: -.02em; line-height: 1; min-width: 44px; font-variant-numeric: tabular-nums; }
+  .v .t { font-family: var(--font-body); font-size: 13px; line-height: 1.35; }
+  .v .t b { font-family: var(--font-display); }
+  .v.ok { border-left-color: var(--ok); } .v.ok .n { color: var(--ok); }
+  .v.warn { border-left-color: var(--warn); } .v.warn .n { color: var(--warn); }
+  .v.bad { border-left-color: var(--bad); } .v.bad .n { color: var(--bad); }
+  .v.info { border-left-color: var(--sav-teal); } .v.info .n { color: var(--sav-teal); }
+
+  /* Cards */
+  .card { background: #fff; border: 1px solid var(--hair); padding: 22px 24px; margin-bottom: 20px; }
+  .card-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .card-head h2 { font-weight: 900; font-size: 18px; margin: 0; }
+  .card-head .hint { font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); }
+  .card-head .right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .sub { font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); }
+  .empty { font-family: var(--font-body); color: var(--sav-steel); padding: 26px 10px; text-align: center; }
+  .muted { color: var(--sav-steel); font-family: var(--font-body); font-size: 12px; }
+
+  /* Tables */
+  table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.tbl thead th { background: var(--sav-navy); color: #fff; font-weight: 700; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; text-align: left; padding: 10px 10px; white-space: nowrap; position: sticky; top: 0; }
+  table.tbl thead th.num, table.tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.tbl thead th.c, table.tbl td.c { text-align: center; }
+  table.tbl tbody td { padding: 9px 10px; border-bottom: 1px solid var(--hair); vertical-align: middle; }
+  table.tbl tbody tr:hover { background: #faf9f6; }
+  .tt { font-weight: 700; }
+  .scroll { overflow-x: auto; }
+  .chip { display: inline-block; font-weight: 700; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; padding: 3px 7px; border-radius: 2px; white-space: nowrap; }
+  .chip.ok { background: var(--ok-bg); color: var(--ok); } .chip.warn { background: var(--warn-bg); color: var(--warn); } .chip.bad { background: var(--bad-bg); color: var(--bad); } .chip.n { background: var(--sav-cream); color: var(--sav-steel); } .chip.p { background: #efe6f7; color: #6b3fa0; }
+  .status { font-weight: 700; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--sav-steel); }
+
+  /* Heat cells (same bands as the live page so the eye carries over) */
+  .heat td.h { padding: 0; text-align: center; }
+  .cell { display: block; padding: 8px 4px; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12px; min-width: 46px; border-left: 1px solid rgba(37,39,58,.05); }
+  .u0 { color: #c9cdd3; font-weight: 400; } .u1 { background: #eef4f4; } .u2 { background: #cfe6e4; } .u3 { background: #fce7c2; color: #7a5600; } .u4 { background: #f6c9c2; color: #8f2418; } .u5 { background: #e4453a; color: #fff; }
+  .cell.ghost { background-image: repeating-linear-gradient(45deg, rgba(37,39,58,.16) 0 3px, transparent 3px 7px); }
+  .cell.nodata { color: #c9cdd3; font-weight: 400; background: repeating-linear-gradient(45deg, #f7f6f3 0 4px, #fff 4px 8px); }
+  th.today, td.today .cell { box-shadow: inset 2px 0 0 var(--sav-yellow); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-family: var(--font-body); font-size: 11px; color: var(--sav-steel); margin-top: 10px; align-items: center; }
+  .legend i { display: inline-block; width: 14px; height: 12px; vertical-align: -2px; margin-right: 4px; }
+
+  /* Coverage bars (contract frame, allocated fill, actual tick) */
+  .cov { display: flex; gap: 3px; align-items: flex-end; height: 34px; }
+  .cov .m { position: relative; flex: 1; min-width: 16px; height: 100%; background: var(--sav-cream); border: 1px dashed var(--hair-strong); }
+  .cov .m .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--sav-navy); opacity: .75; }
+  .cov .m .fill.p { background: #6b3fa0; }
+  .cov .m .fill.over { background: var(--bad); }
+  .cov .m .act { position: absolute; left: 0; right: 0; height: 2px; background: var(--sav-yellow); box-shadow: 0 0 0 1px var(--sav-navy); }
+  .cov .m.today { border-color: var(--sav-navy); border-style: solid; }
+
+  /* Mix / supply bars */
+  .bar2 { position: relative; height: 12px; background: var(--sav-cream); min-width: 120px; }
+  .bar2 i { position: absolute; left: 0; top: 0; bottom: 0; }
+  .bar2 i.s { background: var(--sav-teal); opacity: .55; }
+  .bar2 i.d { background: var(--sav-navy); height: 6px; top: 3px; }
+  .bar2 i.d.p { background: #6b3fa0; }
+  .delta { font-family: var(--font-body); font-size: 11px; font-weight: 700; margin-left: 6px; }
+  .delta.up { color: var(--ok); } .delta.down { color: var(--bad); }
+
+  /* Ranked list */
+  .rank { list-style: none; margin: 0; padding: 0; }
+  .rank li { display: grid; grid-template-columns: 90px 1fr auto; gap: 14px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--hair); }
+  .rank .sev { font-weight: 800; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; padding: 4px 6px; text-align: center; }
+  .rank .sev.money { background: var(--bad-bg); color: var(--bad); } .rank .sev.revenue { background: var(--warn-bg); color: var(--warn); } .rank .sev.people { background: #e3ecf7; color: #2f5d8f; } .rank .sev.hygiene { background: var(--sav-cream); color: var(--sav-steel); }
+  .rank .what { font-size: 13px; } .rank .what .own { font-family: var(--font-body); font-size: 11.5px; color: var(--sav-steel); margin-top: 2px; }
+  .rank .fix { font-family: var(--font-body); font-size: 12px; white-space: nowrap; }
+
+  /* Health line */
+  .health { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+  .health span { font-family: var(--font-body); font-size: 12px; padding: 7px 11px; background: #fff; border: 1px solid var(--hair); display: inline-flex; gap: 7px; align-items: center; }
+  .health i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .health i.ok { background: var(--ok); } .health i.warn { background: var(--warn); } .health i.bad { background: var(--bad); }
+
+  /* Scenario picker */
+  .scen { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 18px; max-height: 220px; overflow: auto; padding: 4px 0; }
+  .scen label { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-family: var(--font-body); font-size: 12.5px; cursor: pointer; padding: 4px 0; }
+  .scen label b { font-family: var(--font-display); font-size: 12.5px; }
+  .scen input { accent-color: var(--sav-navy); width: 15px; height: 15px; }
+
+  /* Review stamp */
+  .stamp { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: #fffbe6; border: 1px solid #e8d98a; padding: 14px 16px; }
+  .stamp .done { font-family: var(--font-body); font-size: 12.5px; }
+
+  /* Glossary */
+  .gloss dl { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; font-family: var(--font-body); font-size: 12.5px; margin: 0; }
+  .gloss dt { font-family: var(--font-display); font-weight: 700; }
+  .gloss dd { margin: 0; color: #3a3d4f; }
+
+  .panel { display: none; } .panel.on { display: block; }
+  details.who summary { cursor: pointer; list-style: none; }
+  details.who summary::-webkit-details-marker { display: none; }
+  details.who[open] summary .tt::after { content: ' ▾'; color: var(--sav-steel); }
+  details.who summary .tt::after { content: ' ▸'; color: var(--sav-steel); }
+  .drawer { background: #faf9f6; padding: 8px 12px 10px 20px; font-family: var(--font-body); font-size: 12px; }
+  .drawer div { padding: 3px 0; }
+  @media (max-width: 1000px) { .head { grid-template-columns: auto 1fr; } .head .who { display: none; } .wrap { padding: 20px 16px 80px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="ribbon"><b>Preview</b> A proposed redesign of Staffing &amp; Bandwidth. It reads the live book and the live staffing store and writes nothing. <span class="grow"></span><a href="Staffing Matrix.html">Open the current page ↗</a></div>
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div>
+      <div class="lbl"><a href="Fee Generator.html" style="color:inherit;text-decoration:none">Home</a> &nbsp;·&nbsp; Staffing &amp; Bandwidth</div>
+      <h1 id="h1">Who is free, who is drowning, what is unplanned.</h1>
+    </div>
+    <div class="who" id="who"></div>
+  </header>
+
+  <div class="bar">
+    <div class="modes" id="modes">
+      <button data-mode="team">My team<small>Is my work planned and showing up?</small></button>
+      <button data-mode="band">Bandwidth<small>Who is free, who is drowning, what to hire</small></button>
+      <button data-mode="data">Data room<small>Is the data clean enough to trust?</small></button>
+    </div>
+    <div class="field"><label>Horizon</label><select id="horizon">
+      <option value="1">This month</option>
+      <option value="3" selected>Next 3 months</option>
+      <option value="6">Next 6 months</option>
+      <option value="12">Next 12 months</option>
+    </select></div>
+    <div class="field" id="leader-field" hidden><label>Revenue leader</label><select id="leader"></select></div>
+    <span class="grow"></span>
+    <button class="btn ghost" id="gloss-btn">What the words mean</button>
+  </div>
+
+  <section class="panel" id="p-team"></section>
+  <section class="panel" id="p-band"></section>
+  <section class="panel" id="p-data"></section>
+
+  <div class="card gloss" id="gloss" hidden>
+    <div class="card-head"><h2>What the words mean.</h2><span class="hint">The same definitions the live page uses.</span></div>
+    <dl>
+      <dt>Contract</dt><dd>What the signed (or proposed) fee record priced: titles and FTE by month, no names. Edited in the calculator.</dd>
+      <dt>Plan</dt><dd>Who we intend to staff: named people with an allocation percentage by month, entered on the live Staffing page.</dd>
+      <dt>Actual</dt><dd>What Clockify says was logged, placed on the fee project through the mapping.</dd>
+      <dt>FTE</dt><dd>One full-time person for one month. Capacity is the person's own month: a part-timer at 60% is 0.6 FTE.</dd>
+      <dt>Load</dt><dd>A person's allocation percentages added across every project in a month. Over 100% is over the line.</dd>
+      <dt>Pursuit</dt><dd>A proposal not yet won. Its staffing is shown hatched and only counts when you ask "what if we win".</dd>
+      <dt>Weighted demand</dt><dd>Pursuit staffing multiplied by the project's rating weight (90%+ counts 0.95, under 25% counts 0.15).</dd>
+      <dt>Finished</dt><dd>Closed out, lost, or the last month of the timeline has passed. Finished work is never chased.</dd>
+    </dl>
+  </div>
+
+</div>
+
+<script src="universal-fee-calc/vendor-lazy.js"></script>
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/cache-store.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/confirmed-book.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/ui.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/staff.js"></script>
+<script src="universal-fee-calc/staffing-preview.js"></script>
+<script src="universal-fee-calc/confirm-widget.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+</body>
+</html>
