@@ -465,7 +465,7 @@
     const n = St.clockifyNudgeEmail(ada, ctx);
     // Lead with the whole shortfall (200 h short of a 150 h month ≈ 1.3 months), then the evidence:
     // 7/13 → 9/18 is Jul 14–31 = 14, Aug = 21, Sep 1–17 = 13 working days; Aug light; Sep (the current month) light so far.
-    if (!/Hi Ada,/.test(n.html) || !/show you <b>200 hours<\/b> short of your usual time over Aug-26 to Sep-26, about <b>1\.3 months<\/b> behind: no time entered since <b>7\/13\/2026<\/b>, your last entry \(<b>48 working days<\/b>\); <b>Aug-26<\/b> at 33% of your usual hours; <b>Sep-26<\/b> at 33% so far\./.test(n.html)) return 'nudge gap: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 400);
+    if (!/Hi Ada,/.test(n.html) || !/show you <b>200 hours<\/b> short of your usual time over Aug-26 to Sep-26, about <b>1\.3 months<\/b> behind: no time entered since <b>7\/13\/26<\/b> \(<b>48 working days<\/b> ago\); <b>Aug-26<\/b> at 33% of your usual hours; <b>Sep-26<\/b> at 33% so far\./.test(n.html)) return 'nudge gap: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 400);
     if (!/coordinate with your manager/.test(n.html) || /7\.8 hours/.test(n.html) || /under-served/.test(n.html) || /— leave,/.test(n.html) || /wrong project/.test(n.html) || /usual hours in/.test(n.html) || /Log every working day/.test(n.html)) return 'nudge tone';
     if (!/last pulled on <b>10\/5\/2026/.test(n.html) || !/planned PTO/.test(n.html) || !/cannot account for or accurately bill/.test(n.html) || !/Clockify is how we measure/.test(n.html)) return 'nudge: pull date, planned PTO, the why';
     if (n.html.indexOf('<b style="color:#CE181E">Friday, October 31, 2026 at 5:00 PM EDT</b>') < 0 || n.subject !== 'Clockify: please bring your time up to date by Fri, Oct 31' || n.text.indexOf('Friday, October 31, 2026 at 5:00 PM EDT') < 0) return 'the deadline set on the screen is in the body (bold red), the subject and the text: ' + n.subject;
@@ -476,18 +476,18 @@
     if (/whole month/.test(n.html) || /of 11 months/.test(n.html)) return '"whole months" and the months-short clause are gone';
     const recent = St.clockifyNudgeEmail(ada, Object.assign({}, ctx, { lastWorked: () => '2026-09-16', yearOf: () => null }));
     // Sporadic gaps with a recent entry (Bailey's case): the light months carry the story, the last entry is a footnote, no "no time entered since".
-    if (!/about <b>1\.3 months<\/b> behind: <b>Aug-26<\/b> at 33% of your usual hours; <b>Sep-26<\/b> at 33% so far; your last entry is dated <b>9\/16\/2026<\/b>\./.test(recent.html) || /no time entered since/.test(recent.html)) return 'a recent entry → light months lead: ' + recent.html.replace(/<[^>]+>/g, '').slice(0, 400);
+    if (!/about <b>1\.3 months<\/b> behind: <b>Aug-26<\/b> at 33% of your usual hours; <b>Sep-26<\/b> at 33% so far; your last entry is dated <b>9\/16\/26<\/b>\./.test(recent.html) || /no time entered since/.test(recent.html)) return 'a recent entry → light months lead: ' + recent.html.replace(/<[^>]+>/g, '').slice(0, 400);
     if (/Over the last/.test(recent.html)) return 'no year data → no pattern sentence';
     const unknown = St.clockifyNudgeEmail(ada, Object.assign({}, ctx, { lastWorked: () => null }));
     if (!/about <b>1\.3 months<\/b> behind: <b>Aug-26<\/b> at 33% of your usual hours; <b>Sep-26<\/b> at 33% so far\./.test(unknown.html)) return 'no last-entry date → no dangling clause: ' + unknown.html.replace(/<[^>]+>/g, '').slice(0, 400);
     const empty = Object.assign({}, ada, { byMonth: { '2026-07': { h: 0, capM: 150, pct: 0 }, '2026-08': { h: 0, capM: 150, pct: 0 }, '2026-09': { h: 60, capM: 150, pct: 0.4 } } });
     const ne = St.clockifyNudgeEmail(empty, Object.assign({}, ctx, { lastWorked: () => '2026-09-16' }));
-    if (!/behind: nothing at all from <b>Jul 1 to Aug 31, 2026<\/b> \(44 working days\); <b>Sep-26<\/b> at 40% so far; your last entry is dated <b>9\/16\/2026<\/b>\./.test(ne.html)) return 'empty months read as a dated span: ' + ne.html.replace(/<[^>]+>/g, '').slice(0, 400);
+    if (!/behind: nothing at all from <b>Jul 1 to Aug 31, 2026<\/b> \(44 working days\); <b>Sep-26<\/b> at 40% so far; your last entry is dated <b>9\/16\/26<\/b>\./.test(ne.html)) return 'empty months read as a dated span: ' + ne.html.replace(/<[^>]+>/g, '').slice(0, 400);
     const two = Object.assign({}, ada, { byMonth: { '2026-06': { h: 0, capM: 150, pct: 0 }, '2026-07': { h: 100, capM: 150, pct: 0.67 }, '2026-08': { h: 0, capM: 150, pct: 0 }, '2026-09': { h: 150, capM: 150, pct: 1 } } });
     const nt = St.clockifyNudgeEmail(two, Object.assign({}, ctx, { lastWorked: () => '2026-09-17' }));
     if (!/nothing at all from <b>Jun 1 to Jun 30, 2026<\/b> \(22 working days\); nothing at all from <b>Aug 1 to Aug 31, 2026<\/b> \(21 working days\); <b>Jul-26<\/b> at 67% of your usual hours; your last entry/.test(nt.html)) return 'a broken run is two spans, light month after: ' + nt.html.replace(/<[^>]+>/g, '').slice(0, 400);
     const covered = St.clockifyNudgeEmail(empty, Object.assign({}, ctx, { lastWorked: () => '2026-06-30' }));
-    if (!/no time entered since <b>6\/30\/2026<\/b>, your last entry \(<b>57 working days<\/b>\); <b>Sep-26<\/b> at 40% so far\./.test(covered.html) || /nothing at all/.test(covered.html)) return 'a span inside the gap since the last entry is not said twice: ' + covered.html.replace(/<[^>]+>/g, '').slice(0, 400);
+    if (!/no time entered since <b>6\/30\/26<\/b> \(<b>57 working days<\/b> ago\); <b>Sep-26<\/b> at 40% so far\./.test(covered.html) || /nothing at all/.test(covered.html)) return 'a span inside the gap since the last entry is not said twice: ' + covered.html.replace(/<[^>]+>/g, '').slice(0, 400);
     const bareN = (n.html.match(/<(td|th|table)\b[^>]*>/gi) || []).filter(t => !/font-family/.test(t)); if (bareN.length) return 'nudge cells without a font: ' + bareN[0];
     const nd = St.clockifyNudgeEmail(comp.rows[0], Object.assign({}, ctx, { deadlineLbl: '', deadlineShort: '', senderName: '' }));
     if (nd.html.indexOf('<b style="color:#CE181E">end of day Friday</b>') < 0 || /by <b style="color:#CE181E"><\/b>/.test(nd.html)) return 'no deadline given → the old default, never a blank';
