@@ -3692,7 +3692,7 @@
       '<tr><td style="background:#ffffff;padding:18px 28px 16px;border-bottom:4px solid #FFDF00;font-family:' + F + '">' +
         '<table role="presentation" width="100%" style="border-collapse:collapse;font-family:' + F + '"><tr>' +
           '<td style="font-family:' + F + ';width:56px;padding-right:16px;vertical-align:middle"><img src="' + escHtml(emailLogoUrl()) + '" width="56" height="56" alt="Savills" style="display:block;width:56px;height:56px;border:0"></td>' +
-          '<td style="font-family:' + F + ';vertical-align:middle;font-weight:800;font-size:15px;letter-spacing:.01em;color:#25273A;line-height:1.3">Savills<br><span style="font-weight:400;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#79828C">Program &amp; Project Management</span></td>' +
+          '<td style="font-family:' + F + ';vertical-align:middle;font-weight:800;font-size:15px;letter-spacing:.01em;color:#25273A;line-height:1.3">Program &amp; Project Management<br><span style="font-weight:400;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#79828C">Fee &amp; Revenue System</span></td>' +
         '</tr></table></td></tr>' +
       '<tr><td style="padding:28px 28px 10px;font-family:' + F + ';font-size:14px;line-height:1.55;color:#25273A">' +
         '<h2 style="margin:0 0 16px;font-family:' + F + ';font-size:21px;line-height:1.25;letter-spacing:-.01em;color:#25273A">' + escHtml(title) + '</h2>' +
