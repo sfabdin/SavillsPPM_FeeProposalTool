@@ -3673,6 +3673,14 @@
      as nested tables with every style inline so Outlook renders it the
      same as Gmail. Web fonts do not reach mail clients, so the type is
      Segoe / Arial standing in for Gotham. opts.wide for the status grid. */
+  /** The logo in an email has to be a hosted image: mail clients will not
+      take a data URI reliably. From the deployed app it is the app's own
+      asset; from anywhere else (a local file, a dev server) it is the
+      production copy, so a recipient never sees a broken square. */
+  function emailLogoUrl() {
+    try { if (location.protocol === 'https:') return location.origin + location.pathname.replace(/[^/]*$/, '') + 'design-system/assets/savills_logo.png'; } catch (e) {}
+    return 'https://savills-ppm-fee-proposal-tool.vercel.app/design-system/assets/savills_logo.png';
+  }
   function noticeHtml(title, paras, cta, footer, opts) {
     const o = opts || {};
     paras = (paras || []).map(emailFonts);
@@ -3681,10 +3689,10 @@
     const width = o.wide ? 1040 : 640;
     return '<table role="presentation" width="100%" style="border-collapse:collapse;background:#F3F3F0;font-family:' + F + '"><tr><td style="padding:24px 12px;font-family:' + F + '">' +
       '<table role="presentation" style="border-collapse:collapse;width:100%;max-width:' + width + 'px;margin:0 auto;background:#ffffff;border:1px solid #E3E0D8;font-family:' + F + '">' +
-      '<tr><td style="background:#25273A;padding:16px 28px;border-bottom:4px solid #FFDF00;font-family:' + F + '">' +
+      '<tr><td style="background:#ffffff;padding:18px 28px 16px;border-bottom:4px solid #FFDF00;font-family:' + F + '">' +
         '<table role="presentation" width="100%" style="border-collapse:collapse;font-family:' + F + '"><tr>' +
-          '<td style="font-family:' + F + ';font-weight:800;font-size:19px;letter-spacing:.01em;color:#FFDF00;white-space:nowrap;width:1%">savills</td>' +
-          '<td style="font-family:' + F + ';padding-left:14px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#ffffff;white-space:nowrap">Program &amp; Project Management</td>' +
+          '<td style="font-family:' + F + ';width:56px;padding-right:16px;vertical-align:middle"><img src="' + escHtml(emailLogoUrl()) + '" width="56" height="56" alt="Savills" style="display:block;width:56px;height:56px;border:0"></td>' +
+          '<td style="font-family:' + F + ';vertical-align:middle;font-weight:800;font-size:15px;letter-spacing:.01em;color:#25273A;line-height:1.3">Savills<br><span style="font-weight:400;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#79828C">Program &amp; Project Management</span></td>' +
         '</tr></table></td></tr>' +
       '<tr><td style="padding:28px 28px 10px;font-family:' + F + ';font-size:14px;line-height:1.55;color:#25273A">' +
         '<h2 style="margin:0 0 16px;font-family:' + F + ';font-size:21px;line-height:1.25;letter-spacing:-.01em;color:#25273A">' + escHtml(title) + '</h2>' +

@@ -2736,7 +2736,7 @@
     const asOf = c.pulledAt ? 'Our Clockify records, last pulled on <b>' + escM(c.pulledAt) + '</b>, show ' : 'Our Clockify records show ';
     let situation;
     if (lwUTC != null && gapWd > grace) {
-      situation = asOf + 'no time entered since <b>' + fmtD(lwUTC) + '</b>, your last entry, through <b>' + fmtD(todayUTC) + '</b>: <b>' + gapWd + ' working days</b>' + (moTxt ? ', about <b>' + moTxt + ' months</b> of your usual hours' : '') + '.';
+      situation = asOf + 'no time entered since <b>' + fmtD(lwUTC) + '</b>, your last entry, through <b>' + fmtD(todayUTC) + '</b>: <b>' + gapWd + ' working days</b>' + (moTxt ? ', about <b>' + moTxt + ' months</b> behind' : '') + '.';
     } else {
       const ms = Object.keys(row.byMonth || {}).sort();
       const n = ms.filter(m => row.byMonth[m] && row.byMonth[m] !== 'leave' && !row.byMonth[m].early && !row.byMonth[m].joinMonth).length;
@@ -2759,7 +2759,7 @@
       pattern,
       'Clockify is how we measure staffing, project health and profitability. Time that is not logged reads as work that did not happen, and as hours you were paid for that we cannot account for or accurately bill.',
       'Please bring your entries up to date by ' + dueHtml + '.',
-      'If something is in the way: planned PTO, a Clockify access problem, or a client commitment that keeps you from completing your entries, coordinate with your manager before the deadline and agree a date by which you will be current.',
+      'If something is in the way: planned PTO, a Clockify access problem, or a client commitment that keeps you from completing your entries, coordinate with your manager before the deadline and agree on a date by which you will be current.',
       'Thank you.'].filter(Boolean),
       { href: CLOCKIFY_URL, label: 'Open Clockify' },
       'Sent from the Savills Program & Project Management fee tool. Figures are as pulled from Clockify' + (c.pulledAt ? ' on ' + c.pulledAt : '') + '; entries made since then are not reflected.');
