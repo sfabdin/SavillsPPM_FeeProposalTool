@@ -178,7 +178,8 @@
   }
   function renderLeader() {
     const Lm = LEADER(); if (!Lm) return;
-    try { Lm.render(state.leaderTab || 'time'); } catch (e) { console.error('leader view', e); const h = $('#p-lead-' + (state.leaderTab || 'time')); if (h) h.innerHTML = '<div class="empty">Could not draw this view — ' + esc(e.message || e) + '</div>'; }
+    const restore = keepScroll();
+    try { Lm.render(state.leaderTab || 'time'); restore(); } catch (e) { console.error('leader view', e); const h = $('#p-lead-' + (state.leaderTab || 'time')); if (h) h.innerHTML = '<div class="empty">Could not draw this view — ' + esc(e.message || e) + '</div>'; }
   }
   function uCls(v) { if (!v) return 'u0'; if (v <= 85) return 'u1'; if (v <= 100) return 'u2'; if (v <= 120) return 'u3'; if (v <= 150) return 'u4'; return 'u5'; }
   /** Datalist inputs need an exact match to commit, but browsers don't always
@@ -2653,14 +2654,40 @@
      vertical scroll and the grid's horizontal scroll — and put it back once
      the new HTML is in, so an edit in the middle of By Person leaves you in
      the middle of By Person. */
+  /* Re-rendering a view replaces its HTML. Two scroll positions have to
+     survive that: the page's, and the one INSIDE every box that scrolls on
+     its own (the By Project / By Person grids are capped at the viewport
+     and scroll internally, so the page's scrollY says nothing about where
+     the reader was). Every scrolled box is remembered by a stable key — its
+     id, or its class plus its index among same-class boxes — and put back
+     after the new HTML is in, then checked once more a frame later when
+     the layout has settled. */
+  function scrollKey(el) {
+    if (el.id) return '#' + el.id;
+    const cls = (el.className && typeof el.className === 'string') ? el.className.trim().split(/\s+/)[0] : el.tagName;
+    const same = $$('.' + cls).filter(x => x !== document.documentElement && x !== document.body);
+    return '.' + cls + ':' + same.indexOf(el);
+  }
+  function scrolledBoxes() {
+    return $$('.wrap *').filter(el => el.scrollTop > 0 || el.scrollLeft > 0)
+      .filter(el => !el.closest('.modal-ov'))
+      .map(el => ({ key: scrollKey(el), top: el.scrollTop, left: el.scrollLeft }));
+  }
   function keepScroll() {
     const y = window.scrollY;
-    const grids = $$('#p-' + state.tab + ' .hm-wrap, #p-' + state.tab + ' .cmp-scroll').map(el => el.scrollLeft);
-    return () => {
-      window.scrollTo(0, y);
-      $$('#p-' + state.tab + ' .hm-wrap, #p-' + state.tab + ' .cmp-scroll').forEach((el, i) => { if (grids[i] != null) el.scrollLeft = grids[i]; });
-      requestAnimationFrame(() => { if (Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y); });
+    const boxes = scrolledBoxes();
+    const put = () => {
+      if (Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y);
+      boxes.forEach(b => {
+        let el = null;
+        if (b.key[0] === '#') el = document.getElementById(b.key.slice(1));
+        else { const [cls, idx] = b.key.slice(1).split(':'); el = $$('.' + cls)[+idx] || null; }
+        if (!el) return;
+        if (b.top && el.scrollTop !== b.top) el.scrollTop = b.top;
+        if (b.left && el.scrollLeft !== b.left) el.scrollLeft = b.left;
+      });
     };
+    return () => { put(); requestAnimationFrame(put); };
   }
   function renderActive() {
     const panel = $('#p-' + state.tab);
