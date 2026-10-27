@@ -3683,8 +3683,8 @@
       '<table role="presentation" style="border-collapse:collapse;width:100%;max-width:' + width + 'px;margin:0 auto;background:#ffffff;border:1px solid #E3E0D8;font-family:' + F + '">' +
       '<tr><td style="background:#25273A;padding:16px 28px;border-bottom:4px solid #FFDF00;font-family:' + F + '">' +
         '<table role="presentation" width="100%" style="border-collapse:collapse;font-family:' + F + '"><tr>' +
-          '<td style="font-family:' + F + ';font-weight:800;font-size:19px;letter-spacing:.01em;color:#FFDF00">savills</td>' +
-          '<td style="font-family:' + F + ';text-align:right;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#C9CDD3">PPM &middot; Fee tool</td>' +
+          '<td style="font-family:' + F + ';font-weight:800;font-size:19px;letter-spacing:.01em;color:#FFDF00;white-space:nowrap;width:1%">savills</td>' +
+          '<td style="font-family:' + F + ';padding-left:14px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#ffffff;white-space:nowrap">Program &amp; Project Management</td>' +
         '</tr></table></td></tr>' +
       '<tr><td style="padding:28px 28px 10px;font-family:' + F + ';font-size:14px;line-height:1.55;color:#25273A">' +
         '<h2 style="margin:0 0 16px;font-family:' + F + ';font-size:21px;line-height:1.25;letter-spacing:-.01em;color:#25273A">' + escHtml(title) + '</h2>' +
