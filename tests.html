@@ -447,7 +447,7 @@
       { person: { id: 'p1', name: 'Ada Lovelace', title: 'Director' }, totLogged: 100, totCap: 300, behindHrs: 200, compliance: 0.33, expectedMonths: 2, okMonths: 0, byMonth: { '2026-08': { h: 50, capM: 150, pct: 0.33 }, '2026-09': { h: 50, capM: 150, pct: 0.33 } } },
       { person: { id: 'p2', name: 'Grace Hopper', title: 'Manager' }, totLogged: 300, totCap: 300, behindHrs: 0, compliance: 1, expectedMonths: 2, okMonths: 2, byMonth: { '2026-08': { h: 150, capM: 150, pct: 1 }, '2026-09': { h: 150, capM: 150, pct: 1 } } },
     ], untracked: [{ person: { id: 'p3', name: 'Alan Turing', title: '' }, reason: 'no Clockify user mapped' }] };
-    const ctx = { deadlineLbl: 'Friday, October 31, 2026 at 5:00 PM EDT', deadlineShort: 'Fri, Oct 31', yearOf: () => ({ span: 12, months: 11, shortMonths: 4, latePct: 40.4, avgLag: 9.26 }), nowYm: '2026-09', expect: { elapsed: 12, total: 22, grace: 5 }, dueLbl: 'Sep-26 to date', teamLag: 3.2, lagOf: () => 2.5, reasonFor: () => 'Nothing logged for August.', lastEntry: () => 'last entry dated 7/13', toolUrl: 'https://x/Staffing%20Matrix.html', pulledAt: '10/5/2026' };
+    const ctx = { today: '2026-09-18T12:00:00', lastWorked: () => '2026-07-13', deadlineLbl: 'Friday, October 31, 2026 at 5:00 PM EDT', deadlineShort: 'Fri, Oct 31', yearOf: () => ({ span: 12, months: 11, shortMonths: 4, latePct: 40.4, avgLag: 9.26 }), nowYm: '2026-09', expect: { elapsed: 12, total: 22, grace: 5 }, dueLbl: 'Sep-26 to date', teamLag: 3.2, lagOf: () => 2.5, reasonFor: () => 'Nothing logged for August.', lastEntry: () => 'last entry dated 7/13', toolUrl: 'https://x/Staffing%20Matrix.html', pulledAt: '10/5/2026' };
     const m = St.clockifyStatusEmail(comp, ctx);
     // Ada is 200 h short of a 300 h window — more than a month of her own hours — so behind; Grace is not.
     if (!/1 behind, 200 h missing/.test(m.subject)) return 'subject: ' + m.subject;
@@ -461,26 +461,25 @@
     if (!(iA > 0 && iG > iA && iT > iG)) return 'behind first, then on target, then not measured';
     if (m.html.indexOf('app.clockify.me') < 0) return 'links to Clockify';
     if (m.counts.behind !== 1 || m.counts.people !== 2) return 'counts: ' + JSON.stringify(m.counts);
-    const n = St.clockifyNudgeEmail(comp.rows[0], ctx);
-    if (!/Hi Ada,/.test(n.html) || !/Aug-26<\/b> at 33% of your usual hours/.test(n.html) || !/Sep-26<\/b> running at 33% so far/.test(n.html) || n.html.indexOf('last entry is dated 7/13') < 0) return 'nudge body: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 400);
-    if (!/tell your manager/.test(n.html) || /7\.8 hours/.test(n.html) || /under-served/.test(n.html) || /— leave,/.test(n.html) || /wrong project/.test(n.html)) return 'nudge tone';
-    if (!/last pulled on <b>10\/5\/2026/.test(n.html) || !/planned PTO/.test(n.html) || !/cannot account for or bill/.test(n.html)) return 'nudge: pull date, planned PTO, sharper line';
-    if (n.html.indexOf('<b>Friday, October 31, 2026 at 5:00 PM EDT</b>') < 0 || n.subject !== 'Clockify: please bring your time up to date by Fri, Oct 31' || n.text.indexOf('Friday, October 31, 2026 at 5:00 PM EDT') < 0) return 'the deadline set on the screen is in the body (bold), the subject and the text: ' + n.subject;
+    const ada = Object.assign({ capMonth: 150 }, comp.rows[0]);
+    const n = St.clockifyNudgeEmail(ada, ctx);
+    // 7/13 → 9/18: Jul 14–31 = 14, Aug = 21, Sep 1–17 = 13 working days; 200 h short of a 150 h month ≈ 1.3 months
+    if (!/Hi Ada,/.test(n.html) || !/no time entered since <b>7\/13\/2026<\/b>, your last entry, through <b>9\/18\/2026<\/b>: <b>48 working days<\/b>, about <b>1\.3 months<\/b> of your usual hours\./.test(n.html)) return 'nudge gap: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 400);
+    if (!/coordinate with your manager/.test(n.html) || /7\.8 hours/.test(n.html) || /under-served/.test(n.html) || /— leave,/.test(n.html) || /wrong project/.test(n.html) || /usual hours in/.test(n.html) || /Log every working day/.test(n.html)) return 'nudge tone';
+    if (!/last pulled on <b>10\/5\/2026/.test(n.html) || !/planned PTO/.test(n.html) || !/cannot account for or accurately bill/.test(n.html) || !/Clockify is how we measure/.test(n.html)) return 'nudge: pull date, planned PTO, the why';
+    if (n.html.indexOf('<b style="color:#CE181E">Friday, October 31, 2026 at 5:00 PM EDT</b>') < 0 || n.subject !== 'Clockify: please bring your time up to date by Fri, Oct 31' || n.text.indexOf('Friday, October 31, 2026 at 5:00 PM EDT') < 0) return 'the deadline set on the screen is in the body (bold red), the subject and the text: ' + n.subject;
     if (/Sarah Abdin/.test(n.html) || /Thank you,/.test(n.html)) return 'not signed by a person';
     if (n.html.indexOf('#FFDF00') < 0 || n.html.indexOf('savills') < 0 || n.html.indexOf('Program &amp; Project Management') < 0) return 'Savills shell: yellow rule, wordmark, Program & Project Management';
-    if (!/Over the last 12 months, <b>40%<\/b> of your entries went in more than a week after the day worked, and an entry is logged on average <b>9\.3 days<\/b> after the work; you were short of your usual hours in <b>4 of 11 months<\/b>\./.test(n.html)) return 'the year pattern: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 600);
-    if (/whole month/.test(n.html)) return '"whole months" is gone';
-    const empty = Object.assign({}, comp.rows[0], { byMonth: { '2026-07': { h: 0, capM: 150, pct: 0 }, '2026-08': { h: 0, capM: 150, pct: 0 }, '2026-09': { h: 0, capM: 150, pct: 0 } } });
-    const ne = St.clockifyNudgeEmail(empty, Object.assign({}, ctx, { yearOf: () => null }));
-    if (ne.html.indexOf('no time entered from <b>Jul 1 to Aug 31, 2026</b> (44 working days)') < 0) return 'empty months read as a span with working days: ' + ne.html.replace(/<[^>]+>/g, '').slice(0, 400);
-    if (ne.html.indexOf('nothing yet for <b>Sep-26</b> (12 working days in)') < 0) return 'the current month says how far in it is';
-    if (/Over the last/.test(ne.html)) return 'no year data → no pattern sentence';
-    const gap = Object.assign({}, comp.rows[0], { byMonth: { '2026-06': { h: 0, capM: 150, pct: 0 }, '2026-07': { h: 100, capM: 150, pct: 0.67 }, '2026-08': { h: 0, capM: 150, pct: 0 }, '2026-09': { h: 50, capM: 150, pct: 0.33 } } });
-    const ng = St.clockifyNudgeEmail(gap, ctx);
-    if (ng.html.indexOf('from <b>Jun 1 to Jun 30, 2026</b> (22 working days)') < 0 || ng.html.indexOf('from <b>Aug 1 to Aug 31, 2026</b> (21 working days)') < 0) return 'a broken run is two spans: ' + ng.html.replace(/<[^>]+>/g, '').slice(0, 400);
+    if (!/Over the last 12 months, <b>40%<\/b> of your entries went in more than a week after the work was performed \(on average <b>9\.3 days<\/b> after\)\./.test(n.html)) return 'the year pattern: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 600);
+    if (/whole month/.test(n.html) || /of 11 months/.test(n.html)) return '"whole months" and the months-short clause are gone';
+    const recent = St.clockifyNudgeEmail(ada, Object.assign({}, ctx, { lastWorked: () => '2026-09-16', yearOf: () => null }));
+    if (!/you <b>200 hours<\/b> short of your usual time over the last 2 months, about <b>1\.3 months<\/b> behind, with your last entry dated <b>9\/16\/2026<\/b>\./.test(recent.html)) return 'a recent entry → the hours-short form: ' + recent.html.replace(/<[^>]+>/g, '').slice(0, 400);
+    if (/Over the last/.test(recent.html)) return 'no year data → no pattern sentence';
+    const unknown = St.clockifyNudgeEmail(ada, Object.assign({}, ctx, { lastWorked: () => null }));
+    if (!/short of your usual time over the last 2 months, about <b>1\.3 months<\/b> behind\./.test(unknown.html)) return 'no last-entry date → no dangling clause: ' + unknown.html.replace(/<[^>]+>/g, '').slice(0, 400);
     const bareN = (n.html.match(/<(td|th|table)\b[^>]*>/gi) || []).filter(t => !/font-family/.test(t)); if (bareN.length) return 'nudge cells without a font: ' + bareN[0];
     const nd = St.clockifyNudgeEmail(comp.rows[0], Object.assign({}, ctx, { deadlineLbl: '', deadlineShort: '', senderName: '' }));
-    if (nd.html.indexOf('<b>end of day Friday</b>') < 0 || /by <\/b>/.test(nd.html)) return 'no deadline given → the old default, never a blank';
+    if (nd.html.indexOf('<b style="color:#CE181E">end of day Friday</b>') < 0 || /by <b style="color:#CE181E"><\/b>/.test(nd.html)) return 'no deadline given → the old default, never a blank';
     if (n.html.indexOf('app.clockify.me') < 0) return 'nudge links to Clockify';
     return true;
   });
