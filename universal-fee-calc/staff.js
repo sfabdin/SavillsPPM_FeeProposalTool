@@ -2727,7 +2727,7 @@
        gets the hours-short form instead. */
     const today = c.today ? new Date(c.today) : new Date();
     const todayUTC = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-    const fmtD = (t) => { const d = new Date(t); return (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '/' + d.getUTCFullYear(); };
+    const fmtD = (t) => { const d = new Date(t); return (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '/' + String(d.getUTCFullYear()).slice(-2); };
     const lw = c.lastWorked ? c.lastWorked(row) : (lastWorkedDays()[p.id] || null);   // 'YYYY-MM-DD', the day the work was done
     const lwUTC = (lw && /^\d{4}-\d{2}-\d{2}/.test(lw)) ? Date.UTC(+lw.slice(0, 4), +lw.slice(5, 7) - 1, +lw.slice(8, 10)) : null;
     let gapWd = 0; if (lwUTC != null) { for (let t = lwUTC + 86400000; t < todayUTC; t += 86400000) { const w = new Date(t).getUTCDay(); if (w !== 0 && w !== 6) gapWd++; } }
@@ -2756,7 +2756,7 @@
     };
     const ev = [];
     const gapForm = lwUTC != null && gapWd > grace;
-    if (gapForm) ev.push('no time entered since <b>' + fmtD(lwUTC) + '</b>, your last entry (<b>' + gapWd + ' working days</b>)');
+    if (gapForm) ev.push('no time entered since <b>' + fmtD(lwUTC) + '</b> (<b>' + gapWd + ' working days</b> ago)');
     // an empty span that lies entirely after the last entry is already said by the gap
     runs.filter(r => !(gapForm && Date.UTC(+r[0].slice(0, 4), +r[0].slice(5, 7) - 1, 1) > lwUTC)).forEach(r => ev.push(spanOf(r)));
     if (lightPast.length) ev.push(lightPast.map(m => '<b>' + escM(ymLabel(m)) + '</b> at ' + Math.round(row.byMonth[m].pct * 100) + '%').join(', ').replace(/, ([^,]*)$/, ' and $1') + ' of your usual hours');
