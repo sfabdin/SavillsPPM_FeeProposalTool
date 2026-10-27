@@ -464,12 +464,13 @@
     const ada = Object.assign({ capMonth: 150 }, comp.rows[0]);
     const n = St.clockifyNudgeEmail(ada, ctx);
     // 7/13 → 9/18: Jul 14–31 = 14, Aug = 21, Sep 1–17 = 13 working days; 200 h short of a 150 h month ≈ 1.3 months
-    if (!/Hi Ada,/.test(n.html) || !/no time entered since <b>7\/13\/2026<\/b>, your last entry, through <b>9\/18\/2026<\/b>: <b>48 working days<\/b>, about <b>1\.3 months<\/b> of your usual hours\./.test(n.html)) return 'nudge gap: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 400);
+    if (!/Hi Ada,/.test(n.html) || !/no time entered since <b>7\/13\/2026<\/b>, your last entry, through <b>9\/18\/2026<\/b>: <b>48 working days<\/b>, about <b>1\.3 months<\/b> behind\./.test(n.html)) return 'nudge gap: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 400);
     if (!/coordinate with your manager/.test(n.html) || /7\.8 hours/.test(n.html) || /under-served/.test(n.html) || /— leave,/.test(n.html) || /wrong project/.test(n.html) || /usual hours in/.test(n.html) || /Log every working day/.test(n.html)) return 'nudge tone';
     if (!/last pulled on <b>10\/5\/2026/.test(n.html) || !/planned PTO/.test(n.html) || !/cannot account for or accurately bill/.test(n.html) || !/Clockify is how we measure/.test(n.html)) return 'nudge: pull date, planned PTO, the why';
     if (n.html.indexOf('<b style="color:#CE181E">Friday, October 31, 2026 at 5:00 PM EDT</b>') < 0 || n.subject !== 'Clockify: please bring your time up to date by Fri, Oct 31' || n.text.indexOf('Friday, October 31, 2026 at 5:00 PM EDT') < 0) return 'the deadline set on the screen is in the body (bold red), the subject and the text: ' + n.subject;
     if (/Sarah Abdin/.test(n.html) || /Thank you,/.test(n.html)) return 'not signed by a person';
-    if (n.html.indexOf('#FFDF00') < 0 || n.html.indexOf('savills') < 0 || n.html.indexOf('Program &amp; Project Management') < 0) return 'Savills shell: yellow rule, wordmark, Program & Project Management';
+    if (n.html.indexOf('#FFDF00') < 0 || !/<img src="[^"]*design-system\/assets\/savills_logo\.png" width="56" height="56" alt="Savills"/.test(n.html) || n.html.indexOf('Program &amp; Project Management') < 0) return 'Savills shell: yellow rule, the hosted logo, Program & Project Management';
+    if (!/agree on a date/.test(n.html)) return 'the last sentence';
     if (!/Over the last 12 months, <b>40%<\/b> of your entries went in more than a week after the work was performed \(on average <b>9\.3 days<\/b> after\)\./.test(n.html)) return 'the year pattern: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 600);
     if (/whole month/.test(n.html) || /of 11 months/.test(n.html)) return '"whole months" and the months-short clause are gone';
     const recent = St.clockifyNudgeEmail(ada, Object.assign({}, ctx, { lastWorked: () => '2026-09-16', yearOf: () => null }));
