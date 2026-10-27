@@ -2734,14 +2734,38 @@
     const mo = behindMonths(row); const moTxt = mo >= 0.5 ? (Math.round(mo * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) : null;
     const grace = (c.expect && c.expect.grace) || COMPLIANCE_GRACE_WORKING_DAYS;
     const asOf = c.pulledAt ? 'Our Clockify records, last pulled on <b>' + escM(c.pulledAt) + '</b>, show ' : 'Our Clockify records show ';
-    let situation;
-    if (lwUTC != null && gapWd > grace) {
-      situation = asOf + 'no time entered since <b>' + fmtD(lwUTC) + '</b>, your last entry, through <b>' + fmtD(todayUTC) + '</b>: <b>' + gapWd + ' working days</b>' + (moTxt ? ', about <b>' + moTxt + ' months</b> behind' : '') + '.';
-    } else {
-      const ms = Object.keys(row.byMonth || {}).sort();
-      const n = ms.filter(m => row.byMonth[m] && row.byMonth[m] !== 'leave' && !row.byMonth[m].early && !row.byMonth[m].joinMonth).length;
-      situation = asOf + 'you <b>' + fmtH0(row.behindHrs) + ' hours</b> short of your usual time over the last ' + n + ' month' + (n === 1 ? '' : 's') + (moTxt ? ', about <b>' + moTxt + ' months</b> behind' : '') + (lwUTC != null ? ', with your last entry dated <b>' + fmtD(lwUTC) + '</b>' : '') + '.';
-    }
+    /* LEAD with the whole shortfall, then every piece of evidence that
+       applies, strongest first: a stretch with nothing since the last entry,
+       months with nothing at all (as a dated span with working days), light
+       months with their percentage, the current month so far. Someone with
+       sporadic gaps and a recent entry is no longer read as a week behind. */
+    const ms = Object.keys(row.byMonth || {}).sort();
+    const expMs = ms.filter(m => row.byMonth[m] && row.byMonth[m] !== 'leave' && !row.byMonth[m].early && !row.byMonth[m].joinMonth);
+    const past = expMs.filter(m => m !== c.nowYm);
+    const zeroPast = past.filter(m => row.byMonth[m].h === 0);
+    const lightPast = past.filter(m => row.byMonth[m].h > 0 && row.byMonth[m].pct < 0.8);
+    const cur = row.byMonth[c.nowYm];
+    const curIn = cur && cur !== 'leave' && !cur.early && !cur.joinMonth && c.expect && c.expect.elapsed >= (c.expect.grace || 0) + 5;
+    const dStr = (y, m, d, withYear) => new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', withYear ? { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' } : { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    const runs = []; zeroPast.forEach(m => { const last = runs[runs.length - 1]; if (last && ymAdd(last[last.length - 1], 1) === m) last.push(m); else runs.push([m]); });
+    const spanOf = (run) => {
+      const [y1, m1] = run[0].split('-').map(Number), [y2, m2] = run[run.length - 1].split('-').map(Number);
+      const lastDay = new Date(Date.UTC(y2, m2, 0)).getUTCDate();
+      const wd = run.reduce((t, m) => { const [y, mm] = m.split('-').map(Number); return t + workingDaysIn(y, mm); }, 0);
+      return 'nothing at all from <b>' + dStr(y1, m1, 1, y1 !== y2) + ' to ' + dStr(y2, m2, lastDay, true) + '</b> (' + wd + ' working days)';
+    };
+    const ev = [];
+    const gapForm = lwUTC != null && gapWd > grace;
+    if (gapForm) ev.push('no time entered since <b>' + fmtD(lwUTC) + '</b>, your last entry (<b>' + gapWd + ' working days</b>)');
+    // an empty span that lies entirely after the last entry is already said by the gap
+    runs.filter(r => !(gapForm && Date.UTC(+r[0].slice(0, 4), +r[0].slice(5, 7) - 1, 1) > lwUTC)).forEach(r => ev.push(spanOf(r)));
+    if (lightPast.length) ev.push(lightPast.map(m => '<b>' + escM(ymLabel(m)) + '</b> at ' + Math.round(row.byMonth[m].pct * 100) + '%').join(', ').replace(/, ([^,]*)$/, ' and $1') + ' of your usual hours');
+    if (curIn && cur.h === 0 && !(lwUTC != null && gapWd > grace)) ev.push('nothing yet for <b>' + escM(ymLabel(c.nowYm)) + '</b> (' + c.expect.elapsed + ' working days in)');
+    else if (curIn && cur.h > 0 && cur.pct < 0.6) ev.push('<b>' + escM(ymLabel(c.nowYm)) + '</b> at ' + Math.round(cur.pct * 100) + '% so far');
+    if (lwUTC != null && !(gapWd > grace)) ev.push('your last entry is dated <b>' + fmtD(lwUTC) + '</b>');
+    const over = expMs.length ? (expMs.length === 1 ? ymLabel(expMs[0]) : ymLabel(expMs[0]) + ' to ' + ymLabel(expMs[expMs.length - 1])) : '';
+    const lead = 'you <b>' + fmtH0(row.behindHrs) + ' hours</b> short of your usual time' + (over ? ' over ' + escM(over) : '') + (moTxt ? ', about <b>' + moTxt + ' months</b> behind' : '');
+    const situation = asOf + lead + (ev.length ? ': ' + ev.join('; ') : '') + '.';
     /* The deadline is set on the nudge screen; it lands bold and red. The
        year's pattern (share of entries logged late, average lag) comes from
        the lateness pull through ctx.yearOf and is left out without data. */
