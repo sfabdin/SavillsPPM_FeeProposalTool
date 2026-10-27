@@ -2633,6 +2633,8 @@
   }
   /** The notice shell at table width — the status grid has a column per month. */
   function mailShellWide(title, paras, cta, footer) {
+    const S2 = window.UFC_Store;
+    if (S2 && S2.noticeHtml) return S2.noticeHtml(title, paras.map(outlookFonts), cta, footer, { wide: true });
     paras = (paras || []).map(outlookFonts);
     const btn = cta ? '<p style="margin:18px 0"><a href="' + escM(cta.href) + '" style="background:#25273A;color:#fff;padding:10px 16px;text-decoration:none;font-weight:700">' + escM(cta.label) + '</a></p>' : '';
     return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#25273A;line-height:1.5;max-width:1040px">' +
@@ -2708,7 +2710,7 @@
       table,
       '<p style="margin:14px 0 0"><a href="' + escM(CLOCKIFY_URL) + '" style="color:#25273A;font-weight:700">Open Clockify</a>' + (c.toolUrl ? ' · <a href="' + escM(c.toolUrl) + '" style="color:#25273A;font-weight:700">Clockify Reporting in the fee tool</a>' : '') + '</p>'],
       { href: CLOCKIFY_URL, label: 'Open Clockify' },
-      'Sent from the fee tool by an admin. Hours are as last pulled from Clockify' + (c.pulledAt ? ' on ' + escM(c.pulledAt) : '') + '.');
+      'Sent from the Savills PPM fee tool' + (c.senderName ? ' by ' + c.senderName : '') + '. Hours are as last pulled from Clockify' + (c.pulledAt ? ' on ' + escM(c.pulledAt) : '') + '.');
     const text = subject + '. ' + behind.map(r => r.person.name + ': ' + fmtHm(r.behindHrs) + ' h missing').join('; ') + '. ' + CLOCKIFY_URL;
     return { subject, html, text, counts: { people: rows.length, behind: behind.length, missing: totMissing, cost: totCost, noRate } };
   }
@@ -2737,15 +2739,22 @@
     const situation = parts.length
       ? asOf + parts.join(parts.length === 2 ? ', and ' : ', ') + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.'
       : asOf + 'you ' + fmtH0(row.behindHrs) + ' hours short of your usual time across the last ' + (row.expectedMonths || 0) + ' months' + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.';
-    const subject = 'Clockify: your time entries need to be brought up to date';
+    /* The deadline is set on the nudge screen (full date and time); the
+       sender is whoever presses Send. Both come in through ctx. */
+    const due = c.deadlineLbl ? String(c.deadlineLbl) : 'end of day Friday';
+    const dueShort = c.deadlineShort ? String(c.deadlineShort) : 'Friday';
+    const sender = c.senderName ? String(c.senderName) : '';
+    const subject = 'Clockify: please bring your time up to date by ' + dueShort;
     const html = mailShell('Please bring your Clockify time up to date', [
       'Hi ' + escM(first) + ',',
       situation,
-      'As you know, staffing plans, project health and profitability are all measured from Clockify. Hours that are not logged read as work that did not happen — and as hours you were paid for but cannot account for. Please update your entries to reflect the time you actually spent by <b>end of day Friday</b>.',
-      'If something is preventing you from getting current — planned PTO, an access problem, hours sitting under the wrong project — please speak with your manager and agree a date by which you will be up to date.'],
+      'Clockify is where we measure staffing, project health and profitability. Time that is not logged reads as work that did not happen, and as hours you were paid for that we cannot account for or bill.',
+      'Please bring your entries up to date by <b>' + escM(due) + '</b>. Log every working day to the project you worked on; internal and business-development time goes under the PPM / Macro project.',
+      'If something is in the way, planned PTO, a Clockify access problem, or a client commitment that keeps you from logging, tell your manager before the deadline and agree a date by which you will be current.',
+      'Thank you' + (sender ? ',<br>' + escM(sender) : '.')],
       { href: CLOCKIFY_URL, label: 'Open Clockify' },
-      'Sent from the fee tool by an admin. Figures are as last pulled from Clockify' + (c.pulledAt ? ' on ' + escM(c.pulledAt) : '') + '. Entries made since then are not reflected.');
-    const text = subject + '. ' + situation.replace(/<[^>]+>/g, '') + ' Please update your entries by end of day Friday. ' + CLOCKIFY_URL;
+      'Sent from the Savills PPM fee tool' + (sender ? ' by ' + sender : '') + '. Figures are as pulled from Clockify' + (c.pulledAt ? ' on ' + c.pulledAt : '') + '; entries made since then are not reflected.');
+    const text = subject + '. ' + situation.replace(/<[^>]+>/g, '') + ' Please bring your entries up to date by ' + due + '. If something is in the way (planned PTO, a Clockify access problem, a client commitment), tell your manager before the deadline. ' + CLOCKIFY_URL;
     return { subject, html, text };
   }
 

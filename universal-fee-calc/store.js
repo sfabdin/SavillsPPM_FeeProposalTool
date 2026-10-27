@@ -3668,14 +3668,30 @@
       .replace(/<(td|th|table)(\s[^>]*?)?\sstyle="(?![^"]*font-family)/gi, (m, tag, attrs) => '<' + tag + (attrs || '') + ' style="font-family:' + MAIL_FONT + ';')
       .replace(/<(td|th|table)(?=[\s>])(?![^>]*\sstyle=)([^>]*)>/gi, (m, tag, attrs) => '<' + tag + attrs + ' style="font-family:' + MAIL_FONT + '">');
   }
-  function noticeHtml(title, paras, cta, footer) {
+  /* The one email shell. Savills navy band with the yellow rule and the
+     wordmark, a white card, a yellow call-to-action, a grey footer — built
+     as nested tables with every style inline so Outlook renders it the
+     same as Gmail. Web fonts do not reach mail clients, so the type is
+     Segoe / Arial standing in for Gotham. opts.wide for the status grid. */
+  function noticeHtml(title, paras, cta, footer, opts) {
+    const o = opts || {};
     paras = (paras || []).map(emailFonts);
-    const btn = cta ? '<p style="margin:18px 0"><a href="' + escHtml(cta.href) + '" style="background:#25273A;color:#fff;padding:10px 16px;text-decoration:none;font-weight:700">' + escHtml(cta.label) + '</a></p>' : '';
-    return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#25273A;line-height:1.5;max-width:640px">' +
-      '<p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#79828C;margin:0 0 6px">Savills PPM · Fee tool</p>' +
-      '<h2 style="margin:0 0 12px;font-size:18px">' + escHtml(title) + '</h2>' +
-      paras.map(p => '<p style="margin:0 0 10px">' + p + '</p>').join('') + btn +
-      '<p style="font-size:12px;color:#79828C;margin-top:20px">' + escHtml(footer || 'Sent automatically by the fee tool.') + '</p></div>';
+    const F = MAIL_FONT;
+    const btn = cta ? '<table role="presentation" style="border-collapse:collapse;margin:22px 0 6px;font-family:' + F + '"><tr><td style="background:#FFDF00;font-family:' + F + '"><a href="' + escHtml(cta.href) + '" style="display:inline-block;padding:12px 20px;color:#25273A;text-decoration:none;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-family:' + F + '">' + escHtml(cta.label) + '</a></td></tr></table>' : '';
+    const width = o.wide ? 1040 : 640;
+    return '<table role="presentation" width="100%" style="border-collapse:collapse;background:#F3F3F0;font-family:' + F + '"><tr><td style="padding:24px 12px;font-family:' + F + '">' +
+      '<table role="presentation" style="border-collapse:collapse;width:100%;max-width:' + width + 'px;margin:0 auto;background:#ffffff;border:1px solid #E3E0D8;font-family:' + F + '">' +
+      '<tr><td style="background:#25273A;padding:16px 28px;border-bottom:4px solid #FFDF00;font-family:' + F + '">' +
+        '<table role="presentation" width="100%" style="border-collapse:collapse;font-family:' + F + '"><tr>' +
+          '<td style="font-family:' + F + ';font-weight:800;font-size:19px;letter-spacing:.01em;color:#FFDF00">savills</td>' +
+          '<td style="font-family:' + F + ';text-align:right;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#C9CDD3">PPM &middot; Fee tool</td>' +
+        '</tr></table></td></tr>' +
+      '<tr><td style="padding:28px 28px 10px;font-family:' + F + ';font-size:14px;line-height:1.55;color:#25273A">' +
+        '<h2 style="margin:0 0 16px;font-family:' + F + ';font-size:21px;line-height:1.25;letter-spacing:-.01em;color:#25273A">' + escHtml(title) + '</h2>' +
+        paras.map(p => '<p style="margin:0 0 12px;font-family:' + F + '">' + p + '</p>').join('') + btn +
+      '</td></tr>' +
+      '<tr><td style="padding:14px 28px 22px;border-top:1px solid #EFEDE7;font-family:' + F + ';font-size:11.5px;line-height:1.5;color:#79828C">' + escHtml(footer || 'Sent automatically by the fee tool.') + '</td></tr>' +
+      '</table></td></tr></table>';
   }
   function appPageUrl(page) { try { return location.origin + location.pathname.replace(/[^/]*$/, '') + encodeURIComponent(page); } catch (e) { return page; } }
   /* ------------------------------------------------------------
