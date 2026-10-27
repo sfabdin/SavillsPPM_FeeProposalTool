@@ -2719,61 +2719,52 @@
       quotes a few hours of a month that has barely started. */
   function clockifyNudgeEmail(row, ctx) {
     const c = ctx || {}; const p = row.person; const first = String(p.name || '').split(' ')[0];
-    const ms = Object.keys(row.byMonth || {}).sort();
-    const expMs = ms.filter(m => row.byMonth[m] && row.byMonth[m] !== 'leave' && !row.byMonth[m].early && !row.byMonth[m].joinMonth);
-    const past = expMs.filter(m => m !== c.nowYm);
-    const zeroPast = past.filter(m => row.byMonth[m].h === 0);
-    const underPast = past.filter(m => row.byMonth[m].h > 0 && row.byMonth[m].pct < 0.8);
-    const cur = row.byMonth[c.nowYm];
-    // The current month only counts when it is well under way: past the grace and at least a working week in.
-    const curIn = cur && cur !== 'leave' && !cur.early && !cur.joinMonth && c.expect && c.expect.elapsed >= (c.expect.grace || 0) + 5;
-    const curEmpty = curIn && cur.h === 0, curUnder = curIn && cur.h > 0 && cur.pct < 0.6;
-    /* Empty months read as a date span with its working days — "no time
-       entered from Aug 1 to Sep 30, 2026 (43 working days)" — one span per
-       unbroken run of empty months. */
-    const dStr = (y, m, d, withYear) => new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', withYear ? { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' } : { month: 'short', day: 'numeric', timeZone: 'UTC' });
-    const runs = []; zeroPast.forEach(m => { const last = runs[runs.length - 1]; if (last && ymAdd(last[last.length - 1], 1) === m) last.push(m); else runs.push([m]); });
-    const spanOf = (run) => {
-      const [y1, m1] = run[0].split('-').map(Number), [y2, m2] = run[run.length - 1].split('-').map(Number);
-      const lastDay = new Date(Date.UTC(y2, m2, 0)).getUTCDate();
-      const wd = run.reduce((s, m) => { const [y, mm] = m.split('-').map(Number); return s + workingDaysIn(y, mm); }, 0);
-      return 'no time entered from <b>' + dStr(y1, m1, 1, y1 !== y2) + ' to ' + dStr(y2, m2, lastDay, true) + '</b> (' + wd + ' working days)';
-    };
-    const parts = runs.map(spanOf);
-    if (underPast.length) parts.push(underPast.map(m => '<b>' + escM(ymLabel(m)) + '</b> at ' + Math.round(row.byMonth[m].pct * 100) + '% of your usual hours').join(', '));
-    if (curEmpty) parts.push('nothing yet for <b>' + escM(ymLabel(c.nowYm)) + '</b>' + (c.expect && c.expect.elapsed ? ' (' + c.expect.elapsed + ' working days in)' : ''));
-    else if (curUnder) parts.push('<b>' + escM(ymLabel(c.nowYm)) + '</b> running at ' + Math.round(cur.pct * 100) + '% so far');
-    const lastEntry = c.lastEntry ? String(c.lastEntry(row) || '') : '';
+    /* THE GAP, anchored on the last entry. "No time entered since 8/14/2026,
+       your last entry, through 10/27/2026: 51 working days, about 2.6 months
+       of your usual hours." Working days are counted strictly after the
+       last entry and before today; months behind is the shortfall against
+       the person's own month. Someone who logged recently but runs light
+       gets the hours-short form instead. */
+    const today = c.today ? new Date(c.today) : new Date();
+    const todayUTC = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const fmtD = (t) => { const d = new Date(t); return (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '/' + d.getUTCFullYear(); };
+    const lw = c.lastWorked ? c.lastWorked(row) : (lastWorkedDays()[p.id] || null);   // 'YYYY-MM-DD', the day the work was done
+    const lwUTC = (lw && /^\d{4}-\d{2}-\d{2}/.test(lw)) ? Date.UTC(+lw.slice(0, 4), +lw.slice(5, 7) - 1, +lw.slice(8, 10)) : null;
+    let gapWd = 0; if (lwUTC != null) { for (let t = lwUTC + 86400000; t < todayUTC; t += 86400000) { const w = new Date(t).getUTCDay(); if (w !== 0 && w !== 6) gapWd++; } }
+    const mo = behindMonths(row); const moTxt = mo >= 0.5 ? (Math.round(mo * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) : null;
+    const grace = (c.expect && c.expect.grace) || COMPLIANCE_GRACE_WORKING_DAYS;
     const asOf = c.pulledAt ? 'Our Clockify records, last pulled on <b>' + escM(c.pulledAt) + '</b>, show ' : 'Our Clockify records show ';
-    const situation = parts.length
-      ? asOf + parts.join(parts.length === 2 ? ', and ' : ', ') + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.'
-      : asOf + 'you ' + fmtH0(row.behindHrs) + ' hours short of your usual time across the last ' + (row.expectedMonths || 0) + ' months' + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.';
-    /* The deadline is set on the nudge screen (full date and time). The
-       year's pattern — share of entries logged late, average lag, months
-       short — comes in through ctx.yearOf so the ask carries a track
-       record, not just the current gap. */
+    let situation;
+    if (lwUTC != null && gapWd > grace) {
+      situation = asOf + 'no time entered since <b>' + fmtD(lwUTC) + '</b>, your last entry, through <b>' + fmtD(todayUTC) + '</b>: <b>' + gapWd + ' working days</b>' + (moTxt ? ', about <b>' + moTxt + ' months</b> of your usual hours' : '') + '.';
+    } else {
+      const ms = Object.keys(row.byMonth || {}).sort();
+      const n = ms.filter(m => row.byMonth[m] && row.byMonth[m] !== 'leave' && !row.byMonth[m].early && !row.byMonth[m].joinMonth).length;
+      situation = asOf + 'you <b>' + fmtH0(row.behindHrs) + ' hours</b> short of your usual time over the last ' + n + ' month' + (n === 1 ? '' : 's') + (moTxt ? ', about <b>' + moTxt + ' months</b> behind' : '') + (lwUTC != null ? ', with your last entry dated <b>' + fmtD(lwUTC) + '</b>' : '') + '.';
+    }
+    /* The deadline is set on the nudge screen; it lands bold and red. The
+       year's pattern (share of entries logged late, average lag) comes from
+       the lateness pull through ctx.yearOf and is left out without data. */
     const due = c.deadlineLbl ? String(c.deadlineLbl) : 'end of day Friday';
     const dueShort = c.deadlineShort ? String(c.deadlineShort) : 'Friday';
+    const dueHtml = '<b style="color:#CE181E">' + escM(due) + '</b>';
     const yr = c.yearOf ? (c.yearOf(p.id) || null) : null;
-    let pattern = '';
-    if (yr) {
-      const bits = [];
-      if (yr.latePct != null) bits.push('<b>' + Math.round(yr.latePct) + '%</b> of your entries went in more than a week after the day worked' + (yr.avgLag != null ? ', and an entry is logged on average <b>' + (Math.round(yr.avgLag * 10) / 10) + ' days</b> after the work' : ''));
-      if (yr.months) bits.push('you were short of your usual hours in <b>' + yr.shortMonths + ' of ' + yr.months + ' months</b>');
-      if (bits.length) pattern = 'Over the last ' + (yr.span || 12) + ' months, ' + bits.join('; ') + '.';
-    }
+    const pattern = (yr && yr.latePct != null)
+      ? 'Over the last ' + (yr.span || 12) + ' months, <b>' + Math.round(yr.latePct) + '%</b> of your entries went in more than a week after the work was performed' + (yr.avgLag != null ? ' (on average <b>' + (Math.round(yr.avgLag * 10) / 10) + ' days</b> after)' : '') + '.'
+      : '';
     const subject = 'Clockify: please bring your time up to date by ' + dueShort;
     const html = mailShell('Please bring your Clockify time up to date', [
       'Hi ' + escM(first) + ',',
       situation,
       pattern,
-      'Clockify is where we measure staffing, project health and profitability. Time that is not logged reads as work that did not happen, and as hours you were paid for that we cannot account for or bill.',
-      'Please bring your entries up to date by <b>' + escM(due) + '</b>. Log every working day to the project you worked on; internal and business-development time goes under the PPM / Macro project.',
-      'If something is in the way, planned PTO, a Clockify access problem, or a client commitment that keeps you from logging, tell your manager before the deadline and agree a date by which you will be current.',
+      'Clockify is how we measure staffing, project health and profitability. Time that is not logged reads as work that did not happen, and as hours you were paid for that we cannot account for or accurately bill.',
+      'Please bring your entries up to date by ' + dueHtml + '.',
+      'If something is in the way: planned PTO, a Clockify access problem, or a client commitment that keeps you from completing your entries, coordinate with your manager before the deadline and agree a date by which you will be current.',
       'Thank you.'].filter(Boolean),
       { href: CLOCKIFY_URL, label: 'Open Clockify' },
       'Sent from the Savills Program & Project Management fee tool. Figures are as pulled from Clockify' + (c.pulledAt ? ' on ' + c.pulledAt : '') + '; entries made since then are not reflected.');
-    const text = subject + '. ' + situation.replace(/<[^>]+>/g, '') + (pattern ? ' ' + pattern.replace(/<[^>]+>/g, '') : '') + ' Please bring your entries up to date by ' + due + '. If something is in the way (planned PTO, a Clockify access problem, a client commitment), tell your manager before the deadline. ' + CLOCKIFY_URL;
+    const strip = (h) => String(h).replace(/<[^>]+>/g, '');
+    const text = subject + '. ' + strip(situation) + (pattern ? ' ' + strip(pattern) : '') + ' Please bring your entries up to date by ' + due + '. If something is in the way (planned PTO, a Clockify access problem, a client commitment), coordinate with your manager before the deadline. ' + CLOCKIFY_URL;
     return { subject, html, text };
   }
 
