@@ -3685,7 +3685,9 @@
     const o = opts || {};
     paras = (paras || []).map(emailFonts);
     const F = MAIL_FONT;
-    const btn = cta ? '<table role="presentation" style="border-collapse:collapse;margin:22px 0 6px;font-family:' + F + '"><tr><td style="background:#FFDF00;font-family:' + F + '"><a href="' + escHtml(cta.href) + '" style="display:inline-block;padding:12px 20px;color:#25273A;text-decoration:none;font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-family:' + F + '">' + escHtml(cta.label) + '</a></td></tr></table>' : '';
+    /* The call to action: one yellow button with a navy edge, the padding on
+       the link itself so Outlook and Gmail draw the same box. */
+    const btn = cta ? '<table role="presentation" style="border-collapse:separate;margin:26px 0 8px;font-family:' + F + '"><tr><td style="background:#FFDF00;border:2px solid #25273A;text-align:center;font-family:' + F + '"><a href="' + escHtml(cta.href) + '" style="display:block;padding:15px 34px;color:#25273A;text-decoration:none;font-weight:800;font-size:15px;line-height:1.2;letter-spacing:.04em;font-family:' + F + ';white-space:nowrap">' + escHtml(cta.label) + ' &rarr;</a></td></tr></table>' : '';
     const width = o.wide ? 1040 : 640;
     return '<table role="presentation" width="100%" style="border-collapse:collapse;background:#F3F3F0;font-family:' + F + '"><tr><td style="padding:24px 12px;font-family:' + F + '">' +
       '<table role="presentation" style="border-collapse:collapse;width:100%;max-width:' + width + 'px;margin:0 auto;background:#ffffff;border:1px solid #E3E0D8;font-family:' + F + '">' +
