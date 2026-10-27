@@ -447,7 +447,7 @@
       { person: { id: 'p1', name: 'Ada Lovelace', title: 'Director' }, totLogged: 100, totCap: 300, behindHrs: 200, compliance: 0.33, expectedMonths: 2, okMonths: 0, byMonth: { '2026-08': { h: 50, capM: 150, pct: 0.33 }, '2026-09': { h: 50, capM: 150, pct: 0.33 } } },
       { person: { id: 'p2', name: 'Grace Hopper', title: 'Manager' }, totLogged: 300, totCap: 300, behindHrs: 0, compliance: 1, expectedMonths: 2, okMonths: 2, byMonth: { '2026-08': { h: 150, capM: 150, pct: 1 }, '2026-09': { h: 150, capM: 150, pct: 1 } } },
     ], untracked: [{ person: { id: 'p3', name: 'Alan Turing', title: '' }, reason: 'no Clockify user mapped' }] };
-    const ctx = { nowYm: '2026-09', expect: { elapsed: 12, total: 22, grace: 5 }, dueLbl: 'Sep-26 to date', teamLag: 3.2, lagOf: () => 2.5, reasonFor: () => 'Nothing logged for August.', lastEntry: () => 'last entry dated 7/13', toolUrl: 'https://x/Staffing%20Matrix.html', pulledAt: '10/5/2026' };
+    const ctx = { deadlineLbl: 'Friday, October 31, 2026 at 5:00 PM EDT', deadlineShort: 'Fri, Oct 31', senderName: 'Sarah Abdin', nowYm: '2026-09', expect: { elapsed: 12, total: 22, grace: 5 }, dueLbl: 'Sep-26 to date', teamLag: 3.2, lagOf: () => 2.5, reasonFor: () => 'Nothing logged for August.', lastEntry: () => 'last entry dated 7/13', toolUrl: 'https://x/Staffing%20Matrix.html', pulledAt: '10/5/2026' };
     const m = St.clockifyStatusEmail(comp, ctx);
     // Ada is 200 h short of a 300 h window — more than a month of her own hours — so behind; Grace is not.
     if (!/1 behind, 200 h missing/.test(m.subject)) return 'subject: ' + m.subject;
@@ -463,8 +463,14 @@
     if (m.counts.behind !== 1 || m.counts.people !== 2) return 'counts: ' + JSON.stringify(m.counts);
     const n = St.clockifyNudgeEmail(comp.rows[0], ctx);
     if (!/Hi Ada,/.test(n.html) || !/Aug-26<\/b> at 33% of your usual hours/.test(n.html) || !/Sep-26<\/b> running at 33% so far/.test(n.html) || n.html.indexOf('last entry is dated 7/13') < 0) return 'nudge body: ' + n.html.replace(/<[^>]+>/g, '').slice(0, 400);
-    if (!/speak with your manager/.test(n.html) || /7\.8 hours/.test(n.html) || /under-served/.test(n.html) || /— leave,/.test(n.html)) return 'nudge tone';
-    if (!/last pulled on <b>10\/5\/2026/.test(n.html) || !/planned PTO/.test(n.html) || !/cannot account for/.test(n.html)) return 'nudge: pull date, planned PTO, sharper line';
+    if (!/tell your manager/.test(n.html) || /7\.8 hours/.test(n.html) || /under-served/.test(n.html) || /— leave,/.test(n.html) || /wrong project/.test(n.html)) return 'nudge tone';
+    if (!/last pulled on <b>10\/5\/2026/.test(n.html) || !/planned PTO/.test(n.html) || !/cannot account for or bill/.test(n.html)) return 'nudge: pull date, planned PTO, sharper line';
+    if (n.html.indexOf('<b>Friday, October 31, 2026 at 5:00 PM EDT</b>') < 0 || n.subject !== 'Clockify: please bring your time up to date by Fri, Oct 31' || n.text.indexOf('Friday, October 31, 2026 at 5:00 PM EDT') < 0) return 'the deadline set on the screen is in the body (bold), the subject and the text: ' + n.subject;
+    if (!/Sarah Abdin/.test(n.html) || !/by Sarah Abdin/.test(n.html)) return 'signed by the sender';
+    if (n.html.indexOf('#FFDF00') < 0 || n.html.indexOf('savills') < 0) return 'Savills shell: yellow rule and wordmark';
+    const bareN = (n.html.match(/<(td|th|table)\b[^>]*>/gi) || []).filter(t => !/font-family/.test(t)); if (bareN.length) return 'nudge cells without a font: ' + bareN[0];
+    const nd = St.clockifyNudgeEmail(comp.rows[0], Object.assign({}, ctx, { deadlineLbl: '', deadlineShort: '', senderName: '' }));
+    if (nd.html.indexOf('<b>end of day Friday</b>') < 0 || /by <\/b>/.test(nd.html)) return 'no deadline given → the old default, never a blank';
     if (n.html.indexOf('app.clockify.me') < 0) return 'nudge links to Clockify';
     return true;
   });

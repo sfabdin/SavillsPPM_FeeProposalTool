@@ -2207,7 +2207,21 @@
      person who is behind, to the address Clockify holds for them. Every
      message is previewed exactly as it will land; nothing goes until Send is
      pressed, and then it goes through the same outbox as every other notice. */
-  const MAIL = { tab: 'digest', to: '', cc: '', subject: '', attach: true, picked: {}, emails: {}, emailSrc: {}, preview: null, from: '', until: '', snap: null, edits: {} };
+  const MAIL = { tab: 'digest', to: '', cc: '', subject: '', attach: true, picked: {}, emails: {}, emailSrc: {}, preview: null, from: '', until: '', snap: null, edits: {}, deadline: '' };
+  /* The nudge deadline: a full date and time chosen on the screen, defaulting
+     to the coming Friday at 5 pm. Written into the email in words
+     ("Friday, October 31, 2026 at 5:00 PM EDT") and into the subject short. */
+  function defaultDeadline() {
+    const d = new Date(); d.setSeconds(0, 0);
+    const dow = d.getDay(); let add = (5 - dow + 7) % 7;
+    if (add === 0 && d.getHours() >= 17) add = 7;
+    d.setDate(d.getDate() + add); d.setHours(17, 0, 0, 0);
+    return d;
+  }
+  const toLocalInput = (d) => { const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); };
+  function deadlineDate() { const d = MAIL.deadline ? new Date(MAIL.deadline) : null; return (d && !isNaN(d)) ? d : defaultDeadline(); }
+  function deadlineLabel(d) { try { return new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(d); } catch (e) { return d.toLocaleString(); } }
+  function deadlineShort(d) { try { return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(d); } catch (e) { return d.toLocaleDateString(); } }
   /* edits: hand changes to a generated email, keyed 'digest' or a person id →
      { subject, html }. The preview is the editor: whatever it shows is what
      goes. A range change throws edits away (the numbers underneath moved). */
@@ -2272,7 +2286,9 @@
     if (!(state.clockifyUsers || []).length) { try { await pullClockifyNames(); } catch (e) {} renderMailModal(); }
   }
   function closeMailModal() { $('#mail-modal').classList.remove('open'); }
-  function mailCtx() { const s = mailSnap(); return { nowYm: s.nowYm, expect: s.expect, dueLbl: s.dueLbl, teamLag: s.teamLag, lagOf: s.lagOf, reasonFor: s.reasonFor, lastEntry: (r) => S.lastTimeEntered(r, s.ms), toolUrl: location.origin + location.pathname, pulledAt: s.pulledAt ? new Date(s.pulledAt).toLocaleDateString() : null }; }
+  function mailCtx() { const s = mailSnap(); const dl = deadlineDate(); let sender = ''; try { const u = STORE.getCurrentUser(); sender = (u && (u.name || u.username)) || ''; } catch (e) {}
+    return { nowYm: s.nowYm, expect: s.expect, dueLbl: s.dueLbl, teamLag: s.teamLag, lagOf: s.lagOf, reasonFor: s.reasonFor, lastEntry: (r) => S.lastTimeEntered(r, s.ms), toolUrl: location.origin + location.pathname, pulledAt: s.pulledAt ? new Date(s.pulledAt).toLocaleDateString() : null,
+      deadline: dl, deadlineLbl: deadlineLabel(dl), deadlineShort: deadlineShort(dl), senderName: sender }; }
   /* Anyone with hours missing in the range can be nudged — the list is
      everyone short, most-short first; the ones more than a month behind are
      ticked by default, the rest are a click away. */
@@ -2317,7 +2333,9 @@
       const addressable = behind.filter(r => MAIL.emails[r.person.id]).length;
       const editedN = behind.filter(r => MAIL.edits[r.person.id]).length;
       $('#mm-title').textContent = 'Nudge · ' + behind.length + ' ' + (behind.length === 1 ? 'person has' : 'people have') + ' hours missing' + (overN ? ' · ' + overN + ' more than a month behind' : '');
-      body.innerHTML = rangeRow + (behind.length ? `
+      const dl = deadlineDate();
+      const deadlineRow = `<div class="mm-row"><label>Due by</label><div class="mm-range"><input type="datetime-local" id="mm-deadline" value="${esc(toLocalInput(dl))}" step="900"><span class="note-txt">in the email as <b>${esc(deadlineLabel(dl))}</b> · changing it rebuilds any reworded emails</span></div></div>`;
+      body.innerHTML = rangeRow + deadlineRow + (behind.length ? `
         <div class="note-txt">One short email each, to the address Clockify holds for them (or the roster's). An amber address is the firm's first-initial-surname pattern guessed from the name — check it; whatever you type is kept on the roster. Everyone with hours missing in this range is listed, most-short first; the <b>&gt;1 mo</b> rows are ticked to start with, tick anyone else you want to nudge. Click a row to preview their email; click into the preview to reword it for that person only.${(state.clockifyUsers || []).length ? '' : ' Clockify addresses are loading…'}</div>
         <div class="mm-pickbar"><span><b>${n}</b> of ${addressable} with an address selected${editedN ? ` · ${editedN} reworded` : ''}</span><a href="#" id="mm-all">Select all</a><a href="#" id="mm-over" title="Only the people more than a month of their own hours behind">Select &gt;1 month behind</a><a href="#" id="mm-none">Deselect all</a></div>
         <div class="mm-people"><table><tbody>${behind.map(r => `<tr class="${r.person.id === MAIL.preview ? 'sel' : ''}" data-pid="${esc(r.person.id)}">
@@ -2338,6 +2356,7 @@
       $$('#mm-body [data-email]').forEach(inp => { inp.oninput = (e) => { MAIL.emails[inp.dataset.email] = e.target.value.trim().toLowerCase(); if (!MAIL.emails[inp.dataset.email]) MAIL.picked[inp.dataset.email] = false; else if (!(inp.dataset.email in MAIL.picked)) MAIL.picked[inp.dataset.email] = true; }; inp.onchange = () => { const v = MAIL.emails[inp.dataset.email] || ''; if (v && /@/.test(v)) { S.setPersonEmail(inp.dataset.email, v); MAIL.emailSrc[inp.dataset.email] = 'roster'; } renderMailModal(); }; inp.onclick = (e) => e.stopPropagation(); });
       $$('#mm-body tr[data-pid]').forEach(tr => tr.onclick = (e) => { if (e.target.closest('input')) return; MAIL.preview = tr.dataset.pid; renderMailModal(); });
       const cc = $('#mm-cc'); if (cc) cc.oninput = (e) => { MAIL.cc = e.target.value; };
+      const dlIn = $('#mm-deadline'); if (dlIn) dlIn.onchange = (e) => { const d = new Date(e.target.value); if (isNaN(d)) return; MAIL.deadline = e.target.value; MAIL.edits = {}; MAIL.subject = ''; renderMailModal(); };
       send.textContent = 'Send ' + n + ' nudge' + (n === 1 ? '' : 's'); send.disabled = !authed || !n;
       note.textContent = authed ? (n ? 'Each person gets only their own email.' : 'Tick at least one person with an address.') : 'Sign in to Box to send.';
       wireMailRange();
