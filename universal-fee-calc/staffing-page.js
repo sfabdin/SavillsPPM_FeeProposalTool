@@ -2279,6 +2279,7 @@
   async function openMailModal() {
     if (!mailSnap()) { toast('No Clockify hours loaded yet — pull them in Data Sources first.'); return; }
     const ov = $('#mail-modal'); ov.classList.add('open');
+    _year = null;
     MAIL.tab = 'digest';
     MAIL.to = MAIL.to || (STORE.adminEmails ? STORE.adminEmails().join('; ') : '');
     MAIL.cc = MAIL.cc || (STORE.bookWatcherEmails ? STORE.bookWatcherEmails().join('; ') : '');   // Emily Glatt, Emily Sobel, Jeff Santoro — not the sender
@@ -2286,9 +2287,29 @@
     if (!(state.clockifyUsers || []).length) { try { await pullClockifyNames(); } catch (e) {} renderMailModal(); }
   }
   function closeMailModal() { $('#mail-modal').classList.remove('open'); }
-  function mailCtx() { const s = mailSnap(); const dl = deadlineDate(); let sender = ''; try { const u = STORE.getCurrentUser(); sender = (u && (u.name || u.username)) || ''; } catch (e) {}
+  /* The year behind a nudge: the last twelve months, whatever range the
+     screen shows. Share of entries logged more than a week after the day
+     worked and the average lag come from the lateness pull; months short
+     of the person's usual hours from the compliance rows. Built once per
+     modal open — twelve months of compliance is not free. */
+  let _year = null;
+  function yearStats() {
+    if (_year && _year.nowYm === S.currentYM()) return _year;
+    const nowYm = S.currentYM(); const ms = []; for (let i = 11; i >= 0; i--) ms.push(S.ymAdd(nowYm, -i));
+    let comp = null; try { comp = S.complianceRows(ms, { clockifyUsers: state.clockifyUsers || [] }); } catch (e) { comp = null; }
+    const { latePP } = latenessByPerson(ms);
+    const byPid = {}; ((comp && comp.rows) || []).forEach(r => { byPid[r.person.id] = r; });
+    _year = { nowYm, span: 12, of: (pid) => {
+      const r = byPid[pid], a = latePP[pid];
+      const out = { span: 12, months: r ? r.expectedMonths : 0, shortMonths: r ? r.expectedMonths - r.okMonths : 0, latePct: null, avgLag: null };
+      if (a && a.entries) { out.latePct = Math.max(0, Math.min(100, (1 - a.w7 / a.entries) * 100)); out.avgLag = a.lagW / a.entries; }
+      return (out.months || out.latePct != null) ? out : null;
+    } };
+    return _year;
+  }
+  function mailCtx() { const s = mailSnap(); const dl = deadlineDate(); const yr = yearStats();
     return { nowYm: s.nowYm, expect: s.expect, dueLbl: s.dueLbl, teamLag: s.teamLag, lagOf: s.lagOf, reasonFor: s.reasonFor, lastEntry: (r) => S.lastTimeEntered(r, s.ms), toolUrl: location.origin + location.pathname, pulledAt: s.pulledAt ? new Date(s.pulledAt).toLocaleDateString() : null,
-      deadline: dl, deadlineLbl: deadlineLabel(dl), deadlineShort: deadlineShort(dl), senderName: sender }; }
+      deadline: dl, deadlineLbl: deadlineLabel(dl), deadlineShort: deadlineShort(dl), yearOf: yr.of }; }
   /* Anyone with hours missing in the range can be nudged — the list is
      everyone short, most-short first; the ones more than a month behind are
      ticked by default, the rest are a click away. */

@@ -2710,7 +2710,7 @@
       table,
       '<p style="margin:14px 0 0"><a href="' + escM(CLOCKIFY_URL) + '" style="color:#25273A;font-weight:700">Open Clockify</a>' + (c.toolUrl ? ' · <a href="' + escM(c.toolUrl) + '" style="color:#25273A;font-weight:700">Clockify Reporting in the fee tool</a>' : '') + '</p>'],
       { href: CLOCKIFY_URL, label: 'Open Clockify' },
-      'Sent from the Savills PPM fee tool' + (c.senderName ? ' by ' + c.senderName : '') + '. Hours are as last pulled from Clockify' + (c.pulledAt ? ' on ' + escM(c.pulledAt) : '') + '.');
+      'Sent from the Savills Program & Project Management fee tool. Hours are as last pulled from Clockify' + (c.pulledAt ? ' on ' + escM(c.pulledAt) : '') + '.');
     const text = subject + '. ' + behind.map(r => r.person.name + ': ' + fmtHm(r.behindHrs) + ' h missing').join('; ') + '. ' + CLOCKIFY_URL;
     return { subject, html, text, counts: { people: rows.length, behind: behind.length, missing: totMissing, cost: totCost, noRate } };
   }
@@ -2728,33 +2728,52 @@
     // The current month only counts when it is well under way: past the grace and at least a working week in.
     const curIn = cur && cur !== 'leave' && !cur.early && !cur.joinMonth && c.expect && c.expect.elapsed >= (c.expect.grace || 0) + 5;
     const curEmpty = curIn && cur.h === 0, curUnder = curIn && cur.h > 0 && cur.pct < 0.6;
-    const list = (arr) => arr.map(m => escM(ymLabel(m))).join(arr.length === 2 ? ' and ' : ', ').replace(/, ([^,]*)$/, ' and $1');
-    const parts = [];
-    if (zeroPast.length) parts.push('nothing logged for <b>' + list(zeroPast) + '</b>' + (zeroPast.length === 1 ? ' — the whole month' : ' — whole months'));
+    /* Empty months read as a date span with its working days — "no time
+       entered from Aug 1 to Sep 30, 2026 (43 working days)" — one span per
+       unbroken run of empty months. */
+    const dStr = (y, m, d, withYear) => new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', withYear ? { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' } : { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    const runs = []; zeroPast.forEach(m => { const last = runs[runs.length - 1]; if (last && ymAdd(last[last.length - 1], 1) === m) last.push(m); else runs.push([m]); });
+    const spanOf = (run) => {
+      const [y1, m1] = run[0].split('-').map(Number), [y2, m2] = run[run.length - 1].split('-').map(Number);
+      const lastDay = new Date(Date.UTC(y2, m2, 0)).getUTCDate();
+      const wd = run.reduce((s, m) => { const [y, mm] = m.split('-').map(Number); return s + workingDaysIn(y, mm); }, 0);
+      return 'no time entered from <b>' + dStr(y1, m1, 1, y1 !== y2) + ' to ' + dStr(y2, m2, lastDay, true) + '</b> (' + wd + ' working days)';
+    };
+    const parts = runs.map(spanOf);
     if (underPast.length) parts.push(underPast.map(m => '<b>' + escM(ymLabel(m)) + '</b> at ' + Math.round(row.byMonth[m].pct * 100) + '% of your usual hours').join(', '));
-    if (curEmpty) parts.push('nothing yet for <b>' + escM(ymLabel(c.nowYm)) + '</b>');
+    if (curEmpty) parts.push('nothing yet for <b>' + escM(ymLabel(c.nowYm)) + '</b>' + (c.expect && c.expect.elapsed ? ' (' + c.expect.elapsed + ' working days in)' : ''));
     else if (curUnder) parts.push('<b>' + escM(ymLabel(c.nowYm)) + '</b> running at ' + Math.round(cur.pct * 100) + '% so far');
     const lastEntry = c.lastEntry ? String(c.lastEntry(row) || '') : '';
     const asOf = c.pulledAt ? 'Our Clockify records, last pulled on <b>' + escM(c.pulledAt) + '</b>, show ' : 'Our Clockify records show ';
     const situation = parts.length
       ? asOf + parts.join(parts.length === 2 ? ', and ' : ', ') + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.'
       : asOf + 'you ' + fmtH0(row.behindHrs) + ' hours short of your usual time across the last ' + (row.expectedMonths || 0) + ' months' + (lastEntry ? ', and your ' + escM(lastEntry.replace(/^last entry dated/i, 'last entry is dated')) : '') + '.';
-    /* The deadline is set on the nudge screen (full date and time); the
-       sender is whoever presses Send. Both come in through ctx. */
+    /* The deadline is set on the nudge screen (full date and time). The
+       year's pattern — share of entries logged late, average lag, months
+       short — comes in through ctx.yearOf so the ask carries a track
+       record, not just the current gap. */
     const due = c.deadlineLbl ? String(c.deadlineLbl) : 'end of day Friday';
     const dueShort = c.deadlineShort ? String(c.deadlineShort) : 'Friday';
-    const sender = c.senderName ? String(c.senderName) : '';
+    const yr = c.yearOf ? (c.yearOf(p.id) || null) : null;
+    let pattern = '';
+    if (yr) {
+      const bits = [];
+      if (yr.latePct != null) bits.push('<b>' + Math.round(yr.latePct) + '%</b> of your entries went in more than a week after the day worked' + (yr.avgLag != null ? ', and an entry is logged on average <b>' + (Math.round(yr.avgLag * 10) / 10) + ' days</b> after the work' : ''));
+      if (yr.months) bits.push('you were short of your usual hours in <b>' + yr.shortMonths + ' of ' + yr.months + ' months</b>');
+      if (bits.length) pattern = 'Over the last ' + (yr.span || 12) + ' months, ' + bits.join('; ') + '.';
+    }
     const subject = 'Clockify: please bring your time up to date by ' + dueShort;
     const html = mailShell('Please bring your Clockify time up to date', [
       'Hi ' + escM(first) + ',',
       situation,
+      pattern,
       'Clockify is where we measure staffing, project health and profitability. Time that is not logged reads as work that did not happen, and as hours you were paid for that we cannot account for or bill.',
       'Please bring your entries up to date by <b>' + escM(due) + '</b>. Log every working day to the project you worked on; internal and business-development time goes under the PPM / Macro project.',
       'If something is in the way, planned PTO, a Clockify access problem, or a client commitment that keeps you from logging, tell your manager before the deadline and agree a date by which you will be current.',
-      'Thank you' + (sender ? ',<br>' + escM(sender) : '.')],
+      'Thank you.'].filter(Boolean),
       { href: CLOCKIFY_URL, label: 'Open Clockify' },
-      'Sent from the Savills PPM fee tool' + (sender ? ' by ' + sender : '') + '. Figures are as pulled from Clockify' + (c.pulledAt ? ' on ' + c.pulledAt : '') + '; entries made since then are not reflected.');
-    const text = subject + '. ' + situation.replace(/<[^>]+>/g, '') + ' Please bring your entries up to date by ' + due + '. If something is in the way (planned PTO, a Clockify access problem, a client commitment), tell your manager before the deadline. ' + CLOCKIFY_URL;
+      'Sent from the Savills Program & Project Management fee tool. Figures are as pulled from Clockify' + (c.pulledAt ? ' on ' + c.pulledAt : '') + '; entries made since then are not reflected.');
+    const text = subject + '. ' + situation.replace(/<[^>]+>/g, '') + (pattern ? ' ' + pattern.replace(/<[^>]+>/g, '') : '') + ' Please bring your entries up to date by ' + due + '. If something is in the way (planned PTO, a Clockify access problem, a client commitment), tell your manager before the deadline. ' + CLOCKIFY_URL;
     return { subject, html, text };
   }
 
