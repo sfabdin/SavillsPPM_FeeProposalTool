@@ -191,6 +191,7 @@
     let r = monRow + 1;
     let lastRating = null;
     let firstBody = null, lastBody = null;
+    const shareRows = []; let shareTotal = 0;
     V.rows.forEach(row => {
       const excluded = row.rating > 4;
       if (excluded && !V.showExcluded) return;
@@ -232,6 +233,26 @@
       if (firstBody == null) firstBody = r;
       lastBody = r;
       r++;
+      /* FEE SHARE OUT, its own row under the project: the broker's cut (and
+         any pass-through line ticked "fee share"), negative and red, month
+         by month with a live total. The rating cell stays blank so the
+         rating totals (SUMIF on that column) read the project row only —
+         the shares are summed on their own line below the totals. */
+      const shareBy = {}; let shareTot = 0;
+      V.cols.forEach(c => { const a = linesFor(row, c.key).filter(x => x.line === 'Fee share out').reduce((t, x) => t + x.amount, 0); if (Math.abs(a) > 0.005) { shareBy[c.key] = a; shareTot += a; } });
+      if (Object.keys(shareBy).length) {
+        const RED = 'FFCE181E';
+        ws.getCell(r, 2).value = '   Fee share out · ' + (brokerOf(row) || 'broker') + (row.feeSharePct ? ' · ' + row.feeSharePct + '%' : '');
+        ws.getCell(r, 2).font = { name: 'Calibri', size: 10, italic: true, color: { argb: RED } };
+        ws.getCell(r, 4).value = leaderName(pj); ws.getCell(r, 4).font = { name: 'Calibri', size: 10, color: { argb: STEEL } };
+        V.cols.forEach((c, i) => setMoney(ws.getCell(r, M0 + i), shareBy[c.key] || 0, { dash: true, font: { name: 'Calibri', size: 10, color: { argb: RED } } }));
+        const sc = ws.getCell(r, lastCol);
+        sc.value = { formula: `SUM(${colL(M0)}${r}:${colL(lastCol - 1)}${r})`, result: Math.round(shareTot * 100) / 100 };
+        sc.numFmt = numFmt; sc.alignment = { horizontal: 'right' }; sc.font = { name: 'Calibri', bold: true, color: { argb: RED } };
+        shareRows.push(r); shareTotal += shareTot;
+        lastBody = r;
+        r++;
+      }
     });
 
     // ----- Totals rows: one per rating 1–4, the 1–4 subtotal, the weighted
@@ -279,6 +300,21 @@
       putF(wtRow, M0 + i, f, V.colWt[c.key], NAVY, false);
     });
     putF(wtRow, lastCol, `SUM(${colL(M0)}${wtRow}:${colL(lastCol - 1)}${wtRow})`, V.grandWt, NAVY, true);
+    // ----- Fee share out (all rows above) and the projected total net of it -----
+    if (shareRows.length) {
+      const RED = 'FFCE181E';
+      const shRow = wtRow + 1;
+      ws.getCell(shRow, 1).value = 'Fee share out · all projects';
+      styleRow(shRow, 'FFFBE9EA', RED, true);
+      const shareVal = (key) => V.rows.reduce((t, rw) => t + ((!V.showExcluded && rw.rating > 4) ? 0 : linesFor(rw, key).filter(x => x.line === 'Fee share out').reduce((u, x) => u + x.amount, 0)), 0);
+      V.cols.forEach((c, i) => putF(shRow, M0 + i, shareRows.map(sr => `${colL(M0 + i)}${sr}`).join('+'), shareVal(c.key), RED, false));
+      putF(shRow, lastCol, `SUM(${colL(M0)}${shRow}:${colL(lastCol - 1)}${shRow})`, shareTotal, RED, true);
+      const netRow = shRow + 1;
+      ws.getCell(netRow, 1).value = 'Projected (rated 1–4) net of fee share';
+      styleRow(netRow, NAVY, WHITE, true);
+      V.cols.forEach((c, i) => putF(netRow, M0 + i, `${colL(M0 + i)}${totRow}+${colL(M0 + i)}${shRow}`, V.colTot[c.key] + shareVal(c.key), WHITE, true));
+      putF(netRow, lastCol, `SUM(${colL(M0)}${netRow}:${colL(lastCol - 1)}${netRow})`, V.grandTot + shareTotal, YEL, true);
+    }
 
     // ----- Focus window: the current month and the two before it stay open;
     // every other month is grouped and collapsed — one click on the + above
