@@ -204,10 +204,7 @@
         return '<button class="rc-mo' + (m === M ? ' on' : '') + (lk ? ' locked' : '') + (fl ? ' flagged' : '') + '" data-m="' + m + '" title="' + MONTHS_LONG[m - 1] + (lk ? ' · locked ' + esc(fmtStamp(meta.lockedAt)) : ' · open') + (fl ? ' · ' + fl + ' change' + (fl === 1 ? '' : 's') + ' since lock' : '') + '">' +
           '<span class="mo">' + MONTHS[m - 1] + '</span><span class="st">' + (lk ? '🔒' : (un ? un + ' open' : (m > (YEAR === now.getFullYear() ? now.getMonth() + 1 : 12) ? '' : '✓'))) + '</span>' + (fl ? '<span class="fl">' + fl + '</span>' : '') + '</button>';
       }).join('') + '</div>' +
-      '<div class="rc-actions">' + (locked
-        ? '<span class="pill n"><i></i>Locked ' + esc(fmtStamp(mm.lockedAt)) + (mm.lockedByName ? ' by ' + esc(mm.lockedByName) : '') + '</span> <button class="btn btn-ghost" id="rc-reopen">Reopen ' + MONTHS[M - 1] + '</button>'
-        : '<button class="btn btn-primary" id="rc-lock">Lock ' + MONTHS_LONG[M - 1] + ' ' + YEAR + '</button>') +
-      ' <button class="btn btn-secondary" id="rc-flash">⤓ Flash · ' + MONTHS[M - 1] + ' ' + YEAR + '</button></div></div>';
+      '<div class="rc-actions"><button class="btn btn-secondary" id="rc-flash">⤓ Flash · ' + MONTHS[M - 1] + ' ' + YEAR + '</button></div></div>';
     // ---- flags ----
     if (flags.length) {
       h += '<div class="rc-flags"><div class="rc-flags-h">⚠ ' + flags.length + ' change' + (flags.length === 1 ? '' : 's') + ' to locked month' + (new Set(flags.map(f => f.m)).size === 1 ? '' : 's') + ' since the lock</div>' +
@@ -217,8 +214,24 @@
           '<td>' + (f.m === M ? '' : '<button class="btn btn-ghost small" data-goto="' + f.m + '">Open ' + MONTHS[f.m - 1] + '</button>') + '</td></tr>').join('') +
         '</tbody></table><div class="sub">A locked month does not change here. To accept a change, <b>reopen the month</b>, re-check the statuses, and lock it again. Until then the flash for that month is what was locked.</div></div>';
     }
-    // ---- KPIs ----
+    // ---- the close, in order: tick what is ready → submit the request → give every line a status → lock ----
     const own = rows.filter(r => r.kind === 'earned');
+    const feeRows = own.filter(r => r.lkind === 'fee');
+    const ticked = feeRows.filter(r => rtbOf(r.p, r.ym));
+    const spent = (r) => { const st = r.cell && r.cell.status; return st === 'billed' || st === 'billed-diff' || st === 'writeoff' || (st === 'accrued' && r.cell.billedIn); };
+    const openTicks = ticked.filter(r => !spent(r));
+    const toSubmit = openTicks.filter(r => !rtbOf(r.p, r.ym).submittedAt);
+    const lastSub = ticked.map(r => rtbOf(r.p, r.ym).submittedAt).filter(Boolean).sort().pop();
+    const withStatus = own.filter(r => r.cell && r.cell.status).length;
+    const stage = (n, title, sub, action) => '<div class="stage"><span class="n">' + n + '</span><div class="body"><b>' + title + '</b><div class="sub">' + sub + '</div></div>' + (action || '') + '</div>';
+    h += '<div class="rc-close">' +
+      stage(1, 'Ready to bill', ticked.length + ' of ' + feeRows.length + ' fee line' + (feeRows.length === 1 ? '' : 's') + ' ticked' + (toSubmit.length ? ' · <b>' + toSubmit.length + '</b> not yet submitted' : '') + (lastSub ? ' · last submitted ' + esc(fmtStamp(lastSub)) : ''),
+        '<button class="btn btn-primary" id="rc-submit"' + (toSubmit.length ? '' : ' disabled') + ' title="Writes an invoice-request file for the ticked lines into the invoice-requests folder in Box">' + (toSubmit.length ? 'Submit ' + toSubmit.length + ' tick' + (toSubmit.length === 1 ? '' : 's') : 'Nothing new to submit') + '</button>') +
+      stage(2, 'Status', withStatus + ' of ' + own.length + ' line' + (own.length === 1 ? '' : 's') + ' ' + (withStatus === 1 ? 'has' : 'have') + ' a status' + (unruled(rows) ? ' · <b>' + unruled(rows) + '</b> open' : '')) +
+      stage(3, 'Lock', locked ? 'Locked ' + esc(fmtStamp(mm.lockedAt)) + (mm.lockedByName ? ' by ' + esc(mm.lockedByName) : '') : 'Open · every line\'s figure freezes when you lock',
+        locked ? '<button class="btn btn-ghost" id="rc-reopen">Reopen ' + MONTHS[M - 1] + '</button>' : '<button class="btn btn-primary" id="rc-lock">Lock ' + MONTHS_LONG[M - 1] + ' ' + YEAR + '</button>') +
+      '</div>';
+    // ---- KPIs ----
     const tot = (kind) => own.filter(r => r.lkind === kind).reduce((t, r) => t + r.earned, 0);
     const billedToClient = tot('fee') - tot('pass');          // pass is negative: the vendor cost the client was invoiced
     const ours = tot('fee') + tot('share');                   // the pass-through is a wash; the fee on it is already in fee
@@ -230,21 +243,21 @@
       kpi(money(billedToClient), 'billed to client · ' + MONTHS[M - 1]) + kpi('<span class="teal">' + money(tot('pass')) + '</span>', 'pass-through out · to vendors') + kpi('<span class="red">' + money(tot('share')) + '</span>', 'fee share out · to brokers') +
       kpi('<b>' + money(ours) + '</b>', 'Savills revenue · fee incl. the fee on pass-through, less fee share') +
       kpi(money(billedNow), 'billed this month · incl. accruals settling') + kpi(money(accruedNow), 'accrued this month') + kpi(money(carryOpen), 'earlier accruals still open') +
-      (() => { const rtbN = own.filter(r => r.lkind === 'fee' && !(r.cell && r.cell.status) && rtbOf(r.p, r.ym)).length; return kpi(String(unruled(rows)), 'lines without a status' + (rtbN ? ' · <b>' + rtbN + '</b> marked ready to bill' : '')); })() + '</div>';
+      kpi(String(openTicks.length), 'ready to bill · ticked, not yet billed') + '</div>';
     // ---- filters ----
     h += '<div class="rc-filt"><input type="search" id="rc-q" placeholder="Search client or project" value="' + esc(Q) + '"><select id="rc-leader"><option value="">All revenue leaders</option>' +
       [...new Set(projects().map(leaderName).filter(Boolean))].sort().map(l => '<option value="' + esc(l) + '"' + (l === LEADER ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
       '<span class="sub">' + rows.length + ' line' + (rows.length === 1 ? '' : 's') + (locked ? ' · locked — read only' : '') + '</span></div>';
     // ---- month table ----
-    h += '<div class="panel"><div class="tw"><table class="cb-table rc-table"><thead><tr><th>Client</th><th>Project</th><th>Leader</th><th>Line</th><th class="money">Earned · ' + MONTHS[M - 1] + '</th><th>Status</th><th class="money">Billed amount</th><th>Month</th><th>Note</th></tr></thead><tbody>';
-    if (!rows.length) h += '<tr><td colspan="9" class="sub">Nothing earned in ' + MONTHS_LONG[M - 1] + ' ' + YEAR + (LEADER || Q ? ' for this filter' : '') + '.</td></tr>';
+    h += '<div class="panel"><div class="tw"><table class="cb-table rc-table"><thead><tr><th>Client</th><th>Project</th><th>Leader</th><th>Line</th><th class="c" title="Ready to bill — a deliberate tick per fee line; Submit sends the ticked lines as an invoice request">Ready</th><th class="money">Earned · ' + MONTHS[M - 1] + '</th><th>Status</th><th class="money">Billed amount</th><th>Month</th><th>Note</th></tr></thead><tbody>';
+    if (!rows.length) h += '<tr><td colspan="10" class="sub">Nothing earned in ' + MONTHS_LONG[M - 1] + ' ' + YEAR + (LEADER || Q ? ' for this filter' : '') + '.</td></tr>';
     rows.forEach((r, i) => {
       const c = r.cell || {}; const st = c.status || '';
       const dis = locked ? ' disabled' : '';
       const id = r.p.id;
       if (r.kind === 'carry') {
         const amt = r.cell.billedAmount != null ? r.cell.billedAmount : r.carry;
-        h += '<tr class="rc-carry ln-' + r.lkind + (r.settledHere ? ' settled' : '') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a><div class="sub">accrued in <b>' + esc(ymLabel(r.fromYm)) + '</b>' + (r.cell.billsIn ? ' · expected ' + esc(ymLabel(r.cell.billsIn)) : '') + '</div></td><td>' + esc(r.leader) + '</td><td>' + esc(r.label) + ' <span class="pill y"><i></i>carry-in</span></td>' +
+        h += '<tr class="rc-carry ln-' + r.lkind + (r.settledHere ? ' settled' : '') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a><div class="sub">accrued in <b>' + esc(ymLabel(r.fromYm)) + '</b>' + (r.cell.billsIn ? ' · expected ' + esc(ymLabel(r.cell.billsIn)) : '') + '</div></td><td>' + esc(r.leader) + '</td><td>' + esc(r.label) + ' <span class="pill y"><i></i>carry-in</span></td><td class="c"><span class="sub">—</span></td>' +
           '<td class="money"><span class="sub">' + money(r.carry) + ' accrued</span></td>' +
           '<td><select class="rc-settle" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" data-from="' + esc(r.fromYm) + '"' + dis + '><option value=""' + (r.settledHere ? '' : ' selected') + '>Still accrued</option><option value="billed"' + (r.settledHere ? ' selected' : '') + '>Billed in ' + MONTHS[M - 1] + '</option></select></td>' +
           '<td class="money"><input class="rc-amt" type="number" step="1" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" data-from="' + esc(r.fromYm) + '" data-settle="1" value="' + (r.settledHere ? Math.round(amt) : '') + '"' + (r.settledHere && !locked ? '' : ' disabled') + ' placeholder="' + Math.round(r.carry) + '"></td>' +
@@ -253,8 +266,13 @@
       }
       const needsAmt = st === 'billed-diff', needsMonth = st === 'accrued' || st === 'slipped';
       const target = st === 'accrued' ? (c.billsIn || '') : st === 'slipped' ? (c.earnedIn || '') : '';
-      const rtb = r.lkind === 'fee' && !(st === 'billed' || st === 'billed-diff' || st === 'writeoff') ? rtbOf(r.p, r.ym) : null;
-      h += '<tr class="' + (st ? 'st-' + st : 'st-none') + ' ln-' + r.lkind + (rtb ? ' rtb' : '') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a>' + (c.flagged ? '<div class="sub red">flag on the project</div>' : '') + '</td><td>' + esc(r.leader) + '</td><td>' + esc(r.label) + (rtb ? ' <span class="pill y" title="' + esc(rtbWho(rtb)) + '"><i></i>ready to bill</span>' : '') + '</td>' +
+      const mark = r.lkind === 'fee' ? rtbOf(r.p, r.ym) : null;
+      const billedNow = spent(r);
+      const rtb = mark && !billedNow;
+      const readyCell = r.lkind !== 'fee' ? '<span class="sub">—</span>'
+        : '<input type="checkbox" class="rc-rtb" data-pid="' + esc(id) + '" title="' + esc(mark ? rtbWho(mark) : 'Tick when this month\'s fee can be invoiced') + '"' + (mark ? ' checked' : '') + (locked || billedNow ? ' disabled' : '') + '>'
+          + (mark && mark.submittedAt ? '<div class="sub rtb-sub">submitted ' + esc(fmtStamp(mark.submittedAt)) + '</div>' : (rtb ? '<div class="sub rtb-sub">not submitted</div>' : (billedNow && mark ? '<div class="sub rtb-sub">billed</div>' : '')));
+      h += '<tr class="' + (st ? 'st-' + st : 'st-none') + ' ln-' + r.lkind + (rtb ? ' rtb' : '') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a>' + (c.flagged ? '<div class="sub red">flag on the project</div>' : '') + '</td><td>' + esc(r.leader) + '</td><td>' + esc(r.label) + '</td><td class="c">' + readyCell + '</td>' +
         '<td class="money' + (r.earned < 0 ? ' neg' : '') + '">' + money(r.earned) + '</td>' +
         '<td><select class="rc-status" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '"' + dis + '><option value="">— status —</option>' + STATUSES.map(s => '<option value="' + s.id + '"' + (st === s.id ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select></td>' +
         '<td class="money"><input class="rc-amt" type="number" step="1" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" value="' + (needsAmt && c.amount != null ? Math.round(c.amount) : '') + '"' + (needsAmt && !locked ? '' : ' disabled') + ' placeholder="' + Math.round(r.earned) + '"></td>' +
@@ -552,7 +570,9 @@
     const lockBtn = $('#rc-lock', host);
     if (lockBtn) lockBtn.addEventListener('click', () => {
       const open = unruled(monthRows(YEAR, M));
-      const msg = 'Lock ' + MONTHS_LONG[M - 1] + ' ' + YEAR + '?\n\nEvery line\'s figure is frozen as it stands now. Nothing in this month can be changed here afterwards; a project edit that moves a locked figure shows up red at the top of this page until you reopen the month.' + (open ? '\n\n' + open + ' line' + (open === 1 ? ' has' : 's have') + ' no status yet.' : '');
+      const fee = monthRows(YEAR, M).filter(r => r.kind === 'earned' && r.lkind === 'fee');
+      const unticked = fee.filter(r => !rtbOf(r.p, r.ym) && !(r.cell && r.cell.status)).length;
+      const msg = 'Lock ' + MONTHS_LONG[M - 1] + ' ' + YEAR + '?\n\nEvery line\'s figure is frozen as it stands now. Nothing in this month can be changed here afterwards; a project edit that moves a locked figure shows up red at the top of this page until you reopen the month.' + (open ? '\n\n' + open + ' line' + (open === 1 ? ' has' : 's have') + ' no status yet.' : '') + (unticked ? '\n' + unticked + ' fee line' + (unticked === 1 ? ' was' : 's were') + ' never ticked ready to bill.' : '');
       if (!confirm(msg)) return;
       if (!(CATALOG && CATALOG.hydrated)) { toast('The rate card has not loaded yet — the snapshot would be wrong. Try again in a moment.'); return; }
       _lines = null;   // price every line fresh for the snapshot
@@ -566,7 +586,12 @@
       render();
     });
     $('#rc-flash', host).addEventListener('click', () => exportFlash().catch(e => toast('Export failed: ' + (e.message || e))));
+    const sub = $('#rc-submit', host); if (sub) sub.addEventListener('click', () => submitTicks().catch(e => toast('Not submitted: ' + (e.message || e))));
     if (locked) return;
+    $$('.rc-rtb', host).forEach(cb => cb.addEventListener('change', () => {
+      try { STORE.setReadyToBill(cb.dataset.pid, ym(YEAR, M), cb.checked); _lines = null; } catch (e) { toast(e.message); }
+      const y = window.scrollY; render(); window.scrollTo(0, y);
+    }));
     $$('.rc-status', host).forEach(sel => sel.addEventListener('change', () => {
       const pid = sel.dataset.pid, line = sel.dataset.line, key = ym(YEAR, M);
       const st = sel.value || null;
@@ -601,6 +626,28 @@
         try { STORE.setReconNote(YEAR, el.dataset.pid, el.dataset.line, el.dataset.ym, v); flush(); } catch (e) { toast(e.message); }
       });
     });
+  }
+
+  /* ---------- submit the ticks: one invoice-request file per submission ----------
+     The ticked, unbilled, not-yet-submitted fee lines of the month, with the
+     payer details from the intake, written to the invoice-requests folder in
+     Box (a download when Box is off). The ticks are stamped submitted only
+     once the file is safely there. */
+  async function submitTicks() {
+    const req = STORE.buildInvoiceRequest(YEAR, M, { catalog: CATALOG, onlyNew: true });
+    const n = req.lines.length;
+    if (!n) { toast('Nothing new to submit for ' + MONTHS_LONG[M - 1] + ' — tick the fee lines that can be invoiced first.'); return; }
+    const inc = req.counts.incomplete;
+    const where = Box && Box.enabled && Box.writeInvoiceRequest ? 'A file goes to the invoice-requests folder in Box.' : 'Box is off here, so the file downloads instead.';
+    if (!confirm('Submit ' + n + ' ticked line' + (n === 1 ? '' : 's') + ' for ' + MONTHS_LONG[M - 1] + ' ' + YEAR + ' (' + money(req.counts.amount) + ') as an invoice request?\n\n' + where + (inc ? '\n\n' + inc + ' line' + (inc === 1 ? ' is' : 's are') + ' missing payer details from the intake — ' + (inc === 1 ? 'it goes' : 'they go') + ' in flagged.' : ''))) return;
+    let where2 = '';
+    if (Box && Box.enabled && Box.writeInvoiceRequest) { const r = await Box.writeInvoiceRequest(req); where2 = 'Box › ' + r.folder + ' › ' + r.name; }
+    else { const blob = new Blob([JSON.stringify(req, null, 2)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = req.id + '.json'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); where2 = 'downloaded ' + req.id + '.json'; }
+    const stamped = STORE.markReadyToBillSubmitted(req);
+    _lines = null;
+    try { STORE.logSystem && STORE.logSystem('invoice-request', { ym: req.month, lines: n, amount: req.counts.amount, id: req.id }); } catch (e) {}
+    toast(stamped + ' line' + (stamped === 1 ? '' : 's') + ' submitted · ' + where2, 'ok');
+    const y = window.scrollY; render(); window.scrollTo(0, y);
   }
 
   /* ---------- flash export ---------- */
@@ -652,7 +699,16 @@
       const x = ws.addRow([cl]);
       [6, 8, 9, 10, 11].forEach(i => { const L = String.fromCharCode(64 + i); x.getCell(i).value = { formula: `SUMIFS(${L}${r0}:${L}${r1},$A$${r0}:$A$${r1},A${x.number})` }; x.getCell(i).numFmt = fmt; });
     });
-    // ---- Sheet 2: the year, billed and accrued lanes ----
+    // ---- Sheet 2: ready to bill — the invoice-request list for the month ----
+    const req = STORE.buildInvoiceRequest(YEAR, M, { catalog: CATALOG });
+    const rb = wb.addWorksheet('Ready to bill', { views: [{ state: 'frozen', ySplit: 3 }] });
+    rb.mergeCells('A1:S1'); rb.getCell('A1').value = (req.lines.length ? req.lines.length + ' fee line' + (req.lines.length === 1 ? '' : 's') + ' ticked ready to bill in ' + MONTHS_LONG[M - 1] + ' ' + YEAR + ' and not yet billed · ' + money(req.counts.amount) : 'No fee lines ticked ready to bill in ' + MONTHS_LONG[M - 1] + ' ' + YEAR + ' that are not already billed.') + (req.counts.incomplete ? ' · ' + req.counts.incomplete + ' missing payer details' : ''); rb.getCell('A1').font = { name: 'Calibri', bold: true, size: 13, color: { argb: NAVY } };
+    rb.addRow([]);
+    head(rb, ['Client', 'Project', 'Salesforce ID', 'Revenue leader', 'Earned month', 'Amount', 'Status', 'Payer entity', 'Payer address', 'Payer email', 'Payer terms', 'Copied on invoices', 'Payment schedule', 'Fee basis', 'Ready · by', 'Ready · on', 'Submitted on', 'Missing details', 'Note']);
+    req.lines.forEach(l => { const x = rb.addRow([l.client, l.project, l.salesforceId, l.leader, ymLabel(l.earnedMonth), l.amount, statusLabel(l.status) || 'no status', l.payer.payerEntity, l.payer.payerAddress, l.payer.payerEmail, l.payer.payerTerms, l.payer.invoiceCc, l.payer.paymentSchedule, l.feeBasis === 'nte' ? 'Not-to-exceed · timecards' : 'Fixed fee', l.readyBy, l.readyAt ? fmtStamp(l.readyAt) : '', l.submittedAt ? fmtStamp(l.submittedAt) : '', l.missing.join(', '), l.note]); x.getCell(6).numFmt = fmt; if (l.missing.length) x.getCell(18).font = { name: 'Calibri', color: { argb: RED } }; });
+    if (req.lines.length) { const t = rb.addRow(['TOTAL', '', '', '', '', { formula: `SUM(F4:F${3 + req.lines.length})` }]); t.getCell(6).numFmt = fmt; t.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; }); }
+    rb.columns = [{ width: 24 }, { width: 40 }, { width: 14 }, { width: 20 }, { width: 12 }, { width: 14 }, { width: 18 }, { width: 26 }, { width: 34 }, { width: 24 }, { width: 12 }, { width: 30 }, { width: 24 }, { width: 20 }, { width: 18 }, { width: 14 }, { width: 14 }, { width: 34 }, { width: 40 }];
+    // ---- Sheet 3: the year, billed and accrued lanes ----
     const L = lanes(YEAR);
     const ys = wb.addWorksheet(YEAR + ' by month', { views: [{ state: 'frozen', ySplit: 3, xSplit: 1 }] });
     ys.mergeCells('A1:N1'); ys.getCell('A1').value = YEAR + ' — billed and accrued by month, as reconciled'; ys.getCell('A1').font = { name: 'Calibri', bold: true, size: 14, color: { argb: NAVY } };
@@ -663,7 +719,7 @@
     const lane = (label, o) => { const r = ys.addRow([label, ...MONTHS.map((_, i) => o[i + 1] || null), null]); for (let c = 2; c <= 13; c++) r.getCell(c).numFmt = fmt; r.getCell(14).value = { formula: `SUM(B${r.number}:M${r.number})` }; r.getCell(14).numFmt = fmt; r.getCell(1).font = { name: 'Calibri', bold: true, color: { argb: NAVY } }; return r; };
     lane('Savills revenue · fee less fee share', L.earned); lane('Billed', L.billed); lane('Accrued (net)', L.accrued); lane('Fee share out', L.share); lane('Pass-through out · to vendors', L.pass);
     ys.columns = [{ width: 30 }, ...MONTHS.map(() => ({ width: 12 })), { width: 14 }];
-    // ---- Sheet 3: flags ----
+    // ---- Sheet 4: flags ----
     const flags = lockFlags(YEAR);
     const fs = wb.addWorksheet('Changes since lock');
     fs.mergeCells('A1:H1'); fs.getCell('A1').value = flags.length ? flags.length + ' change(s) to locked months since they were locked' : 'No changes to locked months.'; fs.getCell('A1').font = { name: 'Calibri', bold: true, size: 13, color: { argb: flags.length ? RED : 'FF1F8A5B' } };

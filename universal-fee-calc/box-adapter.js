@@ -1734,22 +1734,45 @@
   const readOutbox = () => { try { return JSON.parse(localStorage.getItem(NOTIFY_OUTBOX_KEY) || '[]') || []; } catch (e) { return []; } };
   const writeOutbox = (q) => { try { localStorage.setItem(NOTIFY_OUTBOX_KEY, JSON.stringify(q.slice(-50))); } catch (e) {} };
   const cleanEmails = (v) => [].concat(v || []).map(s => String(s || '').trim().toLowerCase()).filter(s => /^[^\s@]+@[^\s@]+$/.test(s));
-  async function resolveNotifyFolderId() {
-    if (_notifyFolderId) return _notifyFolderId;
-    try { const c = localStorage.getItem(NOTIFY_FOLDER_KEY); if (c) return (_notifyFolderId = c); } catch (e) {}
+  /** A named subfolder of the shared folder — found, else created; the id
+      is remembered per browser. The notifications folder and the
+      invoice-requests folder both come through here. */
+  const _subfolderIds = {};
+  async function resolveSubfolderId(name, cacheKey) {
+    if (_subfolderIds[name]) return _subfolderIds[name];
+    try { const c = localStorage.getItem(cacheKey); if (c) return (_subfolderIds[name] = c); } catch (e) {}
     try {
       const items = await rootItems(true);
-      const hit = items.find(e => e.type === 'folder' && String(e.name || '').toLowerCase() === NOTIFY_FOLDER);
-      if (hit) { _notifyFolderId = hit.id; try { localStorage.setItem(NOTIFY_FOLDER_KEY, hit.id); } catch (e) {} return hit.id; }
+      const hit = items.find(e => e.type === 'folder' && String(e.name || '').toLowerCase() === name);
+      if (hit) { _subfolderIds[name] = hit.id; try { localStorage.setItem(cacheKey, hit.id); } catch (e) {} return hit.id; }
     } catch (e) { /* fall through to create */ }
-    const mk = await boxFetch('/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: NOTIFY_FOLDER, parent: { id: BOX_CONFIG.folderId } }) });
+    const mk = await boxFetch('/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, parent: { id: BOX_CONFIG.folderId } }) });
     let id = null;
     if (mk.status === 409) { try { const j = await mk.json(); const c = j.context_info && j.context_info.conflicts; id = c && ((Array.isArray(c) ? c[0] : c) || {}).id; } catch (e) {} }
     else if (mk.ok) { try { const j = await mk.json(); id = j.id; } catch (e) {} }
-    if (!id) throw new Error('could not create the notifications folder: HTTP ' + mk.status);
-    _notifyFolderId = id; try { localStorage.setItem(NOTIFY_FOLDER_KEY, id); } catch (e) {}
+    if (!id) throw new Error('could not create the ' + name + ' folder: HTTP ' + mk.status);
+    _subfolderIds[name] = id; try { localStorage.setItem(cacheKey, id); } catch (e) {}
     return id;
   }
+  async function resolveNotifyFolderId() { const id = await resolveSubfolderId(NOTIFY_FOLDER, NOTIFY_FOLDER_KEY); _notifyFolderId = id; return id; }
+  /* INVOICE REQUESTS — Financial Tracking's "Submit ticks" writes one JSON
+     file per submission into the invoice-requests subfolder:
+     invoice-request-<YYYY-MM>-<stamp>.json, the shape UFC_Store.buildInvoiceRequest
+     returns. Nothing reads it yet; the Dynamics 365 flow will. Written
+     straight through (no outbox): the caller stamps the ticks submitted
+     only once this resolves, so a failed upload leaves them unsubmitted. */
+  const INVOICE_FOLDER = 'invoice-requests';
+  const INVOICE_FOLDER_KEY = 'ufc_invoice_folder_id';
+  Box.writeInvoiceRequest = async function (req) {
+    if (!BOX_CONFIG.enabled) throw new Error('Box is off');
+    if (!req || !req.id) throw new Error('nothing to submit');
+    if (!getToken()) throw new Error('not signed in to Box');
+    const folder = await resolveSubfolderId(INVOICE_FOLDER, INVOICE_FOLDER_KEY);
+    const name = req.id + '.json';
+    const res = await uploadNewFile(folder, name, JSON.stringify(req, null, 2));
+    if (!(res.ok || res.status === 409)) throw new Error('Box refused the file: HTTP ' + res.status);
+    return { name, folder: INVOICE_FOLDER, folderId: folder };
+  };
   async function uploadNewFile(folderId, name, body) {
     const token = await ensureToken(); if (!token) throw new Error('not authenticated');
     const form = new FormData();
