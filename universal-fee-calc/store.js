@@ -1733,6 +1733,60 @@
       return c;
     });
   }
+  /* ---------- FINANCIAL TRACKING · the annual view's assignment ----------
+     One line-month is given three months — EARNED (the work), ACCRUED (the
+     revenue recognised), BILLED (the invoice) — and an amount. It is written
+     into the same cell the monthly view reads, as the status those months
+     imply, so lanes, carry-ins, the flash and the locks all keep working:
+       e = a = b, planned amount      billed as planned
+       e = a = b, another amount      billed · different amount
+       b or a after e                 accrued; bills in b (settled once b has come)
+       e moved later                  slipped to e (a and b follow it)
+       written off                    not billing
+     Fee shares follow the fee line's months — Finance confirmed they always
+     land in the same month — so a share line is assigned alongside, never
+     on its own clock. */
+  function setReconAssignment(year, pid, line, ym, a) {
+    assertReconAdmin();
+    if (isReconLocked(ym)) throw new Error(ym + ' is locked. Reopen the month to change it.');
+    const x = a || {};
+    const e = String(x.earnedIn || ym), acc = String(x.accruedIn || e), b = String(x.billedIn || acc);
+    if (acc < e) throw new Error('Accrued before earned: the revenue cannot be recognised before the work.');
+    if (b < acc) throw new Error('Billed before accrued: the invoice cannot come before the revenue is recognised.');
+    const planned = x.earned != null ? Number(x.earned) : null;
+    const amount = (x.amount != null && x.amount !== '') ? Number(x.amount) : null;
+    const differs = amount != null && planned != null && Math.abs(amount - planned) > 0.5;
+    let status; const extra = {}; if (planned != null) extra.earned = planned;
+    if (x.writeoff) status = 'writeoff';
+    else if (e !== ym) { status = 'slipped'; extra.earnedIn = e; }
+    else if (b !== ym || acc !== ym) { status = 'accrued'; extra.billsIn = b; if (differs) extra.amount = amount; }
+    else if (differs) { status = 'billed-diff'; extra.amount = amount; }
+    else status = 'billed';
+    setReconStatus(year, pid, line, ym, status, extra);
+    const d = new Date(); const nowYm = reconYmOf(d.getFullYear(), d.getMonth() + 1);
+    const key = reconCellKey(pid, line, ym); const who = reconWho();
+    reconEdit(year, y => {
+      const c = y.cells[key]; if (!c) return;
+      c.assigned = { earnedIn: e, accruedIn: acc, billedIn: b, at: new Date().toISOString(), by: who.by, byName: who.byName };
+      if (status === 'accrued') {
+        c.accruedIn = acc;
+        if (b <= nowYm) { c.billedIn = b; if (differs) c.billedAmount = amount; else delete c.billedAmount; } else { delete c.billedIn; delete c.billedAmount; }
+      } else { delete c.accruedIn; }
+      if (x.note != null) { const t = String(x.note).trim(); if (t) c.note = t; else delete c.note; }
+    });
+    return reconCell(year, pid, line, ym);
+  }
+  /** The three months (and amount) a line-month carries, for the annual pop-up. */
+  function reconAssignment(year, pid, line, ym, earned) {
+    const c = reconCell(year, pid, line, ym) || {};
+    const st = c.status || '';
+    const e = st === 'slipped' ? (c.earnedIn || ym) : ym;
+    const acc = st === 'accrued' ? (c.accruedIn || (c.assigned && c.assigned.accruedIn) || e) : e;
+    const b = st === 'accrued' ? (c.billedIn || c.billsIn || acc) : e;
+    const amount = c.amount != null ? c.amount : (c.billedAmount != null ? c.billedAmount : (earned != null ? earned : null));
+    return { status: st, set: !!st, earnedIn: e, accruedIn: acc, billedIn: b, amount, planned: earned, writeoff: st === 'writeoff', note: c.note || '',
+      settled: st === 'accrued' ? !!c.billedIn : st === 'billed' || st === 'billed-diff' };
+  }
   /** Lock a month. `snapshot` = { "pid|line": amount } of every live line in
       that month, taken by the caller (it needs the rate card). */
   function lockReconMonth(year, month, snapshot) {
@@ -4012,7 +4066,7 @@
     exportDb, importDb, downloadJson,
     FLASH_LABELS, captureSnapshot, getSnapshots, 
     RECON_LINES, RECON_STATUSES, reconLinesFor, reconLineInfo, reconYears, reconYear, reconMonth, isReconLocked, reconCell,
-    setReconStatus, settleReconAccrual, setReconNote, lockReconMonth, reopenReconMonth, reconProjectFlags, invalidateRevenueCache,
+    setReconStatus, settleReconAccrual, setReconNote, setReconAssignment, reconAssignment, lockReconMonth, reopenReconMonth, reconProjectFlags, invalidateRevenueCache,
     projectFinancials, getTierRateFromCatalog, monthlySeries,
     computeFinancials, restampFinancials, passThroughMonths, passThroughLines, ptLineDistribution, ptActive, clientBillOf,
     isChangeOrder, isApprovedChangeOrder, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,
