@@ -319,7 +319,7 @@
     const extras = (c.share ? ' · fee share ' + money(c.share) : '') + (c.pass ? ' · pass-through ' + money(c.pass) : '') + (c.outStatus && !st ? ' · a share / pass-through line has a status' : '');
     return '<td class="ra-cell ' + cls + (lk ? ' lk' : '') + '"><button type="button" class="ra-btn" data-pid="' + esc(row.p.id) + '" data-m="' + m + '" title="' + esc(title + extras + (lk ? ' · locked' : '')) + '">' +
       '<span class="amt' + (shown < 0 ? ' neg' : '') + '">' + (Math.abs(shown) > 0.5 ? money(shown) : '·') + '</span>' +
-      (badge ? '<span class="bd">' + esc(badge) + '</span>' : '') + (c.share ? '<i class="sh" aria-hidden="true"></i>' : '') + '</button></td>';
+      (badge ? '<span class="bd">' + esc(badge) + '</span>' : '') + (c.share ? '<i class="sh" aria-hidden="true"></i>' : '') + (c.pass ? '<i class="pt" aria-hidden="true"></i>' : '') + '</button></td>';
   }
   /** Where each fee line-month sits on each basis, with its amount:
       { pid → { earned:{m:amt}, accrued:{m:amt}, billed:{m:amt} } } for the year. */
@@ -394,7 +394,7 @@
     const feeLane = {}; for (let m = 1; m <= 12; m++) feeLane[m] = rows.reduce((t, r) => t + ((r.months[m] || {}).fee || 0), 0);
     h += '</tbody><tfoot>' + laneRow('Fee billed to client', feeLane) + laneRow('Fee share out · in the month paid', L.share, 'lane-share') + laneRow('Savills revenue · earned', L.earned, 'lane-rev') + laneRow('Billed', L.billed, 'lane-billed') + laneRow('Accrued (net)', L.accrued, 'lane-accrued') + laneRow('Pass-through out · in the month paid', L.pass, 'lane-pass') + '</tfoot></table></div>' +
       (BASIS === 'earned' ? '' : '<div class="sub" style="margin-top:8px">On the ' + BASIS + ' basis the grid is read-only; switch to Earned to assign months. Hover a number for the earned month it came from.</div>') +
-      '<div class="legend"><span><i class="k st-none"></i>planned</span><span><i class="k st-due"></i>past or current, no months assigned</span><span><i class="k st-billed"></i>✓ billed as planned</span><span><i class="k st-billed-diff"></i>≠ billed a different amount</span><span><i class="k st-accrued"></i>A→ accrued, bills later · B billed</span><span><i class="k st-slipped"></i>→ slipped to a later month</span><span><i class="k st-writeoff"></i>✕ written off</span><span><i class="sh"></i>has a fee share</span><span>🔒 locked month</span></div></div>';
+      '<div class="legend"><span><i class="k st-none"></i>planned</span><span><i class="k st-due"></i>past or current, no months assigned</span><span><i class="k st-billed"></i>✓ billed as planned</span><span><i class="k st-billed-diff"></i>≠ billed a different amount</span><span><i class="k st-accrued"></i>A→ accrued, bills later · B billed</span><span><i class="k st-slipped"></i>→ slipped to a later month</span><span><i class="k st-writeoff"></i>✕ written off</span><span><i class="sh"></i>has a fee share</span><span><i class="pt"></i>has a pass-through</span><span>🔒 locked month</span></div></div>';
     return h;
   }
   function wireAnnual(host) {

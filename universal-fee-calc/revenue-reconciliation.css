@@ -74,6 +74,7 @@
 .ra-btn .amt.neg { color: var(--sav-red); }
 .ra-btn .bd { font-family: var(--font-display); font-weight: 800; font-size: 9.5px; letter-spacing: .04em; color: var(--sav-steel); line-height: 1; }
 .ra-btn .sh { position: absolute; left: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--sav-red); opacity: .8; }
+.ra-btn .pt { position: absolute; left: 4px; bottom: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--sav-teal, #238291); opacity: .85; }
 .ra-cell.st-none .ra-btn { color: #4f5668; }
 .ra-cell.st-due .ra-btn { background: #fdf0d8; }
 .ra-cell.st-billed .ra-btn { background: #eaf6ee; } .ra-cell.st-billed .bd { color: #1f7a44; }
@@ -91,6 +92,7 @@
 .legend i.k { display: inline-block; width: 14px; height: 12px; vertical-align: -2px; margin-right: 4px; border: 1px solid rgba(37,39,58,.12); }
 .legend i.k.st-none { background: #fff; } .legend i.k.st-due { background: #fdf0d8; } .legend i.k.st-billed { background: #eaf6ee; } .legend i.k.st-billed-diff { background: #fff3cd; } .legend i.k.st-accrued { background: #e6f0f2; } .legend i.k.st-slipped { background: #fde2e2; } .legend i.k.st-writeoff { background: #ececec; }
 .legend i.sh { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--sav-red); margin-right: 5px; vertical-align: 1px; }
+.legend i.pt { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--sav-teal, #238291); margin-right: 5px; vertical-align: 1px; }
 /* ---- the assignment pop-up ---- */
 .ra-ov { position: fixed; inset: 0; background: rgba(37,39,58,.45); z-index: 200; display: none; align-items: center; justify-content: center; padding: 20px; }
 .ra-ov.open { display: flex; }
