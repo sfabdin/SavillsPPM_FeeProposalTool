@@ -33,6 +33,13 @@
   const ymLabel = (s) => { const [y, m] = String(s).split('-').map(Number); return MONTHS[m - 1] + ' ' + y; };
   const now = new Date();
   let YEAR = now.getFullYear(), M = now.getMonth() + 1, LEADER = '', Q = '';
+  const NOW_KEY = ym(now.getFullYear(), now.getMonth() + 1);
+  /* Two views on one book. ANNUAL is the Revenue Projections shape — every
+     project, twelve months — where a tap on a number assigns its earned,
+     accrued and billed months. MONTHLY is one month, every line, with the
+     status, the carry-ins and the lock. Remembered per browser. */
+  const VIEW_KEY = 'ufc_fin_view_v1';
+  let VIEW = 'annual'; try { VIEW = localStorage.getItem(VIEW_KEY) === 'monthly' ? 'monthly' : 'annual'; } catch (e) {}
   const STATUSES = STORE.RECON_STATUSES;
   const KIND_ORDER = { fee: 0, pass: 1, share: 2 };
   /** Label + kind of a line id on a project (fee, share, pt:<id>). */
@@ -126,7 +133,9 @@
           if (!st || st === 'billed') billed[m] += v;
           else if (st === 'billed-diff') billed[m] += (c.amount != null ? c.amount : v);
           else if (st === 'accrued') {
-            accrued[m] += (c.amount != null ? c.amount : v);
+            // the accrual sits in its own accrued month when the annual view set one, else here
+            let am = m; if (c.accruedIn && c.accruedIn.startsWith(String(y))) { const [, a2] = c.accruedIn.split('-').map(Number); if (a2) am = a2; }
+            accrued[am] += (c.amount != null ? c.amount : v);
             if (c.billedIn) { const [, bm] = c.billedIn.split('-').map(Number); if (c.billedIn.startsWith(String(y)) && bm) { billed[bm] += (c.billedAmount != null ? c.billedAmount : (c.amount != null ? c.amount : v)); accrued[bm] -= (c.amount != null ? c.amount : v); } }
           }
           // slipped / writeoff: nothing billed or accrued in this month
@@ -164,7 +173,8 @@
     const rows = monthRows(YEAR, M);
     const mm = STORE.reconMonth(YEAR, M);
     const locked = !!(mm && mm.lockedAt);
-    let h = '';
+    let h = viewToggle();
+    if (VIEW === 'annual') { h += annualHtml(); host.innerHTML = h; wireAnnual(host); return; }
     // ---- header bar ----
     h += '<div class="rc-bar"><div class="rc-year"><label for="rc-year">Year</label><select id="rc-year">' + years.map(y => '<option value="' + y + '"' + (y === YEAR ? ' selected' : '') + '>' + y + '</option>').join('') + '</select></div>' +
       '<div class="rc-strip">' + Array.from({ length: 12 }, (_, i) => i + 1).map(m => {
@@ -242,6 +252,151 @@
     wire(host, locked);
   }
   function kpi(v, s) { return '<div class="kpi"><div class="v">' + v + '</div><div class="s">' + s + '</div></div>'; }
+
+  /* ============================================================
+     ANNUAL VIEW
+     ============================================================ */
+  function viewToggle() {
+    return '<div class="rc-view" role="tablist">' +
+      '<button role="tab" data-view="annual" class="' + (VIEW === 'annual' ? 'on' : '') + '"><b>Annual</b><small>Every project, twelve months. Tap a number to assign its earned, accrued and billed months.</small></button>' +
+      '<button role="tab" data-view="monthly" class="' + (VIEW === 'monthly' ? 'on' : '') + '"><b>Monthly</b><small>One month, every line: status, carry-ins, the flash and the lock.</small></button></div>';
+  }
+  const isLocked = (y, m) => { const meta = STORE.reconMonth(y, m); return !!(meta && meta.lockedAt); };
+  /** One row per project with anything in the year: per month the fee line,
+      the out lines (share, pass-through) and the fee line's cell. */
+  function annualRows(y) {
+    const out = [];
+    linesAll().forEach(({ p, lines }) => {
+      if (!passes(p)) return;
+      const months = {}; let any = false;
+      for (let m = 1; m <= 12; m++) {
+        const key = ym(y, m);
+        const fee = (lines.fee || {})[key] || 0;
+        const outs = (lines.out || []).map(L => ({ L, v: (L.byMonth || {})[key] || 0 })).filter(x => Math.abs(x.v) > 0.005);
+        const feeCell = STORE.reconCell(y, p.id, 'fee', key);
+        const outStatus = outs.some(x => { const c = STORE.reconCell(y, p.id, x.L.id, key); return c && c.status; });
+        if (Math.abs(fee) > 0.005 || outs.length || (feeCell && feeCell.status) || outStatus) {
+          any = true;
+          months[m] = { key, fee, outs, feeCell: feeCell || null, outStatus,
+            share: outs.filter(x => x.L.kind === 'share').reduce((t, x) => t + x.v, 0), pass: outs.filter(x => x.L.kind === 'pass').reduce((t, x) => t + x.v, 0) };
+        }
+      }
+      if (any) out.push({ p, pj: p.project || {}, leader: leaderName(p), months });
+    });
+    return out.sort((a, b) => (a.pj.client || '').localeCompare(b.pj.client || '') || (a.pj.name || '').localeCompare(b.pj.name || ''));
+  }
+  const moShort = (k) => { if (!k) return ''; const [, m] = String(k).split('-').map(Number); return MONTHS[m - 1] || k; };
+  function cellHtml(row, m, y) {
+    const c = row.months[m]; const key = ym(y, m); const lk = isLocked(y, m);
+    if (!c) return '<td class="ra-cell empty' + (lk ? ' lk' : '') + '">·</td>';
+    const fc = c.feeCell || {}; const st = fc.status || '';
+    const due = key <= NOW_KEY;
+    let cls = st ? 'st-' + st : (due ? 'st-due' : 'st-none'), badge = '', title = '';
+    if (st === 'billed') { badge = '✓'; title = 'Billed as planned'; }
+    else if (st === 'billed-diff') { badge = '≠'; title = 'Billed ' + money(fc.amount) + ' against ' + money(c.fee) + ' planned'; }
+    else if (st === 'accrued') { const b = fc.billedIn || fc.billsIn; badge = (fc.billedIn ? 'B ' : 'A→') + moShort(b); title = 'Accrued' + (fc.accruedIn ? ' in ' + moShort(fc.accruedIn) : '') + (fc.billedIn ? ', billed ' + moShort(fc.billedIn) : b ? ', bills in ' + moShort(b) : ''); }
+    else if (st === 'slipped') { badge = '→' + moShort(fc.earnedIn); title = 'Slipped: earned in ' + moShort(fc.earnedIn); }
+    else if (st === 'writeoff') { badge = '✕'; title = 'Written off'; }
+    else title = due ? 'No months assigned yet' : 'Planned';
+    const shown = (st === 'billed-diff' && fc.amount != null) ? fc.amount : c.fee;
+    const extras = (c.share ? ' · fee share ' + money(c.share) : '') + (c.pass ? ' · pass-through ' + money(c.pass) : '') + (c.outStatus && !st ? ' · a share / pass-through line has a status' : '');
+    return '<td class="ra-cell ' + cls + (lk ? ' lk' : '') + '"><button type="button" class="ra-btn" data-pid="' + esc(row.p.id) + '" data-m="' + m + '" title="' + esc(title + extras + (lk ? ' · locked' : '')) + '">' +
+      '<span class="amt' + (shown < 0 ? ' neg' : '') + '">' + (Math.abs(shown) > 0.5 ? money(shown) : '·') + '</span>' +
+      (badge ? '<span class="bd">' + esc(badge) + '</span>' : '') + (c.share ? '<i class="sh" aria-hidden="true"></i>' : '') + '</button></td>';
+  }
+  function annualHtml() {
+    const years = yearsAvailable();
+    const rows = annualRows(YEAR);
+    const L = lanes(YEAR);
+    const sum = (lane) => Object.values(lane).reduce((a, b) => a + b, 0);
+    let cells = 0, assigned = 0, due = 0;
+    rows.forEach(r => Object.keys(r.months).forEach(m => { const c = r.months[m]; if (Math.abs(c.fee) <= 0.5) return; cells++; if (c.feeCell && c.feeCell.status) assigned++; else if (c.key <= NOW_KEY) due++; }));
+    const feeTot = rows.reduce((t, r) => t + Object.values(r.months).reduce((u, c) => u + c.fee, 0), 0);
+    let h = '<div class="rc-bar"><div class="rc-year"><label for="ra-year">Year</label><select id="ra-year">' + years.map(y => '<option value="' + y + '"' + (y === YEAR ? ' selected' : '') + '>' + y + '</option>').join('') + '</select></div>' +
+      '<div class="rc-filt" style="margin:0;flex:1"><input type="search" id="ra-q" placeholder="Search client or project" value="' + esc(Q) + '"><select id="ra-leader"><option value="">All revenue leaders</option>' +
+      [...new Set(projects().map(leaderName).filter(Boolean))].sort().map(l => '<option value="' + esc(l) + '"' + (l === LEADER ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
+      '<span class="sub">' + rows.length + ' project' + (rows.length === 1 ? '' : 's') + ' · ' + assigned + ' of ' + cells + ' fee months assigned' + (due ? ' · <b class="red">' + due + ' past or current, not yet</b>' : '') + '</span></div></div>';
+    h += '<div class="kpis rc-kpis">' +
+      kpi(money(feeTot), 'fee billed to client · ' + YEAR) + kpi('<span class="red">' + money(sum(L.share)) + '</span>', 'fee share out · to brokers') + kpi('<b>' + money(sum(L.earned)) + '</b>', 'Savills revenue · fee less fee share') +
+      kpi(money(sum(L.billed)), 'billed · incl. accruals settling') + kpi(money(sum(L.accrued)), 'accrued · still open at year end') + kpi(String(due), 'fee months due a decision') + '</div>';
+    h += '<div class="panel"><div class="tw"><table class="cb-table ra-table"><thead><tr><th>Client</th><th>Project</th><th>Leader</th>' +
+      MONTHS.map((mn, i) => '<th class="money' + (isLocked(YEAR, i + 1) ? ' lk' : '') + (ym(YEAR, i + 1) === NOW_KEY ? ' now' : '') + '">' + mn + (isLocked(YEAR, i + 1) ? ' 🔒' : '') + '</th>').join('') + '<th class="money">Year</th></tr></thead><tbody>';
+    if (!rows.length) h += '<tr><td colspan="16" class="sub">Nothing earned in ' + YEAR + (LEADER || Q ? ' for this filter' : '') + '.</td></tr>';
+    rows.forEach(r => {
+      const yr = Object.values(r.months).reduce((t, c) => t + c.fee, 0);
+      h += '<tr><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(r.p.id) + '">' + esc(r.pj.name || 'Untitled') + '</a></td><td>' + esc(r.leader) + '</td>' +
+        MONTHS.map((_, i) => cellHtml(r, i + 1, YEAR)).join('') + '<td class="money"><b>' + money(yr) + '</b></td></tr>';
+    });
+    const laneRow = (label, lane, cls) => '<tr class="ra-lane ' + (cls || '') + '"><td colspan="3"><b>' + label + '</b></td>' + MONTHS.map((_, i) => { const v = lane[i + 1] || 0; return '<td class="money' + (v < 0 ? ' neg' : '') + (isLocked(YEAR, i + 1) ? ' lk' : '') + '">' + (Math.abs(v) > 0.5 ? money(v) : '·') + '</td>'; }).join('') + '<td class="money"><b>' + money(sum(lane)) + '</b></td></tr>';
+    const feeLane = {}; for (let m = 1; m <= 12; m++) feeLane[m] = rows.reduce((t, r) => t + ((r.months[m] || {}).fee || 0), 0);
+    h += '</tbody><tfoot>' + laneRow('Fee billed to client', feeLane) + laneRow('Fee share out', L.share, 'lane-share') + laneRow('Savills revenue', L.earned, 'lane-rev') + laneRow('Billed', L.billed, 'lane-billed') + laneRow('Accrued (net)', L.accrued, 'lane-accrued') + '</tfoot></table></div>' +
+      '<div class="legend"><span><i class="k st-none"></i>planned</span><span><i class="k st-due"></i>past or current, no months assigned</span><span><i class="k st-billed"></i>✓ billed as planned</span><span><i class="k st-billed-diff"></i>≠ billed a different amount</span><span><i class="k st-accrued"></i>A→ accrued, bills later · B billed</span><span><i class="k st-slipped"></i>→ slipped to a later month</span><span><i class="k st-writeoff"></i>✕ written off</span><span><i class="sh"></i>has a fee share</span><span>🔒 locked month</span></div></div>';
+    return h;
+  }
+  function wireAnnual(host) {
+    $$('.rc-view [data-view]', host).forEach(b => b.addEventListener('click', () => { VIEW = b.dataset.view; try { localStorage.setItem(VIEW_KEY, VIEW); } catch (e) {} render(); }));
+    $('#ra-year', host).addEventListener('change', e => { YEAR = +e.target.value; render(); });
+    $('#ra-q', host).addEventListener('input', e => { Q = e.target.value; const y = window.scrollY; render(); const q = $('#ra-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } window.scrollTo(0, y); });
+    $('#ra-leader', host).addEventListener('change', e => { LEADER = e.target.value; render(); });
+    $$('.ra-btn', host).forEach(b => b.addEventListener('click', () => openAssign(b.dataset.pid, +b.dataset.m)));
+  }
+  /* ---------- the pop-up: one project-month, every line, three months each ---------- */
+  function monthOpts(fromYm, selected, back) {
+    const [y, m] = fromYm.split('-').map(Number); const out = [];
+    for (let i = -(back || 0); i <= 18; i++) { const d = new Date(y, m - 1 + i, 1); const v = ym(d.getFullYear(), d.getMonth() + 1); out.push('<option value="' + v + '"' + (v === selected ? ' selected' : '') + '>' + MONTHS[d.getMonth()] + ' ' + d.getFullYear() + '</option>'); }
+    return out.join('');
+  }
+  function openAssign(pid, m) {
+    const key = ym(YEAR, m); const entry = linesAll().find(x => x.p.id === pid); if (!entry) return;
+    const p = entry.p, pj = p.project || {}; const lk = isLocked(YEAR, m);
+    const lines = (entry.lines.all || []).filter(L => Math.abs((L.byMonth || {})[key] || 0) > 0.005 || (STORE.reconCell(YEAR, pid, L.id, key) || {}).status);
+    let ov = $('#ra-ov'); if (!ov) { ov = document.createElement('div'); ov.id = 'ra-ov'; ov.className = 'ra-ov'; document.body.appendChild(ov); }
+    const rowsHtml = lines.map(L => {
+      const planned = (L.byMonth || {})[key] || 0; const A = STORE.reconAssignment(YEAR, pid, L.id, key, planned);
+      const dis = lk ? ' disabled' : '';
+      return '<tr class="ln-' + L.kind + '" data-line="' + esc(L.id) + '"><td><b>' + esc(L.label) + '</b>' + (A.set ? '<div class="sub">' + esc(statusLabel(A.status)) + (A.status === 'accrued' ? (A.settled ? ' · settled' : ' · open') : '') + '</div>' : '<div class="sub">not yet assigned</div>') + '</td>' +
+        '<td class="money' + (planned < 0 ? ' neg' : '') + '">' + money(planned) + '</td>' +
+        '<td><input type="number" step="1" class="ra-amt" value="' + (A.amount != null ? Math.round(A.amount) : '') + '" placeholder="' + Math.round(planned) + '"' + dis + '></td>' +
+        '<td><select class="ra-e"' + dis + '>' + monthOpts(key, A.earnedIn, 0) + '</select></td>' +
+        '<td><select class="ra-a"' + dis + '>' + monthOpts(key, A.accruedIn, 0) + '</select></td>' +
+        '<td><select class="ra-b"' + dis + '>' + monthOpts(key, A.billedIn, 0) + '</select></td>' +
+        '<td class="c"><input type="checkbox" class="ra-wo"' + (A.writeoff ? ' checked' : '') + dis + '></td>' +
+        '<td><input type="text" class="ra-note" value="' + esc(A.note) + '" placeholder="What happened"' + dis + '></td></tr>';
+    }).join('');
+    ov.innerHTML = '<div class="ra-modal" role="dialog" aria-modal="true"><div class="mh"><div><h3>' + esc(pj.name || 'Untitled') + ' <span class="sub">· ' + esc(pj.client || '') + '</span></h3><div class="sub">' + MONTHS_LONG[m - 1] + ' ' + YEAR + ' · earned in the fee tool' + (lk ? ' · <b>locked, read only</b>' : '') + '</div></div><button type="button" class="x" id="ra-x" aria-label="Close">×</button></div>' +
+      '<div class="mb"><table class="cb-table ra-assign"><thead><tr><th>Line</th><th class="money">Planned</th><th>Amount</th><th>Earned</th><th>Accrued</th><th>Billed</th><th class="c">Written off</th><th>Note</th></tr></thead><tbody>' + (rowsHtml || '<tr><td colspan="8" class="sub">Nothing on this line-month.</td></tr>') + '</tbody></table>' +
+      '<div class="sub ra-help"><b>Earned</b> is the month the work is done, <b>Accrued</b> the month the revenue is recognised, <b>Billed</b> the month the invoice goes. Leave all three on ' + MONTHS[m - 1] + ' and it is billed as planned. A later Billed month accrues it until then. Moving Earned slips the whole line; set its accrual and billing from the new month. Fee shares follow the fee line.</div></div>' +
+      '<div class="mf">' + (lk ? '<span class="sub">Reopen ' + MONTHS[m - 1] + ' on the Monthly view to change it.</span>' : '') + '<span class="grow"></span><button type="button" class="btn btn-secondary" id="ra-cancel">' + (lk ? 'Close' : 'Cancel') + '</button>' + (lk ? '' : '<button type="button" class="btn btn-primary" id="ra-save">Save</button>') + '</div></div>';
+    ov.classList.add('open');
+    const close = () => { ov.classList.remove('open'); ov.innerHTML = ''; };
+    $('#ra-x', ov).onclick = close; $('#ra-cancel', ov).onclick = close; ov.onclick = (e) => { if (e.target === ov) close(); };
+    // earned moved → accrued and billed follow and lock; accrued moved → billed at least as late
+    $$('tr[data-line]', ov).forEach(tr => {
+      const E = $('.ra-e', tr), Aa = $('.ra-a', tr), B = $('.ra-b', tr), W = $('.ra-wo', tr);
+      const sync = () => {
+        const moved = E.value !== key;
+        if (moved) { Aa.value = E.value; B.value = E.value; }
+        Aa.disabled = moved || lk || W.checked; B.disabled = moved || lk || W.checked; E.disabled = lk || W.checked;
+        if (Aa.value < E.value) Aa.value = E.value; if (B.value < Aa.value) B.value = Aa.value;
+        tr.classList.toggle('wo', W.checked);
+      };
+      [E, Aa, B, W].forEach(el => el.addEventListener('change', sync)); sync();
+    });
+    const save = $('#ra-save', ov);
+    if (save) save.onclick = () => {
+      let n = 0, err = null;
+      $$('tr[data-line]', ov).forEach(tr => {
+        if (err) return;
+        const line = tr.dataset.line; const L = lines.find(x => x.id === line); const planned = (L.byMonth || {})[key] || 0;
+        const amt = $('.ra-amt', tr).value;
+        try { STORE.setReconAssignment(YEAR, pid, line, key, { earned: planned, amount: amt === '' ? null : Number(amt), earnedIn: $('.ra-e', tr).value, accruedIn: $('.ra-a', tr).value, billedIn: $('.ra-b', tr).value, writeoff: $('.ra-wo', tr).checked, note: $('.ra-note', tr).value }); n++; }
+        catch (e) { err = e; }
+      });
+      if (err) { toast(err.message || String(err)); return; }
+      flush(); close(); toast(n + ' line' + (n === 1 ? '' : 's') + ' assigned for ' + MONTHS[m - 1] + ' ' + YEAR + '.', 'ok');
+      const y = window.scrollY; render(); window.scrollTo(0, y);
+    };
+  }
   function monthOptions(fromYm, selected) {
     const [y, m] = fromYm.split('-').map(Number); const out = [];
     for (let i = 1; i <= 18; i++) { const d = new Date(y, m - 1 + i, 1); const v = ym(d.getFullYear(), d.getMonth() + 1); out.push('<option value="' + v + '"' + (v === selected ? ' selected' : '') + '>' + MONTHS[d.getMonth()] + ' ' + d.getFullYear() + '</option>'); }
@@ -257,6 +412,7 @@
   const flush = () => { if (Box && Box.enabled && Box.flushRevenue) Box.flushRevenue().catch(() => {}); };
 
   function wire(host, locked) {
+    $$('.rc-view [data-view]', host).forEach(b => b.addEventListener('click', () => { VIEW = b.dataset.view; try { localStorage.setItem(VIEW_KEY, VIEW); } catch (e) {} render(); }));
     $('#rc-year', host).addEventListener('change', e => { YEAR = +e.target.value; render(); });
     $$('.rc-mo', host).forEach(b => b.addEventListener('click', () => { M = +b.dataset.m; render(); }));
     $$('[data-goto]', host).forEach(b => b.addEventListener('click', () => { M = +b.dataset.goto; render(); }));

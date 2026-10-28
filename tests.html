@@ -1171,6 +1171,33 @@
              sq(!!S.reconMonth(2026, 2).lockedAt, true, 'locked') && sq(refused, true, 'a locked month refuses a status') &&
              sq(settled.billedIn, '2026-03', 'an accrual from a locked month still settles in an open month') && sq(leaderRefused, true, 'a leader cannot set statuses');
     });
+    test('Recon · annual assignment', 'earned, accrued and billed months land in the same cell the monthly view reads, as the status they imply', () => {
+      const p = setup(); const L = S.reconLinesFor(p, C); const feb = L.fee['2026-02'], mar = L.fee['2026-03'], apr = L.fee['2026-04'];
+      // all three on the earned month → billed as planned
+      const c1 = S.setReconAssignment(2026, 'rc_a', 'fee', '2026-02', { earned: feb, earnedIn: '2026-02', accruedIn: '2026-02', billedIn: '2026-02' });
+      // billed two months later → accrued, bills in April; April has passed, so it is settled there
+      const c2 = S.setReconAssignment(2026, 'rc_a', 'fee', '2026-03', { earned: mar, earnedIn: '2026-03', accruedIn: '2026-03', billedIn: '2026-04' });
+      // a different amount on the earned month → billed-diff
+      const c3 = S.setReconAssignment(2026, 'rc_a', 'fee', '2026-04', { earned: apr, amount: 1000 });
+      // earned moved → slipped, the share line follows with the same months
+      const c4 = S.setReconAssignment(2026, 'rc_a', 'fee', '2026-05', { earned: L.fee['2026-05'], earnedIn: '2026-07' });
+      const c5 = S.setReconAssignment(2026, 'rc_a', 'share', '2026-05', { earned: L.out.find(x => x.id === 'share').byMonth['2026-05'], earnedIn: '2026-07' });
+      const c6 = S.setReconAssignment(2026, 'rc_a', 'fee', '2026-06', { earned: L.fee['2026-06'], writeoff: true, note: 'client disputed' });
+      let bad = false; try { S.setReconAssignment(2026, 'rc_a', 'fee', '2026-07', { earnedIn: '2026-07', accruedIn: '2026-08', billedIn: '2026-07' }); } catch (e) { bad = true; }
+      const back = S.reconAssignment(2026, 'rc_a', 'fee', '2026-03', mar);
+      const none = S.reconAssignment(2026, 'rc_a', 'fee', '2026-08', 500);
+      // the monthly view's carry-in: accrued in March, settled in April
+      S.lockReconMonth(2026, 3, { 'rc_a|fee': mar });
+      let locked = false; try { S.setReconAssignment(2026, 'rc_a', 'fee', '2026-03', { billedIn: '2026-05' }); } catch (e) { locked = true; }
+      return sq(c1.status, 'billed', 'same three months → billed') && sq(c2.status, 'accrued', 'later billing → accrued') && sq(c2.billsIn, '2026-04', 'bills in April') && sq(c2.billedIn, '2026-04', 'April has come, so it settled there') && sq(c2.accruedIn, '2026-03', 'accrued month kept') &&
+             sq(c3.status, 'billed-diff', 'different amount → billed-diff') && sq(c3.amount, 1000, 'the amount') &&
+             sq(c4.status, 'slipped', 'earned moved → slipped') && sq(c4.earnedIn, '2026-07', 'to July') && sq(c5.status, 'slipped', 'the fee share follows') &&
+             sq(c6.status, 'writeoff', 'written off') && sq(c6.note, 'client disputed', 'the note') &&
+             sq(bad, true, 'billed before accrued is refused') &&
+             sq(back.earnedIn + '|' + back.accruedIn + '|' + back.billedIn + '|' + back.settled, '2026-03|2026-03|2026-04|true', 'the three months read back') &&
+             sq(none.set, false, 'an untouched month is not assigned') && sq(none.earnedIn + none.accruedIn + none.billedIn, '2026-082026-082026-08', 'and defaults to its own month') &&
+             sq(locked, true, 'a locked month refuses an assignment');
+    });
     test('Recon · overrides', 'a number a leader types on Revenue Projections is what the book, the lock and the confirmed copy carry', () => {
       const p = setup();
       const before = S.reconLinesFor(p, C).fee['2026-03'];
