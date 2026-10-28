@@ -39,7 +39,10 @@
      accrued and billed months. MONTHLY is one month, every line, with the
      status, the carry-ins and the lock. Remembered per browser. */
   const VIEW_KEY = 'ufc_fin_view_v1';
-  let VIEW = 'annual'; try { VIEW = localStorage.getItem(VIEW_KEY) === 'monthly' ? 'monthly' : 'annual'; } catch (e) {}
+  let VIEW = 'annual', BASIS = 'earned', MODE = 'projects', GROUP = 'client';
+  try { const sv = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}'); if (sv.view === 'monthly') VIEW = 'monthly'; if (['earned', 'accrued', 'billed'].includes(sv.basis)) BASIS = sv.basis; if (sv.mode === 'rollup') MODE = 'rollup'; if (['client', 'leader', 'rating'].includes(sv.group)) GROUP = sv.group; } catch (e) {}
+  const remember = () => { try { localStorage.setItem(VIEW_KEY, JSON.stringify({ view: VIEW, basis: BASIS, mode: MODE, group: GROUP })); } catch (e) {} };
+  const ymPlus = (k, n) => { const [yy, mm] = String(k).split('-').map(Number); const d = new Date(yy, mm - 1 + n, 1); return ym(d.getFullYear(), d.getMonth() + 1); };
   const STATUSES = STORE.RECON_STATUSES;
   const KIND_ORDER = { fee: 0, pass: 1, share: 2 };
   /** Label + kind of a line id on a project (fee, share, pt:<id>). */
@@ -127,7 +130,10 @@
         (lines.all || []).forEach(L => {
           const v = (L.byMonth || {})[key] || 0; if (!v) return;
           if (L.kind !== 'pass') earned[m] += v;                    // ours: fee (incl. the fee on pass-through) + fee shares (minuses)
-          if (L.kind === 'share') share[m] += v; if (L.kind === 'pass') { pass[m] += v; return; }   // the pass-through is a wash — not billed/accrued revenue
+          if (L.kind === 'share' || L.kind === 'pass') {            // money OUT lands in the month it is paid (the pass-through is a wash — never billed/accrued revenue)
+            const pm = paidMonth(y, p.id, L, key); if (pm && pm.y === y) (L.kind === 'share' ? share : pass)[pm.m] += v;
+            if (L.kind === 'pass') return;
+          }
           const c = STORE.reconCell(y, p.id, L.id, key);
           const st = c && c.status;
           if (!st || st === 'billed') billed[m] += v;
@@ -143,6 +149,17 @@
       }
     });
     return { billed, accrued, earned, share, pass };
+  }
+  /* The month money OUT is paid: the paid month set in the pop-up, else the
+     line's own billed month for a fee share, the month after it for a
+     vendor (Finance: shares go with our billing; vendors are paid once we
+     have been). */
+  const monthOf = (k) => { if (!k) return null; const [yy, mm] = String(k).split('-').map(Number); return (yy && mm) ? { y: yy, m: mm } : null; };
+  function paidMonth(y, pid, L, key) {
+    const v = (L.byMonth || {})[key] || 0; const A = STORE.reconAssignment(y, pid, L.id, key, v);
+    if (A.writeoff) return null;
+    if (A.paidIn) return monthOf(A.paidIn);
+    return monthOf(L.kind === 'pass' ? ymPlus(A.billedIn, 1) : A.billedIn);
   }
   function lockFlags(y) {
     const R = STORE.reconYear(y); const out = [];
@@ -246,7 +263,7 @@
     const laneRow = (label, lane, cls) => '<tr class="' + (cls || '') + '"><td><b>' + label + '</b></td>' + MONTHS.map((_, i) => { const v = lane[i + 1] || 0; const meta = STORE.reconMonth(YEAR, i + 1); return '<td class="money' + (v < 0 ? ' neg' : '') + (meta && meta.lockedAt ? ' lk' : '') + '">' + (Math.abs(v) > 0.5 ? money(v) : '·') + '</td>'; }).join('') + '<td class="money"><b>' + money(Object.values(lane).reduce((a, b) => a + b, 0)) + '</b></td></tr>';
     h += '<div class="panel"><div class="ph"><h3>' + YEAR + ' · billed and accrued by month</h3><span class="sub">Billed carries earlier accruals settling; Accrued shows this month\'s own accruals less any settling (the minus). Pass-through and fee share are money out. Locked months are shaded.</span></div>' +
       '<div class="tw"><table class="cb-table rc-year"><thead><tr><th></th>' + MONTHS.map((mn, i) => { const meta = STORE.reconMonth(YEAR, i + 1); return '<th class="money' + (meta && meta.lockedAt ? ' lk' : '') + '">' + mn + (meta && meta.lockedAt ? ' 🔒' : '') + '</th>'; }).join('') + '<th class="money">Year</th></tr></thead><tbody>' +
-      laneRow('Savills revenue · fee less fee share', L.earned) + laneRow('Billed', L.billed, 'lane-billed') + laneRow('Accrued (net)', L.accrued, 'lane-accrued') + laneRow('Fee share out', L.share, 'lane-share') + laneRow('Pass-through out · to vendors', L.pass, 'lane-pass') +
+      laneRow('Savills revenue · fee less fee share', L.earned) + laneRow('Billed', L.billed, 'lane-billed') + laneRow('Accrued (net)', L.accrued, 'lane-accrued') + laneRow('Fee share out · in the month paid', L.share, 'lane-share') + laneRow('Pass-through out · in the month paid', L.pass, 'lane-pass') +
       '</tbody></table></div></div>';
     host.innerHTML = h;
     wire(host, locked);
@@ -304,10 +321,45 @@
       '<span class="amt' + (shown < 0 ? ' neg' : '') + '">' + (Math.abs(shown) > 0.5 ? money(shown) : '·') + '</span>' +
       (badge ? '<span class="bd">' + esc(badge) + '</span>' : '') + (c.share ? '<i class="sh" aria-hidden="true"></i>' : '') + '</button></td>';
   }
+  /** Where each fee line-month sits on each basis, with its amount:
+      { pid → { earned:{m:amt}, accrued:{m:amt}, billed:{m:amt} } } for the year. */
+  function feePlacements(y) {
+    const out = {};
+    linesAll().forEach(({ p, lines }) => {
+      if (!passes(p)) return;
+      const slot = { earned: {}, accrued: {}, billed: {}, src: {} };
+      Object.keys(lines.fee || {}).forEach(key => {
+        const v = lines.fee[key] || 0; if (Math.abs(v) < 0.005) return;
+        const A = STORE.reconAssignment(y, p.id, 'fee', key, v);
+        const amt = A.amount != null ? A.amount : v;
+        const place = (basis, k, a) => { const mo = monthOf(k); if (!mo || mo.y !== y) return; slot[basis][mo.m] = (slot[basis][mo.m] || 0) + a; (slot.src[basis + mo.m] = slot.src[basis + mo.m] || []).push(key); };
+        place('earned', A.earnedIn, A.writeoff ? 0 : amt);
+        if (!A.writeoff) { place('accrued', A.accruedIn, amt); place('billed', A.billedIn, amt); }
+      });
+      if (Object.keys(slot.earned).length || Object.keys(slot.accrued).length || Object.keys(slot.billed).length) out[p.id] = slot;
+    });
+    return out;
+  }
+  const groupOf = (p) => GROUP === 'leader' ? (leaderName(p) || 'No leader') : GROUP === 'rating' ? (STORE.ratingMeta ? STORE.ratingMeta(STORE.ratingFor(p)).label : String(STORE.ratingFor(p))) : ((p.project || {}).client || 'No client');
+  function rollupRows(y) {
+    const P = feePlacements(y); const by = {};
+    Object.keys(P).forEach(pid => { const p = STORE.getProject(pid); if (!p) return; const g = groupOf(p); const r = by[g] || (by[g] = { label: g, months: {}, n: 0 }); r.n++; const src = P[pid][BASIS]; Object.keys(src).forEach(m => { r.months[m] = (r.months[m] || 0) + src[m]; }); });
+    return Object.values(by).map(r => Object.assign(r, { total: Object.values(r.months).reduce((a, b) => a + b, 0) })).sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+  }
+  function basisCell(slot, m) {
+    const v = (slot[BASIS] || {})[m]; if (!v) return '<td class="ra-cell empty' + (isLocked(YEAR, m) ? ' lk' : '') + '">·</td>';
+    const src = (slot.src[BASIS + m] || []).map(k => moShort(k)).join(', ');
+    return '<td class="ra-cell ro' + (isLocked(YEAR, m) ? ' lk' : '') + '" title="' + esc(BASIS + ' here · earned ' + src) + '"><span class="amt' + (v < 0 ? ' neg' : '') + '">' + money(v) + '</span></td>';
+  }
   function annualHtml() {
     const years = yearsAvailable();
     const rows = annualRows(YEAR);
     const L = lanes(YEAR);
+    const P = feePlacements(YEAR);
+    const basisBar = '<div class="ra-ctl"><div class="seg" role="tablist" aria-label="Basis">' + [['earned', 'Earned', 'the month the work is done'], ['accrued', 'Accrued', 'the month the revenue is recognised'], ['billed', 'Billed', 'the month the invoice goes']].map(([k, l, t]) => '<button type="button" data-basis="' + k + '" class="' + (BASIS === k ? 'on' : '') + '" title="' + t + '">' + l + '</button>').join('') + '</div>' +
+      '<div class="seg" role="tablist" aria-label="Shape"><button type="button" data-mode="projects" class="' + (MODE === 'projects' ? 'on' : '') + '">By project</button><button type="button" data-mode="rollup" class="' + (MODE === 'rollup' ? 'on' : '') + '">Simple roll-up</button></div>' +
+      (MODE === 'rollup' ? '<select id="ra-group"><option value="client"' + (GROUP === 'client' ? ' selected' : '') + '>By client</option><option value="leader"' + (GROUP === 'leader' ? ' selected' : '') + '>By revenue leader</option><option value="rating"' + (GROUP === 'rating' ? ' selected' : '') + '>By rating</option></select>' : '') +
+      '<span class="grow"></span><button class="btn btn-secondary" id="ra-xlsx">⤓ Excel · ' + YEAR + ' ' + BASIS + (MODE === 'rollup' ? ' by ' + ({ client: 'client', leader: 'leader', rating: 'rating' })[GROUP] : '') + '</button></div>';
     const sum = (lane) => Object.values(lane).reduce((a, b) => a + b, 0);
     let cells = 0, assigned = 0, due = 0;
     rows.forEach(r => Object.keys(r.months).forEach(m => { const c = r.months[m]; if (Math.abs(c.fee) <= 0.5) return; cells++; if (c.feeCell && c.feeCell.status) assigned++; else if (c.key <= NOW_KEY) due++; }));
@@ -319,17 +371,29 @@
     h += '<div class="kpis rc-kpis">' +
       kpi(money(feeTot), 'fee billed to client · ' + YEAR) + kpi('<span class="red">' + money(sum(L.share)) + '</span>', 'fee share out · to brokers') + kpi('<b>' + money(sum(L.earned)) + '</b>', 'Savills revenue · fee less fee share') +
       kpi(money(sum(L.billed)), 'billed · incl. accruals settling') + kpi(money(sum(L.accrued)), 'accrued · still open at year end') + kpi(String(due), 'fee months due a decision') + '</div>';
-    h += '<div class="panel"><div class="tw"><table class="cb-table ra-table"><thead><tr><th>Client</th><th>Project</th><th>Leader</th>' +
-      MONTHS.map((mn, i) => '<th class="money' + (isLocked(YEAR, i + 1) ? ' lk' : '') + (ym(YEAR, i + 1) === NOW_KEY ? ' now' : '') + '">' + mn + (isLocked(YEAR, i + 1) ? ' 🔒' : '') + '</th>').join('') + '<th class="money">Year</th></tr></thead><tbody>';
+    h += basisBar;
+    const thead = (first) => '<thead><tr>' + first + MONTHS.map((mn, i) => '<th class="money' + (isLocked(YEAR, i + 1) ? ' lk' : '') + (ym(YEAR, i + 1) === NOW_KEY ? ' now' : '') + '">' + mn + (isLocked(YEAR, i + 1) ? ' 🔒' : '') + '</th>').join('') + '<th class="money">Year</th></tr></thead>';
+    if (MODE === 'rollup') {
+      const rr = rollupRows(YEAR); const gl = { client: 'Client', leader: 'Revenue leader', rating: 'Rating' }[GROUP];
+      h += '<div class="panel"><div class="ph"><h3>' + YEAR + ' · fee billed to client, ' + BASIS + ' basis, by ' + gl.toLowerCase() + '</h3><span class="sub">The fee line only, placed in its ' + BASIS + ' month. Written-off lines are left out of accrued and billed.</span></div><div class="tw"><table class="cb-table ra-table ra-roll">' + thead('<th>' + gl + '</th><th class="money">Projects</th>') + '<tbody>';
+      if (!rr.length) h += '<tr><td colspan="15" class="sub">Nothing in ' + YEAR + '.</td></tr>';
+      rr.forEach(r => { h += '<tr><td><b>' + esc(r.label) + '</b></td><td class="money">' + r.n + '</td>' + MONTHS.map((_, i) => { const v = r.months[i + 1] || 0; return '<td class="money' + (v < 0 ? ' neg' : '') + (isLocked(YEAR, i + 1) ? ' lk' : '') + '">' + (Math.abs(v) > 0.5 ? money(v) : '·') + '</td>'; }).join('') + '<td class="money"><b>' + money(r.total) + '</b></td></tr>'; });
+      const tot = {}; rr.forEach(r => Object.keys(r.months).forEach(m => { tot[m] = (tot[m] || 0) + r.months[m]; }));
+      h += '</tbody><tfoot><tr class="ra-lane"><td colspan="2"><b>Total</b></td>' + MONTHS.map((_, i) => '<td class="money">' + (Math.abs(tot[i + 1] || 0) > 0.5 ? money(tot[i + 1]) : '·') + '</td>').join('') + '<td class="money"><b>' + money(Object.values(tot).reduce((a, b) => a + b, 0)) + '</b></td></tr></tfoot></table></div></div>';
+      return h;
+    }
+    h += '<div class="panel"><div class="tw"><table class="cb-table ra-table">' + thead('<th>Client</th><th>Project</th><th>Leader</th>') + '<tbody>';
     if (!rows.length) h += '<tr><td colspan="16" class="sub">Nothing earned in ' + YEAR + (LEADER || Q ? ' for this filter' : '') + '.</td></tr>';
     rows.forEach(r => {
-      const yr = Object.values(r.months).reduce((t, c) => t + c.fee, 0);
+      const slot = P[r.p.id] || { earned: {}, accrued: {}, billed: {}, src: {} };
+      const yr = BASIS === 'earned' ? Object.values(r.months).reduce((t, c) => t + c.fee, 0) : Object.values(slot[BASIS]).reduce((a, b) => a + b, 0);
       h += '<tr><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(r.p.id) + '">' + esc(r.pj.name || 'Untitled') + '</a></td><td>' + esc(r.leader) + '</td>' +
-        MONTHS.map((_, i) => cellHtml(r, i + 1, YEAR)).join('') + '<td class="money"><b>' + money(yr) + '</b></td></tr>';
+        MONTHS.map((_, i) => BASIS === 'earned' ? cellHtml(r, i + 1, YEAR) : basisCell(slot, i + 1)).join('') + '<td class="money"><b>' + money(yr) + '</b></td></tr>';
     });
     const laneRow = (label, lane, cls) => '<tr class="ra-lane ' + (cls || '') + '"><td colspan="3"><b>' + label + '</b></td>' + MONTHS.map((_, i) => { const v = lane[i + 1] || 0; return '<td class="money' + (v < 0 ? ' neg' : '') + (isLocked(YEAR, i + 1) ? ' lk' : '') + '">' + (Math.abs(v) > 0.5 ? money(v) : '·') + '</td>'; }).join('') + '<td class="money"><b>' + money(sum(lane)) + '</b></td></tr>';
     const feeLane = {}; for (let m = 1; m <= 12; m++) feeLane[m] = rows.reduce((t, r) => t + ((r.months[m] || {}).fee || 0), 0);
-    h += '</tbody><tfoot>' + laneRow('Fee billed to client', feeLane) + laneRow('Fee share out', L.share, 'lane-share') + laneRow('Savills revenue', L.earned, 'lane-rev') + laneRow('Billed', L.billed, 'lane-billed') + laneRow('Accrued (net)', L.accrued, 'lane-accrued') + '</tfoot></table></div>' +
+    h += '</tbody><tfoot>' + laneRow('Fee billed to client', feeLane) + laneRow('Fee share out · in the month paid', L.share, 'lane-share') + laneRow('Savills revenue · earned', L.earned, 'lane-rev') + laneRow('Billed', L.billed, 'lane-billed') + laneRow('Accrued (net)', L.accrued, 'lane-accrued') + laneRow('Pass-through out · in the month paid', L.pass, 'lane-pass') + '</tfoot></table></div>' +
+      (BASIS === 'earned' ? '' : '<div class="sub" style="margin-top:8px">On the ' + BASIS + ' basis the grid is read-only; switch to Earned to assign months. Hover a number for the earned month it came from.</div>') +
       '<div class="legend"><span><i class="k st-none"></i>planned</span><span><i class="k st-due"></i>past or current, no months assigned</span><span><i class="k st-billed"></i>✓ billed as planned</span><span><i class="k st-billed-diff"></i>≠ billed a different amount</span><span><i class="k st-accrued"></i>A→ accrued, bills later · B billed</span><span><i class="k st-slipped"></i>→ slipped to a later month</span><span><i class="k st-writeoff"></i>✕ written off</span><span><i class="sh"></i>has a fee share</span><span>🔒 locked month</span></div></div>';
     return h;
   }
@@ -339,6 +403,54 @@
     $('#ra-q', host).addEventListener('input', e => { Q = e.target.value; const y = window.scrollY; render(); const q = $('#ra-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } window.scrollTo(0, y); });
     $('#ra-leader', host).addEventListener('change', e => { LEADER = e.target.value; render(); });
     $$('.ra-btn', host).forEach(b => b.addEventListener('click', () => openAssign(b.dataset.pid, +b.dataset.m)));
+    $$('[data-basis]', host).forEach(b => b.addEventListener('click', () => { BASIS = b.dataset.basis; remember(); render(); }));
+    $$('[data-mode]', host).forEach(b => b.addEventListener('click', () => { MODE = b.dataset.mode; remember(); render(); }));
+    const g = $('#ra-group', host); if (g) g.addEventListener('change', e => { GROUP = e.target.value; remember(); render(); });
+    const x = $('#ra-xlsx', host); if (x) x.addEventListener('click', () => exportAnnual().catch(e => toast('Export failed: ' + (e.message || e))));
+  }
+  /* ---------- Excel: the annual grid as shown (basis, shape), plus the lanes ---------- */
+  async function exportAnnual() {
+    await window.UFC_Vendor.excel();
+    if (typeof ExcelJS === 'undefined') { toast('Excel library not loaded.'); return; }
+    const NAVY = 'FF25273A', WHITE = 'FFFFFFFF', CREAM = 'FFEEE8E3';
+    const fmt = '#,##0;[Red]-#,##0;"·"';
+    const wb = new ExcelJS.Workbook(); wb.creator = 'Savills PPM · Financial Tracking';
+    const head = (ws, labels) => { const r = ws.addRow(labels); r.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; }); return r; };
+    const moneyCols = (ws, from, to) => { for (let c = from; c <= to; c++) ws.getColumn(c).numFmt = fmt; };
+    const title = 'Savills PPM — Financial Tracking · ' + YEAR + ' · ' + BASIS + ' basis' + (MODE === 'rollup' ? ' · by ' + GROUP : '');
+    const ws = wb.addWorksheet(MODE === 'rollup' ? 'Roll-up' : 'By project', { views: [{ state: 'frozen', ySplit: 4, xSplit: MODE === 'rollup' ? 2 : 3 }] });
+    ws.mergeCells('A1:P1'); ws.getCell('A1').value = title; ws.getCell('A1').font = { name: 'Calibri', bold: true, size: 16, color: { argb: NAVY } };
+    ws.mergeCells('A2:P2'); ws.getCell('A2').value = 'Fee billed to client, placed in its ' + BASIS + ' month · exported ' + new Date().toLocaleString() + (LEADER || Q ? ' · filtered' : ''); ws.getCell('A2').font = { name: 'Calibri', italic: true, color: { argb: 'FF79828C' } };
+    ws.addRow([]);
+    if (MODE === 'rollup') {
+      const gl = { client: 'Client', leader: 'Revenue leader', rating: 'Rating' }[GROUP];
+      head(ws, [gl, 'Projects'].concat(MONTHS, ['Year']));
+      rollupRows(YEAR).forEach(r => ws.addRow([r.label, r.n].concat(MONTHS.map((_, i) => r.months[i + 1] || 0), [r.total])));
+      moneyCols(ws, 3, 15); ws.getColumn(1).width = 34; ws.getColumn(2).width = 10;
+    } else {
+      head(ws, ['Client', 'Project', 'Revenue leader'].concat(MONTHS, ['Year']));
+      const P = feePlacements(YEAR);
+      annualRows(YEAR).forEach(r => {
+        const slot = P[r.p.id] || { earned: {}, accrued: {}, billed: {} };
+        const vals = MONTHS.map((_, i) => BASIS === 'earned' ? ((r.months[i + 1] || {}).fee || 0) : (slot[BASIS][i + 1] || 0));
+        ws.addRow([r.pj.client || '', r.pj.name || 'Untitled', r.leader].concat(vals, [vals.reduce((a, b) => a + b, 0)]));
+      });
+      moneyCols(ws, 4, 16); ws.getColumn(1).width = 24; ws.getColumn(2).width = 44; ws.getColumn(3).width = 20;
+    }
+    for (let c = 1; c <= 16; c++) if (ws.getColumn(c).width == null || ws.getColumn(c).width < 11) ws.getColumn(c).width = 11;
+    // lanes
+    const L = lanes(YEAR);
+    const ws2 = wb.addWorksheet('Lanes');
+    head(ws2, ['Lane'].concat(MONTHS, ['Year']));
+    [['Savills revenue · earned', L.earned], ['Billed', L.billed], ['Accrued (net)', L.accrued], ['Fee share out · month paid', L.share], ['Pass-through out · month paid', L.pass]].forEach(([lab, lane]) => ws2.addRow([lab].concat(MONTHS.map((_, i) => lane[i + 1] || 0), [Object.values(lane).reduce((a, b) => a + b, 0)])));
+    moneyCols(ws2, 2, 14); ws2.getColumn(1).width = 34;
+    // the assignments behind the grid
+    const ws3 = wb.addWorksheet('Assignments');
+    head(ws3, ['Client', 'Project', 'Line', 'Earned in fee tool', 'Planned', 'Amount', 'Status', 'Earned', 'Accrued', 'Billed', 'Paid', 'Note']);
+    linesAll().forEach(({ p, lines }) => { if (!passes(p)) return; (lines.all || []).forEach(Lx => Object.keys(Lx.byMonth || {}).forEach(k => { if (!k.startsWith(String(YEAR))) return; const v = Lx.byMonth[k] || 0; const A = STORE.reconAssignment(YEAR, p.id, Lx.id, k, v); if (!A.set) return; ws3.addRow([(p.project || {}).client || '', (p.project || {}).name || '', Lx.label, k, v, A.amount, A.writeoff ? 'written off' : statusLabel(A.status), A.earnedIn, A.accruedIn, A.billedIn, A.paidIn || '', A.note]); })); });
+    moneyCols(ws3, 5, 6); ws3.getColumn(2).width = 44; ws3.getColumn(3).width = 28;
+    const buf = await wb.xlsx.writeBuffer(); const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Savills PPM Financial Tracking ' + YEAR + ' ' + BASIS + (MODE === 'rollup' ? ' by ' + GROUP : '') + '.xlsx'; document.body.appendChild(a); a.click(); a.remove();
   }
   /* ---------- the pop-up: one project-month, every line, three months each ---------- */
   function monthOpts(fromYm, selected, back) {
@@ -354,30 +466,37 @@
     const rowsHtml = lines.map(L => {
       const planned = (L.byMonth || {})[key] || 0; const A = STORE.reconAssignment(YEAR, pid, L.id, key, planned);
       const dis = lk ? ' disabled' : '';
-      return '<tr class="ln-' + L.kind + '" data-line="' + esc(L.id) + '"><td><b>' + esc(L.label) + '</b>' + (A.set ? '<div class="sub">' + esc(statusLabel(A.status)) + (A.status === 'accrued' ? (A.settled ? ' · settled' : ' · open') : '') + '</div>' : '<div class="sub">not yet assigned</div>') + '</td>' +
+      // money out carries the month it is PAID: a fee share with the bill, a vendor the month after
+      const out = L.kind === 'share' || L.kind === 'pass';
+      const paidDefault = L.kind === 'pass' ? ymPlus(A.billedIn, 1) : A.billedIn;
+      const paid = A.paidIn || paidDefault;
+      return '<tr class="ln-' + L.kind + '" data-line="' + esc(L.id) + '" data-kind="' + L.kind + '"' + (A.paidIn ? ' data-paid-set="1"' : '') + '><td><b>' + esc(L.label) + '</b>' + (A.set ? '<div class="sub">' + esc(statusLabel(A.status)) + (A.status === 'accrued' ? (A.settled ? ' · settled' : ' · open') : '') + '</div>' : '<div class="sub">not yet assigned</div>') + '</td>' +
         '<td class="money' + (planned < 0 ? ' neg' : '') + '">' + money(planned) + '</td>' +
         '<td><input type="number" step="1" class="ra-amt" value="' + (A.amount != null ? Math.round(A.amount) : '') + '" placeholder="' + Math.round(planned) + '"' + dis + '></td>' +
         '<td><select class="ra-e"' + dis + '>' + monthOpts(key, A.earnedIn, 0) + '</select></td>' +
         '<td><select class="ra-a"' + dis + '>' + monthOpts(key, A.accruedIn, 0) + '</select></td>' +
         '<td><select class="ra-b"' + dis + '>' + monthOpts(key, A.billedIn, 0) + '</select></td>' +
+        '<td>' + (out ? '<select class="ra-p" title="' + (L.kind === 'pass' ? 'The month the vendor is paid — the month after we bill, unless you set another' : 'The month the share goes out — with our billing, unless you set another') + '"' + dis + '>' + monthOpts(key, paid, 0) + '</select>' : '<span class="sub">—</span>') + '</td>' +
         '<td class="c"><input type="checkbox" class="ra-wo"' + (A.writeoff ? ' checked' : '') + dis + '></td>' +
         '<td><input type="text" class="ra-note" value="' + esc(A.note) + '" placeholder="What happened"' + dis + '></td></tr>';
     }).join('');
     ov.innerHTML = '<div class="ra-modal" role="dialog" aria-modal="true"><div class="mh"><div><h3>' + esc(pj.name || 'Untitled') + ' <span class="sub">· ' + esc(pj.client || '') + '</span></h3><div class="sub">' + MONTHS_LONG[m - 1] + ' ' + YEAR + ' · earned in the fee tool' + (lk ? ' · <b>locked, read only</b>' : '') + '</div></div><button type="button" class="x" id="ra-x" aria-label="Close">×</button></div>' +
-      '<div class="mb"><table class="cb-table ra-assign"><thead><tr><th>Line</th><th class="money">Planned</th><th>Amount</th><th>Earned</th><th>Accrued</th><th>Billed</th><th class="c">Written off</th><th>Note</th></tr></thead><tbody>' + (rowsHtml || '<tr><td colspan="8" class="sub">Nothing on this line-month.</td></tr>') + '</tbody></table>' +
-      '<div class="sub ra-help"><b>Earned</b> is the month the work is done, <b>Accrued</b> the month the revenue is recognised, <b>Billed</b> the month the invoice goes. Leave all three on ' + MONTHS[m - 1] + ' and it is billed as planned. A later Billed month accrues it until then. Moving Earned slips the whole line; set its accrual and billing from the new month. Fee shares follow the fee line.</div></div>' +
+      '<div class="mb"><table class="cb-table ra-assign"><thead><tr><th>Line</th><th class="money">Planned</th><th>Amount</th><th>Earned</th><th>Accrued</th><th>Billed</th><th>Paid</th><th class="c">Written off</th><th>Note</th></tr></thead><tbody>' + (rowsHtml || '<tr><td colspan="9" class="sub">Nothing on this line-month.</td></tr>') + '</tbody></table>' +
+      '<div class="sub ra-help"><b>Earned</b> is the month the work is done, <b>Accrued</b> the month the revenue is recognised, <b>Billed</b> the month the invoice goes. Leave all three on ' + MONTHS[m - 1] + ' and it is billed as planned. A later Billed month accrues it until then. Moving Earned slips the whole line; set its accrual and billing from the new month. <b>Paid</b> is the month money goes out: a fee share with our billing, a vendor the month after we bill — change it when it is not.</div></div>' +
       '<div class="mf">' + (lk ? '<span class="sub">Reopen ' + MONTHS[m - 1] + ' on the Monthly view to change it.</span>' : '') + '<span class="grow"></span><button type="button" class="btn btn-secondary" id="ra-cancel">' + (lk ? 'Close' : 'Cancel') + '</button>' + (lk ? '' : '<button type="button" class="btn btn-primary" id="ra-save">Save</button>') + '</div></div>';
     ov.classList.add('open');
     const close = () => { ov.classList.remove('open'); ov.innerHTML = ''; };
     $('#ra-x', ov).onclick = close; $('#ra-cancel', ov).onclick = close; ov.onclick = (e) => { if (e.target === ov) close(); };
     // earned moved → accrued and billed follow and lock; accrued moved → billed at least as late
     $$('tr[data-line]', ov).forEach(tr => {
-      const E = $('.ra-e', tr), Aa = $('.ra-a', tr), B = $('.ra-b', tr), W = $('.ra-wo', tr);
+      const E = $('.ra-e', tr), Aa = $('.ra-a', tr), B = $('.ra-b', tr), W = $('.ra-wo', tr), Pd = $('.ra-p', tr);
+      if (Pd) Pd.addEventListener('change', () => { tr.dataset.paidSet = '1'; });
       const sync = () => {
         const moved = E.value !== key;
         if (moved) { Aa.value = E.value; B.value = E.value; }
         Aa.disabled = moved || lk || W.checked; B.disabled = moved || lk || W.checked; E.disabled = lk || W.checked;
         if (Aa.value < E.value) Aa.value = E.value; if (B.value < Aa.value) B.value = Aa.value;
+        if (Pd) { Pd.disabled = lk || W.checked; if (!tr.dataset.paidSet) { Pd.value = tr.dataset.kind === 'pass' ? ymPlus(B.value, 1) : B.value; if (Pd.selectedIndex < 0) Pd.selectedIndex = Pd.options.length - 1; } }
         tr.classList.toggle('wo', W.checked);
       };
       [E, Aa, B, W].forEach(el => el.addEventListener('change', sync)); sync();
@@ -389,7 +508,8 @@
         if (err) return;
         const line = tr.dataset.line; const L = lines.find(x => x.id === line); const planned = (L.byMonth || {})[key] || 0;
         const amt = $('.ra-amt', tr).value;
-        try { STORE.setReconAssignment(YEAR, pid, line, key, { earned: planned, amount: amt === '' ? null : Number(amt), earnedIn: $('.ra-e', tr).value, accruedIn: $('.ra-a', tr).value, billedIn: $('.ra-b', tr).value, writeoff: $('.ra-wo', tr).checked, note: $('.ra-note', tr).value }); n++; }
+        const Pd = $('.ra-p', tr);
+        try { STORE.setReconAssignment(YEAR, pid, line, key, { earned: planned, amount: amt === '' ? null : Number(amt), earnedIn: $('.ra-e', tr).value, accruedIn: $('.ra-a', tr).value, billedIn: $('.ra-b', tr).value, paidIn: Pd ? Pd.value : null, writeoff: $('.ra-wo', tr).checked, note: $('.ra-note', tr).value }); n++; }
         catch (e) { err = e; }
       });
       if (err) { toast(err.message || String(err)); return; }
