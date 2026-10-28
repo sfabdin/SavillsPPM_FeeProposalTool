@@ -77,8 +77,11 @@
     </div>
   </div>
 
-  <!-- ========== Change-order banner ========== -->
+  <!-- ========== Finance flags · ready to bill ========== -->
   <div class="recon-flags" id="recon-flags" hidden></div>
+  <div class="rtb-panel" id="rtb-panel" hidden></div>
+
+  <!-- ========== Change-order banner ========== -->
   <div class="co-banner" id="co-banner" hidden>
     <div class="co-mark" id="co-mark">⇄</div>
     <div class="co-body">
@@ -212,6 +215,17 @@
             <span class="hint">Appears once the project is booked. Bridges this record to Salesforce → Clockify for reporting. Not required to save.</span>
           </div>
         </div>
+      </div>
+
+      <!-- Intake details · only once the project is Won or Active -->
+      <div class="cover-section intake-section" id="intake-section" hidden>
+        <div class="cs-title">
+          <span class="ix">01b · Intake</span>
+          <h3>Intake details.</h3>
+          <span class="hint">What Salesforce needs that the fee record cannot fill in by itself. Required once a project is Won or Active; when the last one is in, the intake email goes to <b>ppmprojectintake@savills.us</b> on its own.</span>
+        </div>
+        <div class="intake-progress" id="intake-progress"></div>
+        <div class="field-grid cols-3 intake-grid" id="intake-fields"></div>
       </div>
 
       <!-- Timeline -->

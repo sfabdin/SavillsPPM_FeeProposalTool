@@ -2,13 +2,19 @@
    SAVILLS PPM · FEE & REVENUE SYSTEM · PROJECT INTAKE
    ------------------------------------------------------------
    Builds the Project Intake as a FORMATTED TABLE (matching the
-   standard intake form) and copies it to the clipboard as rich
-   HTML, so the person doing intake pastes it straight into an
-   email to ppmprojectintake@savills.us.
+   standard intake form). Two ways out:
 
-   Fields the system can pre-fill are filled; fields the submitter
-   must complete are HIGHLIGHTED YELLOW. Appears when a project is
-   Won or Active; re-flags if fee/schedule changes afterward.
+   AUTOMATIC — once a project is Won or Active, the calculator's Intake
+   section asks for every row the fee record cannot pre-fill
+   (UFC_Store.INTAKE_FIELDS). The moment the last one is in, the
+   calculator hands the finished table to Box.notify as a
+   `project-intake` message and Power Automate mails it to
+   ppmprojectintake@savills.us. Nobody copies anything.
+
+   MANUAL — the top-bar button still previews the table and copies it
+   to the clipboard as rich HTML, for a mailbox without the flow, or to
+   look before it goes. Fields still to complete are HIGHLIGHTED
+   YELLOW there. Re-flags if fee/schedule changes afterward.
    ============================================================ */
 (function () {
   'use strict';
@@ -47,28 +53,15 @@
     return (opts.serviceLines || []).join(', ');
   }
 
-  /** Row 1 — "is this the first authorization for this client?" We can usually
-      answer this: look for other BOOKED projects for the same client. Prior work
-      found → a confident "No" plus the list. Nothing found → "Yes" flagged for
-      confirmation, since absence of a record isn't proof (the client may predate
-      the system). Change orders are excluded — they aren't separate
-      authorizations. */
+  /** Row 1 — "is this the first authorization for this client?" Earlier
+      BOOKED projects for the same client answer it (UFC_Store.priorBookedForClient).
+      Prior work found → a confident "No" plus the list. Nothing found → the
+      submitter confirms in the Intake section, since absence of a record isn't
+      proof (the client may predate the system). */
   function priorAuthorizations(state) {
     const S = window.UFC_Store;
-    const client = ((state.project || {}).client || '').trim().toLowerCase();
-    if (!S || !S.listProjects || !client) return null;
-    const BOOKED = { won: 1, active: 1, closed: 1 };
-    try {
-      let list = S.listProjects().filter(p =>
-        p && p.id !== state.id && !p._deleted
-        && !(S.isChangeOrder && S.isChangeOrder(p))
-        && ((p.project || {}).client || '').trim().toLowerCase() === client
-        && BOOKED[(p.project || {}).status]);
-      // Only count what this user is allowed to see.
-      if (S.visibleProjects) list = S.visibleProjects(list);
-      list.sort((a, b) => ((a.project || {}).name || '').localeCompare((b.project || {}).name || ''));
-      return list;
-    } catch (e) { return null; }
+    if (!S || !S.priorBookedForClient) return null;
+    try { return S.priorBookedForClient(state); } catch (e) { return null; }
   }
 
   /** Rows: [num, question, value, needsInput, kind].
@@ -77,61 +70,69 @@
       Process & Form (2026.06.08). */
   function intakeRows(state, opts) {
     const p = state.project || {};
+    const it = p.intake || {};
     const t = state.timeline || {};
     const fs = state.assumptions && state.assumptions.feeShare;
     const feeShare = fs && fs.enabled;
     const scope = scopeText(state, opts);
+    const v = (k) => String(it[k] == null ? '' : it[k]).trim();
 
-    const priors = priorAuthorizations(state);
+    const priors = opts.priors !== undefined ? opts.priors : priorAuthorizations(state);
     const names = (priors || []).map(x => (x.project || {}).name).filter(Boolean);
     const shown = names.slice(0, 4).join('; ') + (names.length > 4 ? `; +${names.length - 4} more` : '');
-    let firstAuth, firstAuthNeeds, additive, additiveNeeds;
-    if (priors === null) {
-      firstAuth = ''; firstAuthNeeds = true;
-      additive = ''; additiveNeeds = true;
-    } else if (names.length) {
-      firstAuth = `No — ${names.length} prior booked authorization${names.length === 1 ? '' : 's'} for this client: ${shown}`;
-      firstAuthNeeds = false;
-      additive = shown; additiveNeeds = true;
-    } else {
-      firstAuth = 'Yes — no prior booked work for this client in the system';
-      firstAuthNeeds = true;
-      additive = 'N/A'; additiveNeeds = false;
-    }
+    const priorsKnown = names.length > 0;
+    // Row 1: the system's answer when it has one, else what the submitter confirmed
+    let firstAuth, firstAuthNeeds;
+    if (priorsKnown) { firstAuth = `No — ${names.length} prior booked authorization${names.length === 1 ? '' : 's'} for this client: ${shown}`; firstAuthNeeds = false; }
+    else if (v('firstAuth') === 'yes') { firstAuth = 'Yes — first authorization / contract for this client'; firstAuthNeeds = false; }
+    else if (v('firstAuth') === 'no') { firstAuth = 'No — the client has prior authorizations (predating the fee tool)'; firstAuthNeeds = false; }
+    else { firstAuth = priors === null ? '' : 'Yes — no prior booked work for this client in the system'; firstAuthNeeds = true; }
+    const isFirst = priorsKnown ? false : v('firstAuth') === 'yes';
+    // Row 2/3: standalone vs additive
+    const sa = v('standalone');
+    const standalone = isFirst ? 'N/A — first authorization' : sa === 'standalone' ? 'Standalone — tracked and invoiced separately' : sa === 'additive' ? 'Additive — part of a prior authorization' : '';
+    const additive = isFirst || sa === 'standalone' ? 'N/A' : (v('additiveWith') || (sa === 'additive' && shown ? shown : ''));
+    const additiveNeeds = !(isFirst || sa === 'standalone') && !v('additiveWith');
+    // Row 10: contracting entity, and whether someone else pays
+    const entity = p.client ? p.client + (v('payerEntity') ? ` — payer entity: ${v('payerEntity')}` : ' — the payer entity is the same') : '';
+    // Row 19: the fee and its basis
+    const basis = (state.assumptions || {}).feeBasis === 'nte' ? 'Not-to-exceed — billed on timecards against the ceiling' : 'Fixed fee';
+    const fee = opts.netFee == null ? '' : `${money(opts.netFee)} · ${basis}` + (v('feeBasisNote') ? ` — ${v('feeBasisNote')}` : '');
+    const dateNote = v('dateNote') ? ` — ${v('dateNote')}` : '';
 
     return [
       ['SECTION', 'Authorization'],
       [1, 'Is this the first authorization/contract for this client?', firstAuth, firstAuthNeeds],
-      [2, 'If not, does the client expect this authorization to be tracked and invoiced separately (standalone), or is this WA additive to prior WAs (i.e. where does this fit within the client’s portfolio)?', '', true],
+      [2, 'If not, does the client expect this authorization to be tracked and invoiced separately (standalone), or is this WA additive to prior WAs (i.e. where does this fit within the client’s portfolio)?', standalone, !standalone],
       [3, 'If additive, which authorizations/contracts go together?', additive, additiveNeeds],
       ['SECTION', 'Client & Project Information'],
       [4, 'Project Name', p.name || '', !p.name, 'confirm'],
       [5, 'Client Industry / Sector', p.industry || '', !p.industry],
       [6, 'Services / Scope', scope, !scope],
       [7, 'Project’s Complete Address', p.location || '', !p.location],
-      [8, 'RSF', '', true],
-      [9, 'Project Budget', '', true],
+      [8, 'RSF', v('rsf'), !v('rsf')],
+      [9, 'Project Budget', v('budget'), !v('budget')],
       ['SECTION', 'Client Payer Information'],
-      [10, 'Contracting Entity Name — is it different from the payer entity?', p.client || '', !p.client],
+      [10, 'Contracting Entity Name — is it different from the payer entity?', entity, !p.client],
       [11, 'Client “short name” [i.e. Comcast]', p.client || '', !p.client],
-      [12, 'Payer’s Physical Address', '', true],
+      [12, 'Payer’s Physical Address', v('payerAddress'), !v('payerAddress')],
       [13, 'Payer POC', p.clientContact || '', !p.clientContact],
-      [14, 'Payer Email', '', true],
-      [15, 'Payer Terms', '', true],
-      [16, 'Provide the names and emails of those who should be copied on invoices.', '', true],
-      [17, 'Provide payment schedule', '', true],
-      [18, 'Does the client require any vendor onboarding forms to be completed, banking authorization letter, W9, etc.?', '', true],
+      [14, 'Payer Email', v('payerEmail'), !v('payerEmail')],
+      [15, 'Payer Terms', v('payerTerms'), !v('payerTerms')],
+      [16, 'Provide the names and emails of those who should be copied on invoices.', v('invoiceCc'), !v('invoiceCc')],
+      [17, 'Provide payment schedule', v('paymentSchedule'), !v('paymentSchedule')],
+      [18, 'Does the client require any vendor onboarding forms to be completed, banking authorization letter, W9, etc.?', v('vendorForms'), !v('vendorForms')],
       ['SECTION', 'Fees and Dates'],
-      [19, 'Total Fee [explain if this is fixed fee or timecard]', money(opts.netFee), opts.netFee == null],
-      [20, 'Total NTE reimbursable expenses', '', true],
-      [21, 'Start Date [explain if contract start differs from work start]', dstr(t.startMonth, t.startYear), !(t.startMonth && t.startYear)],
+      [19, 'Total Fee [explain if this is fixed fee or timecard]', fee, opts.netFee == null],
+      [20, 'Total NTE reimbursable expenses', v('nteExpenses'), !v('nteExpenses')],
+      [21, 'Start Date [explain if contract start differs from work start]', dstr(t.startMonth, t.startYear) + (t.startMonth && t.startYear ? dateNote : ''), !(t.startMonth && t.startYear)],
       [22, 'End Date [explain if contract end differs from work end]', dstrEnd(t.endMonth, t.endYear), !(t.endMonth && t.endYear)],
       ['SECTION', 'Commission'],
       [23, 'Does a fee share apply? [if yes, include a co-broker agreement or co-broker understanding email with this email]', feeShare ? `Yes — ${fs.pct}% to broker (attach co-broker agreement)` : 'No', false],
-      [24, 'Percentage split [be specific, especially if this is not a simple % to one broker]', feeShare ? `${fs.pct}%` : 'N/A', feeShare],
-      [25, 'Is this a domestic (U.S.) fee split? [if yes, state the % split, broker name(s), office, and team]', feeShare ? '' : 'N/A', feeShare],
-      [26, 'Is this an international fee split? [if yes, state the % split, broker name(s), office, team, and international Savills entity]', 'N/A', false],
-      [27, 'Third Party Commission / Fees [if applicable — for us this would be a subcontractor, rarely applicable]', 'N/A', false],
+      [24, 'Percentage split [be specific, especially if this is not a simple % to one broker]', feeShare ? `${fs.pct}%` : 'N/A', false],
+      [25, 'Is this a domestic (U.S.) fee split? [if yes, state the % split, broker name(s), office, and team]', feeShare ? v('feeSplit') : 'N/A', feeShare && !v('feeSplit')],
+      [26, 'Is this an international fee split? [if yes, state the % split, broker name(s), office, team, and international Savills entity]', v('intlSplit') || 'N/A', false],
+      [27, 'Third Party Commission / Fees [if applicable — for us this would be a subcontractor, rarely applicable]', v('thirdParty') || 'N/A', false],
     ];
   }
 
@@ -146,7 +147,7 @@
         return;
       }
       const [num, q, val, needs, kind] = r;
-      const isConfirm = kind === 'confirm';
+      const isConfirm = kind === 'confirm' && !opts.auto;   // the automatic send has nobody left to confirm
       let valStyle = needs ? HL : '';
       let valText = needs ? (val ? esc(val) + ' &nbsp;<i>(confirm)</i>' : '&nbsp;') : esc(val);
       if (isConfirm) {
@@ -164,9 +165,12 @@
     });
     const reflag = opts.reflag ? `<p style="color:#CE181E;font-weight:bold;">NOTE: fee or schedule CHANGED since the last intake — please process as a change order.</p>` : '';
     const FF = "'Gotham','Montserrat',Tahoma,Arial,sans-serif";
+    const intro = opts.auto
+      ? `<p style="color:#79828c;">Sent automatically by the Savills PPM fee tool${opts.by ? ' — <b style="color:#25273A;">' + esc(opts.by) + '</b> completed the intake details' : ''}${opts.leadName ? ' · revenue leader <b style="color:#25273A;">' + esc(opts.leadName) + '</b>' : ''}. Reply to the people in copy with any question.${opts.link ? ' <a href="' + esc(opts.link) + '" style="color:#25273A;">Open the project record</a>.' : ''}</p>`
+      : `<p style="color:#79828c;">Yellow cells need to be completed/confirmed by the submitter before sending. <span style="color:#CE181E;">Red</span> is pre-filled from the fee record and must be confirmed.</p>`;
     return `<div style="font-family:${FF};font-size:13px;color:#25273A;">`
       + `<p>PPM Project Intake — <b>${esc(p.name || 'New Project')}</b>${p.client ? ' · ' + esc(p.client) : ''}</p>`
-      + `<p style="color:#79828c;">Yellow cells need to be completed/confirmed by the submitter before sending. <span style="color:#CE181E;">Red</span> is pre-filled from the fee record and must be confirmed.</p>`
+      + intro
       + reflag
       + `<table style="border-collapse:collapse;border:1px solid #c9c9c4;width:100%;max-width:760px;font-family:${FF};">`
       + `<tr><td style="background:#25273A;color:#fff;font-weight:bold;padding:6px 8px;border:1px solid #c9c9c4;width:32px;">#</td>`
@@ -182,7 +186,7 @@
     rows.forEach(r => {
       if (r[0] === 'SECTION') { L.push('', '== ' + r[1] + ' =='); return; }
       L.push(`${r[0]}. ${r[1]}: ${r[3] && !r[2] ? '>> TO COMPLETE >>' : (r[2] || (r[3] ? '>> CONFIRM >>' : ''))}`);
-      if (r[4] === 'confirm') L.push(`    >> ${NAME_CONFIRM}`);
+      if (r[4] === 'confirm' && !opts.auto) L.push(`    >> ${NAME_CONFIRM}`);
     });
     return L.join('\n');
   }
@@ -264,5 +268,29 @@
     };
   }
 
-  window.UFC_Intake = { openIntake: copyIntake, intakeSignature, INTAKE_TO };
+  /** The intake as one email: { subject, html, text, to, cc }. Table only; the
+      message is the form, so it does not wear the notice shell. */
+  function buildIntakeEmail(state, opts) {
+    const o = Object.assign({ auto: true }, opts || {});
+    const p = state.project || {};
+    const subject = `PPM Project Intake - ${p.name || 'New Project'}` + (o.reflag ? ' (CHANGED — change order)' : '');
+    return { subject, html: buildTableHtml(state, o), text: buildPlainText(state, o), to: [INTAKE_TO] };
+  }
+  /** Hand the finished intake to the Box outbox (Power Automate mails it).
+      Returns the message id, or null when Box is off. cc: whoever completed
+      it and the revenue leader, so the reply lands with people who know. */
+  function sendIntake(state, opts) {
+    const B = window.UFC_Box; if (!(B && B.enabled && B.notify)) return null;
+    const S = window.UFC_Store; const o = opts || {};
+    let by = '', byLogin = '';
+    try { const u = (S && S.getCurrentUser()) || {}; byLogin = u.username || ''; by = u.name || (S.displayNameForLogin ? S.displayNameForLogin(byLogin) : byLogin); } catch (e) {}
+    const leadObj = S && S.resolveLeader ? S.resolveLeader((state.project || {}).leadId || (state.project || {}).lead) : null;
+    let link = ''; try { link = location.origin + location.pathname + '?id=' + encodeURIComponent(state.id); } catch (e) {}
+    const m = buildIntakeEmail(state, Object.assign({}, o, { auto: true, by, leadName: leadObj ? leadObj.displayName : o.leadName, link }));
+    const cc = [byLogin, leadObj && leadObj.username].filter(Boolean);
+    return B.notify({ event: 'project-intake', to: m.to, cc, subject: m.subject, html: m.html, text: m.text,
+      data: { projectId: state.id, name: (state.project || {}).name || '', client: (state.project || {}).client || '', netFee: Math.round(o.netFee || 0), reflag: !!o.reflag, signature: intakeSignature(state, o.netFee) } });
+  }
+
+  window.UFC_Intake = { openIntake: copyIntake, intakeSignature, intakeRows, buildTableHtml, buildIntakeEmail, sendIntake, INTAKE_TO };
 })();

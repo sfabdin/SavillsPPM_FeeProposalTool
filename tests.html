@@ -62,6 +62,7 @@
 <script src="universal-fee-calc/confirmed-book.js"></script>
 <script src="universal-fee-calc/projections-xlsx.js"></script>
 <script src="universal-fee-calc/staff.js"></script>
+<script src="universal-fee-calc/intake.js"></script>
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/vendor-lazy.js"></script>
 <script src="universal-fee-calc/bulk-excel.js"></script>
@@ -1245,6 +1246,77 @@
              sq(shareOut, 'CBRE|Fee share · Dallas PM', 'the export lists both fee shares') && sq(passOut, 'Pass-through · Movers', 'and one pass-through') &&
              sq(r2(feeBilled), r2(fin.invoice - 1000), 'fee billed = invoice less the vendor cost only; the fee share stays billed as fee') &&
              sq(r2(bill.passCost), 4000, 'the index note counts only the vendor cost as pass-through') && sq(r2(bill.shareOut), 8000, 'and the ticked line as fee share');
+    });
+    test('Intake · required fields', 'a booked project asks for every intake row the record cannot pre-fill; filled in, confirmed, and with a valid payer email it is complete', () => {
+      setup();
+      const won = (over) => S.saveProject(base({ id: 'in_a', project: Object.assign({ name: 'Intake A', client: 'Zeta Corp', status: 'won', rating: 1, industry: 'Financial Services', projectType: 'Relocation', location: '1 Main St, New York, NY', clientContact: 'Pat Payer', leadId: 'esobel' }, over || {}) }), { force: true });
+      const draft = S.intakeStatus(base({ project: { name: 'D', client: 'Zeta Corp', status: 'draft' } }));
+      const p0 = won();
+      const s0 = S.intakeStatus(p0, { netFee: 100000 });
+      const keys0 = s0.missing.filter(m => !m.auto).map(m => m.key).sort().join(',');
+      const full = { firstAuth: 'yes', rsf: '45,000', budget: '$12M', payerAddress: '1 Main St, New York, NY 10001', payerEmail: 'ap@zeta.com', payerTerms: 'Net 45', invoiceCc: 'Jo jo@zeta.com', paymentSchedule: 'Monthly in arrears', vendorForms: 'W9 only', nteExpenses: '$5,000' };
+      const s1 = S.intakeStatus(won({ intake: full }), { netFee: 100000 });
+      const s2 = S.intakeStatus(won({ intake: Object.assign({}, full, { payerEmail: 'not an email' }) }), { netFee: 100000 });
+      const s3 = S.intakeStatus(won({ intake: Object.assign({}, full, { firstAuth: 'no' }) }), { netFee: 100000 });
+      const s4 = S.intakeStatus(won({ intake: Object.assign({}, full, { firstAuth: 'no', standalone: 'additive' }) }), { netFee: 100000 });
+      const s5 = S.intakeStatus(won({ intake: Object.assign({}, full, { firstAuth: 'no', standalone: 'standalone' }) }), { netFee: 100000 });
+      // a fee share → the split details are asked for
+      const fsP = S.saveProject(base({ id: 'in_fs', project: Object.assign({}, p0.project, { intake: full }), assumptions: { feeShare: { enabled: true, pct: 10, mode: 'offtop', broker: 'CBRE' } } }), { force: true });
+      const s6 = S.intakeStatus(fsP, { netFee: 100000 });
+      // an earlier booked project for the same client answers row 1 by itself
+      S.saveProject(base({ id: 'in_prior', project: { name: 'Zeta HQ 2024', client: 'zeta corp', status: 'closed', rating: 1 } }), { force: true });
+      const s7 = S.intakeStatus(won({ intake: Object.assign({}, full, { firstAuth: '' }) }), { netFee: 100000 });
+      // the pre-filled rows that happen to be blank block it too, flagged as the project section's job
+      const s8 = S.intakeStatus(won({ intake: full, industry: '', location: '' }), { netFee: 100000 });
+      const s9 = S.intakeStatus(won({ intake: full }), { netFee: 0 });
+      return sq(draft.eligible, false, 'a draft has no intake') && sq(s0.eligible, true, 'won is eligible') &&
+             sq(keys0, 'budget,firstAuth,invoiceCc,nteExpenses,payerAddress,payerEmail,payerTerms,paymentSchedule,rsf,standalone,vendorForms', 'what a fresh booking asks for') &&
+             sq(s1.complete, true, 'everything typed → complete') && sq(s1.missing.length, 0, 'nothing missing') &&
+             sq(s2.complete, false, 'a bad payer email is not complete') && sq(/not a valid address/.test(s2.missing.map(m => m.label).join()), true, 'and says why') &&
+             sq(s3.missing.map(m => m.key).join(), 'standalone', 'not the first authorization → standalone or additive must be answered') &&
+             sq(s4.missing.map(m => m.key).join(), 'additiveWith', 'additive → say which authorizations go together') && sq(s5.complete, true, 'standalone → nothing more') &&
+             sq(s6.missing.map(m => m.key).join(), 'feeSplit', 'a fee share asks for the split details') &&
+             sq(s7.ctx.priorsKnown, true, 'prior booked work found (case-insensitive client match)') && sq(s7.missing.map(m => m.key).join(), 'standalone', 'row 1 answered by the system; standalone still asked') &&
+             sq(s8.missing.filter(m => m.auto).map(m => m.key).join(), 'industry,location', 'blank pre-filled rows block it, flagged auto') && sq(s9.missing.some(m => m.key === 'fee'), true, 'an unpriced project blocks it');
+    });
+    test('Intake · email', 'the typed details land on their rows, the automatic table has nothing left highlighted, and Box gets one project-intake message', () => {
+      setup();
+      const I = window.UFC_Intake;
+      const full = { firstAuth: 'yes', rsf: '45,000', budget: '$12M', payerAddress: '1 Main St', payerEmail: 'ap@zeta.com', payerTerms: 'Net 45', invoiceCc: 'Jo jo@zeta.com', paymentSchedule: 'Monthly', vendorForms: 'None', nteExpenses: '$5,000', feeBasisNote: 'billed monthly', dateNote: 'contract signed a month before kickoff' };
+      const p = S.saveProject(base({ id: 'in_e', project: { name: 'Intake E', client: 'Zeta Corp', status: 'won', rating: 1, industry: 'Tech', projectType: 'Relocation', location: '1 Main St', clientContact: 'Pat', leadId: 'esobel', intake: full }, assumptions: { feeBasis: 'nte' } }), { force: true });
+      const rows = I.intakeRows(p, { netFee: 123456, serviceLines: [] });
+      const row = (n) => rows.find(r => r[0] === n);
+      const html = I.buildTableHtml(p, { netFee: 123456, auto: true, by: 'Test Admin' });
+      const manual = I.buildTableHtml(base({ project: { name: 'Blank', client: 'Zeta Corp', status: 'won' } }), { netFee: 100 });
+      const em = I.buildIntakeEmail(p, { netFee: 123456 });
+      window.__notices = [];
+      const wasEnabled = window.UFC_Box.enabled; window.UFC_Box.enabled = true;
+      let id; try { id = I.sendIntake(p, { netFee: 123456 }); } finally { window.UFC_Box.enabled = wasEnabled; }
+      const n = window.__notices[0] || {};
+      return sq(row(1)[2], 'Yes — first authorization / contract for this client', 'row 1 from the confirmation') && sq(row(1)[3], false, 'and no longer needs input') &&
+             sq(row(2)[2], 'N/A — first authorization', 'row 2 n/a on a first authorization') && sq(row(8)[2], '45,000', 'RSF') && sq(row(14)[2], 'ap@zeta.com', 'payer email') &&
+             sq(row(19)[2], '$123,456 · Not-to-exceed — billed on timecards against the ceiling — billed monthly', 'fee, basis and note') &&
+             sq(/contract signed a month before kickoff/.test(row(21)[2]), true, 'the dates note rides on the start date') &&
+             sq(row(10)[2], 'Zeta Corp — the payer entity is the same', 'contracting vs payer entity') &&
+             sq(rows.filter(r => r[0] !== 'SECTION' && r[3]).length, 0, 'nothing left to complete') &&
+             sq(html.indexOf('#FFF36B') < 0, true, 'the automatic table has no yellow cells') && sq(html.indexOf('Sent automatically') >= 0 && html.indexOf('Test Admin') >= 0, true, 'and says who completed it') &&
+             sq(manual.indexOf('#FFF36B') >= 0 && manual.indexOf('Please confirm') >= 0, true, 'the manual preview still highlights and asks to confirm') &&
+             sq(em.subject, 'PPM Project Intake - Intake E', 'subject') && sq(em.to.join(), S.INTAKE_TO, 'to the intake mailbox') &&
+             sq(id, 'spy', 'queued through Box.notify') && sq(n.event, 'project-intake', 'as a project-intake message') && sq((n.cc || []).indexOf('esobel@savills.us') >= 0, true, 'the revenue leader in copy') && sq(n.data.projectId, 'in_e', 'carrying the project id');
+    });
+    test('Ready to bill', 'a month is marked on the project record by whoever can edit it, reads back with who and when, and clears', () => {
+      setup();
+      S.setRealIdentity({ username: 'esobel@savills.us', name: 'Emily Sobel' });   // a leader, not an admin
+      const before = S.listActivity ? S.listActivity().length : 0;
+      const saved = S.setReadyToBill('rc_a', '2026-02', true);
+      const mark = S.readyToBillOf(S.getProject('rc_a'), '2026-02');
+      const none = S.readyToBillOf(S.getProject('rc_a'), '2026-03');
+      S.setReadyToBill('rc_a', '2026-02', false);
+      const cleared = S.readyToBillOf(S.getProject('rc_a'), '2026-02');
+      const kept = S.getProject('rc_a').project.readyToBill;
+      asAdmin();
+      return sq(!!saved && saved.id, 'rc_a', 'the record saved') && sq(!!mark && mark.by, 'esobel@savills.us', 'who marked it') && sq(!!mark && /^\d{4}-/.test(mark.at), true, 'and when') &&
+             sq(none, null, 'other months untouched') && sq(cleared, null, 'untick clears it') && sq(kept, undefined, 'an empty map is dropped from the record');
     });
     test('Recon · lock flags', 'a project edit that moves a locked month shows as a locked-month flag; reopening clears the lock', () => {
       const p = setup(); const L = S.reconLinesFor(p, C);
