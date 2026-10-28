@@ -50,7 +50,6 @@
       salesforceId: '',   // pasted in once Booked — bridges to Salesforce → Clockify reporting
       intakeSent: false,  // user-confirmed the intake email actually went out (clicking ≠ sent)
       intake: {},         // the intake rows the record cannot pre-fill — UFC_Store.INTAKE_FIELDS; typed once Won/Active
-      readyToBill: {},    // { 'YYYY-MM': { at, by, byName } } — months the project says Finance can invoice
     },
     timeline: {
       startMonth: 1,   // 1..12
@@ -2247,42 +2246,6 @@
     UFC_UI.toast('Updated intake sent to ' + window.UFC_Intake.INTAKE_TO + ', marked as a change.');
   }
 
-  /* ----- Ready to bill · the project telling Finance a month can be invoiced -----
-     One tick per earned month, kept on the record (project.readyToBill[ym] =
-     { at, by, byName }). Financial Tracking shows the mark on the cell and in
-     its pop-up; a month Finance has already billed is shown settled here. */
-  function renderReadyToBill() {
-    const host = $('#rtb-panel'); if (!host) return;
-    const off = () => { host.hidden = true; host.innerHTML = ''; };
-    if (!state.id || !STORE.reconLinesFor || !STORE.CO_ELIGIBLE_STATUSES.has(state.project.status)) return off();
-    let fee = {}; try { fee = STORE.reconLinesFor(stateAsRecord(), window.RATES_CATALOG).fee || {}; } catch (e) { fee = {}; }
-    const now = new Date(); const nowKey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-    const months = Object.keys(fee).filter(k => k <= nowKey && Math.abs(fee[k]) > 0.5).sort();
-    if (!months.length) return off();
-    const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const lbl = (k) => { const [y, m] = k.split('-').map(Number); return MN[m - 1] + ' ' + y; };
-    const rb = state.project.readyToBill || {};
-    const rows = months.map(k => {
-      const c = (STORE.reconCell && STORE.reconCell(+k.slice(0, 4), state.id, 'fee', k)) || {};
-      const billed = c.status === 'billed' || c.status === 'billed-diff' || (c.status === 'accrued' && !!c.billedIn);
-      const r = rb[k];
-      const who = r ? (r.byName || (STORE.displayNameForLogin ? STORE.displayNameForLogin(r.by) : r.by) || '') : '';
-      const when = r && r.at ? new Date(r.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-      const status = billed ? 'Billed ✓' : r ? 'Ready' + (who ? ' · ' + escapeHtml(who) : '') + (when ? ' ' + escapeHtml(when) : '') : 'Not marked';
-      return `<label class="rtb-m${billed ? ' billed' : r ? ' on' : ''}"><input type="checkbox" data-ym="${k}"${(r || billed) ? ' checked' : ''}${billed ? ' disabled' : ''}><span class="rtb-mo">${lbl(k)}</span><span class="rtb-amt">${fmtMoney(fee[k])}</span><span class="rtb-st">${status}</span></label>`;
-    }).join('');
-    const ready = months.filter(k => rb[k]).length;
-    host.innerHTML = `<div class="rtb-head"><div class="rtb-title">Ready to bill</div><div class="rtb-sub">Tick a month once its fee can be invoiced. Finance sees the mark on Financial Tracking${ready ? ` · <b>${ready}</b> marked` : ''}.</div></div><div class="rtb-months">${rows}</div>`;
-    host.hidden = false;
-    Array.from(host.querySelectorAll('input[type=checkbox]')).forEach(cb => cb.addEventListener('change', e => {
-      const k = e.target.dataset.ym; const map = Object.assign({}, state.project.readyToBill || {});
-      if (e.target.checked) { const u = STORE.getCurrentUser() || {}; map[k] = { at: new Date().toISOString(), by: u.username || '', byName: u.name || '' }; }
-      else delete map[k];
-      if (Object.keys(map).length) state.project.readyToBill = map; else delete state.project.readyToBill;
-      markDirty(); renderReadyToBill();
-    }));
-  }
-
   /** "Amends" — the optional link from a follow-on project (a CO, an ASR, a
       work authorisation) to the contract it extends. Display and grouping
       only; the dollars stay separate. Lists the client's other projects
@@ -2327,7 +2290,6 @@
     updateIntakeButton();
     updateIntakeCallout();
     renderIntakeSection();
-    renderReadyToBill();
     updateChangeOrderBanner();
     renderReconFlags();
     const rh = $('#rating-hint');
@@ -3723,7 +3685,6 @@
       state.financials = saved.financials ? JSON.parse(JSON.stringify(saved.financials)) : null;
       updateChangeOrderBanner();
       renderReconFlags();
-      renderReadyToBill();
       maybeAutoSendIntake();   // the last intake detail just landed → the email goes
       conflicted = false;
       clearConflictBanner();

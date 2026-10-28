@@ -63,6 +63,22 @@
     return null;
   }
 
+  /* ---------- intake columns ----------
+     One per typed intake row (UFC_Store.INTAKE_FIELDS), so the Bulk Editor
+     can backfill every booked project in one pass instead of opening each
+     in the calculator. Written and read as text; the two dropdown questions
+     take Yes/No and standalone/additive. Stored under project.intake. */
+  const INTAKE_SPEC = () => ((window.UFC_Store || {}).INTAKE_FIELDS) || [];
+  const intakeKey = (k) => 'in_' + k;
+  function intakeCols() {
+    return INTAKE_SPEC().map(f => ({ key: intakeKey(f.key), h: 'Intake · ' + f.label.split(' · ')[0], w: f.kind === 'select' ? 16 : 28, text: true, intake: f.key,
+      list: f.key === 'firstAuth' ? 'FirstAuth' : f.key === 'standalone' ? 'Standalone' : undefined }));
+  }
+  const INTAKE_OUT = { firstAuth: { yes: 'Yes', no: 'No' } };
+  const INTAKE_IN = { firstAuth: { yes: 'yes', y: 'yes', no: 'no', n: 'no' }, standalone: { standalone: 'standalone', additive: 'additive' } };
+  function intakeToCell(k, v) { const t = S(v); const m = INTAKE_OUT[k]; return m ? (m[t] || t) : t; }
+  function intakeFromCell(k, v) { const t = S(v); const m = INTAKE_IN[k]; return m ? (m[t.toLowerCase()] || t) : t; }
+
   /* ---------- column definitions ----------
      `key` drives both write and read, so the two directions can never
      drift apart. `ro: true` = reference only, ignored on import. */
@@ -88,6 +104,7 @@
     { key: 'firstProposalDate', h: 'First proposal date', w: 17, text: true },
     { key: 'signedContractDate', h: 'Signed contract date', w: 18, text: true },
     { key: 'intakeSent',    h: 'Intake sent (Y/N)', w: 14, list: 'YesNo' },
+  ].concat(intakeCols(), [
     { key: 'start',         h: 'Start (YYYY-MM)',   w: 15, text: true },
     { key: 'end',           h: 'End (YYYY-MM)',     w: 15, text: true },
     { key: 'hrsPerMo',      h: 'Hrs / month',       w: 12, num: true },
@@ -102,7 +119,7 @@
     { key: 'refRoles',      h: '▸ Roles',           w: 9,  ro: true, num: true },
     { key: 'refUpdated',    h: '▸ Last updated',    w: 20, ro: true },
     { key: 'refBy',         h: '▸ Last edited by',  w: 20, ro: true },
-  ];
+  ]);
   const MAX_PHASE_COLS = 8;
   const ROLE_COLS = [
     { key: 'projectId', h: 'Project ID',   w: 20, lock: true },
@@ -173,6 +190,7 @@
       proposalDate: pj.proposalDate || '', firstProposalDate: pj.firstProposalDate || '',
       signedContractDate: pj.signedContractDate || '',
       intakeSent: pj.intakeSent ? 'Y' : 'N',
+      ...Object.fromEntries(INTAKE_SPEC().map(f => [intakeKey(f.key), intakeToCell(f.key, (pj.intake || {})[f.key])])),
       start: ymText(tl.startYear, tl.startMonth), end: ymText(tl.endYear, tl.endMonth),
       hrsPerMo: a.hrsPerMo == null ? '' : a.hrsPerMo,
       escalation: a.escalation == null ? '' : a.escalation,
@@ -237,6 +255,8 @@
       ['ProjectType', st.PROJECT_TYPES.map(t => t.name)],
       ['Lead', st.REVENUE_LEADERS.map(l => l.displayName + (l.username ? ' <' + l.username + '>' : ''))],
       ['YesNo', ['Y', 'N']],
+      ['FirstAuth', ['Yes', 'No']],
+      ['Standalone', ['standalone', 'additive']],
       ['Billing', ['phase', 'flatline']],
       ['RateSource', ['grid', 'contracted']],
       ['Tier', ['high', 'mid', 'low']],
@@ -348,6 +368,7 @@
       ['Roles, Phases, Groups, Revenue', 'These sheets are AUTHORITATIVE for every project that appears on them: the project is rebuilt from exactly those rows. Delete a role row to delete the role; add a row with a blank Role ID to add one. A project with no rows on a sheet keeps what it already had.'],
       ['FTE columns', 'FTE% P1…P8 map to that project\'s phases in order (see the Phases sheet). Roles flagged "Month-by-month FTE" carry a per-month schedule that is preserved as long as you leave their FTE% columns alone.'],
       ['Rates', 'Rate source "grid" prices from the rate grid using Title ID + Tier. "contracted" uses the Contracted rate column verbatim. Title IDs must exist on the Lists sheet.'],
+      ['Intake columns', 'One column per row of the Salesforce intake form that the record cannot pre-fill (RSF, budget, payer details, payment schedule, onboarding forms, NTE expenses, the first-authorization and standalone/additive answers, fee-split notes). Fill them here to backfill booked projects in one pass; the calculator shows the same fields in its Intake section and sends the intake email once a Won or Active project has them all. First authorization takes Yes/No; Standalone takes standalone or additive.'],
       ['What is preserved', 'Imported-revenue provenance, change-order links, saved versions and the activity log are carried over untouched — the workbook does not model them.'],
       ['Before you start', 'Turn ON maintenance mode in the tool so nobody else saves while the book is out. Turn it off when you are done.'],
     ].forEach(([k, v]) => {
@@ -667,6 +688,13 @@
       setIf('firstProposalDate', S(row.firstProposalDate));
       setIf('signedContractDate', S(row.signedContractDate));
       pj.intakeSent = YESNO(row.intakeSent);
+      {
+        const intake = {};
+        INTAKE_SPEC().forEach(f => { const v = intakeFromCell(f.key, row[intakeKey(f.key)]); if (v) intake[f.key] = v; });
+        if (Object.keys(intake).length) pj.intake = intake; else delete pj.intake;
+        errIf(intakeKey('firstAuth'), intake.firstAuth && !/^(yes|no)$/.test(intake.firstAuth), `Intake · first authorization "${S(row[intakeKey('firstAuth')])}" must be Yes or No.`);
+        errIf(intakeKey('standalone'), intake.standalone && !/^(standalone|additive)$/.test(intake.standalone), `Intake · standalone "${S(row[intakeKey('standalone')])}" must be standalone or additive.`);
+      }
       setIf('notes', S(row.notes));
 
       const sYm = parseYm(row.start), eYm = parseYm(row.end);
@@ -801,6 +829,7 @@
         if (JSON.stringify(a0.assumptionsList || []) !== JSON.stringify(b0.assumptionsList || []))
           diff.push({ field: 'Assumptions', from: listLbl(a0.assumptionsList), to: listLbl(b0.assumptionsList) });
         if (!!a0.intakeSent !== !!b0.intakeSent) diff.push({ field: 'Intake sent', from: a0.intakeSent ? 'Y' : 'N', to: b0.intakeSent ? 'Y' : 'N' });
+        INTAKE_SPEC().forEach(f => { const va = S((a0.intake || {})[f.key]), vb = S((b0.intake || {})[f.key]); if (va !== vb) diff.push({ field: 'Intake · ' + f.label.split(' · ')[0], from: va || '—', to: vb || '—' }); });
         const roleDelta = ((prev.roles || []).length !== (next.roles || []).length)
           ? [{ field: 'Roles', from: (prev.roles || []).length + '', to: (next.roles || []).length + '' }] : [];
         const rosterChanged = JSON.stringify((prev.roles || []).map(rolesKey)) !== JSON.stringify((next.roles || []).map(rolesKey));
