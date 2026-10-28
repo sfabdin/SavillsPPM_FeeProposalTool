@@ -18,10 +18,10 @@
     // people, commit the number, track the money, report it. Then the two
     // buckets that are not stages — keeping the data clean, and admin.
     // ── 1 · Pursue & price ──
-    { href: 'Projects Index.html',           label: 'Projects Index',      group: 'Pursue & price',
-      desc: 'Every proposal and project in one place — search, filter, and open.' },
     { href: 'Universal Fee Calculator.html', label: '+ New Project',       group: 'Pursue & price', cta: true,
       desc: 'Start a new fee proposal in the Fee Calculator — team, rates, phases, monthly schedule.' },
+    { href: 'Projects Index.html',           label: 'Projects Index',      group: 'Pursue & price',
+      desc: 'Every proposal and project in one place — search, filter, and open.' },
     { href: 'Benchmarking Dashboard.html',   label: 'Benchmarking',        group: 'Pursue & price',
       desc: 'Benchmark a proposal against a cohort, or compare up to five side by side — fee, team mix, rates, scope.' },
     { href: 'Proposal Analytics.html',       label: 'Proposal Analytics',  group: 'Pursue & price',
