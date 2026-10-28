@@ -3185,6 +3185,36 @@
       return plan.untouched.length === 2 || ('untouched ' + plan.untouched.length);
     });
 
+    testAsync('Round trip', 'Bulk Excel carries the intake details: they round-trip untouched, and an edited cell lands under project.intake with a reviewable diff', async () => {
+      const intake = { firstAuth: 'yes', rsf: '45,000', payerEmail: 'ap@acme.com', payerTerms: 'Net 45' };
+      freshBook([rec('rt_i', 'Intake Tower', stamp(2), { project: { name: 'Intake Tower', client: 'Acme', status: 'won', rating: 1, lead: 'Andrew Peters', intake } }), rec('rt_j', 'Juliet')]);
+      const { wb } = await B.buildWorkbook();
+      const ws = wb.getWorksheet('Projects'); const heads = ws.getRow(1).values.map(v => String(v == null ? '' : v));
+      const col = (h) => heads.indexOf(h);
+      const rowOf = (id) => { let out = null; ws.eachRow((r, n) => { if (n > 1 && String(r.getCell(1).value) === id) out = r; }); return out; };
+      const ri = rowOf('rt_i');
+      const cellFirst = ri ? String(ri.getCell(col('Intake · First authorization for this client?')).value || '') : '';
+      const cellRsf = ri ? String(ri.getCell(col('Intake · RSF')).value || '') : '';
+      const buf = await wb.xlsx.writeBuffer();
+      const parsed = await B.parseWorkbook({ name: 'intake.xlsx', arrayBuffer: async () => buf });
+      const quiet = B.buildPlan(parsed);
+      // backfill Juliet from the sheet, and change one cell on Intake Tower
+      const pj = parsed.projects.find(r => String(r.id) === 'rt_j'); pj.in_rsf = '12,000'; pj.in_payerEmail = 'billing@acme.com'; pj.in_firstAuth = 'No'; pj.in_standalone = 'additive';
+      const pi = parsed.projects.find(r => String(r.id) === 'rt_i'); pi.in_payerTerms = 'Net 60';
+      const plan = B.buildPlan(parsed);
+      const upJ = plan.plan.find(x => x.kind === 'update' && x.id === 'rt_j'), upI = plan.plan.find(x => x.kind === 'update' && x.id === 'rt_i');
+      const chJ = plan.changes.find(c => c.id === 'rt_j'), chI = plan.changes.find(c => c.id === 'rt_i');
+      if (col('Intake · RSF') < 0 || col('Intake · Payer email') < 0) return 'intake columns missing from the Projects sheet: ' + heads.filter(h => /Intake/.test(h)).join(', ');
+      if (cellFirst !== 'Yes' || cellRsf !== '45,000') return 'export cells: first=' + cellFirst + ' rsf=' + cellRsf;
+      if (quiet.errors.length || quiet.changes.length) return 'phantom: ' + (quiet.errors[0] || JSON.stringify(quiet.changes[0]).slice(0, 160));
+      if (plan.errors.length) return 'errors: ' + plan.errors.slice(0, 2).join(' · ');
+      if (!upJ || JSON.stringify(upJ.record.project.intake) !== JSON.stringify({ firstAuth: 'no', standalone: 'additive', rsf: '12,000', payerEmail: 'billing@acme.com' })) return 'Juliet intake: ' + JSON.stringify(upJ && upJ.record.project.intake);
+      if (!upI || upI.record.project.intake.payerTerms !== 'Net 60' || upI.record.project.intake.rsf !== '45,000') return 'Intake Tower intake: ' + JSON.stringify(upI && upI.record.project.intake);
+      if (!chJ || !chJ.fields.some(f => f.field === 'Intake · RSF' && f.to === '12,000')) return 'Juliet diff: ' + JSON.stringify(chJ && chJ.fields);
+      if (!chI || !chI.fields.some(f => f.field === 'Intake · Payer terms' && f.from === 'Net 45' && f.to === 'Net 60')) return 'Intake Tower diff: ' + JSON.stringify(chI && chI.fields);
+      return true;
+    });
+
     /* The Box fake: an upload that meets a 412 must pull, merge newest-wins per
        record, and retry with the etag it just pulled — never overwrite. */
     testAsync('Box sync', 'a 412 on upload pulls, merges newest-wins, and retries with the fresh etag', async () => {
