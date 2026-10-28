@@ -3484,6 +3484,7 @@
     'mhadim@savills.us',     // Maria Hadim
     'eglatt@savills.us',     // Emily Glatt
     'cglatt@savills.us',     // Cara Glatt
+    'bwiniarz@savills.us',   // Brayan Winiarz — admin, not a revenue leader
   ].map(s => s.toLowerCase()));
 
   /* ------------------------------------------------------------
@@ -3910,7 +3911,7 @@
   const LOGIN_NAMES = {
     'sabdin@savills.us': 'Sarah Abdin', 'kyerou@savills.us': 'Kyri Yerou',
     'esobel@savills.us': 'Emily Sobel', 'jsantoro@savills.us': 'Jeff Santoro', 'mglatt@savills.us': 'Michael Glatt',
-    'mhadim@savills.us': 'Maria Hadim', 'eglatt@savills.us': 'Emily Glatt', 'cglatt@savills.us': 'Cara Glatt',
+    'mhadim@savills.us': 'Maria Hadim', 'eglatt@savills.us': 'Emily Glatt', 'cglatt@savills.us': 'Cara Glatt', 'bwiniarz@savills.us': 'Brayan Winiarz',
     'bjosselson@savills.us': 'Benay Josselson',
   };
   /** A person's display name for any login: the leader directory first, then
