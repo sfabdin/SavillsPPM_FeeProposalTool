@@ -1837,6 +1837,11 @@
   }
 
   function getLateness() { const db = readDb(); return { rows: db.lateness || [], at: db.meta.latenessAt }; }
+  /* The daily Clockify drop (clockify-latest.json, written by the scheduled
+     job): the stamp of the last drop this store took, so a newer one is
+     committed once and an older one never. */
+  function clockifyDropAt() { return (readDb().meta || {}).clockifyDropAt || ''; }
+  function markClockifyDrop(pulledAt) { const db = readDb(); db.meta.clockifyDropAt = String(pulledAt || ''); db.meta.clockifyDropTakenAt = new Date().toISOString(); writeDb(db); }
   /** personId → 'YYYY-MM-DD' of the last day they logged time for (from the
       actuals pull; the lateness pull tops it up). */
   function lastWorkedDays() {
@@ -3278,6 +3283,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals,
     getMappings, setUserMapping, setProjectMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
+    clockifyDropAt, markClockifyDrop,
     titleFamily, costRateForTitle, personCostRate, behindMonths, isBehind, missingCost, projectLabel, projectLabelText, allocContractDrift, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles, personEmail, setPersonEmail,
     parseCsvRows: parseCsv,

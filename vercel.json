@@ -65,5 +65,11 @@
         }
       ]
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/clockify-daily",
+      "schedule": "0 10 * * *"
+    }
   ]
 }
