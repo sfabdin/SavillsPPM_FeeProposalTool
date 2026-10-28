@@ -777,7 +777,7 @@
     const total = slips.reduce((a, s) => a + Math.abs(Number((s.kind || 'slip') === 'adjust' ? s.delta : s.amount) || 0), 0);
     const nAdj = slips.filter(s => (s.kind || 'slip') === 'adjust').length;
     const nSlip = slips.length - nAdj;
-    $('#slip-sub').innerHTML = `<b>${slips.length}</b> open change${slips.length === 1 ? '' : 's'} from Revenue Reconciliation`
+    $('#slip-sub').innerHTML = `<b>${slips.length}</b> open change${slips.length === 1 ? '' : 's'} from Financial Tracking`
       + (nSlip ? ` — ${nSlip} moved to a later month` : '') + (nAdj ? `${nSlip ? ',' : ' —'} ${nAdj} plan adjustment${nAdj === 1 ? '' : 's'}` : '')
       + ` — <b>${fmtExact(total)}</b>. Red below until the schedule is moved and each one is reconciled.`;
     $('#slip-list').innerHTML = `<table><thead><tr>
