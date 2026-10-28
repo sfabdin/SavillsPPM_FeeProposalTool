@@ -1268,7 +1268,9 @@
       const s7 = S.intakeStatus(won({ intake: Object.assign({}, full, { firstAuth: '' }) }), { netFee: 100000 });
       // the pre-filled rows that happen to be blank block it too, flagged as the project section's job
       const s8 = S.intakeStatus(won({ intake: full, industry: '', location: '' }), { netFee: 100000 });
-      const s9 = S.intakeStatus(won({ intake: full }), { netFee: 0 });
+      // netTotal is 0 on a project imported by month, so a zero here falls back to the record's own series — only a truly unpriced project is blocked
+      const s9 = S.intakeStatus(S.saveProject(base({ id: 'in_u', roles: [], project: Object.assign({}, p0.project, { intake: full }) }), { force: true }), { netFee: 0 });
+      const s9b = S.intakeStatus(won({ intake: full }), { netFee: 0 });
       return sq(draft.eligible, false, 'a draft has no intake') && sq(s0.eligible, true, 'won is eligible') &&
              sq(keys0, 'budget,firstAuth,invoiceCc,nteExpenses,payerAddress,payerEmail,payerTerms,paymentSchedule,rsf,standalone,vendorForms', 'what a fresh booking asks for') &&
              sq(s1.complete, true, 'everything typed → complete') && sq(s1.missing.length, 0, 'nothing missing') &&
@@ -1277,7 +1279,7 @@
              sq(s4.missing.map(m => m.key).join(), 'additiveWith', 'additive → say which authorizations go together') && sq(s5.complete, true, 'standalone → nothing more') &&
              sq(s6.missing.map(m => m.key).join(), 'feeSplit', 'a fee share asks for the split details') &&
              sq(s7.ctx.priorsKnown, true, 'prior booked work found (case-insensitive client match)') && sq(s7.missing.map(m => m.key).join(), 'standalone', 'row 1 answered by the system; standalone still asked') &&
-             sq(s8.missing.filter(m => m.auto).map(m => m.key).join(), 'industry,location', 'blank pre-filled rows block it, flagged auto') && sq(s9.missing.some(m => m.key === 'fee'), true, 'an unpriced project blocks it');
+             sq(s8.missing.filter(m => m.auto).map(m => m.key).join(), 'industry,location', 'blank pre-filled rows block it, flagged auto') && sq(s9.missing.some(m => m.key === 'fee'), true, 'an unpriced project blocks it') && sq(s9b.missing.some(m => m.key === 'fee'), false, 'a priced one passes even when the calculator total reads 0');
     });
     test('Intake · email', 'the typed details land on their rows, the automatic table has nothing left highlighted, and Box gets one project-intake message', () => {
       setup();
