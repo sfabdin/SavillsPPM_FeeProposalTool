@@ -50,6 +50,9 @@
   const statusLabel = (id) => (STATUSES.find(s => s.id === id) || {}).label || '';
 
   const admin = () => STORE.isAdmin(STORE.getCurrentUser());
+  /** The project side's "ready to bill" mark on a fee month: { at, by, byName } or null. */
+  const rtbOf = (p, key) => STORE.readyToBillOf ? STORE.readyToBillOf(p, key) : null;
+  const rtbWho = (r) => r ? ((r.byName || (STORE.displayNameForLogin ? STORE.displayNameForLogin(r.by) : r.by) || 'the project') + (r.at ? ' · ' + fmtStamp(r.at) : '')) : '';
 
   /* ---------- data ---------- */
   let _lines = null, _linesRev = '';
@@ -227,7 +230,7 @@
       kpi(money(billedToClient), 'billed to client · ' + MONTHS[M - 1]) + kpi('<span class="teal">' + money(tot('pass')) + '</span>', 'pass-through out · to vendors') + kpi('<span class="red">' + money(tot('share')) + '</span>', 'fee share out · to brokers') +
       kpi('<b>' + money(ours) + '</b>', 'Savills revenue · fee incl. the fee on pass-through, less fee share') +
       kpi(money(billedNow), 'billed this month · incl. accruals settling') + kpi(money(accruedNow), 'accrued this month') + kpi(money(carryOpen), 'earlier accruals still open') +
-      kpi(String(unruled(rows)), 'lines without a status') + '</div>';
+      (() => { const rtbN = own.filter(r => r.lkind === 'fee' && !(r.cell && r.cell.status) && rtbOf(r.p, r.ym)).length; return kpi(String(unruled(rows)), 'lines without a status' + (rtbN ? ' · <b>' + rtbN + '</b> marked ready to bill' : '')); })() + '</div>';
     // ---- filters ----
     h += '<div class="rc-filt"><input type="search" id="rc-q" placeholder="Search client or project" value="' + esc(Q) + '"><select id="rc-leader"><option value="">All revenue leaders</option>' +
       [...new Set(projects().map(leaderName).filter(Boolean))].sort().map(l => '<option value="' + esc(l) + '"' + (l === LEADER ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
@@ -250,7 +253,8 @@
       }
       const needsAmt = st === 'billed-diff', needsMonth = st === 'accrued' || st === 'slipped';
       const target = st === 'accrued' ? (c.billsIn || '') : st === 'slipped' ? (c.earnedIn || '') : '';
-      h += '<tr class="' + (st ? 'st-' + st : 'st-none') + ' ln-' + r.lkind + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a>' + (c.flagged ? '<div class="sub red">flag on the project</div>' : '') + '</td><td>' + esc(r.leader) + '</td><td>' + esc(r.label) + '</td>' +
+      const rtb = r.lkind === 'fee' && !(st === 'billed' || st === 'billed-diff' || st === 'writeoff') ? rtbOf(r.p, r.ym) : null;
+      h += '<tr class="' + (st ? 'st-' + st : 'st-none') + ' ln-' + r.lkind + (rtb ? ' rtb' : '') + '"><td>' + esc(r.pj.client || '') + '</td><td><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(id) + '">' + esc(r.pj.name || 'Untitled') + '</a>' + (c.flagged ? '<div class="sub red">flag on the project</div>' : '') + '</td><td>' + esc(r.leader) + '</td><td>' + esc(r.label) + (rtb ? ' <span class="pill y" title="' + esc(rtbWho(rtb)) + '"><i></i>ready to bill</span>' : '') + '</td>' +
         '<td class="money' + (r.earned < 0 ? ' neg' : '') + '">' + money(r.earned) + '</td>' +
         '<td><select class="rc-status" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '"' + dis + '><option value="">— status —</option>' + STATUSES.map(s => '<option value="' + s.id + '"' + (st === s.id ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select></td>' +
         '<td class="money"><input class="rc-amt" type="number" step="1" data-pid="' + esc(id) + '" data-line="' + esc(r.line) + '" value="' + (needsAmt && c.amount != null ? Math.round(c.amount) : '') + '"' + (needsAmt && !locked ? '' : ' disabled') + ' placeholder="' + Math.round(r.earned) + '"></td>' +
@@ -294,7 +298,7 @@
         const outStatus = outs.some(x => { const c = STORE.reconCell(y, p.id, x.L.id, key); return c && c.status; });
         if (Math.abs(fee) > 0.005 || outs.length || (feeCell && feeCell.status) || outStatus) {
           any = true;
-          months[m] = { key, fee, outs, feeCell: feeCell || null, outStatus,
+          months[m] = { key, fee, outs, feeCell: feeCell || null, outStatus, rtb: rtbOf(p, key),
             share: outs.filter(x => x.L.kind === 'share').reduce((t, x) => t + x.v, 0), pass: outs.filter(x => x.L.kind === 'pass').reduce((t, x) => t + x.v, 0) };
         }
       }
@@ -316,8 +320,10 @@
     else if (st === 'writeoff') { badge = '✕'; title = 'Written off'; }
     else title = due ? 'No months assigned yet' : 'Planned';
     const shown = (st === 'billed-diff' && fc.amount != null) ? fc.amount : c.fee;
-    const extras = (c.share ? ' · fee share ' + money(c.share) : '') + (c.pass ? ' · pass-through ' + money(c.pass) : '') + (c.outStatus && !st ? ' · a share / pass-through line has a status' : '');
-    return '<td class="ra-cell ' + cls + (lk ? ' lk' : '') + '"><button type="button" class="ra-btn" data-pid="' + esc(row.p.id) + '" data-m="' + m + '" title="' + esc(title + extras + (lk ? ' · locked' : '')) + '">' +
+    // the project said this month can be invoiced — shown until Finance has billed it
+    const rtb = c.rtb && !(st === 'billed' || st === 'billed-diff' || st === 'writeoff' || (st === 'accrued' && fc.billedIn));
+    const extras = (rtb ? ' · READY TO BILL — ' + rtbWho(c.rtb) : '') + (c.share ? ' · fee share ' + money(c.share) : '') + (c.pass ? ' · pass-through ' + money(c.pass) : '') + (c.outStatus && !st ? ' · a share / pass-through line has a status' : '');
+    return '<td class="ra-cell ' + cls + (lk ? ' lk' : '') + (rtb ? ' rtb' : '') + '"><button type="button" class="ra-btn" data-pid="' + esc(row.p.id) + '" data-m="' + m + '" title="' + esc(title + extras + (lk ? ' · locked' : '')) + '">' +
       '<span class="amt' + (shown < 0 ? ' neg' : '') + '">' + (Math.abs(shown) > 0.5 ? money(shown) : '·') + '</span>' +
       (badge ? '<span class="bd">' + esc(badge) + '</span>' : '') + (c.share ? '<i class="sh" aria-hidden="true"></i>' : '') + (c.pass ? '<i class="pt" aria-hidden="true"></i>' : '') + '</button></td>';
   }
@@ -394,7 +400,7 @@
     const feeLane = {}; for (let m = 1; m <= 12; m++) feeLane[m] = rows.reduce((t, r) => t + ((r.months[m] || {}).fee || 0), 0);
     h += '</tbody><tfoot>' + laneRow('Fee billed to client', feeLane) + laneRow('Fee share out · in the month paid', L.share, 'lane-share') + laneRow('Savills revenue · earned', L.earned, 'lane-rev') + laneRow('Billed', L.billed, 'lane-billed') + laneRow('Accrued (net)', L.accrued, 'lane-accrued') + laneRow('Pass-through out · in the month paid', L.pass, 'lane-pass') + '</tfoot></table></div>' +
       (BASIS === 'earned' ? '' : '<div class="sub" style="margin-top:8px">On the ' + BASIS + ' basis the grid is read-only; switch to Earned to assign months. Hover a number for the earned month it came from.</div>') +
-      '<div class="legend"><span><i class="k st-none"></i>planned</span><span><i class="k st-due"></i>past or current, no months assigned</span><span><i class="k st-billed"></i>✓ billed as planned</span><span><i class="k st-billed-diff"></i>≠ billed a different amount</span><span><i class="k st-accrued"></i>A→ accrued, bills later · B billed</span><span><i class="k st-slipped"></i>→ slipped to a later month</span><span><i class="k st-writeoff"></i>✕ written off</span><span><i class="sh"></i>has a fee share</span><span><i class="pt"></i>has a pass-through</span><span>🔒 locked month</span></div></div>';
+      '<div class="legend"><span><i class="k st-none"></i>planned</span><span><i class="k st-due"></i>past or current, no months assigned</span><span><i class="k st-billed"></i>✓ billed as planned</span><span><i class="k st-billed-diff"></i>≠ billed a different amount</span><span><i class="k st-accrued"></i>A→ accrued, bills later · B billed</span><span><i class="k st-slipped"></i>→ slipped to a later month</span><span><i class="k st-writeoff"></i>✕ written off</span><span><i class="sh"></i>has a fee share</span><span><i class="pt"></i>has a pass-through</span><span><i class="rb"></i>ready to bill — marked on the project</span><span>🔒 locked month</span></div></div>';
     return h;
   }
   function wireAnnual(host) {
@@ -446,8 +452,8 @@
     moneyCols(ws2, 2, 14); ws2.getColumn(1).width = 34;
     // the assignments behind the grid
     const ws3 = wb.addWorksheet('Assignments');
-    head(ws3, ['Client', 'Project', 'Line', 'Earned in fee tool', 'Planned', 'Amount', 'Status', 'Earned', 'Accrued', 'Billed', 'Paid', 'Note']);
-    linesAll().forEach(({ p, lines }) => { if (!passes(p)) return; (lines.all || []).forEach(Lx => Object.keys(Lx.byMonth || {}).forEach(k => { if (!k.startsWith(String(YEAR))) return; const v = Lx.byMonth[k] || 0; const A = STORE.reconAssignment(YEAR, p.id, Lx.id, k, v); if (!A.set) return; ws3.addRow([(p.project || {}).client || '', (p.project || {}).name || '', Lx.label, k, v, A.amount, A.writeoff ? 'written off' : statusLabel(A.status), A.earnedIn, A.accruedIn, A.billedIn, A.paidIn || '', A.note]); })); });
+    head(ws3, ['Client', 'Project', 'Line', 'Earned in fee tool', 'Planned', 'Amount', 'Status', 'Earned', 'Accrued', 'Billed', 'Paid', 'Ready to bill', 'Note']);
+    linesAll().forEach(({ p, lines }) => { if (!passes(p)) return; (lines.all || []).forEach(Lx => Object.keys(Lx.byMonth || {}).forEach(k => { if (!k.startsWith(String(YEAR))) return; const v = Lx.byMonth[k] || 0; const A = STORE.reconAssignment(YEAR, p.id, Lx.id, k, v); const rb = Lx.kind === 'fee' ? rtbOf(p, k) : null; if (!A.set && !rb) return; ws3.addRow([(p.project || {}).client || '', (p.project || {}).name || '', Lx.label, k, v, A.set ? A.amount : null, A.set ? (A.writeoff ? 'written off' : statusLabel(A.status)) : 'no status', A.set ? A.earnedIn : '', A.set ? A.accruedIn : '', A.set ? A.billedIn : '', A.paidIn || '', rb ? rtbWho(rb) : '', A.note]); })); });
     moneyCols(ws3, 5, 6); ws3.getColumn(2).width = 44; ws3.getColumn(3).width = 28;
     const buf = await wb.xlsx.writeBuffer(); const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Savills PPM Financial Tracking ' + YEAR + ' ' + BASIS + (MODE === 'rollup' ? ' by ' + GROUP : '') + '.xlsx'; document.body.appendChild(a); a.click(); a.remove();
@@ -470,7 +476,9 @@
       const out = L.kind === 'share' || L.kind === 'pass';
       const paidDefault = L.kind === 'pass' ? ymPlus(A.billedIn, 1) : A.billedIn;
       const paid = A.paidIn || paidDefault;
-      return '<tr class="ln-' + L.kind + '" data-line="' + esc(L.id) + '" data-kind="' + L.kind + '"' + (A.paidIn ? ' data-paid-set="1"' : '') + '><td><b>' + esc(L.label) + '</b>' + (A.set ? '<div class="sub">' + esc(statusLabel(A.status)) + (A.status === 'accrued' ? (A.settled ? ' · settled' : ' · open') : '') + '</div>' : '<div class="sub">not yet assigned</div>') + '</td>' +
+      const rtb = L.kind === 'fee' ? rtbOf(p, key) : null;
+      return '<tr class="ln-' + L.kind + '" data-line="' + esc(L.id) + '" data-kind="' + L.kind + '"' + (A.paidIn ? ' data-paid-set="1"' : '') + '><td><b>' + esc(L.label) + '</b>' + (A.set ? '<div class="sub">' + esc(statusLabel(A.status)) + (A.status === 'accrued' ? (A.settled ? ' · settled' : ' · open') : '') + '</div>' : '<div class="sub">not yet assigned</div>') + (rtb ? '<div class="sub rtb-who">ready to bill · ' + esc(rtbWho(rtb)) + '</div>' : '') + '</td>' +
+        '<td class="c">' + (L.kind === 'fee' ? '<input type="checkbox" class="ra-rtb" title="The project side says this month can be invoiced. Tick it here on their behalf, or clear it."' + (rtb ? ' checked' : '') + ' data-was="' + (rtb ? '1' : '0') + '"' + dis + '>' : '<span class="sub">—</span>') + '</td>' +
         '<td class="money' + (planned < 0 ? ' neg' : '') + '">' + money(planned) + '</td>' +
         '<td><input type="number" step="1" class="ra-amt" value="' + (A.amount != null ? Math.round(A.amount) : '') + '" placeholder="' + Math.round(planned) + '"' + dis + '></td>' +
         '<td><select class="ra-e"' + dis + '>' + monthOpts(key, A.earnedIn, 0) + '</select></td>' +
@@ -481,8 +489,8 @@
         '<td><input type="text" class="ra-note" value="' + esc(A.note) + '" placeholder="What happened"' + dis + '></td></tr>';
     }).join('');
     ov.innerHTML = '<div class="ra-modal" role="dialog" aria-modal="true"><div class="mh"><div><h3>' + esc(pj.name || 'Untitled') + ' <span class="sub">· ' + esc(pj.client || '') + '</span></h3><div class="sub">' + MONTHS_LONG[m - 1] + ' ' + YEAR + ' · earned in the fee tool' + (lk ? ' · <b>locked, read only</b>' : '') + '</div></div><button type="button" class="x" id="ra-x" aria-label="Close">×</button></div>' +
-      '<div class="mb"><table class="cb-table ra-assign"><thead><tr><th>Line</th><th class="money">Planned</th><th>Amount</th><th>Earned</th><th>Accrued</th><th>Billed</th><th>Paid</th><th class="c">Written off</th><th>Note</th></tr></thead><tbody>' + (rowsHtml || '<tr><td colspan="9" class="sub">Nothing on this line-month.</td></tr>') + '</tbody></table>' +
-      '<div class="sub ra-help"><b>Earned</b> is the month the work is done, <b>Accrued</b> the month the revenue is recognised, <b>Billed</b> the month the invoice goes. Leave all three on ' + MONTHS[m - 1] + ' and it is billed as planned. A later Billed month accrues it until then. Moving Earned slips the whole line; set its accrual and billing from the new month. <b>Paid</b> is the month money goes out: a fee share with our billing, a vendor the month after we bill — change it when it is not.</div></div>' +
+      '<div class="mb"><table class="cb-table ra-assign"><thead><tr><th>Line</th><th class="c" title="Ready to bill — marked on the project">Ready</th><th class="money">Planned</th><th>Amount</th><th>Earned</th><th>Accrued</th><th>Billed</th><th>Paid</th><th class="c">Written off</th><th>Note</th></tr></thead><tbody>' + (rowsHtml || '<tr><td colspan="10" class="sub">Nothing on this line-month.</td></tr>') + '</tbody></table>' +
+      '<div class="sub ra-help"><b>Earned</b> is the month the work is done, <b>Accrued</b> the month the revenue is recognised, <b>Billed</b> the month the invoice goes. <b>Ready</b> is the project side saying the month can be invoiced — it clears from the grid once the line is billed. Leave all three on ' + MONTHS[m - 1] + ' and it is billed as planned. A later Billed month accrues it until then. Moving Earned slips the whole line; set its accrual and billing from the new month. <b>Paid</b> is the month money goes out: a fee share with our billing, a vendor the month after we bill — change it when it is not.</div></div>' +
       '<div class="mf">' + (lk ? '<span class="sub">Reopen ' + MONTHS[m - 1] + ' on the Monthly view to change it.</span>' : '') + '<span class="grow"></span><button type="button" class="btn btn-secondary" id="ra-cancel">' + (lk ? 'Close' : 'Cancel') + '</button>' + (lk ? '' : '<button type="button" class="btn btn-primary" id="ra-save">Save</button>') + '</div></div>';
     ov.classList.add('open');
     const close = () => { ov.classList.remove('open'); ov.innerHTML = ''; };
@@ -512,6 +520,9 @@
         try { STORE.setReconAssignment(YEAR, pid, line, key, { earned: planned, amount: amt === '' ? null : Number(amt), earnedIn: $('.ra-e', tr).value, accruedIn: $('.ra-a', tr).value, billedIn: $('.ra-b', tr).value, paidIn: Pd ? Pd.value : null, writeoff: $('.ra-wo', tr).checked, note: $('.ra-note', tr).value }); n++; }
         catch (e) { err = e; }
       });
+      if (err) { toast(err.message || String(err)); return; }
+      // the ready-to-bill mark lives on the project record, not the book
+      $$('tr[data-line] .ra-rtb', ov).forEach(cb => { if ((cb.checked ? '1' : '0') !== cb.dataset.was) { try { STORE.setReadyToBill(pid, key, cb.checked); _lines = null; } catch (e) { err = e; } } });
       if (err) { toast(err.message || String(err)); return; }
       flush(); close(); toast(n + ' line' + (n === 1 ? '' : 's') + ' assigned for ' + MONTHS[m - 1] + ' ' + YEAR + '.', 'ok');
       const y = window.scrollY; render(); window.scrollTo(0, y);
@@ -606,7 +617,7 @@
     ws.mergeCells('A1:M1'); ws.getCell('A1').value = 'Savills PPM — Revenue Flash · ' + MONTHS_LONG[M - 1] + ' ' + YEAR; ws.getCell('A1').font = { name: 'Calibri', bold: true, size: 16, color: { argb: NAVY } };
     ws.mergeCells('A2:M2'); ws.getCell('A2').value = (mm && mm.lockedAt ? 'LOCKED ' + fmtStamp(mm.lockedAt) + (mm.lockedByName ? ' by ' + mm.lockedByName : '') : 'Working copy — not locked') + ' · exported ' + new Date().toLocaleString() + (LEADER ? ' · leader: ' + LEADER : ''); ws.getCell('A2').font = { name: 'Calibri', italic: true, size: 10, color: { argb: mm && mm.lockedAt ? NAVY : RED } };
     ws.addRow([]);
-    head(ws, ['Client', 'Project', 'Revenue leader', 'Line', 'Kind', 'Earned', 'Status', 'Billed', 'Accrued', 'Pass-through out', 'Fee share out', 'Bill / earn month', 'Note']);
+    head(ws, ['Client', 'Project', 'Revenue leader', 'Line', 'Kind', 'Earned', 'Status', 'Billed', 'Accrued', 'Pass-through out', 'Fee share out', 'Bill / earn month', 'Note', 'Ready to bill']);
     const r0 = 5;
     rows.forEach(r => {
       const c = r.cell || {}; const st = c.status || '';
@@ -619,19 +630,20 @@
       else if (st === 'accrued') { accrued = c.amount != null ? c.amount : r.earned; target = c.billsIn ? ymLabel(c.billsIn) : ''; }
       else if (st === 'slipped') target = c.earnedIn ? ymLabel(c.earnedIn) : '';
       const x = ws.addRow([r.pj.client || '', r.pj.name || 'Untitled', r.leader, r.label, r.kind === 'carry' ? 'Carry-in · accrued ' + ymLabel(r.fromYm) : 'Earned this month',
-        r.kind === 'carry' ? null : r.earned, r.kind === 'carry' ? (r.settledHere ? 'Billed here' : 'Still accrued') : (statusLabel(st) || 'no status'), billed || null, accrued || null, pass || null, share || null, target, c.note || '']);
+        r.kind === 'carry' ? null : r.earned, r.kind === 'carry' ? (r.settledHere ? 'Billed here' : 'Still accrued') : (statusLabel(st) || 'no status'), billed || null, accrued || null, pass || null, share || null, target, c.note || '',
+        r.kind === 'earned' && r.lkind === 'fee' ? rtbWho(rtbOf(r.p, r.ym)) : '']);
       [6, 8, 9, 10, 11].forEach(i => { x.getCell(i).numFmt = fmt; x.getCell(i).alignment = { horizontal: 'right' }; });
       if (!st && r.kind === 'earned') x.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF0D8' } };
       if (r.lkind === 'share') x.eachCell(cell => { cell.font = { name: 'Calibri', color: { argb: RED } }; });
       if (r.lkind === 'pass') x.eachCell(cell => { cell.font = { name: 'Calibri', color: { argb: 'FF0E7C7B' } }; });
     });
     const r1 = r0 + rows.length - 1;
-    const tot = ws.addRow(['TOTAL', '', '', '', '', null, '', null, null, null, null, '', '']);
+    const tot = ws.addRow(['TOTAL', '', '', '', '', null, '', null, null, null, null, '', '', '']);
     [6, 8, 9, 10, 11].forEach(i => { const L = String.fromCharCode(64 + i); tot.getCell(i).value = rows.length ? { formula: `SUM(${L}${r0}:${L}${r1})` } : 0; tot.getCell(i).numFmt = fmt; });
     tot.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
     tot.getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YEL } }; tot.getCell(8).font = { name: 'Calibri', bold: true, color: { argb: NAVY } };
-    ws.columns = [{ width: 24 }, { width: 40 }, { width: 20 }, { width: 16 }, { width: 24 }, { width: 14 }, { width: 28 }, { width: 14 }, { width: 14 }, { width: 15 }, { width: 13 }, { width: 14 }, { width: 50 }];
-    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(r1, r0), column: 13 } };
+    ws.columns = [{ width: 24 }, { width: 40 }, { width: 20 }, { width: 16 }, { width: 24 }, { width: 14 }, { width: 28 }, { width: 14 }, { width: 14 }, { width: 15 }, { width: 13 }, { width: 14 }, { width: 50 }, { width: 30 }];
+    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(r1, r0), column: 14 } };
     // by-client summary via SUMIFS
     const sr = tot.number + 2;
     ws.getCell(sr, 1).value = 'By client'; ws.getCell(sr, 1).font = { name: 'Calibri', bold: true, size: 12, color: { argb: NAVY } };

@@ -1898,3 +1898,59 @@ table.fm-tbl tr.is-pinned input.fm-in { border-color: var(--sav-yellow); }
 /* fee share: take it on pass-through billing too (per project, off by default) */
 .fs-onpt { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--sav-navy); margin-left:8px; white-space:nowrap; cursor:pointer; }
 .fs-onpt input { margin:0; }
+
+/* ===== Intake details (setup section, booked projects only) ===== */
+.intake-section[hidden] { display: none; }
+.intake-section { background: #FBFAF7; border-left: 6px solid var(--sav-yellow); }
+.field-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 1100px) { .field-grid.cols-3 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .field-grid.cols-3 { grid-template-columns: 1fr; } }
+.intake-progress {
+  font-family: var(--font-body); font-size: 13px; color: var(--sav-navy);
+  margin: 0 0 18px; padding: 10px 14px; background: #fff; border-left: 4px solid var(--sav-red);
+}
+.intake-progress:empty { display: none; }
+.intake-progress.complete { border-left-color: var(--sav-teal); }
+.intake-progress .ip-left b { font-family: var(--font-display); color: var(--sav-red); font-size: 15px; }
+.intake-progress .ip-ok { font-family: var(--font-display); font-weight: 800; color: var(--sav-teal); }
+/* A required field still blank on a booked project — the one thing to look for */
+.field.need label { color: var(--sav-red); }
+.field.need input, .field.need select { border-bottom-color: var(--sav-red); background: #FFF4F4; }
+.field.opt label { color: var(--sav-steel); font-weight: 600; }
+.intake-grid .field-hint { font-size: 11px; }
+
+/* Callout extras: what is still blank, and the re-send */
+.intake-callout .ic-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.intake-callout .ic-chip {
+  font-family: var(--font-display); font-weight: 700; font-size: 10.5px; letter-spacing: .04em;
+  background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.55); color: #fff; padding: 3px 9px;
+}
+.intake-callout .ic-chip.auto { border-style: dashed; }
+.intake-callout .ic-btn {
+  font-family: var(--font-display); font-weight: 800; font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+  background: var(--sav-yellow); color: var(--sav-navy); border: 0; padding: 8px 14px; cursor: pointer; margin: 0 2px;
+}
+.intake-callout .ic-btn:hover { background: #fff; }
+
+/* ===== Ready to bill ===== */
+.rtb-panel { margin: 0 0 14px; padding: 14px 18px; border: 2px solid var(--sav-navy); background: #fff; }
+.rtb-panel[hidden] { display: none; }
+.rtb-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+.rtb-title { font-family: var(--font-display); font-weight: 900; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: var(--sav-navy); }
+.rtb-sub { font-family: var(--font-body); font-size: 12.5px; color: var(--sav-steel); }
+.rtb-sub b { color: var(--sav-navy); }
+.rtb-months { display: flex; flex-wrap: wrap; gap: 8px; }
+.rtb-m {
+  display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 10px; row-gap: 1px; align-items: center;
+  padding: 8px 12px 8px 10px; border: 1px solid var(--hairline); background: var(--sav-cream); cursor: pointer; min-width: 150px; user-select: none;
+}
+.rtb-m input { grid-row: 1 / span 2; width: 18px; height: 18px; accent-color: var(--sav-navy); margin: 0; cursor: pointer; }
+.rtb-m .rtb-mo { font-family: var(--font-display); font-weight: 800; font-size: 12.5px; color: var(--sav-navy); }
+.rtb-m .rtb-amt { font-family: var(--font-display); font-weight: 600; font-size: 12px; color: var(--sav-navy); font-variant-numeric: tabular-nums; grid-column: 2; }
+.rtb-m .rtb-st { grid-column: 2; font-family: var(--font-body); font-size: 10.5px; color: var(--sav-steel); letter-spacing: .04em; text-transform: uppercase; }
+.rtb-m:hover { border-color: var(--sav-navy); }
+.rtb-m.on { background: #FFF6CC; border-color: #D9A400; }
+.rtb-m.on .rtb-st { color: #7A5C00; }
+.rtb-m.billed { background: #E4F1E9; border-color: #B9DCC6; cursor: default; }
+.rtb-m.billed .rtb-st { color: #1E7A4C; }
+.rtb-m.billed input { accent-color: #1E7A4C; }

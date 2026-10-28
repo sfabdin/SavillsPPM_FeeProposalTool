@@ -49,6 +49,8 @@
       clientRelOwner: '',
       salesforceId: '',   // pasted in once Booked — bridges to Salesforce → Clockify reporting
       intakeSent: false,  // user-confirmed the intake email actually went out (clicking ≠ sent)
+      intake: {},         // the intake rows the record cannot pre-fill — UFC_Store.INTAKE_FIELDS; typed once Won/Active
+      readyToBill: {},    // { 'YYYY-MM': { at, by, byName } } — months the project says Finance can invoice
     },
     timeline: {
       startMonth: 1,   // 1..12
@@ -2092,7 +2094,10 @@
     btn.classList.toggle('intake-drift', !!drifted);
   }
 
-  /** Booked-state callout: drives the intake action, owns SF ID visibility + "sent" confirmation. */
+  /** Booked-state callout: drives the intake action, owns SF ID visibility + "sent" confirmation.
+      With Box on, the intake sends itself once the Intake section is complete,
+      so the callout counts what is still blank; without Box it points at the
+      copy-the-table button as before. */
   function updateIntakeCallout() {
     const callout = $('#intake-callout');
     const sfRow = $('#sf-id-row');
@@ -2107,23 +2112,175 @@
     const drifted = !!(state.intakeSnapshot && sig && state.intakeSnapshot !== sig);
     const cb = $('#pm-intake-sent'); if (cb) cb.checked = sent;
     const mark = $('#ic-mark'), title = $('#ic-title'), detail = $('#ic-detail');
+    const auto = intakeAutoOn();
+    const st = intakeState();
+    const chips = (list) => list.length ? `<div class="ic-chips">${list.map(m => `<span class="ic-chip${m.auto ? ' auto' : ''}">${escapeHtml(m.label.split(' · ')[0])}</span>`).join('')}</div>` : '';
+    const sentAt = state.project.intakeSentAt ? formatTime(state.project.intakeSentAt) : '';
 
     if (sent && !drifted) {
       callout.classList.add('confirmed');
       if (mark) mark.textContent = '✓';
-      if (title) title.textContent = 'Intake submitted for this booked project.';
-      if (detail) detail.innerHTML = 'Logged as sent. Change the fee or schedule and you’ll be prompted to re-submit. Make sure the <strong>Salesforce ID</strong> below is filled in so reporting can link this project to Clockify.';
+      if (title) title.textContent = state.project.intakeSentVia === 'auto' ? 'Intake emailed for this booked project.' : 'Intake submitted for this booked project.';
+      if (detail) detail.innerHTML = (state.project.intakeSentVia === 'auto' ? `Sent automatically to <strong>${escapeHtml(window.UFC_Intake ? window.UFC_Intake.INTAKE_TO : '')}</strong>${sentAt ? ' on ' + escapeHtml(sentAt) : ''}. ` : 'Logged as sent. ') + 'Change the fee or schedule and you’ll be prompted to re-submit. Make sure the <strong>Salesforce ID</strong> below is filled in so reporting can link this project to Clockify.';
     } else {
       callout.classList.remove('confirmed');
       if (mark) mark.textContent = '⚑';
       if (drifted && sent) {
         if (title) title.textContent = 'Fee or schedule changed — re-submit the Salesforce intake.';
-        if (detail) detail.innerHTML = 'Something changed since the last intake. Press <strong>⚠ Re-submit Intake →</strong> in the top bar, re-send the email, then re-confirm below.';
+        if (detail) detail.innerHTML = auto
+          ? `Something changed since the last intake. ${st.complete ? '' : 'Fill the red intake details, then '}<button type="button" class="ic-btn" id="ic-resend">Send the updated intake</button> — it goes to ${escapeHtml(window.UFC_Intake.INTAKE_TO)} marked as a change order.` + chips(st.missing)
+          : 'Something changed since the last intake. Press <strong>⚠ Re-submit Intake →</strong> in the top bar, re-send the email, then re-confirm below.';
+      } else if (auto && !st.complete) {
+        const typed = st.missing.filter(m => !m.auto), autoLeft = st.missing.filter(m => m.auto);
+        if (title) title.textContent = `This project is booked — ${st.missing.length} intake detail${st.missing.length === 1 ? '' : 's'} still needed.`;
+        if (detail) detail.innerHTML = (typed.length ? `Fill the red fields in the <strong>Intake</strong> section of the setup panel` : '') + (typed.length && autoLeft.length ? ', and ' : '') + (autoLeft.length ? `complete <strong>${autoLeft.map(m => escapeHtml(m.label.split(' · ')[0])).join(', ')}</strong> in the project section` : '') + `. When the last one is in, the intake email goes to <strong>${escapeHtml(window.UFC_Intake.INTAKE_TO)}</strong> by itself.` + chips(st.missing);
+      } else if (auto) {
+        if (title) title.textContent = 'This project is booked — the intake email is ready to go.';
+        if (detail) detail.innerHTML = `Every intake detail is in. It sends to <strong>${escapeHtml(window.UFC_Intake.INTAKE_TO)}</strong> on the next save${state.project.intakeAutoSig === sig ? ' — or tick below if it already went out by hand' : ''}.`;
       } else {
         if (title) title.textContent = 'This project is booked — submit the Salesforce intake.';
-        if (detail) detail.innerHTML = 'Press <strong>Salesforce Intake →</strong> in the top bar to generate the intake email, send it from your mailbox, then confirm below. Paste the <strong>Salesforce ID</strong> into the project record once the opportunity exists.';
+        if (detail) detail.innerHTML = 'Press <strong>Salesforce Intake →</strong> in the top bar to generate the intake email, send it from your mailbox, then confirm below. Paste the <strong>Salesforce ID</strong> into the project record once the opportunity exists.' + (st.missing.length ? ` Still blank on the form:` + chips(st.missing) : '');
       }
     }
+    const rs = $('#ic-resend'); if (rs) rs.addEventListener('click', resendIntake);
+  }
+
+  /* ----- Intake details · the rows Salesforce needs that the record cannot pre-fill -----
+     The spec is UFC_Store.INTAKE_FIELDS; the section shows once the project
+     is Won or Active, paints what is still blank red, and the moment the last
+     detail is in (and nobody is still typing in the section) the finished
+     intake table goes out through Box.notify — see maybeAutoSendIntake. */
+  /** The fee the intake quotes: what the calculator prices, or for a project
+      imported by month (where netTotal is 0) what its series adds up to. */
+  function intakeFee() {
+    const n = netTotal(); if (n > 0) return n;
+    try { return STORE.completenessOf(stateAsRecord(), window.RATES_CATALOG).fee || 0; } catch (e) { return 0; }
+  }
+  function intakeOpts() {
+    const leadObj = STORE.resolveLeader(state.project.leadId || state.project.lead);
+    return { netFee: intakeFee(), serviceLines: STORE.projectServiceLines ? STORE.projectServiceLines(state) : [], leadName: leadObj ? leadObj.displayName : (state.project.lead || ''), statusLabel: STORE.STATUS_LABELS[state.project.status] || '' };
+  }
+  function intakeState() {
+    if (!STORE.intakeStatus) return { eligible: false, required: [], missing: [], complete: false, ctx: {} };
+    const p = state.project || {};
+    const scope = p.projectType || (STORE.projectServiceLines ? STORE.projectServiceLines(state).join(', ') : '');
+    try { return STORE.intakeStatus(stateAsRecord(), { netFee: intakeFee(), scope }); }
+    catch (e) { return { eligible: STORE.CO_ELIGIBLE_STATUSES.has(p.status), required: [], missing: [], complete: false, ctx: {} }; }
+  }
+  const intakeAutoOn = () => !!(window.UFC_Box && window.UFC_Box.enabled && window.UFC_Box.notify && window.UFC_Intake && window.UFC_Intake.sendIntake);
+  function intakeFieldHtml(f) {
+    const id = 'in-' + f.key;
+    const req = f.optional ? '' : ' <span class="req" title="Required for the intake">*</span>';
+    let ctl;
+    if (f.kind === 'select') ctl = `<select id="${id}" data-key="${f.key}">${(f.options || []).map(o => `<option value="${escapeHtml(o[0])}">${escapeHtml(o[1])}</option>`).join('')}</select>`;
+    else ctl = `<input type="${f.kind === 'email' ? 'email' : 'text'}" id="${id}" data-key="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}"${f.list ? ` list="${id}-list"` : ''}>` + (f.list ? `<datalist id="${id}-list">${f.list.map(v => `<option value="${escapeHtml(v)}"></option>`).join('')}</datalist>` : '');
+    return `<div class="field" data-field="${f.key}"><label for="${id}">${escapeHtml(f.label)}${req}</label>${ctl}${f.hint ? `<div class="field-hint">${escapeHtml(f.hint)}</div>` : ''}</div>`;
+  }
+  function renderIntakeSection() {
+    const sec = $('#intake-section'); if (!sec || !STORE.INTAKE_FIELDS) return;
+    const st = intakeState();
+    sec.hidden = !st.eligible;
+    if (!st.eligible) return;
+    const grid = $('#intake-fields'); const it = state.project.intake || (state.project.intake = {});
+    const need = new Set(st.missing.filter(m => !m.auto).map(m => m.key));
+    const shown = STORE.INTAKE_FIELDS.filter(f => f.optional || !f.when || f.when(st.ctx));
+    // The grid is rebuilt only when the SET of fields changes (a "first
+    // authorization" answer hides the standalone question) — never while
+    // someone is typing in it.
+    const key = shown.map(f => f.key).join('|');
+    if (grid.dataset.key !== key) { grid.dataset.key = key; grid.innerHTML = shown.map(intakeFieldHtml).join(''); }
+    shown.forEach(f => {
+      const el = grid.querySelector(`[data-key="${f.key}"]`); if (!el) return;
+      if (document.activeElement !== el) el.value = it[f.key] == null ? '' : String(it[f.key]);
+      const wrap = el.closest('.field'); wrap.classList.toggle('need', need.has(f.key)); wrap.classList.toggle('opt', !!f.optional);
+    });
+    const prog = $('#intake-progress'); if (!prog) return;
+    const typedLeft = st.missing.filter(m => !m.auto), autoLeft = st.missing.filter(m => m.auto);
+    const done = st.required.length - typedLeft.length;
+    const sentAt = state.project.intakeSentAt ? formatTime(state.project.intakeSentAt) : '';
+    let html;
+    if (st.complete && state.project.intakeSent) {
+      html = `<span class="ip-ok">✓ All intake details are in.</span> ${state.project.intakeSentVia === 'auto' ? `Intake emailed automatically${sentAt ? ' · ' + escapeHtml(sentAt) : ''}.` : 'Intake logged as sent.'}`;
+    } else if (st.complete) {
+      html = `<span class="ip-ok">✓ All intake details are in.</span> ${intakeAutoOn() ? 'The intake email goes out on save.' : 'Press <b>Salesforce Intake →</b> in the top bar to copy the table into an email.'}`;
+    } else {
+      html = `<span class="ip-left">${typedLeft.length ? `<b>${typedLeft.length}</b> of ${st.required.length} detail${st.required.length === 1 ? '' : 's'} still to enter` : `<b>${done}</b> of ${st.required.length} entered`}</span>`
+        + (autoLeft.length ? ` · and in the project section above: <b>${autoLeft.map(m => escapeHtml(m.label.split(' · ')[0])).join(', ')}</b>` : '')
+        + (intakeAutoOn() ? ' · the intake email sends itself once everything is in.' : '');
+    }
+    prog.innerHTML = html;
+    prog.classList.toggle('complete', st.complete);
+  }
+  /** The automatic send. Once per intake signature, never while the cursor is
+      still inside the Intake section (a half-typed email address is not an
+      intake), never when the intake was already sent — a changed fee or
+      schedule goes through the explicit re-send in the callout. */
+  function maybeAutoSendIntake() {
+    if (!intakeAutoOn() || !state.id) return false;
+    const st = intakeState(); if (!st.complete) return false;
+    const sig = window.UFC_Intake.intakeSignature(state, netTotal());
+    if (state.project.intakeSent || state.project.intakeAutoSig === sig) return false;
+    const sec = $('#intake-section'); if (sec && sec.contains(document.activeElement)) return false;
+    const id = window.UFC_Intake.sendIntake(state, intakeOpts());
+    if (!id) return false;
+    recordIntakeSent(sig, 'auto');
+    UFC_UI.toast('Intake details complete — the intake email went to ' + window.UFC_Intake.INTAKE_TO + '.');
+    return true;
+  }
+  function recordIntakeSent(sig, via) {
+    state.project.intakeSent = true;
+    state.project.intakeSentAt = new Date().toISOString();
+    state.project.intakeSentVia = via;
+    state.project.intakeAutoSig = sig;
+    state.intakeSnapshot = sig;
+    updateIntakeButton(); updateIntakeCallout(); renderIntakeSection();
+    markDirty();
+  }
+  /** Fee or schedule moved after the intake went: send it again, flagged as a change order. */
+  function resendIntake() {
+    if (!intakeAutoOn()) return;
+    const st = intakeState();
+    if (!st.complete) { UFC_UI.toast('Fill the red intake details first — the email needs them.'); return; }
+    const id = window.UFC_Intake.sendIntake(state, Object.assign(intakeOpts(), { reflag: true }));
+    if (!id) { UFC_UI.toast('Could not queue the intake email.'); return; }
+    recordIntakeSent(window.UFC_Intake.intakeSignature(state, netTotal()), 'auto');
+    UFC_UI.toast('Updated intake sent to ' + window.UFC_Intake.INTAKE_TO + ', marked as a change.');
+  }
+
+  /* ----- Ready to bill · the project telling Finance a month can be invoiced -----
+     One tick per earned month, kept on the record (project.readyToBill[ym] =
+     { at, by, byName }). Financial Tracking shows the mark on the cell and in
+     its pop-up; a month Finance has already billed is shown settled here. */
+  function renderReadyToBill() {
+    const host = $('#rtb-panel'); if (!host) return;
+    const off = () => { host.hidden = true; host.innerHTML = ''; };
+    if (!state.id || !STORE.reconLinesFor || !STORE.CO_ELIGIBLE_STATUSES.has(state.project.status)) return off();
+    let fee = {}; try { fee = STORE.reconLinesFor(stateAsRecord(), window.RATES_CATALOG).fee || {}; } catch (e) { fee = {}; }
+    const now = new Date(); const nowKey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    const months = Object.keys(fee).filter(k => k <= nowKey && Math.abs(fee[k]) > 0.5).sort();
+    if (!months.length) return off();
+    const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const lbl = (k) => { const [y, m] = k.split('-').map(Number); return MN[m - 1] + ' ' + y; };
+    const rb = state.project.readyToBill || {};
+    const rows = months.map(k => {
+      const c = (STORE.reconCell && STORE.reconCell(+k.slice(0, 4), state.id, 'fee', k)) || {};
+      const billed = c.status === 'billed' || c.status === 'billed-diff' || (c.status === 'accrued' && !!c.billedIn);
+      const r = rb[k];
+      const who = r ? (r.byName || (STORE.displayNameForLogin ? STORE.displayNameForLogin(r.by) : r.by) || '') : '';
+      const when = r && r.at ? new Date(r.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+      const status = billed ? 'Billed ✓' : r ? 'Ready' + (who ? ' · ' + escapeHtml(who) : '') + (when ? ' ' + escapeHtml(when) : '') : 'Not marked';
+      return `<label class="rtb-m${billed ? ' billed' : r ? ' on' : ''}"><input type="checkbox" data-ym="${k}"${(r || billed) ? ' checked' : ''}${billed ? ' disabled' : ''}><span class="rtb-mo">${lbl(k)}</span><span class="rtb-amt">${fmtMoney(fee[k])}</span><span class="rtb-st">${status}</span></label>`;
+    }).join('');
+    const ready = months.filter(k => rb[k]).length;
+    host.innerHTML = `<div class="rtb-head"><div class="rtb-title">Ready to bill</div><div class="rtb-sub">Tick a month once its fee can be invoiced. Finance sees the mark on Financial Tracking${ready ? ` · <b>${ready}</b> marked` : ''}.</div></div><div class="rtb-months">${rows}</div>`;
+    host.hidden = false;
+    Array.from(host.querySelectorAll('input[type=checkbox]')).forEach(cb => cb.addEventListener('change', e => {
+      const k = e.target.dataset.ym; const map = Object.assign({}, state.project.readyToBill || {});
+      if (e.target.checked) { const u = STORE.getCurrentUser() || {}; map[k] = { at: new Date().toISOString(), by: u.username || '', byName: u.name || '' }; }
+      else delete map[k];
+      if (Object.keys(map).length) state.project.readyToBill = map; else delete state.project.readyToBill;
+      markDirty(); renderReadyToBill();
+    }));
   }
 
   /** "Amends" — the optional link from a follow-on project (a CO, an ASR, a
@@ -2169,6 +2326,8 @@
   function updateStatusRatingHints() {
     updateIntakeButton();
     updateIntakeCallout();
+    renderIntakeSection();
+    renderReadyToBill();
     updateChangeOrderBanner();
     renderReconFlags();
     const rh = $('#rating-hint');
@@ -3280,6 +3439,24 @@
     if (amendsSel) amendsSel.addEventListener('change', e => { state.project.amendsId = e.target.value || ''; markDirty(); });
     const intakeSentInput = $('#pm-intake-sent');
     if (intakeSentInput) intakeSentInput.addEventListener('change', e => { state.project.intakeSent = e.target.checked; updateIntakeCallout(); markDirty(); });
+    const intakeGrid = $('#intake-fields');
+    if (intakeGrid) {
+      // typed → the record and the red paint, live; the grid itself is only rebuilt when the set of questions changes
+      intakeGrid.addEventListener('input', e => {
+        const key = e.target && e.target.dataset ? e.target.dataset.key : ''; if (!key) return;
+        const it = state.project.intake || (state.project.intake = {});
+        it[key] = e.target.value;
+        markDirty(); renderIntakeSection(); updateIntakeCallout();
+      });
+      intakeGrid.addEventListener('change', e => {
+        const key = e.target && e.target.dataset ? e.target.dataset.key : ''; if (!key) return;
+        const it = state.project.intake || (state.project.intake = {});
+        it[key] = e.target.value;
+        markDirty(); renderIntakeSection(); updateIntakeCallout();
+      });
+      // leaving the section with everything in → send now rather than on the next edit
+      $('#intake-section').addEventListener('focusout', () => { setTimeout(() => { if (!dirty) maybeAutoSendIntake(); }, 60); });
+    }
     $('#pm-clientContact').addEventListener('input', e => { state.project.clientContact = e.target.value; markDirty(); });
     $('#pm-clientRel').addEventListener('change', e => {
       const l = STORE.leaderById(e.target.value);
@@ -3546,6 +3723,8 @@
       state.financials = saved.financials ? JSON.parse(JSON.stringify(saved.financials)) : null;
       updateChangeOrderBanner();
       renderReconFlags();
+      renderReadyToBill();
+      maybeAutoSendIntake();   // the last intake detail just landed → the email goes
       conflicted = false;
       clearConflictBanner();
       setProjectIdInUrl(saved.id);

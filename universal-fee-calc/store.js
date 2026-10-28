@@ -3813,6 +3813,111 @@
     return { fields, missing, chase: finished ? [] : missing, finished, smallWorks, fee, info: { passthrough: ptLines.length > 0, staffingViaPt,
       staffingSmallWorks: smallWorks && !hasAlloc && !staffingViaPt, staffingNotNeeded: finished && !hasAlloc && !staffingViaPt && !smallWorks, ptBilled } };
   }
+  /* ------------------------------------------------------------
+     PROJECT INTAKE — what Salesforce needs once a project is booked.
+     The intake form (DOC A · Project Intake Process & Form) has 27
+     rows. The fee record pre-fills about half; the rest is typed into
+     the calculator's Intake section, which appears once the status is
+     Won or Active. These are the typed fields — one spec for the
+     calculator (which inputs to show, which are required), the intake
+     email (which rows they fill) and the tests.
+       when(ctx)  → required only in that situation (ctx below)
+       optional   → shown, never required
+     ctx: { priorsKnown  the system found earlier booked work for the client
+            firstAuth    'yes' | 'no' | ''   (forced 'no' when priorsKnown)
+            standalone   'standalone' | 'additive' | ''
+            feeShare     the proposal carries a broker fee share }
+     ------------------------------------------------------------ */
+  const INTAKE_TO = 'ppmprojectintake@savills.us';
+  const INTAKE_FIELDS = [
+    { key: 'firstAuth', label: 'First authorization for this client?', kind: 'select', row: 1,
+      options: [['', '— confirm —'], ['yes', 'Yes — first authorization / contract'], ['no', 'No — the client has prior authorizations']], when: c => !c.priorsKnown,
+      hint: 'The system found no earlier booked work for this client. Confirm, or say No if the work predates the fee tool.' },
+    { key: 'standalone', label: 'Standalone or additive?', kind: 'select', row: 2,
+      options: [['', '— select —'], ['standalone', 'Standalone — tracked and invoiced separately'], ['additive', 'Additive — part of a prior authorization']], when: c => c.firstAuth !== 'yes',
+      hint: 'Does the client expect this authorization invoiced on its own, or as part of an earlier WA?' },
+    { key: 'additiveWith', label: 'Which authorizations go together', kind: 'text', row: 3, when: c => c.standalone === 'additive', placeholder: 'Contract / WA names or numbers this one joins' },
+    { key: 'rsf', label: 'RSF', kind: 'text', row: 8, placeholder: 'e.g. 45,000 RSF' },
+    { key: 'budget', label: 'Project budget', kind: 'text', row: 9, placeholder: 'e.g. $12.5M construction budget' },
+    { key: 'payerEntity', label: 'Payer entity · if different from the client', kind: 'text', row: 10, optional: true, placeholder: 'Leave blank when the contracting entity pays' },
+    { key: 'payerAddress', label: 'Payer’s physical address', kind: 'text', row: 12, placeholder: 'Street, city, state, ZIP' },
+    { key: 'payerEmail', label: 'Payer email', kind: 'email', row: 14, placeholder: 'ap@client.com' },
+    { key: 'payerTerms', label: 'Payer terms', kind: 'text', row: 15, placeholder: 'Net 30, Net 45, Net 60…', list: ['Net 30', 'Net 45', 'Net 60', 'Net 90', 'Due on receipt'] },
+    { key: 'invoiceCc', label: 'Copied on invoices · names and emails', kind: 'text', row: 16, placeholder: 'Jane Doe jdoe@client.com; …' },
+    { key: 'paymentSchedule', label: 'Payment schedule', kind: 'text', row: 17, placeholder: 'Monthly in arrears, milestone, 50/50…' },
+    { key: 'vendorForms', label: 'Vendor onboarding · forms, W9, banking letter', kind: 'text', row: 18, placeholder: 'None, or what the client needs' },
+    { key: 'nteExpenses', label: 'Total NTE reimbursable expenses', kind: 'text', row: 20, placeholder: '$0 if none' },
+    { key: 'feeBasisNote', label: 'Fee note · fixed fee or timecard', kind: 'text', row: 19, optional: true, placeholder: 'Only if the basis needs explaining' },
+    { key: 'dateNote', label: 'Dates note · contract vs work', kind: 'text', row: 21, optional: true, placeholder: 'Only if the contract dates differ from the work' },
+    { key: 'feeSplit', label: 'Fee split · % split, broker, office, team', kind: 'text', row: 25, when: c => c.feeShare, placeholder: 'e.g. 20% to J. Smith, Savills NYC, Tenant Rep' },
+    { key: 'intlSplit', label: 'International fee split', kind: 'text', row: 26, optional: true, placeholder: 'Leave blank if none' },
+    { key: 'thirdParty', label: 'Third-party commission / fees', kind: 'text', row: 27, optional: true, placeholder: 'Leave blank if none' },
+  ];
+  /** Earlier BOOKED projects for the same client (won, active or closed;
+      change orders excluded — they are not separate authorizations), scoped
+      to what this user may see. null when the question cannot be asked
+      (no client yet). An empty list is "none in the system", which is not
+      proof the client is new — the form asks for a confirmation then. */
+  function priorBookedForClient(record) {
+    const client = String(((record || {}).project || {}).client || '').trim().toLowerCase();
+    if (!client) return null;
+    const BOOKED = { won: 1, active: 1, closed: 1 };
+    let list = listProjects().filter(p => p && p.id !== record.id && !p._deleted && !(isChangeOrder && isChangeOrder(p))
+      && String((p.project || {}).client || '').trim().toLowerCase() === client && BOOKED[(p.project || {}).status]);
+    list = visibleProjects(list);
+    return list.sort((a, b) => ((a.project || {}).name || '').localeCompare((b.project || {}).name || ''));
+  }
+  const EMAIL_RE = /^[^\s@;,]+@[^\s@;,]+\.[^\s@;,]+$/;
+  /** Where the intake stands on one record.
+        eligible   the status is Won or Active — the intake applies
+        required   the typed fields this record needs (spec entries)
+        missing    everything still blank that the email needs: typed fields
+                   ({key,label}) and pre-filled ones that happen to be empty
+                   ({key,label,auto:true} — fixed in the project section)
+        complete   eligible and nothing missing
+      opts: { priors (skip the lookup), netFee, scope } */
+  function intakeStatus(p, opts) {
+    const o = opts || {}; const pj = (p && p.project) || {}; const it = pj.intake || {}; const t = (p && p.timeline) || {};
+    const eligible = CO_ELIGIBLE_STATUSES.has(String(pj.status || ''));
+    const priors = o.priors !== undefined ? o.priors : priorBookedForClient(p);
+    const priorsKnown = Array.isArray(priors) && priors.length > 0;
+    const fs = (p && p.assumptions && p.assumptions.feeShare) || {};
+    const ctx = { priorsKnown, firstAuth: priorsKnown ? 'no' : String(it.firstAuth || ''), standalone: String(it.standalone || ''), feeShare: !!fs.enabled, priors: priors || [] };
+    const val = (k) => String(it[k] == null ? '' : it[k]).trim();
+    const required = INTAKE_FIELDS.filter(f => !f.optional && (!f.when || f.when(ctx)));
+    const missing = [];
+    required.forEach(f => {
+      const v = val(f.key);
+      if (!v) missing.push({ key: f.key, label: f.label });
+      else if (f.kind === 'email' && !EMAIL_RE.test(v)) missing.push({ key: f.key, label: f.label + ' · not a valid address' });
+    });
+    // priced in the calculator, or imported by month (netTotal is 0 there) — the completeness rule knows both
+    let fee = o.netFee > 0 ? o.netFee : 0;
+    if (!fee) { try { fee = completenessOf(p, o.catalog).fee || 0; } catch (e) { fee = 0; } }
+    const scope = o.scope != null ? o.scope : (pj.projectType || (projectServiceLines ? projectServiceLines(p).join(', ') : ''));
+    [['name', 'Project name', pj.name], ['client', 'Client', pj.client], ['industry', 'Industry', pj.industry], ['scope', 'Project type', scope],
+     ['location', 'Location · the project’s address', pj.location], ['clientContact', 'Client contact · payer POC', pj.clientContact],
+     ['fee', 'Fee · price the project', fee > 0 ? 'x' : ''], ['timeline', 'Timeline', (t.startMonth && t.startYear && t.endMonth && t.endYear) ? 'x' : '']]
+      .forEach(([key, label, v]) => { if (!String(v == null ? '' : v).trim()) missing.push({ key, label, auto: true }); });
+    return { eligible, required, missing, complete: eligible && !missing.length, values: it, ctx };
+  }
+  /* ------------------------------------------------------------
+     READY TO BILL — the project side telling Finance a month's fee can
+     be invoiced. Kept on the project record (the leader's file, which
+     they can write), read by Financial Tracking, which shows it on the
+     cell and in the pop-up. One entry per month: { at, by, byName }.
+     ------------------------------------------------------------ */
+  function setReadyToBill(pid, ym, ready) {
+    const rec = getProject(pid); if (!rec) throw new Error('Project not found.');
+    const pj = rec.project = rec.project || {}; const rb = Object.assign({}, pj.readyToBill || {});
+    const k = String(ym); const who = reconWho();
+    if (ready) rb[k] = { at: new Date().toISOString(), by: who.by, byName: who.byName }; else delete rb[k];
+    if (Object.keys(rb).length) pj.readyToBill = rb; else delete pj.readyToBill;
+    const saved = saveProject(rec);
+    logActivity('ready-to-bill', pid, { name: pj.name || '', client: pj.client || '', ym: k, ready: !!ready });
+    return saved;
+  }
+  const readyToBillOf = (p, ym) => ((((p || {}).project || {}).readyToBill) || {})[String(ym)] || null;
   /** The weekly digest, pre-rendered per leader so the sending flow only
       loops and mails: who, how many, and an email with one deep link per
       project. Finished work (closed, lost, or a timeline already past) is
@@ -4079,6 +4184,7 @@
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, isSmallWorks, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
+    INTAKE_TO, INTAKE_FIELDS, priorBookedForClient, intakeStatus, setReadyToBill, readyToBillOf,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
