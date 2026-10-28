@@ -3918,6 +3918,71 @@
     return saved;
   }
   const readyToBillOf = (p, ym) => ((((p || {}).project || {}).readyToBill) || {})[String(ym)] || null;
+  /* ------------------------------------------------------------
+     INVOICE REQUEST — the close step after the ticks. Every fee
+     line-month ticked ready to bill and not yet billed goes into one
+     request file for the month: who to invoice (the intake's payer
+     details), how much, from which project. Financial Tracking writes
+     it to the invoice-requests folder in Box (Box.writeInvoiceRequest)
+     for the flow that will one day raise it in Dynamics 365, and stamps
+     each tick submitted so the next submit carries only what is new.
+     The payer fields may be blank until the intake backfill lands —
+     `missing` on each line says what still has to be filled in.
+     ------------------------------------------------------------ */
+  const PAYER_FIELDS = ['payerEntity', 'payerAddress', 'payerEmail', 'payerTerms', 'invoiceCc', 'paymentSchedule', 'vendorForms', 'nteExpenses'];
+  const BILLED_STATUSES = { billed: 1, 'billed-diff': 1, writeoff: 1 };
+  /** Ticked fee lines of one month, with everything an invoice needs.
+      opts: { catalog, onlyNew (default false: every tick), projects } */
+  function buildInvoiceRequest(year, month, opts) {
+    const o = opts || {}; const cat = o.catalog || (typeof window !== 'undefined' && window.RATES_CATALOG);
+    const key = reconYmOf(year, month); const u = getCurrentUser() || {};
+    const list = (o.projects || listProjects()).filter(p => p && !p._deleted && !(isChangeOrder && isChangeOrder(p)));
+    const lines = [];
+    list.forEach(p => {
+      const mark = readyToBillOf(p, key); if (!mark) return;
+      if (o.onlyNew && mark.submittedAt) return;
+      const cell = reconCell(year, p.id, 'fee', key) || {};
+      if (BILLED_STATUSES[cell.status] || (cell.status === 'accrued' && cell.billedIn)) return;   // already billed, the tick is spent
+      let planned = 0; try { planned = (reconLinesFor(p, cat).fee || {})[key] || 0; } catch (e) { planned = 0; }
+      const amount = cell.amount != null ? Number(cell.amount) : planned;
+      if (!(Math.abs(amount) > 0.5)) return;
+      const pj = p.project || {}; const it = pj.intake || {}; const lead = resolveLeader(pj.leadId || pj.lead);
+      const payer = {}; PAYER_FIELDS.forEach(k => { payer[k] = String(it[k] == null ? '' : it[k]).trim(); });
+      if (!payer.payerEntity) payer.payerEntity = pj.client || '';
+      const missing = INTAKE_FIELDS.filter(f => !f.optional && PAYER_FIELDS.indexOf(f.key) >= 0 && !payer[f.key]).map(f => f.label.split(' · ')[0]);
+      if (!pj.salesforceId) missing.push('Salesforce ID');
+      lines.push({
+        projectId: p.id, client: pj.client || '', project: pj.name || '', salesforceId: pj.salesforceId || '', projectNumber: pj.projectNumber || '',
+        leader: lead ? lead.displayName : (pj.lead || ''), leaderEmail: lead ? (lead.username || '') : '',
+        earnedMonth: key, amount: Math.round(amount * 100) / 100, planned: Math.round(planned * 100) / 100, status: cell.status || '',
+        payer, feeBasis: (p.assumptions || {}).feeBasis === 'nte' ? 'nte' : 'fixed', note: cell.note || '',
+        readyAt: mark.at || '', readyBy: mark.byName || mark.by || '', submittedAt: mark.submittedAt || '', submissionId: mark.submissionId || '',
+        missing,
+      });
+    });
+    lines.sort((a, b) => a.client.localeCompare(b.client) || a.project.localeCompare(b.project));
+    const at = new Date().toISOString();
+    return { schemaVersion: 1, kind: 'invoice-request', id: 'invoice-request-' + key + '-' + at.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z').replace('T', '-'),
+      month: key, at, by: { login: u.username || '', name: u.name || u.username || '' }, app: (typeof location !== 'undefined' ? location.origin : ''),
+      counts: { lines: lines.length, amount: Math.round(lines.reduce((a, l) => a + l.amount, 0) * 100) / 100, resubmitted: lines.filter(l => l.submittedAt).length, incomplete: lines.filter(l => l.missing.length).length },
+      lines };
+  }
+  /** After the file is safely written: stamp every tick in the request as
+      submitted (date + request id) so "new since last submit" means something. */
+  function markReadyToBillSubmitted(req) {
+    assertReconAdmin();
+    const r = req || {}; const key = String(r.month || ''); const at = r.at || new Date().toISOString();
+    let n = 0;
+    (r.lines || []).forEach(l => {
+      const rec = getProject(l.projectId); if (!rec) return;
+      const pj = rec.project = rec.project || {}; const rb = Object.assign({}, pj.readyToBill || {});
+      if (!rb[key]) return;
+      rb[key] = Object.assign({}, rb[key], { submittedAt: at, submissionId: r.id || '' });
+      pj.readyToBill = rb; saveProject(rec); n++;
+      logActivity('invoice-request', rec.id, { name: pj.name || '', client: pj.client || '', ym: key, amount: l.amount, requestId: r.id || '' });
+    });
+    return n;
+  }
   /** The weekly digest, pre-rendered per leader so the sending flow only
       loops and mails: who, how many, and an email with one deep link per
       project. Finished work (closed, lost, or a timeline already past) is
@@ -4184,7 +4249,7 @@
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, isSmallWorks, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
-    INTAKE_TO, INTAKE_FIELDS, priorBookedForClient, intakeStatus, setReadyToBill, readyToBillOf,
+    INTAKE_TO, INTAKE_FIELDS, priorBookedForClient, intakeStatus, setReadyToBill, readyToBillOf, buildInvoiceRequest, markReadyToBillSubmitted,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,

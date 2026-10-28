@@ -29,12 +29,12 @@
 .rc-table select, .rc-table input[type=number] { font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid rgba(37,39,58,.25); background: #fff; max-width: 220px; }
 .rc-table input[type=number] { width: 110px; text-align: right; }
 .rc-table input:disabled, .rc-table select:disabled { background: #f4f4f3; color: var(--sav-steel); }
-.rc-table tr.st-none td:nth-child(6) { background: #fdf0d8; }
-.rc-table tr.st-billed td:nth-child(6) { background: #eaf6ee; }
-.rc-table tr.st-billed-diff td:nth-child(6) { background: #fff3cd; }
-.rc-table tr.st-accrued td:nth-child(6) { background: #e6f0f2; }
-.rc-table tr.st-slipped td:nth-child(6) { background: #fde2e2; }
-.rc-table tr.st-writeoff td:nth-child(6) { background: #ececec; color: var(--sav-steel); }
+.rc-table tr.st-none td:nth-child(7) { background: #fdf0d8; }
+.rc-table tr.st-billed td:nth-child(7) { background: #eaf6ee; }
+.rc-table tr.st-billed-diff td:nth-child(7) { background: #fff3cd; }
+.rc-table tr.st-accrued td:nth-child(7) { background: #e6f0f2; }
+.rc-table tr.st-slipped td:nth-child(7) { background: #fde2e2; }
+.rc-table tr.st-writeoff td:nth-child(7) { background: #ececec; color: var(--sav-steel); }
 .rc-table tr.rc-carry td { background: #fbfaf5; }
 .rc-table tr.rc-carry.settled td { background: #f1f8f3; }
 .rc-note { min-width: 200px; min-height: 18px; font-size: 12px; padding: 2px 4px; border-bottom: 1px dashed rgba(37,39,58,.25); outline: none; }
@@ -98,6 +98,21 @@
 .ra-cell.rtb .ra-btn { box-shadow: inset 4px 0 0 var(--sav-yellow); }
 .ra-cell.rtb .ra-btn .amt { font-weight: 800; }
 .rc-table tr.rtb td:first-child { box-shadow: inset 4px 0 0 var(--sav-yellow); }
+.rc-table th.c, .rc-table td.c { text-align: center; }
+.rc-table .rc-rtb { width: 18px; height: 18px; accent-color: #D9A400; cursor: pointer; vertical-align: middle; }
+.rc-table .rc-rtb:disabled { cursor: default; }
+.rc-table .rtb-sub { font-size: 10px; color: #7A5C00; white-space: nowrap; }
+/* ---- the close, three stages in order ---- */
+.rc-close { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px; margin: 0 0 12px; }
+.rc-close .stage { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 2px solid var(--sav-navy); background: #fff; }
+.rc-close .stage .n { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--sav-navy); color: #fff; font-family: var(--font-display); font-weight: 900; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; }
+.rc-close .stage .body { flex: 1; min-width: 0; }
+.rc-close .stage .body b { font-family: var(--font-display); font-weight: 900; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--sav-navy); }
+.rc-close .stage .sub { font-size: 12px; }
+.rc-close .stage .sub b { font-family: var(--font-display); color: var(--sav-red); }
+.rc-close .stage .btn { flex: none; white-space: nowrap; }
+.rc-close .stage .btn:disabled { opacity: .55; cursor: default; }
+@media (max-width: 1000px) { .rc-close { grid-template-columns: 1fr; } }
 .ra-assign .ra-rtb { width: 18px; height: 18px; accent-color: #D9A400; cursor: pointer; }
 .ra-assign .rtb-who { color: #7A5C00; }
 .ra-assign td:first-child { min-width: 190px; }

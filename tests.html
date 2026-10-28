@@ -1320,6 +1320,26 @@
       return sq(!!saved && saved.id, 'rc_a', 'the record saved') && sq(!!mark && mark.by, 'esobel@savills.us', 'who marked it') && sq(!!mark && /^\d{4}-/.test(mark.at), true, 'and when') &&
              sq(none, null, 'other months untouched') && sq(cleared, null, 'untick clears it') && sq(kept, undefined, 'an empty map is dropped from the record');
     });
+    test('Ready to bill · invoice request', 'the ticked, unbilled fee lines of a month become one request with the payer details and what is still missing; submitting stamps the ticks so the next request carries only what is new', () => {
+      setup();
+      const L = S.reconLinesFor(S.getProject('rc_a'), C); const feb = L.fee['2026-02'];
+      S.setReadyToBill('rc_a', '2026-02', true); S.setReadyToBill('rc_a', '2026-03', true);
+      S.setReconStatus(2026, 'rc_a', 'fee', '2026-03', 'billed', { earned: L.fee['2026-03'] });     // March's tick is spent
+      const rec = S.getProject('rc_a'); rec.project.intake = { payerEmail: 'ap@acme.com', payerTerms: 'Net 30' }; rec.project.salesforceId = 'P1'; S.saveProject(rec, { force: true });
+      const r2 = S.buildInvoiceRequest(2026, 2, { catalog: C }); const r3 = S.buildInvoiceRequest(2026, 3, { catalog: C });
+      const line = r2.lines[0] || {};
+      const n = S.markReadyToBillSubmitted(r2);
+      const onlyNew = S.buildInvoiceRequest(2026, 2, { catalog: C, onlyNew: true });
+      const all = S.buildInvoiceRequest(2026, 2, { catalog: C });
+      const mark = S.readyToBillOf(S.getProject('rc_a'), '2026-02');
+      return sq(r2.lines.length, 1, 'one ticked, unbilled line in February') && sq(Math.round(line.amount), Math.round(feb), 'the planned fee') && sq(line.client + '|' + line.salesforceId, 'Acme|P1', 'who') &&
+             sq(line.payer.payerEmail + '|' + line.payer.payerTerms + '|' + line.payer.payerEntity, 'ap@acme.com|Net 30|Acme', 'payer details from the intake, entity falls back to the client') &&
+             sq(line.missing.some(x => /physical address/.test(x)) && line.missing.some(x => /Payment schedule/.test(x)) && !line.missing.some(x => /Salesforce/.test(x)), true, 'says what is still blank') &&
+             sq(r2.counts.incomplete, 1, 'counted as incomplete') && sq(/^invoice-request-2026-02-/.test(r2.id), true, 'file id carries the month') &&
+             sq(r3.lines.length, 0, 'a billed line is not requested again') &&
+             sq(n, 1, 'one tick stamped') && sq(onlyNew.lines.length, 0, 'nothing new after the submit') && sq(all.lines.length, 1, 'but the full list still has it') &&
+             sq(!!mark && mark.submissionId, r2.id, 'the tick remembers its request') && sq(!!mark && !!mark.submittedAt, true, 'and when');
+    });
     test('Recon · lock flags', 'a project edit that moves a locked month shows as a locked-month flag; reopening clears the lock', () => {
       const p = setup(); const L = S.reconLinesFor(p, C);
       S.lockReconMonth(2026, 3, { 'rc_a|fee': L.fee['2026-03'], 'rc_a|pt:v': L.out.find(x => x.id === 'pt:v').byMonth['2026-03'], 'rc_a|share': L.out.find(x => x.id === 'share').byMonth['2026-03'] });
