@@ -1102,6 +1102,18 @@
     try { await uploadRevenue(r); } catch (e) { _revPending = r; console.warn('revenue push failed', e); }
   }
   Box.pullRevenue = pullRevenue;
+  /** The daily Clockify drop, if the scheduled job has written one:
+      { pulledAt, actuals:{csv…}, lateness, users, projects } or null. Found by
+      name in Main Source; never cached, it is read once per page load. */
+  Box.pullClockifyDrop = async function () {
+    const f = await findByName('main', 'clockify-latest.json');
+    if (!f) return null;
+    const res = await boxFetch('/files/' + f.id + '/content');
+    if (!res.ok) throw new Error('clockify drop pull failed: ' + res.status);
+    const txt = await res.text(); if (!txt.trim()) return null;
+    const drop = JSON.parse(txt); drop._fileId = f.id;
+    return drop;
+  };
   /** Push the revenue book now — a lock or a status should reach Box before the tab closes. */
   Box.flushRevenue = async function () { clearTimeout(_revTimer); await revenuePushNow(); };
   /** Pull-if-changed + row-level merge + hydrate — so a tab left open all day

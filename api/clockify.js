@@ -30,21 +30,7 @@
    (Start Date = first of the month — the importer buckets by month.)
    ============================================================ */
 
-const MONTHS = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
-function normMonth(name) {
-  const s = String(name || '').trim();
-  let m;
-  if ((m = s.match(/^(\d{4})-(\d{2})/))) return m[1] + '-' + m[2];                    // 2026-04…
-  if ((m = s.match(/^([A-Za-z]{3,9})[ ,]+(\d{4})$/))) {                                // Apr 2026 / April 2026
-    const mm = MONTHS[m[1].slice(0, 3).toLowerCase()];
-    if (mm) return m[2] + '-' + mm;
-  }
-  if ((m = s.match(/^(\d{1,2})\/(\d{4})$/))) return m[2] + '-' + String(+m[1]).padStart(2, '0'); // 04/2026
-  const d = new Date(s);
-  if (!isNaN(d)) return d.toISOString().slice(0, 7);
-  return null;
-}
-function csvCell(v) { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+import { usersCsv, projectsCsv, latenessCsv, actualsCsv, isDay, ClockifyError } from './_clockify.js';
 
 /* AUTH: this endpoint returns employee names, hours and project assignments —
    it must not be publicly callable. See api/_auth.js: a valid Box session,
@@ -58,197 +44,22 @@ export default async function handler(req, res) {
   const ws = process.env.CLOCKIFY_WORKSPACE_ID;
   if (!key || !ws) { res.status(501).json({ error: 'not configured', detail: 'Set CLOCKIFY_API_KEY and CLOCKIFY_WORKSPACE_ID in Vercel env vars.' }); return; }
 
-  // ---- user list mode: canonical people names for the people mapping ----
-  // Job title rides along as a workspace CUSTOM FIELD on each user record
-  // (customFields[].customFieldName = "Title") — same source the Power BI
-  // report uses. No extra API calls needed.
-  if (req.query.list === 'users') {
-    try {
-      const users = [];
-      for (let page = 1; page <= 10; page++) {
-        const r = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/users?page-size=500&page=${page}&status=ALL&memberships=ALL`, { headers: { 'X-Api-Key': key } });
-        if (!r.ok) { res.status(502).json({ error: 'clockify ' + r.status, detail: (await r.text()).slice(0, 300) }); return; }
-        const batch = await r.json();
-        batch.forEach(u => {
-          let title = '';
-          const cfs = Array.isArray(u.customFields) ? u.customFields : [];
-          const hit = cfs.find(c => /title/i.test(c.customFieldName || '')) || cfs.find(c => c.value);
-          if (hit && hit.value != null) title = String(hit.value).trim();
-          users.push({ id: u.id, name: u.name || '', email: u.email || '', status: u.status || '', title });
-        });
-        if (batch.length < 500) break;
-      }
-      if (req.query.debug) { res.setHeader('Content-Type', 'application/json'); res.status(200).json(users.slice(0, 5)); return; }
-      const csv = 'User,Email,Status,JobTitle\n' + users.map(u => [u.name, u.email, u.status, u.title].map(csvCell).join(',')).join('\n');
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.status(200).send(csv);
-    } catch (e) { res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) }); }
-    return;
-  }
-
-  // ---- project list mode: canonical names for the one-time matrix rename ----
-  if (req.query.list === 'projects') {
-    try {
-      const out = [];
-      for (let page = 1; page <= 10; page++) {
-        const r = await fetch(`https://api.clockify.me/api/v1/workspaces/${ws}/projects?page-size=500&page=${page}&archived=false`, { headers: { 'X-Api-Key': key } });
-        if (!r.ok) { res.status(502).json({ error: 'clockify ' + r.status, detail: (await r.text()).slice(0, 300) }); return; }
-        const batch = await r.json();
-        batch.forEach(p => out.push([p.name || '', p.clientName || '']));
-        if (batch.length < 500) break;
-      }
-      const csv = 'Project,Client\n' + out.map(r2 => r2.map(csvCell).join(',')).join('\n');
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.status(200).send(csv);
-    } catch (e) { res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) }); }
-    return;
-  }
-
-  const start = String(req.query.start || '').slice(0, 10);
-  const end = String(req.query.end || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
-    res.status(400).json({ error: 'pass start=YYYY-MM-DD&end=YYYY-MM-DD' }); return;
-  }
-
-  // ---- lateness mode: per-user entry-timeliness aggregates ----
-  if (req.query.lateness) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) { res.status(400).json({ error: 'pass start=YYYY-MM-DD&end=YYYY-MM-DD' }); return; }
-    try {
-      const agg = {};   // user|ym -> stats
-      let page = 1;
-      while (page <= 25) {   // hard cap: 25k entries per pull
-        const rep = await fetch(`https://reports.api.clockify.me/v1/workspaces/${ws}/reports/detailed`, {
-          method: 'POST',
-          headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            dateRangeStart: start + 'T00:00:00.000', dateRangeEnd: end + 'T23:59:59.999',
-            detailedFilter: { page, pageSize: 1000 }, exportType: 'JSON',
-          }),
-        });
-        if (!rep.ok) { res.status(502).json({ error: 'clockify ' + rep.status, detail: (await rep.text()).slice(0, 300) }); return; }
-        const data = await rep.json();
-        const entries = data.timeentries || [];
-        entries.forEach(t => {
-          const id = t._id || t.id || '';
-          const startIso = t.timeInterval && t.timeInterval.start; if (!startIso || id.length < 8) return;
-          const created = parseInt(id.slice(0, 8), 16) * 1000;             // ObjectID timestamp
-          const workDay = new Date(startIso);
-          const lagDays = Math.max(0, (created - workDay.getTime()) / 86400000);
-          const ym = startIso.slice(0, 7);
-          const hrs = (t.timeInterval.duration || 0) / 3600;
-          const k2 = (t.userName || '') + '|' + ym;
-          const a = agg[k2] || (agg[k2] = { user: t.userName || '', ym, entries: 0, hours: 0, lagSum: 0, lagMax: 0, within3: 0, within7: 0, lastWorked: '', lastEntered: '' });
-          a.entries++; a.hours += hrs; a.lagSum += lagDays; a.lagMax = Math.max(a.lagMax, lagDays);
-          const workDate = startIso.slice(0, 10), enteredDate = new Date(created).toISOString().slice(0, 10);
-          if (workDate > a.lastWorked) a.lastWorked = workDate;            // the latest day they logged time FOR
-          if (enteredDate > a.lastEntered) a.lastEntered = enteredDate;    // the latest day they actually typed an entry
-          if (lagDays <= 3) a.within3++; if (lagDays <= 7) a.within7++;
-        });
-        if (entries.length < 1000) break;
-        page++;
-      }
-      const csv = 'User,Month,Entries,Hours,AvgLagDays,MaxLagDays,PctWithin3d,PctWithin7d,LastWorked,LastEntered\n'
-        + Object.values(agg).map(a => [a.user, a.ym, a.entries, Math.round(a.hours * 10) / 10, Math.round(a.lagSum / a.entries * 10) / 10, Math.round(a.lagMax), Math.round(a.within3 / a.entries * 100), Math.round(a.within7 / a.entries * 100), a.lastWorked, a.lastEntered].map(csvCell).join(',')).join('\n');
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.status(200).send(csv);
-    } catch (e) { res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) }); }
-    return;
-  }
-
+  const sendCsv = (csv) => { res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Cache-Control', 'no-store'); res.status(200).send(csv); };
+  const fail = (e) => { if (e instanceof ClockifyError) res.status(502).json({ error: 'clockify ' + e.status, detail: e.detail }); else res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) }); };
   try {
-    // Summary report, grouped USER → PROJECT → MONTH — aggregated server-side.
-    const rep = await fetch(`https://reports.api.clockify.me/v1/workspaces/${ws}/reports/summary`, {
-      method: 'POST',
-      headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        dateRangeStart: start + 'T00:00:00.000',
-        dateRangeEnd: end + 'T23:59:59.999',
-        summaryFilter: { groups: ['USER', 'PROJECT', 'MONTH'] },
-        exportType: 'JSON',
-      }),
-    });
-    if (!rep.ok) { res.status(502).json({ error: 'clockify ' + rep.status, detail: (await rep.text()).slice(0, 400) }); return; }
-    const data = await rep.json();
-
-    // Flatten nested groups → rows. duration is in seconds.
-    const rows = [];
-    (data.groupOne || []).forEach(user => {
-      (user.children || []).forEach(proj => {
-        const client = proj.clientName || '';
-        (proj.children || []).forEach(mon => {
-          const ym = normMonth(mon.name);
-          const hrs = Math.round(((mon.duration || 0) / 3600) * 100) / 100;
-          if (!ym || !hrs) return;
-          rows.push([user.name || '', proj.name || '', client, hrs, ym + '-01']);
-        });
-      });
-    });
-
-    /* The day each person last logged time FOR. A second summary report,
-       grouped USER → DATE, gives one row per person per day for the whole
-       range in a single response — every person gets a date, however long
-       ago it was. (The earlier newest-first walk of the detailed report
-       stopped at 5,000 entries and left quiet people undated.) The detailed
-       walk stays as a fallback if the day grouping is ever unavailable. */
-    const lastWorked = {};
-    const toDay = (name) => {
-      const n = String(name || '').trim();
-      if (/^\d{4}-\d{2}-\d{2}/.test(n)) return n.slice(0, 10);
-      const t = Date.parse(n); return isNaN(t) ? '' : new Date(t).toISOString().slice(0, 10);
-    };
-    try {
-      const byDay = await fetch(`https://reports.api.clockify.me/v1/workspaces/${ws}/reports/summary`, {
-        method: 'POST',
-        headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dateRangeStart: start + 'T00:00:00.000', dateRangeEnd: end + 'T23:59:59.999',
-          summaryFilter: { groups: ['USER', 'DATE'] }, exportType: 'JSON',
-        }),
-      });
-      if (byDay.ok) {
-        const dj = await byDay.json();
-        (dj.groupOne || []).forEach(user => {
-          const u = user.name || ''; if (!u) return;
-          (user.children || []).forEach(d => { const day = toDay(d.name); if (day && (!lastWorked[u] || day > lastWorked[u])) lastWorked[u] = day; });
-        });
-      }
-    } catch (e) { /* fall through to the detailed walk */ }
-    try {
-      const users = new Set(rows.map(r => r[0]).filter(Boolean));
-      let page = 1;
-      while (page <= 5 && users.size > Object.keys(lastWorked).length) {
-        const det = await fetch(`https://reports.api.clockify.me/v1/workspaces/${ws}/reports/detailed`, {
-          method: 'POST',
-          headers: { 'X-Api-Key': key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            dateRangeStart: start + 'T00:00:00.000', dateRangeEnd: end + 'T23:59:59.999',
-            sortOrder: 'DESCENDING',
-            detailedFilter: { page, pageSize: 1000, sortColumn: 'DATE' }, exportType: 'JSON',
-          }),
-        });
-        if (!det.ok) break;
-        const dj = await det.json();
-        const entries = dj.timeentries || [];
-        entries.forEach(t => {
-          const u = t.userName || ''; const s = t.timeInterval && t.timeInterval.start;
-          if (!u || !s) return;
-          const day = s.slice(0, 10);
-          if (!lastWorked[u] || day > lastWorked[u]) lastWorked[u] = day;
-        });
-        if (entries.length < 1000) break;
-        page++;
-      }
-    } catch (e) { /* the dates are a bonus — the actuals still land without them */ }
-
-    const csv = 'User,Project,Client,Duration (decimal),Start Date,Last Worked\n'
-      + rows.map(r => r.concat([lastWorked[r[0]] || '']).map(csvCell).join(',')).join('\n');
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(200).send(csv);
-  } catch (e) {
-    res.status(500).json({ error: 'proxy failed', detail: String(e && e.message || e).slice(0, 300) });
-  }
+    // ---- user list: canonical people names for the people mapping, job title riding along as a custom field ----
+    if (req.query.list === 'users') {
+      const u = await usersCsv({ key, ws });
+      if (req.query.debug) { res.setHeader('Content-Type', 'application/json'); res.status(200).json(u.users.slice(0, 5)); return; }
+      sendCsv(u.csv); return;
+    }
+    // ---- project list: canonical names for the mapping tab ----
+    if (req.query.list === 'projects') { sendCsv((await projectsCsv({ key, ws })).csv); return; }
+    const start = String(req.query.start || '').slice(0, 10), end = String(req.query.end || '').slice(0, 10);
+    if (!isDay(start) || !isDay(end)) { res.status(400).json({ error: 'pass start=YYYY-MM-DD&end=YYYY-MM-DD' }); return; }
+    // ---- lateness: per-user entry-timeliness aggregates ----
+    if (req.query.lateness) { sendCsv((await latenessCsv({ key, ws, start, end })).csv); return; }
+    // ---- actuals: hours by user × project × month ----
+    sendCsv((await actualsCsv({ key, ws, start, end })).csv);
+  } catch (e) { fail(e); }
 }

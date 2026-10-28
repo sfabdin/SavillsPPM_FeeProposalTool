@@ -2466,6 +2466,36 @@
     };
   }
 
+  /* ---------- the daily Clockify drop ----------
+     The scheduled job (api/clockify-daily.js) writes clockify-latest.json
+     into Box every morning: actuals CSV, lateness CSV, users, projects. The
+     first staffing page to open after a newer drop commits it exactly as
+     the Import button would — replace mode for the months it covers, titles
+     onto the roster, lateness stats — and stamps which drop was taken, so
+     a second tab or a second admin does not import it again. */
+  const parseLateness = (txt) => S.parseCsvRows(txt).map(o => ({ user: o.User, ym: o.Month, entries: +o.Entries || 0, hours: +o.Hours || 0, avgLag: +o.AvgLagDays || 0, maxLag: +o.MaxLagDays || 0, pctWithin3: +o.PctWithin3d || 0, pctWithin7: +o.PctWithin7d || 0, lastWorked: o.LastWorked || '', lastEntered: o.LastEntered || '' })).filter(r => r.user && r.ym);
+  async function takeClockifyDrop() {
+    const Box = window.UFC_Box; if (!(Box && Box.enabled && Box.pullClockifyDrop)) return;
+    const drop = await Box.pullClockifyDrop(); if (!drop || !drop.pulledAt) { state.drop = null; return; }
+    state.drop = { pulledAt: drop.pulledAt, takenAt: (S.readDb().meta || {}).clockifyDropTakenAt || '' };
+    if (!(drop.pulledAt > (S.clockifyDropAt() || ''))) return;       // already taken (by this store or a teammate's)
+    const parts = [];
+    if (drop.actuals && drop.actuals.csv) {
+      const report = S.analyzeClockify(drop.actuals.csv, (drop.actuals.start || '').slice(0, 7));
+      if (report && report.ok) { S.commitClockify(report, 'replace'); state.clockifyRaw = drop.actuals.csv; state.clockifyReport = report; parts.push((report.months || []).length + ' months of hours'); }
+    }
+    if (drop.users && drop.users.csv) {
+      state.clockifyUsers = S.parseCsvRows(drop.users.csv).map(o => ({ name: o.User || '', email: o.Email || '', status: o.Status || '', title: o.JobTitle || '' })).filter(x => x.name);
+      const n = S.applyClockifyTitles(state.clockifyUsers); if (n) parts.push(n + ' title' + (n === 1 ? '' : 's'));
+    }
+    if (drop.projects && drop.projects.csv) state.clockifyNames = S.parseCsvRows(drop.projects.csv).map(o => ({ name: o.Project || Object.values(o)[0] || '', client: o.Client || '' })).filter(x => x.name);
+    if (drop.lateness && drop.lateness.csv) { const rows = parseLateness(drop.lateness.csv); if (rows.length) { S.setLateness(rows); parts.push('lateness for ' + rows.length + ' person-months'); } }
+    S.markClockifyDrop(drop.pulledAt);
+    state.drop.takenAt = new Date().toISOString();
+    toast('Clockify refreshed from this morning\'s pull (' + new Date(drop.pulledAt).toLocaleString() + '): ' + (parts.join(', ') || 'nothing new') + '.', 'ok');
+    if (state.winStart) renderAll();
+  }
+
   /* ---------- staff.json sync (Box) — makes the matrix + notes a shared,
      living document instead of per-browser state ---------- */
   function setStoreNote(mode, extra) {
@@ -2498,6 +2528,8 @@
       try { const n = S.applyMappingSeeds ? S.applyMappingSeeds() : []; if (n.length) { toast(n.length + ' mapping fix' + (n.length === 1 ? '' : 'es') + ' applied and saved.', 'ok'); } } catch (e) { console.warn('mapping seeds', e); }
       // Data repairs shipped as code (the allocations deep dive) — same rule: once, here, logged.
       try { const c = S.applyCleanupSeeds ? S.applyCleanupSeeds() : []; if (c.length) { const r = c[0]; toast(`Allocations cleanup applied: ${r.merges} people merged, ${r.renames} project names folded, ${r.deletes} duplicate rows removed, ${r.ended} row ended.`, 'ok'); if (state.winStart) renderAll(); } } catch (e) { console.warn('cleanup seeds', e); }
+      // The daily Clockify drop: a newer file than the last one taken is committed here, once, through the Import button's own code.
+      takeClockifyDrop().catch(e => console.warn('clockify drop', e));
       // Live refresh: when the tab regains focus (and every 3 min) check the file's
       // etag; if a teammate saved, hydrate + re-render — mappings flow to everyone.
       const refresh = async () => {
@@ -2611,6 +2643,10 @@
       if (bits.length) html += `<div class="note-txt" style="margin:0 0 14px;padding:8px 12px;background:#fdf6e3;border-left:3px solid #e8b563">🩺 Data health: ${bits.join(' · ')}</div>`;
     }
 
+    {
+      const d = state.drop; const taken = (S.readDb().meta || {}).clockifyDropAt;
+      html += `<div class="note-txt" style="margin:0 0 14px;padding:8px 12px;background:${d ? '#eaf6ee' : '#f4f4f3'};border-left:3px solid ${d ? '#1f7a44' : '#c9cdd3'}">⏰ <b>Daily pull:</b> ${d ? `Clockify was pulled automatically at ${esc(new Date(d.pulledAt).toLocaleString())}${taken === d.pulledAt ? ' and is in this book' : ' · <b>not yet committed here</b> (reload to take it)'}.` : 'no automatic pull has landed yet — the scheduled job writes clockify-latest.json to Box each morning once it is configured (see the Runbook). Until then, pull by hand below.'}</div>`;
+    }
     html += `<div id="import-anchor"></div>` + importCard(has, am);
     if (state.clockifyReport) html += reportBlock(state.clockifyReport);
 
