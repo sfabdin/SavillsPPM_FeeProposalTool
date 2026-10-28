@@ -157,7 +157,7 @@
   /* ---------- render ---------- */
   function render() {
     const host = $('#recon'); if (!host) return;
-    if (!admin()) { host.innerHTML = '<div class="panel"><h2>Admins only</h2><p class="sub">Revenue Reconciliation is Finance\'s book. Leaders see its flags on their own projects in the calculator.</p></div>'; return; }
+    if (!admin()) { host.innerHTML = '<div class="panel"><h2>Admins only</h2><p class="sub">Financial Tracking is Finance\'s book. Leaders see its flags on their own projects in the calculator.</p></div>'; return; }
     const years = yearsAvailable();
     const R = STORE.reconYear(YEAR);
     const flags = lockFlags(YEAR);
@@ -323,7 +323,7 @@
     const rows = monthRows(YEAR, M), mm = STORE.reconMonth(YEAR, M);
     const NAVY = 'FF25273A', YEL = 'FFFFDF00', RED = 'FFCE181E', STEEL = 'FF79828C', WHITE = 'FFFFFFFF', CREAM = 'FFEEE8E3';
     const fmt = '#,##0;[Red]-#,##0;"·"';
-    const wb = new ExcelJS.Workbook(); wb.creator = 'Savills PPM · Revenue Reconciliation'; wb.calcProperties = { fullCalcOnLoad: true };
+    const wb = new ExcelJS.Workbook(); wb.creator = 'Savills PPM · Financial Tracking'; wb.calcProperties = { fullCalcOnLoad: true };
     const head = (ws, labels) => { const r = ws.addRow(labels); r.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; }); return r; };
     // ---- Sheet 1: the month ----
     const ws = wb.addWorksheet(MONTHS[M - 1] + ' ' + YEAR + ' Flash', { views: [{ state: 'frozen', ySplit: 4 }] });

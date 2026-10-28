@@ -14,55 +14,62 @@
   // `cta:true` = the yellow "start here" action. `sub:'…'` = rendered under
   // an indented sub-heading inside its group (rarely-used one-time tools).
   const LINKS = [
-    // ── Projects — the daily loop for every revenue leader ──
-    { href: 'Projects Index.html',           label: 'Projects Index',      group: 'Projects',
+    // The menu follows the life of a dollar: pursue and price it, plan the
+    // people, commit the number, track the money, report it. Then the two
+    // buckets that are not stages — keeping the data clean, and admin.
+    // ── 1 · Pursue & price ──
+    { href: 'Projects Index.html',           label: 'Projects Index',      group: 'Pursue & price',
       desc: 'Every proposal and project in one place — search, filter, and open.' },
-    { href: 'Universal Fee Calculator.html', label: '+ New Project',       group: 'Projects', cta: true,
+    { href: 'Universal Fee Calculator.html', label: '+ New Project',       group: 'Pursue & price', cta: true,
       desc: 'Start a new fee proposal in the Fee Calculator — team, rates, phases, monthly schedule.' },
-    { href: 'Revenue Projections.html',      label: 'Revenue Projections', group: 'Projects',
-      desc: 'Monthly revenue outlook across the whole portfolio — booked plus probability-weighted pipeline.' },
-    { href: 'Benchmarking Dashboard.html',   label: 'Benchmarking',        group: 'Projects',
-      desc: 'Compare proposals against each other — fee levels, team shapes, and pricing patterns.' },
-    { href: 'Proposal Analytics.html',       label: 'Proposal Analytics',  group: 'Projects',
+    { href: 'Benchmarking Dashboard.html',   label: 'Benchmarking',        group: 'Pursue & price',
+      desc: 'Benchmark a proposal against a cohort, or compare up to five side by side — fee, team mix, rates, scope.' },
+    { href: 'Proposal Analytics.html',       label: 'Proposal Analytics',  group: 'Pursue & price',
       desc: 'Pipeline and win/loss analytics — where proposals come from and why we win or lose.' },
-    // ── Operations — running the business (admin) ──
-    { href: 'Staffing Matrix.html',          label: 'Staffing & Bandwidth', group: 'Operations', admin: true,
-      desc: 'Who is working on what and how loaded they are — allocations, bandwidth, and contract-vs-staffing checks.' },
-    { href: 'Staffing & Bandwidth (Preview).html', label: 'Staffing & Bandwidth · preview', group: 'Operations', admin: true,
+    // ── 2 · Plan the people (admin) ──
+    { href: 'Staffing Matrix.html',          label: 'Staffing, Bandwidth & Clockify', group: 'Plan the people', admin: true,
+      desc: 'Who is working on what and how loaded they are — allocations, bandwidth, Clockify time against plan, and contract-vs-staffing checks.' },
+    { href: 'Staffing & Bandwidth (Preview).html', label: 'Staffing, Bandwidth & Clockify · preview', group: 'Plan the people', admin: true,
       desc: 'A proposed redesign, read-only: My team, Bandwidth, Data room. The current page stays live.' },
-    { href: 'Revenue Reconciliation.html',   label: 'Revenue Reconciliation', group: 'Operations', admin: true,
-      desc: 'Finance\'s monthly book, built from the fee tool: a status on every fee, pass-through and fee-share line, the monthly flash, and a lock per month — a project edit that moves a locked month is flagged red.' },
-    { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Operations', admin: true,
-      desc: 'Revenue with Clockify burn (hours × cost rate) laid against it — margin per project, per month.' },
-    { href: 'Monthly Confirmed Book.html',   label: 'Monthly Confirmed Book', group: 'Projects',
+    // ── 3 · Commit the number ──
+    { href: 'Revenue Projections.html',      label: 'Revenue Projections', group: 'Commit the number',
+      desc: 'Monthly revenue outlook across the whole portfolio — booked plus probability-weighted pipeline.' },
+    { href: 'Monthly Confirmed Book.html',   label: 'Monthly Confirmed Book', group: 'Commit the number',
       desc: 'Confirm your book once a month, see who has and who has not, and (admins) open and lock each month.' },
-    { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Projects',
+    // ── 4 · Track the money (admin) ──
+    { href: 'Revenue Reconciliation.html',   label: 'Financial Tracking',  group: 'Track the money', admin: true,
+      desc: 'Finance\'s monthly book, built from the fee tool: a status on every fee, pass-through and fee-share line, the monthly flash, and a lock per month — a project edit that moves a locked month is flagged red.' },
+    { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Track the money', admin: true,
+      desc: 'Revenue with Clockify burn (hours × cost rate) laid against it — margin per project, per month.' },
+    // ── Keep it clean — everyone owns their own data ──
+    { href: 'Data Entry Status.html',        label: 'Data Entry Status',   group: 'Keep it clean',
       desc: 'Completeness tracker — your projects by revenue leader, with the fields still missing.' },
-    { href: 'Change Log.html',               label: 'Change Log',          group: 'Projects',
-      desc: 'Who changed what, and when, on the projects you can see — every create, edit, status change and deletion.' },
-    // ── Data Admin — keeping the data right (admin) ──
-    { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Data Admin', admin: true,
-      desc: 'One door for ingestion: paste or upload a single proposal document, or switch to bulk mode to import the projections workbook full-book-vs-full-book with a diff of every row before anything lands.' },
-    { href: 'Bulk Editor.html',              label: 'Bulk Editor (Excel)', group: 'Data Admin', admin: true,
-      desc: 'Superuser only — export the whole project book to Excel, scrub it (including rosters and monthly revenue), and put it back with a full diff. Includes the maintenance lock that pauses everyone else’s saves while you work.' },
-    { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
-      desc: 'One-time import of the small-works project book.' },
-    { href: 'Data Repair.html',              label: 'Data Repair',         group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
-      desc: 'Scan-and-fix for known data damage — duplicates, stale renames, sparse months. Preview first, then repair.' },
-    { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Data Admin', admin: true, sub: 'Migration / One-Time Tools',
-      desc: 'Dry-run a new rate grid against every project to see what would change before committing it.' },
-    // ── Executive Reporting - leadership only. Gated on the sees-all-projects
-    //    list (store.js ADMINS), NOT the wider admin-tools role, and hidden
-    //    until identity confirms so it never flashes for anyone else. ──
-    { href: 'Executive Reporting.html',      label: 'Executive Reporting', group: 'Executive Reporting', exec: true,
-      desc: 'Pipeline against budget, clients, leaders, rates and delivery, read live from the shared data files. Restricted access.' },
-    // ── Help ──
-    { href: 'Getting Started.html',          label: 'Getting Started',     group: 'Help',
+    { href: 'Change Log.html',               label: 'Change Log',          group: 'Keep it clean',
+      desc: 'Who changed what, and when, on the projects you can see — every create, edit, status change and deletion — and who has the system open now.' },
+    { href: 'Getting Started.html',          label: 'Getting Started',     group: 'Keep it clean',
       desc: 'The 5-minute orientation — how the tools fit together and what you are expected to keep current.' },
-    { href: 'Maintainers Runbook.html',      label: 'Maintainer’s Runbook', group: 'Help',
+    { href: 'Revenue Leader Guide.html',     label: 'Revenue Leader Guide', group: 'Keep it clean',
+      desc: 'What a revenue leader is asked to do each month, page by page.' },
+    // ── Admin — keeping the data right ──
+    { href: 'Ingestion Studio.html',         label: 'Ingestion Studio',    group: 'Admin', admin: true,
+      desc: 'One door for ingestion: paste or upload a single proposal document, or switch to bulk mode to import the projections workbook full-book-vs-full-book with a diff of every row before anything lands.' },
+    { href: 'Bulk Editor.html',              label: 'Bulk Editor (Excel)', group: 'Admin', admin: true,
+      desc: 'Superuser only — export the whole project book to Excel, scrub it (including rosters and monthly revenue), and put it back with a full diff. Includes the maintenance lock that pauses everyone else’s saves while you work.' },
+    { href: 'Rate Grid Reconciliation.html', label: 'Rate Reconciliation', group: 'Admin', admin: true,
+      desc: 'Dry-run a new rate grid against every project to see what would change before committing it.' },
+    { href: 'Data Repair.html',              label: 'Data Repair',         group: 'Admin', admin: true,
+      desc: 'Scan-and-fix for known data damage — duplicates, stale renames, sparse months. Preview first, then repair.' },
+    { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Admin', admin: true,
+      desc: 'One-time import of the small-works project book.' },
+    { href: 'Maintainers Runbook.html',      label: 'Maintainer’s Runbook', group: 'Admin', admin: true,
       desc: 'Deep technical reference — architecture, data flow, and the exact fee math. The migration guide, roadmap and readiness report live in the repo under docs/.' },
+    // ── 5 · Report — leadership only. Gated on the sees-all-projects list
+    //    (store.js ADMINS), NOT the wider admin-tools role, and hidden until
+    //    identity confirms so it never flashes for anyone else. Last, as asked. ──
+    { href: 'Executive Reporting.html',      label: 'Executive Reporting', group: 'Report', exec: true,
+      desc: 'Pipeline against budget, clients, leaders, rates and delivery, read live from the shared data files. Restricted access.' },
   ];
-  const ADMIN_GROUPS = ['Operations', 'Data Admin'];
+  const ADMIN_GROUPS = ['Plan the people', 'Track the money', 'Admin'];
   const NAVY = '#25273A', YEL = '#FFDF00', TEAL = '#0E7C7B';
   const here = (location.pathname.split('/').pop() || '').toLowerCase();
 
@@ -129,7 +136,7 @@
       <div id="ppm-nav-search"><input type="search" placeholder="Jump to a tool or project…" aria-label="Filter tools and search projects"></div><div id="ppm-proj-hits"></div><div id="ppm-nav-list">`;
     groups.forEach(g => {
       const adminGrp = ADMIN_GROUPS.includes(g);
-      inner += `<div class="pn-grp${g === 'Help' ? ' pn-docs' : ''}"${adminGrp ? ' data-admin="1"' : ''}>${g}${adminGrp ? '<span class="pn-adm">admin only</span>' : ''}</div>`;
+      inner += `<div class="pn-grp${(g === 'Keep it clean' || g === 'Report') ? ' pn-docs' : ''}"${adminGrp ? ' data-admin="1"' : ''}>${g}${(adminGrp && g !== 'Admin') ? '<span class="pn-adm">admin only</span>' : ''}</div>`;
       let subShown = null;
       LINKS.filter(l => l.group === g).forEach(l => {
         if (l.sub && l.sub !== subShown) {
@@ -137,7 +144,7 @@
           inner += `<div class="pn-grp pn-subgrp" data-admin="${l.admin ? 1 : 0}">${l.sub}</div>`;
         }
         const cur = l.href.split('?')[0].toLowerCase() === here ? ' here' : '';   // ?mode=… entries still highlight on their page
-        const cls = (g === 'Help' ? 'pn-doc ' : '') + (l.sub ? 'pn-sub ' : '') + (l.cta ? 'pn-cta ' : '') + (l.exec ? 'pn-exec ' : '');
+        const cls = (l.sub ? 'pn-sub ' : '') + (l.cta ? 'pn-cta ' : '') + (l.exec ? 'pn-exec ' : '');
         // exec entries start hidden (data-role-hidden) so they cannot flash
         // before the identity check runs - fail closed, reveal on proof.
         inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" data-exec="${l.exec ? 1 : 0}"${l.exec ? ' data-role-hidden="1" style="display:none"' : ''} class="${(cls + cur).trim()}" title="${l.desc || ''}">${l.label}</a>`;
