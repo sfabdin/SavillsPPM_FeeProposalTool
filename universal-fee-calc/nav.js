@@ -5,7 +5,9 @@
    page and it adds a fixed hamburger button + slide-out menu
    linking every tool. Highlights the current page. Admin-only
    items hide for non-admins once the data layer reports
-   identity; shown by default so it never blocks.
+   identity. Admin and executive items start HIDDEN and are revealed on
+   proof — fail closed — so a revenue leader never sees the admin groups
+   flash for the second before the identity check lands.
    ============================================================ */
 (function () {
   'use strict';
@@ -145,9 +147,9 @@
         }
         const cur = l.href.split('?')[0].toLowerCase() === here ? ' here' : '';   // ?mode=… entries still highlight on their page
         const cls = (l.sub ? 'pn-sub ' : '') + (l.cta ? 'pn-cta ' : '') + (l.exec ? 'pn-exec ' : '');
-        // exec entries start hidden (data-role-hidden) so they cannot flash
-        // before the identity check runs - fail closed, reveal on proof.
-        inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" data-exec="${l.exec ? 1 : 0}"${l.exec ? ' data-role-hidden="1" style="display:none"' : ''} class="${(cls + cur).trim()}" title="${l.desc || ''}">${l.label}</a>`;
+        // admin and exec entries start hidden (data-role-hidden) so they cannot
+        // flash before the identity check runs - fail closed, reveal on proof.
+        inner += `<a href="${l.href}" data-admin="${l.admin ? 1 : 0}" data-exec="${l.exec ? 1 : 0}"${(l.exec || l.admin) ? ' data-role-hidden="1" style="display:none"' : ''} class="${(cls + cur).trim()}" title="${l.desc || ''}">${l.label}</a>`;
       });
     });
     inner += `</div>`;
@@ -220,6 +222,7 @@
         h.style.display = any ? '' : 'none';
       });
     }
+    applyFilter();   // first paint: hidden items hide their now-empty group headings too
     search.addEventListener('input', applyFilter);
     search.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
