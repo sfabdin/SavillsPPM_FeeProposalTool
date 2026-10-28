@@ -1183,6 +1183,8 @@
       const c4 = S.setReconAssignment(2026, 'rc_a', 'fee', '2026-05', { earned: L.fee['2026-05'], earnedIn: '2026-07' });
       const c5 = S.setReconAssignment(2026, 'rc_a', 'share', '2026-05', { earned: L.out.find(x => x.id === 'share').byMonth['2026-05'], earnedIn: '2026-07' });
       const c6 = S.setReconAssignment(2026, 'rc_a', 'fee', '2026-06', { earned: L.fee['2026-06'], writeoff: true, note: 'client disputed' });
+      const c7 = S.setReconAssignment(2026, 'rc_a', 'pt:v', '2026-02', { earned: L.out.find(x => x.id === 'pt:v').byMonth['2026-02'], paidIn: '2026-03' });
+      const r7 = S.reconAssignment(2026, 'rc_a', 'pt:v', '2026-02', 0);
       let bad = false; try { S.setReconAssignment(2026, 'rc_a', 'fee', '2026-07', { earnedIn: '2026-07', accruedIn: '2026-08', billedIn: '2026-07' }); } catch (e) { bad = true; }
       const back = S.reconAssignment(2026, 'rc_a', 'fee', '2026-03', mar);
       const none = S.reconAssignment(2026, 'rc_a', 'fee', '2026-08', 500);
@@ -1193,6 +1195,7 @@
              sq(c3.status, 'billed-diff', 'different amount → billed-diff') && sq(c3.amount, 1000, 'the amount') &&
              sq(c4.status, 'slipped', 'earned moved → slipped') && sq(c4.earnedIn, '2026-07', 'to July') && sq(c5.status, 'slipped', 'the fee share follows') &&
              sq(c6.status, 'writeoff', 'written off') && sq(c6.note, 'client disputed', 'the note') &&
+             sq(c7.status + '|' + c7.paidIn, 'billed|2026-03', 'a vendor line billed with the fee, paid the month after') && sq(r7.paidIn, '2026-03', 'the paid month reads back') &&
              sq(bad, true, 'billed before accrued is refused') &&
              sq(back.earnedIn + '|' + back.accruedIn + '|' + back.billedIn + '|' + back.settled, '2026-03|2026-03|2026-04|true', 'the three months read back') &&
              sq(none.set, false, 'an untouched month is not assigned') && sq(none.earnedIn + none.accruedIn + none.billedIn, '2026-082026-082026-08', 'and defaults to its own month') &&

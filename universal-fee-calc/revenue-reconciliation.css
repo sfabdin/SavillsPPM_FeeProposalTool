@@ -112,3 +112,16 @@
 .ra-assign tr.ln-share td:first-child, .ra-assign tr.ln-share td.money { color: var(--sav-red); }
 .ra-assign tr.ln-pass td:first-child, .ra-assign tr.ln-pass td.money { color: var(--sav-teal, #238291); }
 .ra-help { margin-top: 12px; line-height: 1.5; }
+
+/* ---- annual controls: basis, shape, export ---- */
+.ra-ctl { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; }
+.ra-ctl .grow { flex: 1; }
+.ra-ctl .seg { display: inline-flex; border: 1px solid var(--sav-navy); }
+.ra-ctl .seg button { font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; padding: 9px 16px; border: 0; background: #fff; color: var(--sav-navy); cursor: pointer; }
+.ra-ctl .seg button + button { border-left: 1px solid var(--sav-navy); }
+.ra-ctl .seg button.on { background: var(--sav-navy); color: #fff; }
+.ra-ctl select { font: inherit; font-weight: 700; padding: 8px 10px; border: 1px solid var(--sav-navy); background: #fff; }
+.ra-table td.ra-cell.ro { padding: 8px 10px; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12.5px; }
+.ra-table td.ra-cell.ro .amt.neg { color: var(--sav-red); }
+.ra-table tr.lane-pass td.money { color: var(--sav-teal, #238291); }
+.ra-roll td:first-child { white-space: nowrap; }

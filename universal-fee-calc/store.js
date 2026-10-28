@@ -1773,6 +1773,8 @@
         if (b <= nowYm) { c.billedIn = b; if (differs) c.billedAmount = amount; else delete c.billedAmount; } else { delete c.billedIn; delete c.billedAmount; }
       } else { delete c.accruedIn; }
       if (x.note != null) { const t = String(x.note).trim(); if (t) c.note = t; else delete c.note; }
+      // money out (a fee share, a pass-through) carries the month it is PAID; the fee line never does
+      if (x.paidIn) c.paidIn = String(x.paidIn); else delete c.paidIn;
     });
     return reconCell(year, pid, line, ym);
   }
@@ -1784,7 +1786,7 @@
     const acc = st === 'accrued' ? (c.accruedIn || (c.assigned && c.assigned.accruedIn) || e) : e;
     const b = st === 'accrued' ? (c.billedIn || c.billsIn || acc) : e;
     const amount = c.amount != null ? c.amount : (c.billedAmount != null ? c.billedAmount : (earned != null ? earned : null));
-    return { status: st, set: !!st, earnedIn: e, accruedIn: acc, billedIn: b, amount, planned: earned, writeoff: st === 'writeoff', note: c.note || '',
+    return { status: st, set: !!st, earnedIn: e, accruedIn: acc, billedIn: b, paidIn: c.paidIn || null, amount, planned: earned, writeoff: st === 'writeoff', note: c.note || '',
       settled: st === 'accrued' ? !!c.billedIn : st === 'billed' || st === 'billed-diff' };
   }
   /** Lock a month. `snapshot` = { "pid|line": amount } of every live line in
