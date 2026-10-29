@@ -77,7 +77,7 @@
     return (e) => run(e.target.value);
   }
   const esc = window.UFC_UI.esc;
-  const fmtH = (n) => n ? (Math.round(n * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
+  const fmtH = (n) => n ? Math.round(n).toLocaleString() : '—';   // whole hours — a tenth of an hour is noise on a plan
   const fmtPct = (n) => n ? Math.round(n) + '%' : '';
 
   const state = {
@@ -87,7 +87,7 @@
     allocSearch: '', allocStatus: '', allocProject: '',
     projSearch: '', projClient: '',
     pplSearch: '', expandedRoster: new Set(), pplExpandInit: false,
-    varProject: '', varPerson: '', varProjectQ: '', varPersonQ: '', gridMetric: 'plan', varGroup: 'project', varUnit: 'hours', showMacro: true, glossaryOpen: false,
+    varProject: '', varPerson: '', varProjectQ: '', varPersonQ: '', gridMetric: 'plan', varGroup: 'project', varUnit: 'hours', varRate: 'cost', showMacro: true, glossaryOpen: false,
     expandedProjects: new Set(),
     clockifyReport: null, clockifyRaw: null,
     editingAlloc: null,
@@ -1055,20 +1055,40 @@
     const cat = window.RATES_CATALOG;
     const canDollars = !!(cat && cat.hydrated);
     const dollars = state.varUnit === 'dollars' && canDollars;
+    /* Two ways to price the hours in dollars mode, both against ② Savills
+       revenue (the fee less the fee share): at each person's internal COST
+       rate — did we make money — or at the CONTRACTED rate their title bills
+       at on that project — did the hours we spent bill out at what we priced. */
+    const basis = dollars ? (state.varRate === 'contract' ? 'contract' : 'cost') : null;
+    const atContract = basis === 'contract';
+    const L2 = '② Savills revenue', L2s = 'fee less fee share';
+    const L3 = atContract ? '③ Hours at contracted rate' : '③ Cost of hours logged';
+    const L3s = atContract ? 'hours × the rate the role bills at' : 'hours × cost rate';
+    const marginWord = atContract ? 'Realization' : 'Margin';
     const _fmtHours = fmtH;
     const fmtD = (n) => (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
     {
       const fmtH = dollars ? fmtD : _fmtHours;   // shadow: every figure below follows the unit toggle
       const noRate = new Set(); const _rateCache = {};
-      const rateOf = (person) => {
+      const noRateProj = new Map();   // contract basis: project → why it has no contracted rate (projects, not people — the list stays readable)
+      const rateOf = (person, project) => {
         if (!person) return 0;
-        if (_rateCache[person.id] != null) return _rateCache[person.id];
-        const r = S.personCostRate(person) || 0;
-        if (!r) noRate.add(person.name + (person.title ? ' — ' + person.title : ' — no title yet'));
-        return (_rateCache[person.id] = r);
+        const key = person.id + '|' + (atContract ? project : '');
+        if (_rateCache[key] != null) return _rateCache[key];
+        let r = 0;
+        if (atContract) {
+          const pL = S.projectLabel(project);
+          r = pL.feeId && S.personContractRate ? (S.personContractRate(person, pL.feeId) || 0) : 0;
+          if (!r) { noRate.add(person.name); noRateProj.set(pL.name || project, pL.feeId ? 'roles not priced' : 'internal line'); }
+        } else {
+          r = S.personCostRate(person) || 0;
+          if (!r) noRate.add(person.name + (person.title ? ' — ' + person.title : ' — no title yet'));
+        }
+        return (_rateCache[key] = r);
       };
-      const cpM = (cp, m) => dollars ? ((cp.feeByMonth || {})[m] || 0) : (cp.byMonth[m] || 0);
-      const cpTot = (cp) => dollars ? (cp.feeTotal || 0) : cp.total;
+      // ② in dollars is SAVILLS REVENUE — the fee less the fee share — not the fee billed
+      const cpM = (cp, m) => dollars ? ((cp.revByMonth || {})[m] || 0) : (cp.byMonth[m] || 0);
+      const cpTot = (cp) => dollars ? (cp.revTotal || 0) : cp.total;
       const msAsc = months();
       const ms = msAsc;
       // Display order: chronological, Jan → Dec (matches the chart above)
@@ -1086,7 +1106,7 @@
       if (pq) rows = rows.filter(r => (r.project + ' ' + (r.client || '') + ' ' + S.projectLabel(r.project, r.client).name).toLowerCase().includes(pq));
       if (qq) rows = rows.filter(r => String(r.person.name || '').toLowerCase().includes(qq));
       // Dollars mode: ①③ become hours × the person's internal COST rate (by title)
-      if (dollars) rows = rows.map(r => { const k = rateOf(r.person); const bm = {}; ms.forEach(m => { const c = r.byMonth[m]; bm[m] = { e: c.e * k, a: c.a * k }; }); return { ...r, expected: r.expected * k, actual: r.actual * k, variance: r.variance * k, byMonth: bm }; });
+      if (dollars) rows = rows.map(r => { const k = rateOf(r.person, r.project); const bm = {}; ms.forEach(m => { const c = r.byMonth[m]; bm[m] = { e: c.e * k, a: c.a * k }; }); return { ...r, expected: r.expected * k, actual: r.actual * k, variance: r.variance * k, byMonth: bm }; });
       const byPerson = state.varGroup === 'person';
       // group by project or by person
       const byProj = {};
@@ -1130,11 +1150,13 @@
       });
       Object.values(contractByProj).forEach(cp => ms.forEach(m => { conM[m] += cpM(cp, m); }));
       html += dollars ? `<div class="kpi-strip">
-        <div class="kpi-card"><div class="k-num">${fmtH(totContract)}</div><div class="k-lbl">② Fee billed (fee tool · net)</div></div>
-        <div class="kpi-card accent"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">③ Cost of hours logged (hours × cost rate)</div></div>
-        <div class="kpi-card"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">① Planned cost (matrix × cost rate) · reference</div></div>
-        <div class="kpi-card ${totContract - totAct < 0 ? 'warn' : ''}"><div class="k-num">${fmtH(totContract - totAct)}</div><div class="k-lbl">Margin · ② fee − ③ actual cost${totContract ? ' · ' + Math.round((totContract - totAct) / totContract * 100) + '%' : ''}</div></div>
-      </div>${noRate.size ? `<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for: ${esc([...noRate].join(' · '))} — their hours count as $0. Fix the title on the roster (Clockify carries it in on the next pull).</div>` : ''}` : `<div class="kpi-strip">
+        <div class="kpi-card"><div class="k-num">${fmtH(totContract)}</div><div class="k-lbl">${L2} (${L2s})</div></div>
+        <div class="kpi-card accent"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">${L3} (${L3s})</div></div>
+        <div class="kpi-card"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">① Matrix plan at the same rate · reference</div></div>
+        <div class="kpi-card ${totContract - totAct < 0 ? 'warn' : ''}"><div class="k-num">${atContract ? (totAct ? Math.round(totContract / totAct * 100) + '%' : '—') : fmtH(totContract - totAct)}</div><div class="k-lbl">${atContract ? 'Realization · ② revenue ÷ ③ hours at contracted rate' + (totContract - totAct ? ' · ' + (totContract - totAct < 0 ? '−' : '+') + fmtH(Math.abs(totContract - totAct)) : '') : 'Margin · ② revenue − ③ cost' + (totContract ? ' · ' + Math.round((totContract - totAct) / totContract * 100) + '%' : '')}</div></div>
+      </div>${noRate.size ? (atContract
+        ? (() => { const unpriced = [...noRateProj].filter(([, why]) => why === 'roles not priced').map(([n]) => n).sort(); const internal = [...noRateProj].filter(([, why]) => why === 'internal line').map(([n]) => n).sort(); const show = (arr) => esc(arr.slice(0, 10).join(' · ')) + (arr.length > 10 ? ` · +${arr.length - 10} more` : ''); return `<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ Hours with no contracted rate count as $0 here${unpriced.length ? ` — <b>${unpriced.length} project${unpriced.length === 1 ? ' has' : 's have'} no priced roles</b> (price the roster in the calculator): ${show(unpriced)}` : ''}${internal.length ? ` — and internal lines never have one: ${show(internal)}` : ''}.</div>`; })()
+        : `<div class="note-txt" style="margin:-8px 0 12px;color:#8a6d00">⚠ No cost rate for: ${esc([...noRate].join(' · '))} — their hours count as $0. Fix the title on the roster (Clockify carries it in on the next pull).</div>`) : ''}` : `<div class="kpi-strip">
         <div class="kpi-card accent"><div class="k-num">${fmtH(totExp)}</div><div class="k-lbl">① Matrix plan (JS sheet) · hrs</div></div>
         <div class="kpi-card"><div class="k-num">${fmtH(totContract)}</div><div class="k-lbl">② Per contract (fee tool) · hrs</div></div>
         <div class="kpi-card"><div class="k-num">${fmtH(totAct)}</div><div class="k-lbl">③ Actual (Clockify) · hrs</div></div>
@@ -1151,15 +1173,16 @@
           <button type="button" class="seg-btn ${byPerson ? 'active' : ''}" data-group="person">By Person</button>
         </div>
         ${findProject}${findPerson}
-        ${canDollars ? `<div class="seg-toggle" role="group" aria-label="Units" title="Hours, or the same hours priced at each person’s cost rate against the contracted fee"><button type="button" class="seg-btn ${!dollars ? 'active' : ''}" data-unit="hours">Hours</button><button type="button" class="seg-btn ${dollars ? 'active' : ''}" data-unit="dollars">$ cost vs fee billed</button></div>` : ''}
+        ${canDollars ? `<div class="seg-toggle" role="group" aria-label="Units" title="Hours, or the same hours priced at each person’s cost rate against the contracted fee"><button type="button" class="seg-btn ${!dollars ? 'active' : ''}" data-unit="hours">Hours</button><button type="button" class="seg-btn ${dollars ? 'active' : ''}" data-unit="dollars">$ vs Savills revenue</button></div>` : ''}
+        ${dollars ? `<div class="seg-toggle" role="group" aria-label="Rate basis" title="Price the logged hours at each person’s internal cost rate (margin), or at the rate their title bills at on the project (realization)"><button type="button" class="seg-btn ${!atContract ? 'active' : ''}" data-rate="cost">At cost rate</button><button type="button" class="seg-btn ${atContract ? 'active' : ''}" data-rate="contract">At contracted rate</button></div>` : ''}
         ${!byPerson ? `<label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" id="var-showmacro" ${state.showMacro ? 'checked' : ''}> Include Macro / Time Off</label>` : ''}
         <button type="button" class="seg-btn" id="cmp-expand-all" style="border:1px solid rgba(37,39,58,0.25)">Expand all</button>
-        <span class="grow"></span><span class="note-txt">${dollars ? '② = the contracted fee — what the client pays (fee tool, net). ③ = hours × internal COST rate for each person’s title. Every project total compares ③ against ②; ① is the matrix plan priced at cost, kept as a reference row. Profitable = ③ below ②.' : `▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.`}</span></div>`;
+        <span class="grow"></span><span class="note-txt">${dollars ? (atContract ? '② = Savills revenue — the fee less the fee share. ③ = hours × the CONTRACTED rate each person’s title bills at on that project (blended rate when the title is not on the contract). ③ above ② means the hours spent are worth more than the revenue earned: over-servicing. Realization = ② ÷ ③.' : '② = Savills revenue — the fee less the fee share. ③ = hours × the internal COST rate for each person’s title. Every project total compares ③ against ②; ① is the matrix plan priced at cost, kept as a reference row. Profitable = ③ below ②.') : `▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.`}</span></div>`;
       html += `<div class="legend" style="margin:-4px 0 10px"><span><span class="sw" style="background:#cfe6e4"></span>on plan (85–110%)</span><span><span class="sw" style="background:#fce7c2"></span>over plan${dollars ? ' / over the fee' : ''}</span><span><span class="sw" style="background:#eef4f4"></span>under plan</span><span><span class="sw" style="background:#f4f2ef"></span>logged with no plan</span><span>·&nbsp; nothing either way</span><span style="margin-left:auto">${dollars ? 'Each cell: what the hours cost (hours × cost rate), over what was planned. Project totals read against the fee billed, and a Margin row shows fee − cost by month.' : 'Each cell: the hours that happened, over what was planned.'}</span></div>`;
-      html += compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars);
+      html += compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars, basis);
 
       if (!projNames.length) html += `<div class="empty">No matched allocations or actuals in this window.</div>`;
-      const cmpHead = (firstCol) => `<thead><tr><th class="sticky-col">${firstCol}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">${dollars ? 'cost · of plan' : 'actual · of plan'}</div></th>`).join('')}<th class="num">${dollars ? '① Plan cost' : '① Plan hrs'}</th><th class="num">${dollars ? '③ Actual cost' : '③ Actual hrs'}</th><th class="num">Variance${dollars ? '<div class="vmini" style="text-transform:none;letter-spacing:0">people vs ① · totals vs ② fee</div>' : ''}</th><th class="num">${dollars ? '% of ① / ② fee' : '% of plan'}</th></tr></thead>`;
+      const cmpHead = (firstCol) => `<thead><tr><th class="sticky-col">${firstCol}</th>${msDesc.map(m => `<th class="num">${esc(S.ymLabel(m))}<div class="vmini" style="text-transform:none;letter-spacing:0">${dollars ? (atContract ? 'at contract · of plan' : 'cost · of plan') : 'actual · of plan'}</div></th>`).join('')}<th class="num">${dollars ? '① Plan $' : '① Plan hrs'}</th><th class="num">${dollars ? (atContract ? '③ At contract' : '③ Actual cost') : '③ Actual hrs'}</th><th class="num">Variance${dollars ? '<div class="vmini" style="text-transform:none;letter-spacing:0">people vs ① · totals vs ② revenue</div>' : ''}</th><th class="num">${dollars ? '% of ① / ② revenue' : '% of plan'}</th></tr></thead>`;
       // One cell = one number you read (what happened), the plan beneath it,
       // the variance as the tint — no arrows, no slashes.
       const mcell = (ref, act, refWord) => {
@@ -1170,7 +1193,8 @@
         return `<td class="num cmp-c ${cls}" title="${fmtH(act)} against ${fmtH(ref)} · ${pct}%"><div class="cmp-a">${act ? fmtH(act) : '0'}</div><div class="cmp-p">${w} ${fmtH(ref)} · ${pct}%</div></td>`;
       };
       // Dollars: the line that answers the question — fee billed less cost, by month.
-      const marginRow = (feeM, costM, feeTot, costTot) => `<tr style="background:#fff"><td class="pname sticky-col" style="font-weight:800">Margin <span class="vmini" style="font-weight:600">· ② fee − ③ cost</span></td>${msDesc.map(m => { const f = feeM(m) || 0, c = costM(m) || 0; if (!f && !c) return '<td class="num cmp-c cmp-e">·</td>'; const mg = f - c; return `<td class="num cmp-c" style="color:${mg < 0 ? '#A6131A' : '#1f5a3e'};font-weight:800" title="fee ${fmtH(f)} − cost ${fmtH(c)}"><div class="cmp-a">${mg < 0 ? '−' : ''}${fmtH(Math.abs(mg))}</div><div class="cmp-p">${f ? Math.round(mg / f * 100) + '% of fee' : 'no fee'}</div></td>`; }).join('')}<td class="num"></td><td class="num"></td><td class="num" style="font-weight:800;color:${feeTot - costTot < 0 ? '#A6131A' : '#1f5a3e'}">${feeTot - costTot < 0 ? '−' : ''}${fmtH(Math.abs(feeTot - costTot))}</td><td class="num vmini" style="font-weight:700">${feeTot ? Math.round((feeTot - costTot) / feeTot * 100) + '% margin' : '—'}</td></tr>`;
+      const pctWord = atContract ? ((f, c) => c ? Math.round(f / c * 100) + '% realized' : 'no hours') : ((f, c) => f ? Math.round((f - c) / f * 100) + '% of revenue' : 'no revenue');
+      const marginRow = (feeM, costM, feeTot, costTot) => `<tr style="background:#fff"><td class="pname sticky-col" style="font-weight:800">${marginWord} <span class="vmini" style="font-weight:600">· ② revenue − ③ ${atContract ? 'at contract' : 'cost'}</span></td>${msDesc.map(m => { const f = feeM(m) || 0, c = costM(m) || 0; if (!f && !c) return '<td class="num cmp-c cmp-e">·</td>'; const mg = f - c; return `<td class="num cmp-c" style="color:${mg < 0 ? '#A6131A' : '#1f5a3e'};font-weight:800" title="revenue ${fmtH(f)} − ${atContract ? 'hours at contract' : 'cost'} ${fmtH(c)}"><div class="cmp-a">${mg < 0 ? '−' : ''}${fmtH(Math.abs(mg))}</div><div class="cmp-p">${pctWord(f, c)}</div></td>`; }).join('')}<td class="num"></td><td class="num"></td><td class="num" style="font-weight:800;color:${feeTot - costTot < 0 ? '#A6131A' : '#1f5a3e'}">${feeTot - costTot < 0 ? '−' : ''}${fmtH(Math.abs(feeTot - costTot))}</td><td class="num vmini" style="font-weight:700">${atContract ? (costTot ? Math.round(feeTot / costTot * 100) + '% realized' : '—') : (feeTot ? Math.round((feeTot - costTot) / feeTot * 100) + '% margin' : '—')}</td></tr>`;
       const refRow = (label, refM, refTot, act, tip) => `<tr style="background:#f4f6f7"><td class="vmini sticky-col" style="font-weight:700" title="${esc(tip || '')}">${label}</td>${msDesc.map(m => `<td class="num vmini">${refM(m) ? fmtH(refM(m)) : '·'}</td>`).join('')}<td class="num vmini" style="font-weight:700">${fmtH(refTot)}</td><td class="num vmini">${fmtH(act)}</td><td class="num vmini ${varCls(refTot, act)}">${act >= refTot ? '+' : ''}${fmtH(act - refTot)}</td><td class="num vmini">${refTot ? Math.round(act / refTot * 100) + '%' : '—'}</td></tr>`;
       projNames.forEach(pn => {
         const list = byProj[pn].sort((a, b) => b.actual - a.actual);
@@ -1199,7 +1223,7 @@
         const refTot = feeRef ? fee : pe, refMo = feeRef ? (m) => cpM(cp, m) : planMo;
         const pcls = varCls(refTot, pa);
         const totCells = msDesc.map(m => mcell(refMo(m), actMo(m), feeRef ? 'of fee' : 'of')).join('');
-        const totRow = `<tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total${feeRef ? ' <span class="vmini" style="font-weight:600">· vs ② fee</span>' : ''}</td>${totCells}<td class="num" style="font-weight:800">${fmtH(pe)}</td><td class="num" style="font-weight:800">${fmtH(pa)}</td><td class="num ${pcls}" style="font-weight:800">${varArrow(refTot, pa)} ${pa >= refTot ? '+' : ''}${fmtH(pa - refTot)}</td><td class="num vmini" style="font-weight:700">${refTot ? Math.round(pa / refTot * 100) + '%' : '—'}</td></tr>`;
+        const totRow = `<tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total${feeRef ? ' <span class="vmini" style="font-weight:600">· vs ② revenue</span>' : ''}</td>${totCells}<td class="num" style="font-weight:800">${fmtH(pe)}</td><td class="num" style="font-weight:800">${fmtH(pa)}</td><td class="num ${pcls}" style="font-weight:800">${varArrow(refTot, pa)} ${pa >= refTot ? '+' : ''}${fmtH(pa - refTot)}</td><td class="num vmini" style="font-weight:700">${refTot ? Math.round(pa / refTot * 100) + '%' : '—'}</td></tr>`;
         // Trust marker: a pinned Mapping link and a fuzzy auto-match look the
         // same everywhere else — say which one this ② number is riding on.
         const autoMatched = cp && (cp.feeProjects || []).some(f => f.via !== 'mapped');
@@ -1210,7 +1234,8 @@
             : pL.feeId ? `<a href="Universal Fee Calculator.html?id=${encodeURIComponent(pL.feeId)}" style="color:#b0b5bc" title="The fee record has no priced roles — staff it in the calculator and the contract line appears here">no contract staffing priced ↗</a>`
             : `<a href="#" data-goto-tab="allocations" style="color:#b0b5bc" title="These rows are under a name the fee tool does not know — map them from the banner on Allocations">no contract staffing — needs a fee project</a>`);
         const summaryLine = feeRef
-          ? `② fee <b style="color:var(--sav-navy)">${fmtH(fee)}</b>${linkBadge} · ③ actual cost <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${fee - pa >= 0 ? '+' : ''}${fmtH(fee - pa)} margin · ${Math.round(pa / fee * 100)}% of fee spent</span> · <span style="color:#8a94a0">① plan cost ${fmtH(pe)}</span>`
+          ? `② revenue <b style="color:var(--sav-navy)">${fmtH(fee)}</b>${linkBadge} · ③ ${atContract ? 'at contract rate' : 'actual cost'} <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${atContract ? (pa ? Math.round(fee / pa * 100) + '% realized' : 'no hours') + ' · ' + (fee - pa >= 0 ? '+' : '') + fmtH(fee - pa) : (fee - pa >= 0 ? '+' : '') + fmtH(fee - pa) + ' margin · ' + Math.round(pa / fee * 100) + '% of revenue spent'}</span> · <span style="color:#8a94a0">① plan ${fmtH(pe)}</span>`
+          : (atContract && !pe && !pa && !byPerson && noRateProj.has(pL.name)) ? `<span style="color:#8a6d00">no contracted rate — ${esc(noRateProj.get(pL.name))}</span> · ${contractCell}`
           : `① matrix <b style="color:var(--sav-navy)">${fmtH(pe)}</b> · ${contractCell} · ③ actual <b style="color:var(--sav-navy)">${fmtH(pa)}</b> · <span class="${pcls}">${pa >= pe ? '+' : ''}${fmtH(pa - pe)} vs plan</span>`;
         let contractTbl = '';
         if (cp && cp.roles.length) {
@@ -1220,8 +1245,8 @@
           </div>`;
         }
         const refRows = feeRef
-          ? marginRow((m) => cpM(cp, m), actMo, fee, pa) + refRow('① Plan cost (matrix × rate)', planMo, pe, pa, 'The matrix plan priced at each person’s cost rate — a reference, not the yardstick')
-          : (cp ? refRow(dollars ? '② Contract fee $' : '② Contract (titles)', (m) => cpM(cp, m), cpTot(cp), pa, '') : '');
+          ? marginRow((m) => cpM(cp, m), actMo, fee, pa) + refRow('① Plan (matrix × rate)', planMo, pe, pa, 'The matrix plan priced at the same rate — a reference, not the yardstick')
+          : (cp ? refRow(dollars ? '② Savills revenue $' : '② Contract (titles)', (m) => cpM(cp, m), cpTot(cp), pa, '') : '');
         html += `<details class="cmp-card" style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px">
           <summary style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;cursor:pointer">
             <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span>${noCkTag}</div>
@@ -1240,18 +1265,18 @@
         const gtCells = msDesc.map(m => mcell(refMo(m), actM[m] || 0, feeRefAll ? 'of fee' : 'of')).join('');
         const gtCls = varCls(refTot, totAct);
         const gtSummary = feeRefAll
-          ? `② fee <b style="color:var(--sav-navy)">${fmtH(totContract)}</b> · ③ actual cost <b style="color:var(--sav-navy)">${fmtH(totAct)}</b> · <span class="${gtCls}">${totContract - totAct >= 0 ? '+' : ''}${fmtH(totContract - totAct)} margin · ${Math.round(totAct / totContract * 100)}% of fee spent</span> · <span style="color:#8a94a0">① plan cost ${fmtH(totExp)}</span>`
+          ? `② revenue <b style="color:var(--sav-navy)">${fmtH(totContract)}</b> · ③ ${atContract ? 'at contract rate' : 'actual cost'} <b style="color:var(--sav-navy)">${fmtH(totAct)}</b> · <span class="${gtCls}">${atContract ? (totAct ? Math.round(totContract / totAct * 100) + '% realized' : 'no hours') + ' · ' + (totContract - totAct >= 0 ? '+' : '') + fmtH(totContract - totAct) : (totContract - totAct >= 0 ? '+' : '') + fmtH(totContract - totAct) + ' margin · ' + Math.round(totAct / totContract * 100) + '% of revenue spent'}</span> · <span style="color:#8a94a0">① plan ${fmtH(totExp)}</span>`
           : `① matrix <b style="color:var(--sav-navy)">${fmtH(totExp)}</b> · ② contract <b style="color:var(--sav-navy)">${fmtH(totContract)}</b> · ③ actual <b style="color:var(--sav-navy)">${fmtH(totAct)}</b> · <span class="${gtCls}">${totAct >= totExp ? '+' : ''}${fmtH(totAct - totExp)} vs plan</span>`;
         const gtRef = feeRefAll
-          ? marginRow((m) => conM[m] || 0, (m) => actM[m] || 0, totContract, totAct) + refRow('① Plan cost (matrix × rate)', (m) => planM[m] || 0, totExp, totAct, 'The matrix plan priced at cost — a reference, not the yardstick')
-          : (totContract ? refRow(dollars ? '② Contract fee $' : '② Contract (titles)', (m) => conM[m] || 0, totContract, totAct, '') : '');
+          ? marginRow((m) => conM[m] || 0, (m) => actM[m] || 0, totContract, totAct) + refRow('① Plan (matrix × rate)', (m) => planM[m] || 0, totExp, totAct, 'The matrix plan priced at the same rate — a reference, not the yardstick')
+          : (totContract ? refRow(dollars ? '② Savills revenue $' : '② Contract (titles)', (m) => conM[m] || 0, totContract, totAct, '') : '');
         html += `<div class="cmp-card" style="background:#fff;border:2px solid var(--sav-navy);margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;border-bottom:1px solid rgba(37,39,58,0.1)">
             <div class="pname" style="font-size:14px">Grand total <span class="note-txt">· ${projNames.length} ${byPerson ? 'people' : 'projects'} in view — matches the chart above</span></div>
             <div class="note-txt">${gtSummary}</div>
           </div>
           <div class="cmp-scroll"><table class="dt cmp-table">${cmpHead('All ' + (byPerson ? 'people' : 'projects'))}<tbody>
-            <tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total${feeRefAll ? ' <span class="vmini" style="font-weight:600">· vs ② fee</span>' : ''}</td>${gtCells}<td class="num" style="font-weight:800">${fmtH(totExp)}</td><td class="num" style="font-weight:800">${fmtH(totAct)}</td><td class="num ${gtCls}" style="font-weight:800">${varArrow(refTot, totAct)} ${totAct >= refTot ? '+' : ''}${fmtH(totAct - refTot)}</td><td class="num vmini" style="font-weight:700">${refTot ? Math.round(totAct / refTot * 100) + '%' : '—'}</td></tr>
+            <tr style="background:#faf9f7;border-top:2px solid rgba(37,39,58,0.18)"><td class="pname sticky-col" style="font-weight:800">Total${feeRefAll ? ' <span class="vmini" style="font-weight:600">· vs ② revenue</span>' : ''}</td>${gtCells}<td class="num" style="font-weight:800">${fmtH(totExp)}</td><td class="num" style="font-weight:800">${fmtH(totAct)}</td><td class="num ${gtCls}" style="font-weight:800">${varArrow(refTot, totAct)} ${totAct >= refTot ? '+' : ''}${fmtH(totAct - refTot)}</td><td class="num vmini" style="font-weight:700">${refTot ? Math.round(totAct / refTot * 100) + '%' : '—'}</td></tr>
             ${gtRef}
           </tbody></table></div>
         </div>`;
@@ -1262,6 +1287,7 @@
     wireCompareFind();
     $$('#p-actuals [data-group]').forEach(b => b.onclick = () => { state.varGroup = b.dataset.group; renderActuals(); });
     $$('#p-actuals [data-unit]').forEach(b => b.onclick = () => { state.varUnit = b.dataset.unit; renderActuals(); });
+    $$('#p-actuals [data-rate]').forEach(b => b.onclick = () => { state.varRate = b.dataset.rate; renderActuals(); });
     const vsm = $('#var-showmacro'); if (vsm) vsm.onchange = (e) => { state.showMacro = e.target.checked; renderActuals(); };
     $$('#p-actuals [data-goto-tab]').forEach(a => a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const t = document.querySelector(`#tabs .tab[data-tab="${a.dataset.gotoTab}"]`); if (t) t.click(); });
     const gl = $('#cmp-glossary'); if (gl) gl.ontoggle = () => { state.glossaryOpen = gl.open; };
@@ -1300,7 +1326,7 @@
     $$('#p-actuals [data-unlock]').forEach(b => b.onclick = () => { state[b.dataset.unlock === 'project' ? 'varProject' : 'varPerson'] = ''; renderActuals(); });
     if (cmpRefocus) { const el = $('#' + cmpRefocus.id); if (el) { el.focus(); try { el.setSelectionRange(cmpRefocus.pos, cmpRefocus.pos); } catch (e) {} } cmpRefocus = null; }
   }
-  function compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars) {
+  function compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars, basis) {
     const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 14, padB = 30, padR = 8;
     const max = Math.max(1, ...ms.map(m => Math.max(planM[m] || 0, conM[m] || 0, actM[m] || 0)));
     const y = (v) => padT + (H - padT - padB) * (1 - v / max);
@@ -1318,7 +1344,7 @@
     </pattern></defs>`;
     for (let i = 0; i <= 4; i++) { const v = max * i / 4, yy = y(v); s += `<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="rgba(37,39,58,.08)"></line><text x="${padL - 6}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#79828C">${tf(v)}</text>`; }
     const bw = Math.max(8, Math.min(26, (gw - 26) / 3));
-    const names = dollars ? ['① Plan cost', '② Contract fee', '③ Actual cost'] : ['① Matrix plan', '② Contract', '③ Actual'];
+    const names = dollars ? ['① Plan', '② Savills revenue', basis === 'contract' ? '③ Hours at contract rate' : '③ Actual cost'] : ['① Matrix plan', '② Contract', '③ Actual'];
     let totBillable = 0, totMacro = 0, totPto = 0;
     ms.forEach((m, i) => {
       const x0 = padL + i * gw + (gw - 3 * bw - 8) / 2;

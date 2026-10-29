@@ -1540,22 +1540,39 @@
     const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
     const inWin = new Set(months);
     const agg = { byMonth: {}, roleAgg: {}, total: 0 }; let any = false;
-    let feeByMonth = null, feeTotal = 0, anyFee = false;
+    let feeByMonth = null, feeTotal = 0, anyFee = false, revByMonth = null, revTotal = 0;
     links.forEach(link => {
       const p = feeRecords().find(x => x.id === link.id);
       if (!addPlanOfRecord(p, inWin, agg)) return;
       any = true;
-      // billed fee $ by month (net of discounts/locks) — powers the dollars view
+      // billed fee $ by month (net of discounts/locks), and SAVILLS REVENUE —
+      // the fee less the broker's share (plus, whole-project, the fee earned on
+      // pass-through) — which is what the hours actually earn and the yardstick
+      // the dollars view compares them to
       if (cat && cat.hydrated) {
         try {
           const series = S2.monthlySeries(p, cat, _viewGroup ? { serviceLine: _viewGroup } : undefined) || [];
-          if (series.length) { feeByMonth = feeByMonth || {}; series.forEach(m => { const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (inWin.has(ym)) { feeByMonth[ym] = (feeByMonth[ym] || 0) + m.amount; feeTotal += m.amount; anyFee = true; } }); }
+          const bill = {}; try { (S2.revenueSeries(p, cat) || []).forEach(b => { bill[b.year + '-' + b.month] = b; }); } catch (e) {}
+          if (series.length) {
+            feeByMonth = feeByMonth || {}; revByMonth = revByMonth || {};
+            series.forEach(m => {
+              const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (!inWin.has(ym)) return;
+              feeByMonth[ym] = (feeByMonth[ym] || 0) + m.amount; feeTotal += m.amount; anyFee = true;
+              const b = bill[m.year + '-' + m.month];
+              // a share ON TOP is paid by the client, not out of the fee: the fee is kept whole
+              const onTop = !!(b && (b.invoice - (b.passClient || 0)) > b.net + 0.005);
+              const keep = (b && b.net && !onTop) ? Math.max(0, (b.net - (b.broker || 0)) / b.net) : 1;
+              let rev = m.amount * keep;
+              if (!_viewGroup && b) rev += (b.passClient || 0) - (b.passCost || 0);
+              revByMonth[ym] = (revByMonth[ym] || 0) + rev; revTotal += rev;
+            });
+          }
         } catch (e) {}
       }
     });
     if (!any) return null;
     const roles = Object.values(agg.roleAgg).map(r => ({ title: r.title, fteMonths: Math.round(r.fteMonths * 100) / 100, hours: Math.round(r.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours);
-    return { byMonth: agg.byMonth, total: Math.round(agg.total * 10) / 10, roles, feeProjects: links, feeByMonth: anyFee ? feeByMonth : null, feeTotal: Math.round(feeTotal) };
+    return { byMonth: agg.byMonth, total: Math.round(agg.total * 10) / 10, roles, feeProjects: links, feeByMonth: anyFee ? feeByMonth : null, feeTotal: Math.round(feeTotal), revByMonth: anyFee ? revByMonth : null, revTotal: Math.round(revTotal) };
   }
 
   function actualsMeta() { const m = readDb().meta || {}; return { importedAt: m.clockifyImportedAt, rows: Object.keys(readDb().actuals).length, months: m.clockifyMonths || [] }; }
@@ -2409,6 +2426,44 @@
     return (tier && tier.costFloor) || null;
   }
   function personCostRate(person) { return person ? costRateForTitle(person.title) : null; }
+  /* ---------- the CONTRACTED rate: what a role on a fee project bills at ----------
+     Per role: the grid (or contracted) rate, escalated to the project's start
+     year, less the client discount — the rate the client was charged for that
+     hour. Averaged per title weighted by the role's hours, plus the project's
+     blended rate (fee ÷ contract hours) for a person whose title the contract
+     does not carry. Against Savills revenue this answers "did the hours we
+     spent bill out at what we priced?", where the cost rate answers "did we
+     make money?". */
+  function contractRates(feeId) {
+    const S2 = window.UFC_Store; const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    const p = feeRecords().find(x => x.id === feeId);
+    if (!p || !cat || !cat.hydrated || !p.roles || !p.roles.length || !p.timeline) return null;
+    const a = p.assumptions || {}; const hrs = a.hrsPerMo || S2.PRICING_HOURS_PER_MONTH;
+    const esc = (a.escalation || 0) / 100, baseYear = a.catalogBaseYear || 2025, startYear = p.timeline.startYear || baseYear, disc = (a.discount || 0) / 100;
+    const byPhase = S2.computeMonthsByPhase(p); const phaseOf = {};
+    (p.phases || []).forEach(ph => (byPhase[ph.id] || []).forEach(m => { phaseOf[m.year + '-' + m.month] = ph.id; }));
+    const months = S2.enumerateMonths(p.timeline);
+    const byTitle = {}; let dollars = 0, hours = 0;
+    p.roles.forEach(r => {
+      const tier = S2.getTierRateFromCatalog(r, cat, p); if (!tier) return;
+      const eff = tier * Math.pow(1 + esc, startYear - baseYear) * (1 - disc);
+      let h = 0;
+      months.forEach(m => { const mk = m.year + '-' + m.month; const fte = ((r.fteMonthly && r.fteMonthly[mk] != null) ? r.fteMonthly[mk] : ((r.fte && r.fte[phaseOf[mk]]) || 0)) / 100; h += fte * hrs; });
+      if (!h) return;
+      const t = byTitle[r.titleId] || (byTitle[r.titleId] = { dollars: 0, hours: 0 });
+      t.dollars += eff * h; t.hours += h; dollars += eff * h; hours += h;
+    });
+    if (!hours) return null;
+    const byTitleId = {}; Object.keys(byTitle).forEach(k => { byTitleId[k] = byTitle[k].dollars / byTitle[k].hours; });
+    return { byTitleId, blended: dollars / hours };
+  }
+  /** The rate a person's hours on a fee project were priced at: their title's
+      contracted rate on that project, else the project's blended rate. */
+  function personContractRate(person, feeId) {
+    const cr = contractRates(feeId); if (!cr) return null;
+    const fam = titleFamily(person && person.title);
+    return (fam && cr.byTitleId[fam.titleId]) || cr.blended || null;
+  }
 
   /* ---------- macro / non-client time ----------
      "PPM", "Macro" — General Non-Billable Work, Business Development: hours
@@ -3284,7 +3339,7 @@
     analyzeClockify, commitClockify, clearActuals,
     getMappings, setUserMapping, setProjectMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
     clockifyDropAt, markClockifyDrop,
-    titleFamily, costRateForTitle, personCostRate, behindMonths, isBehind, missingCost, projectLabel, projectLabelText, allocContractDrift, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
+    titleFamily, costRateForTitle, personCostRate, contractRates, personContractRate, behindMonths, isBehind, missingCost, projectLabel, projectLabelText, allocContractDrift, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles, personEmail, setPersonEmail,
     parseCsvRows: parseCsv,
     // helpers

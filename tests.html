@@ -2139,6 +2139,28 @@
     }));
     document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
 
+    // Savills revenue and the contracted rate: a fee project with a 10% broker share off the top
+    const feeShareP = S.saveProject(base({
+      project: { name: 'Share Tower', client: 'Acme', status: 'active' },
+      assumptions: { feeShare: { enabled: true, pct: 10, mode: 'offtop', broker: 'CBRE' } },
+      roles: [{ id: 'r1', titleId: 'pm', tierId: 'mid', rateSource: 'grid', groupId: 'core', fte: {}, fteMonthly: { '2026-3': 50, '2026-4': 50 } }],
+    }));
+    document.dispatchEvent(new CustomEvent('ufc:remote-updated', { detail: { projects: true } }));
+    test('Staffing', 'the dollars yardstick is Savills revenue — the fee less the fee share — and hours price at the rate the title bills at on that project', () => {
+      const cp = ST.contractPlan('Share Tower', ['2026-03', '2026-04'], 'Acme');
+      if (!cp) return 'no contract plan resolved for Share Tower';
+      const r1 = eq(cp.feeTotal, 2 * 80 * 180, 'fee billed: 2 months × 80 h × $200 less the 10% client discount'); if (r1 !== true) return r1;
+      const r2 = eq(cp.revTotal, Math.round(0.9 * cp.feeTotal), 'Savills revenue keeps 90% once the broker takes 10% off the top', 1); if (r2 !== true) return r2;
+      const r3 = eq(cp.revByMonth['2026-04'], 0.9 * 80 * 180, 'and month by month', 1); if (r3 !== true) return r3;
+      const cr = ST.contractRates(feeShareP.id);
+      if (!cr) return 'no contracted rates for the project';
+      const r4 = eq(cr.byTitleId.pm, 180, 'the PM role bills at $200 less the 10% discount'); if (r4 !== true) return r4;
+      const r5 = eq(cr.blended, 180, 'one role → the blend is that rate'); if (r5 !== true) return r5;
+      const pm = { id: 'x', name: 'Pat', title: 'Project Manager' }, lead = { id: 'y', name: 'Lee', title: 'Lead' };
+      const r6 = eq(ST.personContractRate(pm, feeShareP.id), 180, 'a Project Manager’s hours on it price at the PM contracted rate'); if (r6 !== true) return r6;
+      const r7 = eq(ST.personContractRate(lead, feeShareP.id), 180, 'a title the contract does not carry falls back to the blended rate'); if (r7 !== true) return r7;
+      return eq(ST.personCostRate(pm), 100, 'while the cost rate is the title’s floor');
+    });
     test('Staffing', 'contractPlan turns the fee tool’s fteMonthly into hours on the calendar', () => {
       const plan = ST.contractPlan('Tower Alpha', ['2026-04', '2026-05'], 'Acme');
       if (!plan) return 'no plan resolved — fee link failed';
