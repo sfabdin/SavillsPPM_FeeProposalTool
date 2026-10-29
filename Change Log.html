@@ -142,6 +142,7 @@
       <option value="365">Last 12 months</option>
       <option value="">All time</option>
     </select>
+    <label class="chk" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;white-space:nowrap" title="Page opens and autosaves that changed nothing are kept in the trail but hidden here unless you ask"><input type="checkbox" id="f-noise"> Show page views &amp; no-change saves</label>
     <span class="loading" id="loading" hidden>loading months…</span>
     <span class="grow"></span>
     <button class="btn" id="csv">⤓ CSV</button>
@@ -207,6 +208,7 @@
     'staff-actuals': 'Hours imported', 'staff-actuals-clear': 'Hours cleared',
     'staff-titles': 'Titles filled', 'staff-rename': 'Projects renamed',
     'staff-map': 'Mapping', 'staff-gap-dismiss': 'Gap dismissed', 'staff-gap-restore': 'Gap restored',
+    'clockify-email': 'Clockify email', 'ready-to-bill': 'Ready to bill', 'invoice-request': 'Invoice request',
   };
   /* Which badge an action wears. Grouped by what the action DOES, not by which
      module raised it — a reader cares that money moved, not that it moved in
@@ -218,10 +220,16 @@
     : /^(status|slip|slip-remove)$/.test(a) ? 'status'
     : /^open$/.test(a) ? 'open'
     : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-name|cycle-period|cycle-lock|cycle-reopen|cycle-review|cycle-delete|report-years|pt-months-cleanup|recon-lock|recon-reopen|recon-flash)$/.test(a) ? 'system'
-    : /^staff-/.test(a) ? 'staff'
+    : /^(staff-|clockify-email$)/.test(a) ? 'staff'
+    : /^(ready-to-bill|invoice-request)$/.test(a) ? 'ledger'
     : /^(ledger-|plan-adjust$|schedule-shift$|reconcile-commit$)/.test(a) ? 'ledger'
     : 'edit';
-  let search = '', who = '', action = '', rangeDays = 30, limit = 200;
+  let search = '', who = '', action = '', rangeDays = 30, limit = 200, noise = false;
+  /* NOISE. Two kinds of entry are kept in the trail for the record but crowd
+     the feed: a page open (logged once per page per session so access history
+     exists — see boot.js) and an autosave that recorded no field change. Both
+     are hidden unless the reader ticks "show", or filters to Opened. */
+  const isNoise = (e) => e.action === 'open' || (e.action === 'edit' && !((e.meta || {}).changes || []).length && !(e.meta || {}).fee);
   let remoteMonths = null, loading = false;
 
   /* Entries are scoped to the projects you're allowed to see. Admins see
@@ -259,6 +267,7 @@
   function statusLabel(s) {
     return (STORE.STATUS_LABELS && STORE.STATUS_LABELS[s]) || s || '—';
   }
+  const ymLabelSafe = (ym) => { const [y, m] = String(ym || '').split('-').map(Number); return (y && m) ? new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : String(ym || ''); };
   const dayLabel = (ts) => ts ? new Date(ts).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) : '—';
   const monthLabel = (m) => m ? (MON[+String(m).slice(5, 7) - 1] + ' ' + String(m).slice(0, 4)) : '—';
 
@@ -343,6 +352,7 @@
   function headline(e) {
     const m = e.meta || {};
     const a = e.action;
+    if (a === 'open') return 'Opened <b>' + esc(String(m.page || 'a page').replace(/^Savills( PPM)?\s*·\s*/i, '')) + '</b>';
     if (a === 'create') return 'Created this project' + (m.status ? ' as <b>' + esc(statusLabel(m.status)) + '</b>' : '');
     if (a === 'delete') return (m.demo ? 'Removed a leftover demo row from the old seed button — ' : '') + 'Deleted this project';
     if (a === 'restore') return 'Restored this project';
@@ -436,6 +446,11 @@
       + (m.from ? esc(String(m.from)) + ' → ' : '') + '<b>' + esc(m.to == null ? 'cleared' : String(m.to)) + '</b>';
     if (a === 'staff-gap-dismiss') return 'Dismissed a contract staffing gap — ' + esc(m.reason || '');
     if (a === 'staff-gap-restore') return 'Put a dismissed staffing gap back on the list';
+    if (a === 'clockify-email') return m.kind === 'nudge'
+      ? 'Sent a Clockify nudge to <b>' + (m.people || 0) + '</b> ' + ((m.people || 0) === 1 ? 'person' : 'people') + (m.names ? ' — ' + esc(m.names) : '') + (m.edited ? ' (' + m.edited + ' edited by hand)' : '')
+      : 'Sent the Clockify status email to <b>' + (m.to || 0) + '</b> address' + ((m.to || 0) === 1 ? '' : 'es') + ' — ' + (m.behind || 0) + ' of ' + (m.people || 0) + ' people behind' + (m.attached ? ', workbook attached' : '');
+    if (a === 'ready-to-bill') return (m.ready ? 'Marked <b>' : 'Cleared the ready-to-bill mark on <b>') + esc(ymLabelSafe(m.ym)) + '</b>' + (m.ready ? ' ready to bill' : '');
+    if (a === 'invoice-request') return 'Submitted <b>' + esc(ymLabelSafe(m.ym)) + '</b> for invoicing' + (m.amount != null ? ' — $' + Math.round(m.amount).toLocaleString() : '') + (m.lines ? ' · ' + m.lines + ' line' + (m.lines === 1 ? '' : 's') + ' in the request' : '');
 
     const n = (m.changes || []).length;
     return n ? ('Changed ' + n + ' field' + (n === 1 ? '' : 's')) : 'Saved changes';
@@ -467,6 +482,7 @@
       rows = rows.filter(e => new Date(e.ts).getTime() >= cut);
     }
     if (action) rows = rows.filter(e => ACTION_KIND(e.action) === action);
+    else if (!noise) rows = rows.filter(e => !isNoise(e));
     if (who) rows = rows.filter(e => (e.actor || '') === who);
     if (search) {
       const q = search.toLowerCase();
@@ -555,15 +571,17 @@
     const rows = filtered();
     buildWhoFilter(rows);
 
-    // KPIs over the scoped set, independent of the filters
-    const all = scopedEntries();
+    // KPIs over the scoped set, independent of the filters — changes exclude
+    // the noise (a page view is not a change); "people active" keeps it, since
+    // opening the tool is activity
+    const everything = scopedEntries(); const all = everything.filter(e => !isNoise(e));
     const now = Date.now();
-    const since = (d) => all.filter(e => now - new Date(e.ts).getTime() < d * 86400000);
+    const since = (d, src) => (src || all).filter(e => now - new Date(e.ts).getTime() < d * 86400000);
     const week = since(7);
     $('#kpis').innerHTML = [
       { n: since(1).length, l: 'Changes today', c: '' },
       { n: week.length, l: 'Last 7 days', c: 'accent' },
-      { n: new Set(week.map(e => e.actor)).size, l: 'People active this week', c: '' },
+      { n: new Set(since(7, everything).map(e => e.actor)).size, l: 'People active this week', c: '' },
       { n: new Set(week.filter(e => e.projectId).map(e => e.projectId)).size, l: 'Projects touched', c: 'accent' }
     ].map(k => '<div class="kpi-card ' + k.c + '"><div class="k-num">' + k.n + '</div><div class="k-lbl">' + k.l + '</div></div>').join('');
 
@@ -733,6 +751,7 @@
     $('#search').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { search = e.target.value.trim(); limit = 200; render(); }, 160); });
     $('#f-who').addEventListener('change', e => { who = e.target.value; limit = 200; render(); });
     $('#f-action').addEventListener('change', e => { action = e.target.value; limit = 200; render(); });
+    $('#f-noise').addEventListener('change', e => { noise = e.target.checked; limit = 200; render(); });
     $('#f-range').addEventListener('change', async e => {
       rangeDays = e.target.value ? parseInt(e.target.value, 10) : 0; limit = 200;
       render();                                   // draw what we have straight away
