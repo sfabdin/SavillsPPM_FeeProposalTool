@@ -1473,6 +1473,24 @@
              sq(n, 1, 'one item marked asked') && sq(!!e.items[0].asked && e.items[0].asked.to, 'esobel@savills.us', 'and the list remembers') &&
              sq(/admin/i.test(refused), true, 'a leader cannot mark the book');
     });
+    test('Fin (TEST) · annual', 'the year in the Revenue Projections shape: earned in the work month, the same money on the accrued and billed bases in their own months, fee share rows with the broker, Savills revenue as gross less fee share', () => {
+      const p = setup(); const L = S.reconLinesFor(p, C); const r2 = (n) => Math.round(n * 100) / 100;
+      const jan = r2(L.fee['2026-01']), feb = r2(L.fee['2026-02']); const sh = L.out.find(x => x.id === 'share').byMonth;
+      S.setFinLine('rc_a', 'fee', '2026-02', { accruedIn: '2026-03', accruedAmt: 9000 });
+      S.setFinLine('rc_a', 'fee', '2026-01', { billedIn: '2026-02', billedAmt: jan });
+      S.setFinLine('rc_a', 'fee', '2025-12', { accruedIn: '2025-12', accruedAmt: 700, billedIn: '2026-01', billedAmt: 700 });   // last year's work billed in January
+      const A = S.finAnnual(2026, C, { now: '2026-05' });
+      const fee = A.rows.find(r => r.line === 'fee'), share = A.rows.find(r => r.kind === 'share');
+      const E = fee.basis.earned, Ac = fee.basis.accrued, B = fee.basis.billed; const T = A.totals;
+      return sq(A.months.length + '|' + A.months[0] + '|' + A.months[11], '12|2026-01|2026-12', 'twelve months') && sq(A.rows.map(r => r.kind).join(), 'fee,pass,share', 'three rows for the fixture') &&
+             sq(r2(E['2026-01']) + '|' + r2(E['2026-02']), jan + '|' + feb, 'earned sits in the work month') && sq(fee.cells['2026-02'].work.accruedIn, '2026-03', 'and the cell knows where it went') &&
+             sq(Ac['2026-02'] == null && r2(Ac['2026-03']), r2(9000 + L.fee['2026-03']), 'accrued basis: February\'s money lands in March at the accrued amount, on top of March\'s own') && sq(Ac['2025-12'], undefined, 'last year\'s accrual is not in this year') &&
+             sq(r2(B['2026-02']) + '|' + r2(B['2026-01']), jan + '|700', 'billed basis: January\'s fee in February, last year\'s work billed in January') && sq(Object.keys(B).length, 2, 'nothing else billed') &&
+             sq(r2(fee.total.earned), r2(Object.keys(E).reduce((t, k) => t + E[k], 0)), 'the year total per basis') &&
+             sq(share.broker, 'CBRE', 'the fee share row is named to the broker') && sq(r2(share.basis.earned['2026-01']), r2(sh['2026-01']), 'and carries its minus') &&
+             sq(r2(T.earned.byMonth['2026-01'].net), r2(T.earned.byMonth['2026-01'].gross + T.earned.byMonth['2026-01'].share), 'Savills revenue is gross less fee share') && sq(T.earned.byMonth['2026-01'].share < 0, true, 'the share is negative') &&
+             sq(r2(T.billed.net), r2(jan + 700 + A.rows.filter(r => r.line !== 'fee').reduce((t, r) => t + r.total.billed, 0)), 'the billed basis adds up what was billed');
+    });
   })();
 
   /* ============================================================
