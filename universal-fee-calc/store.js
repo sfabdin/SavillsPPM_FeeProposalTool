@@ -1575,7 +1575,7 @@
   ];
   let _revenuePush = null;
   function attachRevenueRemote(pushFn) { _revenuePush = typeof pushFn === 'function' ? pushFn : null; }
-  function defaultRevenue() { return { schemaVersion: SCHEMA, recon: {} }; }
+  function defaultRevenue() { return { schemaVersion: SCHEMA, recon: {}, fin: { lines: {}, cycles: {}, opening: {} } }; }
   function readRevenue() {
     try {
       const raw = localStorage.getItem(REVENUE_KEY);
@@ -1597,6 +1597,7 @@
     if (!r || typeof r !== 'object') return;
     r.schemaVersion = SCHEMA;
     r.recon = r.recon || {};
+    r.fin = r.fin || { lines: {}, cycles: {}, opening: {} };
     safeSet(REVENUE_KEY, JSON.stringify(r), 'the revenue book');
     try { document.dispatchEvent(new CustomEvent('ufc:revenue-updated')); } catch (e) {}
   }
@@ -3983,6 +3984,144 @@
     });
     return n;
   }
+  /* ------------------------------------------------------------
+     FINANCIAL TRACKING (TEST) — Finance's working sheet, one month of
+     work performed at a time, modelled on Emily's accrual/billing book.
+     Lives beside the original revenue book (rev.recon) in its own
+     namespace so neither page can disturb the other:
+
+       rev.fin.lines['pid|line|ym']  what Finance decided about one
+         line-month: accruedIn/accruedAmt, billedIn/billedAmt/invoice/
+         billedDate, hold (accrued · bill TBD), flag (approval | cr), note.
+         EARNED is never stored here — it is the revenue leader's number,
+         read live from the record, and locked on this page.
+       rev.fin.cycles['YYYY-MM']     the three snapshots of a cycle (the
+         work-performed month): flash, final, eom — each { at, by, values }
+         where values = the working amount of every line for the cycle
+         month and the two after it. The cycle's PRIOR EOM column is the
+         previous cycle's eom snapshot read for this month.
+       rev.fin.opening[pid]          the unbilled schedule's opening balance.
+     ------------------------------------------------------------ */
+  const FIN_FLAGS = { '': 'auto', approval: 'Awaiting invoice approval', cr: 'Discuss with CR' };
+  const FIN_STATUS = {
+    billed: 'Billed', confirm: 'Not yet billed · requires confirmation', approval: 'Awaiting invoice approval', cr: 'Discuss with CR', hold: 'Accrued · bill TBD', planned: 'Planned', none: 'Nothing this month',
+  };
+  const finKey = (pid, line, ym) => pid + '|' + line + '|' + ym;
+  const finYmPlus = (k, n) => { const [y, m] = String(k).split('-').map(Number); const d = new Date(y, m - 1 + n, 1); return reconYmOf(d.getFullYear(), d.getMonth() + 1); };
+  const finNowYm = () => { const d = new Date(); return reconYmOf(d.getFullYear(), d.getMonth() + 1); };
+  function finDb() { const r = readRevenue(); const f = r.fin || {}; return { lines: f.lines || {}, cycles: f.cycles || {}, opening: f.opening || {} }; }
+  function finEdit(fn) {
+    const rev = readRevenue(); rev.fin = rev.fin || {}; rev.fin.lines = rev.fin.lines || {}; rev.fin.cycles = rev.fin.cycles || {}; rev.fin.opening = rev.fin.opening || {};
+    const res = fn(rev.fin); writeRevenue(rev); return res;
+  }
+  function finLine(pid, line, ym) { return finDb().lines[finKey(pid, line, ym)] || null; }
+  const finYmOk = (v) => v == null || v === '' || /^\d{4}-\d{2}$/.test(String(v));
+  /** Finance's decision on one line-month. Any field left out is kept; null
+      clears it. Clearing everything removes the record. */
+  function setFinLine(pid, line, ym, patch) {
+    assertReconAdmin();
+    const x = patch || {}; const key = finKey(pid, line, ym); const who = reconWho();
+    ['accruedIn', 'billedIn'].forEach(k => { if (k in x && !finYmOk(x[k])) throw new Error(k + ' must be a month (YYYY-MM).'); });
+    return finEdit(f => {
+      const c = Object.assign({}, f.lines[key] || {});
+      const num = (v) => (v == null || v === '') ? null : Number(v);
+      if ('accruedIn' in x) { if (x.accruedIn) c.accruedIn = String(x.accruedIn); else delete c.accruedIn; }
+      if ('accruedAmt' in x) { const n = num(x.accruedAmt); if (n == null) delete c.accruedAmt; else c.accruedAmt = n; }
+      if ('billedIn' in x) { if (x.billedIn) c.billedIn = String(x.billedIn); else delete c.billedIn; }
+      if ('billedAmt' in x) { const n = num(x.billedAmt); if (n == null) delete c.billedAmt; else c.billedAmt = n; }
+      if ('invoice' in x) { const t = String(x.invoice || '').trim(); if (t) c.invoice = t; else delete c.invoice; }
+      if ('billedDate' in x) { const t = String(x.billedDate || '').trim(); if (t) c.billedDate = t; else delete c.billedDate; }
+      if ('hold' in x) { if (x.hold) c.hold = true; else delete c.hold; }
+      if ('flag' in x) { if (x.flag && FIN_FLAGS[x.flag]) c.flag = x.flag; else delete c.flag; }
+      if ('note' in x) { const t = String(x.note || '').trim(); if (t) c.note = t; else delete c.note; }
+      const empty = !Object.keys(c).some(k => !['at', 'by', 'byName'].includes(k));
+      if (empty) delete f.lines[key];
+      else { c.at = new Date().toISOString(); c.by = who.by; c.byName = who.byName; f.lines[key] = c; }
+      const p = getProject(pid);
+      logActivity('fin-line', pid, { name: (p && p.project && p.project.name) || '', client: (p && p.project && p.project.client) || '', ym, line,
+        accruedIn: c.accruedIn, accruedAmt: c.accruedAmt, billedIn: c.billedIn, billedAmt: c.billedAmt, invoice: c.invoice, hold: !!c.hold, flag: c.flag || '', cleared: empty });
+      return empty ? null : c;
+    });
+  }
+  /** One line-month as the sheet reads it: the leader's earned number, what
+      Finance accrued and billed, and the status those imply. `opts.timecard`
+      makes the accrual follow the billed amount, as a time-card line does. */
+  function finWorking(pid, line, ym, earned, opts) {
+    const o = opts || {}; const c = finLine(pid, line, ym) || {};
+    const e = earned == null ? 0 : Number(earned);
+    const billed = c.billedIn ? (c.billedAmt != null ? c.billedAmt : null) : null;
+    const accruedAmt = c.accruedAmt != null ? c.accruedAmt : ((o.timecard && billed != null) ? billed : e);
+    const accruedIn = c.accruedIn || ym;
+    const now = o.now || finNowYm();
+    let status;
+    if (c.billedIn && billed != null) status = 'billed';
+    else if (c.hold) status = 'hold';
+    else if (c.flag === 'approval') status = 'approval';
+    else if (c.flag === 'cr') status = 'cr';
+    else if (Math.abs(accruedAmt) < 0.005 && Math.abs(e) < 0.005) status = 'none';
+    else status = ym <= now ? 'confirm' : 'planned';
+    const accruedNotBilled = (status === 'billed') ? Math.round((accruedAmt - billed) * 100) / 100 : accruedAmt;
+    return { earned: e, accruedIn, accruedAmt, billedIn: c.billedIn || null, billedAmt: billed, invoice: c.invoice || '', billedDate: c.billedDate || '',
+      hold: !!c.hold, flag: c.flag || '', note: c.note || '', status, statusLabel: FIN_STATUS[status], accruedNotBilled, set: !!finLine(pid, line, ym), at: c.at || null, byName: c.byName || '' };
+  }
+  function finCycle(ym) { return finDb().cycles[String(ym)] || null; }
+  function finSnapshot(ym, kind) { const c = finCycle(ym); return (c && c[kind]) || null; }
+  /** Freeze the working amounts as flash / final / eom for a cycle. `values`
+      is { 'pid|line|ym': amount } — finSnapshotValues builds it. */
+  function takeFinSnapshot(ym, kind, values, opts) {
+    assertReconAdmin();
+    if (!/^(flash|final|eom)$/.test(kind)) throw new Error('Unknown snapshot "' + kind + '".');
+    const who = reconWho(); const o = opts || {};
+    return finEdit(f => {
+      const c = f.cycles[String(ym)] = f.cycles[String(ym)] || {};
+      if (c[kind] && !o.replace) throw new Error('The ' + kind + ' snapshot for ' + ym + ' was already taken on ' + c[kind].at + '.');
+      c[kind] = { at: new Date().toISOString(), by: who.by, byName: who.byName, values: Object.assign({}, values || {}), lines: Object.keys(values || {}).length };
+      logActivity('fin-snapshot', null, { ym, kind, lines: c[kind].lines, replaced: !!(o.replace) });
+      return c[kind];
+    });
+  }
+  /** The projects the sheet covers: every live record that bills (change
+      orders roll into their parent; dead pursuits bill nothing). */
+  function finProjects() { return listProjects().filter(p => p && !p._deleted && !(isChangeOrder && isChangeOrder(p)) && !isDeadPursuit(p)); }
+  const finTimecard = (p) => ((p.assumptions || {}).feeBasis === 'nte');
+  /** Every line of every project with something in `ym` (an earned figure
+      or a decision), as the sheet's rows, with the cycle's snapshots and
+      deltas. `cycle` = the work-performed month the sheet is open on. */
+  function finRows(cycle, catalog, opts) {
+    const o = opts || {}; const cat = catalog || (typeof window !== 'undefined' && window.RATES_CATALOG);
+    const ym = String(cycle); const prior = finSnapshot(finYmPlus(ym, -1), 'eom'); const flash = finSnapshot(ym, 'flash'), fin = finSnapshot(ym, 'final'), eom = finSnapshot(ym, 'eom');
+    const out = []; const lines = finDb().lines;
+    (o.projects || finProjects()).forEach(p => {
+      const pj = p.project || {}; const L = reconLinesFor(p, cat); const tc = finTimecard(p);
+      const lead = resolveLeader(pj.leadId || pj.lead);
+      (L.all || []).forEach(Lx => {
+        const earned = (Lx.byMonth || {})[ym] || 0; const key = finKey(p.id, Lx.id, ym);
+        if (Math.abs(earned) < 0.005 && !lines[key]) return;
+        const w = finWorking(p.id, Lx.id, ym, earned, { timecard: tc, now: o.now });
+        const snap = (s) => (s && s.values && s.values[key] != null) ? s.values[key] : null;
+        const r = { p, pj, pid: p.id, line: Lx.id, kind: Lx.kind, label: Lx.label, key, timecard: tc,
+          leader: lead ? lead.displayName : (pj.lead || ''), projectId: pj.salesforceId || pj.projectNumber || '',
+          broker: Lx.kind === 'share' ? String(((p.assumptions || {}).feeShare || {}).broker || Lx.label.replace(/^Fee share · /, '')) : '',
+          earned, work: w, priorEom: snap(prior), flash: snap(flash), final: snap(fin), eomSnap: snap(eom), eom: w.accruedAmt };
+        const d = (a, b) => (a == null || b == null) ? null : Math.round((a - b) * 100) / 100;
+        r.dPriorFlash = d(r.flash, r.priorEom); r.dFinalFlash = d(r.final, r.flash); r.dEomFinal = d(r.eom, r.final); r.dBilledEom = w.billedAmt != null ? d(w.billedAmt, r.eom) : null;
+        out.push(r);
+      });
+    });
+    const kindRank = { fee: 0, pass: 1, share: 2 };
+    return out.sort((a, b) => (a.pj.client || '').localeCompare(b.pj.client || '') || (a.pj.name || '').localeCompare(b.pj.name || '') || (kindRank[a.kind] - kindRank[b.kind]) || a.line.localeCompare(b.line));
+  }
+  /** The working amounts to freeze for a cycle: this month and the two after. */
+  function finSnapshotValues(cycle, catalog) {
+    const vals = {}; const ym = String(cycle);
+    [0, 1, 2].forEach(n => finRows(finYmPlus(ym, n), catalog).forEach(r => { vals[r.key] = r.eom; }));
+    return vals;
+  }
+  /** The cycle's state for the stepper. */
+  function finCycleState(cycle) {
+    const c = finCycle(cycle) || {};
+    return { flash: c.flash || null, final: c.final || null, eom: c.eom || null, lockedAt: c.lockedAt || null, priorEom: finSnapshot(finYmPlus(String(cycle), -1), 'eom') };
+  }
   /** The weekly digest, pre-rendered per leader so the sending flow only
       loops and mails: who, how many, and an email with one deep link per
       project. Finished work (closed, lost, or a timeline already past) is
@@ -4250,6 +4389,7 @@
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, isSmallWorks, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
     INTAKE_TO, INTAKE_FIELDS, priorBookedForClient, intakeStatus, setReadyToBill, readyToBillOf, buildInvoiceRequest, markReadyToBillSubmitted,
+    FIN_STATUS, FIN_FLAGS, finKey, finYmPlus, finLine, setFinLine, finWorking, finCycle, finSnapshot, takeFinSnapshot, finProjects, finTimecard, finRows, finSnapshotValues, finCycleState,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,

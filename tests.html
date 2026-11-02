@@ -1351,6 +1351,67 @@
       return sq(before, 0, 'nothing moved yet') && sq(after.length >= 1, true, 'the moved line is flagged') && sq(after[0].ym, '2026-03', 'on the locked month') &&
              sq(after[0].was > after[0].now, true, 'a bigger discount lowers the fee') && sq(gone, 0, 'reopening clears the flag') && sq(!!S.reconMonth(2026, 3).lockedAt, false, 'month is open again');
     });
+    test('Fin (TEST) · working line', 'earned is the leader\'s number and stays locked; Finance records accrued and billed with their own months and amounts, and the status follows: confirm, hold, approval, CR, billed, cleared', () => {
+      const p = setup(); const L = S.reconLinesFor(p, C); const feb = L.fee['2026-02']; const r2 = (n) => Math.round(n * 100) / 100;
+      const w0 = S.finWorking('rc_a', 'fee', '2026-02', feb, { now: '2026-03' });
+      const w0p = S.finWorking('rc_a', 'fee', '2026-02', feb, { now: '2026-01' });
+      const w0n = S.finWorking('rc_a', 'fee', '2025-06', 0, { now: '2026-03' });
+      S.setFinLine('rc_a', 'fee', '2026-02', { accruedIn: '2026-03', accruedAmt: 9000, note: 'half the deliverable slipped' });
+      const w1 = S.finWorking('rc_a', 'fee', '2026-02', feb, { now: '2026-03' });
+      S.setFinLine('rc_a', 'fee', '2026-02', { hold: true });
+      const w2 = S.finWorking('rc_a', 'fee', '2026-02', feb, { now: '2026-03' });
+      S.setFinLine('rc_a', 'fee', '2026-02', { hold: false, flag: 'approval' });
+      const w3 = S.finWorking('rc_a', 'fee', '2026-02', feb, { now: '2026-03' });
+      S.setFinLine('rc_a', 'fee', '2026-02', { flag: 'cr' });
+      const w4 = S.finWorking('rc_a', 'fee', '2026-02', feb, { now: '2026-03' });
+      S.setFinLine('rc_a', 'fee', '2026-02', { billedIn: '2026-04', billedAmt: 8500, invoice: 'INV-77', billedDate: '2026-04-12' });
+      const w5 = S.finWorking('rc_a', 'fee', '2026-02', feb, { now: '2026-03' });
+      let bad = ''; try { S.setFinLine('rc_a', 'fee', '2026-02', { billedIn: 'April' }); } catch (e) { bad = e.message; }
+      const logged = (S.listActivity ? S.listActivity() : []).filter(e => e.action === 'fin-line').length;
+      S.setFinLine('rc_a', 'fee', '2026-02', { accruedIn: null, accruedAmt: null, billedIn: null, billedAmt: null, invoice: '', billedDate: '', flag: '', note: '' });
+      const gone = S.finLine('rc_a', 'fee', '2026-02');
+      // a time-card line accrues what was billed when nothing else is said
+      S.setFinLine('rc_a', 'fee', '2026-03', { billedIn: '2026-04', billedAmt: 4200 });
+      const tc = S.finWorking('rc_a', 'fee', '2026-03', L.fee['2026-03'], { timecard: true, now: '2026-04' });
+      const ff = S.finWorking('rc_a', 'fee', '2026-03', L.fee['2026-03'], { timecard: false, now: '2026-04' });
+      S.setRealIdentity({ username: 'lead.only@savills.us', name: 'A Leader' });   // a leader who is not Finance
+      let refused = ''; try { S.setFinLine('rc_a', 'fee', '2026-02', { hold: true }); } catch (e) { refused = e.message; }
+      asAdmin();
+      return sq(r2(w0.earned), r2(feb), 'earned is the leader\'s number') && sq(r2(w0.accruedAmt), r2(feb), 'accrued defaults to earned') && sq(w0.accruedIn, '2026-02', 'in the work month') && sq(w0.status + '|' + w0.set, 'confirm|false', 'a past month with nothing recorded needs confirming') &&
+             sq(w0p.status, 'planned', 'a future month is planned') && sq(w0n.status, 'none', 'nothing earned, nothing recorded') &&
+             sq(w1.accruedIn + '|' + w1.accruedAmt + '|' + r2(w1.earned) + '|' + w1.note, '2026-03|9000|' + r2(feb) + '|half the deliverable slipped', 'accrued has its own month and amount; earned did not move') && sq(w1.accruedNotBilled, 9000, 'all of it is still unbilled') &&
+             sq(w2.status, 'hold', 'hold') && sq(w3.status + '|' + w3.hold, 'approval|false', 'approval flag after the hold was lifted') && sq(w4.status, 'cr', 'discuss with CR') &&
+             sq(w5.status + '|' + w5.billedIn + '|' + w5.billedAmt + '|' + w5.invoice + '|' + w5.billedDate, 'billed|2026-04|8500|INV-77|2026-04-12', 'billed with its own month, amount, invoice and date') && sq(w5.accruedNotBilled, 500, 'accrued less billed') && sq(w5.flag, 'cr', 'the flag is kept for the record') &&
+             sq(/must be a month/.test(bad), true, 'a month must be YYYY-MM') && sq(logged >= 5, true, 'every decision is logged') &&
+             sq(gone, null, 'clearing every field removes the record') &&
+             sq(tc.accruedAmt + '|' + tc.status, '4200|billed', 'a time-card line accrues what was billed') && sq(r2(ff.accruedAmt), r2(L.fee['2026-03']), 'a fixed-fee line keeps the earned accrual') &&
+             sq(/admin/i.test(refused), true, 'a leader cannot record for Finance');
+    });
+    test('Fin (TEST) · sheet and snapshots', 'the sheet lists fee, pass-through and fee share as their own rows with the broker named; flash, final and EOM freeze the working amounts once each, and the prior cycle\'s EOM lines up against this cycle\'s flash', () => {
+      const p = setup(); const L = S.reconLinesFor(p, C); const r2 = (n) => Math.round(n * 100) / 100;
+      const rows = S.finRows('2026-02', C, { now: '2026-03' });
+      const fee = rows.find(r => r.line === 'fee'), share = rows.find(r => r.kind === 'share'), pass = rows.find(r => r.kind === 'pass');
+      const jan = S.finSnapshotValues('2026-01', C);
+      const janEom = S.takeFinSnapshot('2026-01', 'eom', jan);
+      const flash = S.takeFinSnapshot('2026-02', 'flash', S.finSnapshotValues('2026-02', C));
+      S.setFinLine('rc_a', 'fee', '2026-02', { accruedAmt: r2(L.fee['2026-02']) - 1000 });
+      const fin = S.takeFinSnapshot('2026-02', 'final', S.finSnapshotValues('2026-02', C));
+      let twice = ''; try { S.takeFinSnapshot('2026-02', 'flash', {}); } catch (e) { twice = e.message; }
+      let kind = ''; try { S.takeFinSnapshot('2026-02', 'draft', {}); } catch (e) { kind = e.message; }
+      const redo = S.takeFinSnapshot('2026-02', 'flash', S.finSnapshotValues('2026-02', C), { replace: true });
+      const after = S.finRows('2026-02', C, { now: '2026-03' }); const f2 = after.find(r => r.line === 'fee');
+      const st = S.finCycleState('2026-02');
+      const feeKey = S.finKey('rc_a', 'fee', '2026-02');
+      return sq(rows.length, 3, 'fee, pass-through and fee share are three rows') && sq(rows.map(r => r.kind).join(), 'fee,pass,share', 'in that order') &&
+             sq(r2(fee.earned), r2(L.fee['2026-02']), 'the fee row carries the leader\'s number') && sq(fee.work.status, 'confirm', 'and needs confirming') && sq(fee.priorEom, null, 'no prior EOM until one is taken') &&
+             sq(share.broker, 'CBRE', 'the fee share row names the broker') && sq(share.earned < 0 && pass.earned < 0, true, 'fee share and pass-through are minuses') &&
+             sq(janEom.lines > 0 && jan[feeKey] != null, true, 'a snapshot covers the cycle month and the two after it') && sq(r2(jan[feeKey]), r2(L.fee['2026-02']), 'the January EOM already held February\'s working figure') &&
+             sq(r2(flash.values[feeKey]), r2(L.fee['2026-02']), 'flash froze the working amount') && sq(r2(fin.values[feeKey]), r2(L.fee['2026-02']) - 1000, 'final froze the changed one') &&
+             sq(/already taken/.test(twice), true, 'a snapshot is taken once') && sq(/Unknown snapshot/.test(kind), true, 'and is flash, final or eom') && sq(!!redo.at, true, 'unless replaced on purpose') &&
+             sq(r2(f2.priorEom), r2(L.fee['2026-02']), 'prior EOM is the previous cycle\'s EOM for this month') && sq(r2(f2.flash) + '|' + r2(f2.final) + '|' + r2(f2.eom), r2(L.fee['2026-02']) + '|' + (r2(L.fee['2026-02']) - 1000) + '|' + (r2(L.fee['2026-02']) - 1000), 'flash, final and the live EOM') &&
+             sq(f2.dPriorFlash + '|' + f2.dFinalFlash + '|' + f2.dEomFinal, '0|-1000|0', 'the deltas') &&
+             sq(!!st.flash && !!st.final && !st.eom && !!st.priorEom, true, 'the stepper knows what has been taken');
+    });
   })();
 
   /* ============================================================

@@ -1062,6 +1062,18 @@
       });
       out.recon[yk] = { months, cells };
     });
+    /* Financial Tracking (TEST): its lines, snapshots and opening balances
+       each carry an `at`; the newer copy wins, key by key. */
+    const RF = (remote && remote.fin) || {}, LF = (local && local.fin) || {};
+    const newer = (a, b) => (!a ? b : !b ? a : ((Date.parse(b.at || 0) || 0) >= (Date.parse(a.at || 0) || 0) ? b : a));
+    const byKey = (ro, lo) => { const m = { ...(ro || {}) }; Object.entries(lo || {}).forEach(([k, v]) => { m[k] = newer(m[k], v); }); return m; };
+    out.fin = { lines: byKey(RF.lines, LF.lines), opening: byKey(RF.opening, LF.opening), cycles: {} };
+    new Set([...Object.keys(RF.cycles || {}), ...Object.keys(LF.cycles || {})]).forEach(ck => {
+      const rc = (RF.cycles || {})[ck] || {}, lc = (LF.cycles || {})[ck] || {}; const c = {};
+      ['flash', 'final', 'eom'].forEach(k => { const v = newer(rc[k], lc[k]); if (v) c[k] = v; });
+      const la = lc.lockedAt || '', ra = rc.lockedAt || ''; if (la || ra) c.lockedAt = la >= ra ? la : ra;
+      out.fin.cycles[ck] = c;
+    });
     return out;
   }
   async function uploadRevenue(r, depth) {
