@@ -4267,6 +4267,45 @@
       return (items || []).length;
     });
   }
+  /** The year, every line, in the shape of Revenue Projections: per line
+      the earned figure in its work month, and the same money placed on the
+      accrued basis (in its accrued month, at the accrued amount) and the
+      billed basis (in its billed month, at the billed amount). Fee shares
+      and pass-throughs are their own rows. Nothing here edits earned. */
+  function finAnnual(year, catalog, opts) {
+    const o = opts || {}; const cat = catalog || (typeof window !== 'undefined' && window.RATES_CATALOG);
+    const y = String(year); const months = []; for (let m = 1; m <= 12; m++) months.push(reconYmOf(Number(y), m));
+    const db = finDb(); const out = [];
+    (o.projects || finProjects()).forEach(p => {
+      const pj = p.project || {}; const L = reconLinesFor(p, cat); const tc = finTimecard(p); const lead = resolveLeader(pj.leadId || pj.lead);
+      (L.all || []).forEach(Lx => {
+        const lk = p.id + '|' + Lx.id;
+        const yms = new Set(Object.keys(Lx.byMonth || {}).filter(k => Math.abs(Lx.byMonth[k]) >= 0.005));
+        Object.keys(db.lines).forEach(k => { const i = k.lastIndexOf('|'); if (k.slice(0, i) === lk) yms.add(k.slice(i + 1)); });
+        const cells = {}; const basis = { earned: {}, accrued: {}, billed: {} }; let any = false;
+        [...yms].sort().forEach(ym => {
+          const earned = (Lx.byMonth || {})[ym] || 0; const w = finWorking(p.id, Lx.id, ym, earned, { timecard: tc, now: o.now });
+          if (ym.slice(0, 4) === y) { cells[ym] = { earned, work: w }; if (Math.abs(earned) >= 0.005 || w.set) any = true; basis.earned[ym] = (basis.earned[ym] || 0) + earned; }
+          if (w.accruedIn.slice(0, 4) === y && Math.abs(w.accruedAmt) >= 0.005) { basis.accrued[w.accruedIn] = (basis.accrued[w.accruedIn] || 0) + w.accruedAmt; any = true; }
+          if (w.billedIn && w.billedAmt != null && w.billedIn.slice(0, 4) === y) { basis.billed[w.billedIn] = (basis.billed[w.billedIn] || 0) + w.billedAmt; any = true; }
+        });
+        if (!any) return;
+        const tot = (b) => Object.keys(b).reduce((t, k) => t + b[k], 0);
+        out.push({ p, pj, pid: p.id, line: Lx.id, kind: Lx.kind, label: Lx.label, key: lk, timecard: tc, leader: lead ? lead.displayName : (pj.lead || ''), projectId: pj.salesforceId || pj.projectNumber || '',
+          broker: Lx.kind === 'share' ? String(((p.assumptions || {}).feeShare || {}).broker || Lx.label.replace(/^Fee share · /, '')) : '',
+          cells, basis, total: { earned: tot(basis.earned), accrued: tot(basis.accrued), billed: tot(basis.billed) } });
+      });
+    });
+    const kindRank = { fee: 0, pass: 1, share: 2 };
+    out.sort((a, b) => (a.pj.client || '').localeCompare(b.pj.client || '') || (a.pj.name || '').localeCompare(b.pj.name || '') || (kindRank[a.kind] - kindRank[b.kind]) || a.line.localeCompare(b.line));
+    const totals = {};
+    ['earned', 'accrued', 'billed'].forEach(b => {
+      const t = { byMonth: {}, gross: 0, share: 0, net: 0 };
+      months.forEach(m => { const g = out.filter(r => r.kind !== 'share').reduce((x, r) => x + (r.basis[b][m] || 0), 0); const sh = out.filter(r => r.kind === 'share').reduce((x, r) => x + (r.basis[b][m] || 0), 0); t.byMonth[m] = { gross: g, share: sh, net: g + sh }; t.gross += g; t.share += sh; });
+      t.net = t.gross + t.share; totals[b] = t;
+    });
+    return { year: y, months, rows: out, totals };
+  }
   /** The cycle's state for the stepper. */
   function finCycleState(cycle) {
     const c = finCycle(cycle) || {};
@@ -4539,7 +4578,7 @@
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, isSmallWorks, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
     INTAKE_TO, INTAKE_FIELDS, priorBookedForClient, intakeStatus, setReadyToBill, readyToBillOf, buildInvoiceRequest, markReadyToBillSubmitted,
-    FIN_STATUS, FIN_FLAGS, finKey, finYmPlus, finLine, setFinLine, finWorking, finCycle, finSnapshot, takeFinSnapshot, finProjects, finTimecard, finRows, finSnapshotValues, finCycleState, finOpening, setFinOpening, finUnbilled, FIN_RULES, finFollowUps, finFollowUpEmail, markFinAsked,
+    FIN_STATUS, FIN_FLAGS, finKey, finYmPlus, finLine, setFinLine, finWorking, finCycle, finSnapshot, takeFinSnapshot, finProjects, finTimecard, finRows, finSnapshotValues, finCycleState, finOpening, setFinOpening, finUnbilled, FIN_RULES, finFollowUps, finFollowUpEmail, markFinAsked, finAnnual,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,

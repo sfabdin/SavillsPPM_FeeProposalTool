@@ -4,7 +4,7 @@
    (confirmed-book.css, revenue-reconciliation.css); this adds the
    cycle stepper, the sheet's status colours and the three-lane pop-up.
    ============================================================ */
-.ft-view { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 2px solid var(--sav-navy); margin: 18px 0 0; }
+.ft-view { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 2px solid var(--sav-navy); margin: 18px 0 0; }
 .ft-view button { font-family: var(--font-display); text-align: left; background: #fff; border: 0; padding: 12px 18px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; color: var(--sav-navy); }
 .ft-view button + button { border-left: 2px solid var(--sav-navy); }
 .ft-view button b { font-weight: 900; font-size: 17px; letter-spacing: -.01em; }
@@ -68,6 +68,13 @@
 .ft-legend i { display: inline-block; width: 12px; height: 12px; border: 1px solid rgba(37,39,58,.3); margin-right: 5px; vertical-align: -1px; }
 .ft-legend i.s-confirm { background: #FFE0A8; } .ft-legend i.s-approval { background: #D6E7F5; } .ft-legend i.s-cr { background: #FFF59E; } .ft-legend i.s-billed { background: #fff; } .ft-legend i.s-hold { background: #ECEBE6; } .ft-legend i.s-planned { background: #fff; border-style: dashed; }
 .ft-legend .grow { flex: 1; }
+/* the annual view */
+.ft-sum .ft-basis { cursor: pointer; } .ft-sum .ft-basis:not(.now):hover { background: #f4f4f3; }
+.ft-an td.an { white-space: nowrap; font-variant-numeric: tabular-nums; vertical-align: top; }
+.ft-an td.an-cell { cursor: pointer; } .ft-an td.an-cell:hover { background: #FFF6CC; }
+.ft-chip { display: block; font-family: var(--font-display); font-weight: 700; font-size: 9.5px; letter-spacing: .03em; text-transform: uppercase; padding: 1px 5px; margin-top: 2px; border: 1px solid rgba(37,39,58,.2); text-align: center; white-space: nowrap; }
+.ft-chip.ok { background: #E4F1E9; color: #1E7A4C; } .ft-chip.acc { background: #D6E7F5; color: #1F3B5A; } .ft-chip.tbd { background: #ECEBE6; color: #4f5668; } .ft-chip.due { background: #FFE0A8; color: #7a4b00; } .ft-chip.cr { background: #FFF59E; color: #5a4a00; }
+.ft-legend .ft-chip { display: inline-block; margin: 0 4px 0 0; }
 /* follow-ups */
 .ft-rules { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0 10px; }
 .ft-rule { position: relative; text-align: left; font: inherit; background: #fff; border: 2px solid rgba(37,39,58,.2); padding: 12px 64px 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; color: var(--sav-navy); min-width: 0; }

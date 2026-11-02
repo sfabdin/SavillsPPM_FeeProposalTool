@@ -42,11 +42,11 @@
 
   /* ---------- state ---------- */
   const KEY = 'ufc_fin_test_v1';
-  const VIEWS = [['sheet', 'Monthly sheet', 'One month of work performed: earned, the three snapshots, the billing.'], ['unbilled', 'Unbilled schedule', 'Accrued less billed, month by month, to a running balance per line.'], ['followups', 'Follow-ups', 'What tripped a rule, by revenue leader. Tick, preview, send.']];
-  let VIEW = 'sheet', CYCLE = STORE.finYmPlus(NOW_KEY, -1), ASOF = CYCLE, TAB = 'all', LEADER = '', Q = '';
-  try { const sv = JSON.parse(localStorage.getItem(KEY) || '{}'); if (/^\d{4}-\d{2}$/.test(sv.cycle || '')) CYCLE = sv.cycle; if (/^\d{4}-\d{2}$/.test(sv.asOf || '')) ASOF = sv.asOf; if (['all', 'fixed', 'timecard'].includes(sv.tab)) TAB = sv.tab; if (VIEWS.some(v => v[0] === sv.view)) VIEW = sv.view; } catch (e) {}
+  const VIEWS = [['sheet', 'Monthly sheet', 'One month of work performed: earned, the three snapshots, the billing.'], ['unbilled', 'Unbilled schedule', 'Accrued less billed, month by month, to a running balance per line.'], ['followups', 'Follow-ups', 'What tripped a rule, by revenue leader. Tick, preview, send.'], ['annual', 'Annual', 'The year in the Revenue Projections shape, fee shares as their own rows, earned · accrued · billed.']];
+  let VIEW = 'sheet', CYCLE = STORE.finYmPlus(NOW_KEY, -1), ASOF = CYCLE, TAB = 'all', LEADER = '', Q = '', YEAR = NOW_KEY.slice(0, 4), BASIS = 'earned';
+  try { const sv = JSON.parse(localStorage.getItem(KEY) || '{}'); if (/^\d{4}-\d{2}$/.test(sv.cycle || '')) CYCLE = sv.cycle; if (/^\d{4}-\d{2}$/.test(sv.asOf || '')) ASOF = sv.asOf; if (['all', 'fixed', 'timecard'].includes(sv.tab)) TAB = sv.tab; if (VIEWS.some(v => v[0] === sv.view)) VIEW = sv.view; if (/^\d{4}$/.test(sv.year || '')) YEAR = sv.year; if (['earned', 'accrued', 'billed'].includes(sv.basis)) BASIS = sv.basis; } catch (e) {}
   if (ASOF > NOW_KEY) ASOF = NOW_KEY;
-  const remember = () => { try { localStorage.setItem(KEY, JSON.stringify({ view: VIEW, cycle: CYCLE, asOf: ASOF, tab: TAB })); } catch (e) {} };
+  const remember = () => { try { localStorage.setItem(KEY, JSON.stringify({ view: VIEW, cycle: CYCLE, asOf: ASOF, tab: TAB, year: YEAR, basis: BASIS })); } catch (e) {} };
   const viewsHtml = () => '<div class="ft-view" role="tablist">' + VIEWS.map(([k, l, d]) => '<button type="button" role="tab" data-view="' + k + '" class="' + (VIEW === k ? 'on' : '') + '"><b>' + l + '</b><small>' + d + '</small></button>').join('') + '</div>';
   const wireViews = (host) => $$('.ft-view [data-view]', host).forEach(b => b.addEventListener('click', () => { VIEW = b.dataset.view; remember(); render(); }));
 
@@ -76,6 +76,7 @@
     if (!admin()) { host.innerHTML = '<div class="panel"><h2>Admins only</h2><p class="sub">Financial Tracking is Finance\'s book.</p></div>'; return; }
     if (VIEW === 'unbilled') { host.innerHTML = viewsHtml() + unbilledHtml(); wireViews(host); wireUnbilled(host); return; }
     if (VIEW === 'followups') { host.innerHTML = viewsHtml() + followUpsHtml(); wireViews(host); wireFollowUps(host); return; }
+    if (VIEW === 'annual') { host.innerHTML = viewsHtml() + annualHtml(); wireViews(host); wireAnnual(host); return; }
     const st = STORE.finCycleState(CYCLE);
     const rows = rowsNow();
     const fixed = rows.filter(r => !r.timecard), tcard = rows.filter(r => r.timecard);
@@ -183,6 +184,90 @@
     $$('.ft-open', host).forEach(inp => inp.addEventListener('change', () => save(inp, { amount: inp.value === '' ? null : Number(inp.value) })));
     $$('.ft-cmt', host).forEach(inp => inp.addEventListener('change', () => save(inp, { comment: inp.value })));
   }
+  /* ---------- the annual view: the year in the Revenue Projections shape ---------- */
+  function annualNow() {
+    const A = STORE.finAnnual(YEAR, CATALOG); let rows = A.rows;
+    if (LEADER) rows = rows.filter(r => r.leader === LEADER);
+    if (Q) { const q = Q.toLowerCase(); rows = rows.filter(r => ((r.pj.client || '') + ' ' + (r.pj.name || '') + ' ' + r.broker + ' ' + r.projectId).toLowerCase().includes(q)); }
+    return Object.assign({}, A, { rows, all: A.rows });
+  }
+  const BASES = [['earned', 'Earned', 'the leader\'s figure, in the work month'], ['accrued', 'Accrued', 'in the accrued month, at the accrued amount'], ['billed', 'Billed', 'in the billed month, at the billed amount']];
+  function chip(c, ym) {
+    if (!c) return ''; const w = c.work; const mon = (k) => MONTHS[+k.slice(5) - 1];
+    if (w.status === 'billed') return '<span class="ft-chip ok" title="Billed ' + esc(w.billedDate || ymLabel(w.billedIn)) + (w.invoice ? ' · ' + esc(w.invoice) : '') + '">B ' + mon(w.billedIn) + (Math.abs(w.billedAmt - c.earned) >= 0.5 ? ' · ' + Math.round(w.billedAmt).toLocaleString() : '') + '</span>';
+    if (w.status === 'hold') return '<span class="ft-chip tbd" title="Accrued, bill TBD">A ' + mon(w.accruedIn) + ' · bill TBD</span>';
+    if (w.status === 'approval') return '<span class="ft-chip acc" title="Awaiting invoice approval">approval</span>';
+    if (w.status === 'cr') return '<span class="ft-chip cr" title="Discuss with CR">CR</span>';
+    if (w.status === 'confirm') { const moved = w.accruedIn !== ym || Math.abs(w.accruedAmt - c.earned) >= 0.5; return moved ? '<span class="ft-chip acc" title="Accrued ' + esc(ymLabel(w.accruedIn)) + ' at ' + money(w.accruedAmt) + '">A ' + mon(w.accruedIn) + (Math.abs(w.accruedAmt - c.earned) >= 0.5 ? ' · ' + Math.round(w.accruedAmt).toLocaleString() : '') + '</span>' : (w.set ? '<span class="ft-chip acc">A ' + mon(w.accruedIn) + '</span>' : ym < NOW_KEY ? '<span class="ft-chip due" title="Past month, nothing recorded yet">open</span>' : ''); }
+    return '';
+  }
+  function annualHtml() {
+    const A = annualNow(); const rows = A.rows; const T = A.totals[BASIS];
+    const leaders = [...new Set(A.all.map(r => r.leader).filter(Boolean))].sort();
+    const years = []; for (let y = 2026; y <= Number(NOW_KEY.slice(0, 4)) + 1; y++) years.push(String(y));
+    let h = '<div class="ft-bar"><div class="ft-cycle"><label for="ft-year">Year</label><select id="ft-year">' + years.map(y => '<option value="' + y + '"' + (y === YEAR ? ' selected' : '') + '>' + y + '</option>').join('') + '</select><div class="sub">' + rows.length + ' line' + (rows.length === 1 ? '' : 's') + '</div></div>' +
+      '<div class="ft-sum">' + BASES.map(([k, l, d]) => '<div class="' + (BASIS === k ? 'now' : '') + ' ft-basis" data-basis="' + k + '" role="tab"><small>' + l + ' · ' + esc(d) + '</small><b>' + money(A.totals[k].net) + '</b></div>').join('') + '</div>' +
+      '<div class="ft-actions"><button type="button" class="btn btn-primary" id="ft-an-export">⤓ Export year</button></div></div>';
+    h += '<div class="ft-filt"><input type="search" id="ft-q" placeholder="Search client, project, broker or ID" value="' + esc(Q) + '"><select id="ft-leader"><option value="">All revenue leaders</option>' + leaders.map(l => '<option value="' + esc(l) + '"' + (l === LEADER ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
+      '<span class="sub grow">Savills revenue on the <b>' + BASIS + '</b> basis: gross less fee share. ' + (BASIS === 'earned' ? 'A chip under a fee cell says where that month\'s money went: tap the cell to open the line.' : 'Money placed in the month it was ' + BASIS + ', whatever month the work was done. Tap a cell to open the line in its work month.') + '</span></div>';
+    const head = '<thead><tr><th>Client · project</th><th>Line</th>' + A.months.map(m => '<th class="money">' + MONTHS[+m.slice(5) - 1] + '</th>').join('') + '<th class="money">Year</th></tr></thead>';
+    const cell = (r, m) => {
+      const v = r.basis[BASIS][m]; const c = r.cells[m]; const fee = r.kind === 'fee';
+      const key = r.key + '|' + (BASIS === 'earned' ? m : (c ? m : m));
+      const inner = (v == null || Math.abs(v) < 0.5 ? '<span class="d0">·</span>' : money(v)) + (fee && BASIS === 'earned' ? chip(c, m) : '');
+      return '<td class="money an' + (fee ? ' an-cell' : '') + '"' + (fee ? ' data-cell="' + esc(key) + '"' : '') + '>' + inner + '</td>';
+    };
+    const rowHtml = (r) => {
+      const sub = r.kind !== 'fee';
+      const proj = sub ? '<td class="pj sub-pj">↳ ' + (r.kind === 'share' ? 'fee share' : 'pass-through') + '</td>'
+        : '<td class="pj"><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(r.pid) + '"><b>' + esc(r.pj.client || '—') + ' — ' + esc(r.pj.name || 'Untitled') + '</b></a><div class="sub">' + esc([r.projectId, r.leader, r.timecard ? 'time card' : 'fixed fee'].filter(Boolean).join(' · ')) + '</div></td>';
+      const line = r.kind === 'fee' ? 'Gross revenue' : r.kind === 'share' ? '<b>' + esc(r.broker || 'broker') + '</b>' : esc(r.label.replace(/^Pass-through · /, ''));
+      return '<tr class="ft-row' + (sub ? ' ln-' + r.kind : '') + '" data-key="' + esc(r.key) + '">' + proj + '<td>' + line + '</td>' + A.months.map(m => cell(r, m)).join('') + '<td class="money"><b>' + money(r.total[BASIS]) + '</b></td></tr>';
+    };
+    let body = rows.length ? rows.map(rowHtml).join('') : '<tr><td colspan="15" class="sub">Nothing in ' + esc(YEAR) + (LEADER || Q ? ' for this filter' : '') + '.</td></tr>';
+    const tot = (label, f, cls) => '<tr class="' + (cls || 'ft-sub') + '"><td colspan="2">' + label + '</td>' + A.months.map(m => '<td class="money">' + money(f(T.byMonth[m])) + '</td>').join('') + '<td class="money"><b>' + money(f(T)) + '</b></td></tr>';
+    const sel = (f) => (x) => f(x);
+    const filtered = LEADER || Q;
+    if (!filtered) body += tot('Gross revenue', sel(x => x.gross)) + tot('Fee share out', sel(x => x.share), 'ft-sub ft-share') + tot('Savills revenue · gross less fee share · ' + BASIS, sel(x => x.net), 'ft-tot');
+    else { const sumB = (list, m) => list.reduce((t, r) => t + (m ? (r.basis[BASIS][m] || 0) : r.total[BASIS]), 0); const g = rows.filter(r => r.kind !== 'share'), sh = rows.filter(r => r.kind === 'share');
+      const trow = (label, list, cls) => '<tr class="' + (cls || 'ft-sub') + '"><td colspan="2">' + label + ' <span class="sub">· filtered</span></td>' + A.months.map(m => '<td class="money">' + money(sumB(list, m)) + '</td>').join('') + '<td class="money"><b>' + money(sumB(list)) + '</b></td></tr>';
+      body += trow('Gross revenue', g) + trow('Fee share out', sh, 'ft-sub ft-share') + trow('Savills revenue · ' + BASIS, rows, 'ft-tot'); }
+    h += '<div class="panel ft-panel"><div class="tw"><table class="cb-table ft-table ft-an">' + head + '<tbody>' + body + '</tbody></table></div>' +
+      '<div class="ft-legend"><span><span class="ft-chip ok">B Oct</span> billed, in that month</span><span><span class="ft-chip acc">A Sep · 53,750</span> accrued, at that amount, not yet billed</span><span><span class="ft-chip tbd">bill TBD</span> held on purpose</span><span><span class="ft-chip due">open</span> past month, nothing recorded</span><span class="grow"></span><span class="sub">Nothing in this grid edits earned; the leader does that in Revenue Projections.</span></div></div>';
+    return h;
+  }
+  function wireAnnual(host) {
+    $('#ft-year', host).addEventListener('change', e => { YEAR = e.target.value; remember(); render(); });
+    $$('.ft-basis', host).forEach(b => b.addEventListener('click', () => { BASIS = b.dataset.basis; remember(); render(); }));
+    $('#ft-q', host).addEventListener('input', e => { Q = e.target.value; render(); const q = $('#ft-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } });
+    $('#ft-leader', host).addEventListener('change', e => { LEADER = e.target.value; render(); });
+    $('#ft-an-export', host).addEventListener('click', () => exportAnnual().catch(e => toast('Export failed: ' + (e.message || e))));
+    $$('[data-cell]', host).forEach(td => td.addEventListener('click', () => { const [pid, line, ym] = td.dataset.cell.split('|'); CYCLE = ym; remember(); openLine(pid + '|' + line + '|' + ym); }));
+  }
+  async function exportAnnual() {
+    await window.UFC_Vendor.excel();
+    if (typeof ExcelJS === 'undefined') { toast('Excel library not loaded.'); return; }
+    const A = STORE.finAnnual(YEAR, CATALOG); const NAVY = 'FF25273A', WHITE = 'FFFFFFFF', RED = 'FFCE181E'; const fmt = '#,##0;[Red]-#,##0;"-"';
+    const wb = new ExcelJS.Workbook(); wb.creator = 'Savills PPM · Financial Tracking (TEST)';
+    BASES.forEach(([b, l, d]) => {
+      const ws = wb.addWorksheet(l, { views: [{ state: 'frozen', ySplit: 3, xSplit: 4 }] });
+      ws.getCell('A1').value = 'Savills PPM — ' + YEAR + ' — ' + l + ' basis (' + d + ')'; ws.getCell('A1').font = { name: 'Calibri', bold: true, size: 14, color: { argb: NAVY } };
+      ws.addRow([]);
+      const hdr = ws.addRow(['Project ID', 'Client', 'Project', 'Line'].concat(A.months.map(m => MONTHS[+m.slice(5) - 1]), ['Year'])); hdr.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+      const put = (vals, o) => { const x = ws.addRow(vals); x.eachCell((c, i) => { if (i >= 5) c.numFmt = fmt; if (o && o.red) c.font = { name: 'Calibri', color: { argb: RED }, bold: !!o.bold }; else if (o && o.bold) c.font = { name: 'Calibri', bold: true }; if (o && o.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: o.fill } }; }); return x; };
+      A.rows.forEach(r => put([r.projectId, r.pj.client || '', r.pj.name || '', r.kind === 'fee' ? 'Gross revenue' : r.kind === 'share' ? 'Fee share · ' + r.broker : r.label].concat(A.months.map(m => r.basis[b][m] || null), [r.total[b]]), { red: r.kind === 'share' }));
+      const T = A.totals[b]; ws.addRow([]);
+      put(['', 'Gross revenue', '', ''].concat(A.months.map(m => T.byMonth[m].gross), [T.gross]), { bold: true, fill: 'FFEEE8E3' });
+      put(['', 'Fee share out', '', ''].concat(A.months.map(m => T.byMonth[m].share), [T.share]), { bold: true, red: true, fill: 'FFEEE8E3' });
+      const t = put(['', 'Savills revenue · gross less fee share', '', ''].concat(A.months.map(m => T.byMonth[m].net), [T.net]), { bold: true }); t.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+      ws.columns = [{ width: 12 }, { width: 24 }, { width: 42 }, { width: 22 }].concat(A.months.map(() => ({ width: 11 })), [{ width: 13 }]);
+    });
+    const buf = await wb.xlsx.writeBuffer(); const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Savills PPM - ' + YEAR + ' Financial Tracking - earned accrued billed.xlsx'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    try { STORE.logSystem && STORE.logSystem('fin-export', { ym: YEAR + '-01', kind: 'annual', lines: A.rows.length }); } catch (e) {}
+  }
+
   /* ---------- follow-ups: rules, ticks, one email per leader ---------- */
   const FU = { rule: '', picked: null, preview: null, cc: '', deadline: '', edits: {} };
   function defaultDeadline() {
@@ -423,5 +508,5 @@
     document.addEventListener('ufc:revenue-updated', () => render());
   }
   if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(start, start); else start();
-  window.UFC_FinTest = { render, openLine, exportEom, exportUnbilled, sendFollowUps, FU };
+  window.UFC_FinTest = { render, openLine, exportEom, exportUnbilled, exportAnnual, sendFollowUps, FU };
 })();
