@@ -1439,6 +1439,40 @@
              sq(pre.months === undefined && pre.byMonth['2026-03'] && !pre.byMonth['2026-04'], true, 'an earlier cutoff stops at its month') &&
              sq(cleared, null, 'clearing both fields drops the record');
     });
+    test('Fin (TEST) · follow-ups', 'four rules over the sheet: a past month with nothing recorded, an accrual with no billing, an EOM that moved from Final with no note, a fee share with no broker; grouped by leader with an email per leader, and the list remembers who was asked', () => {
+      setup(); const rec = S.getProject('rc_a'); rec.project.lead = 'Emily Sobel'; S.saveProject(rec, { force: true });
+      const C0 = { today: '2026-05-15' }; const L = S.reconLinesFor(S.getProject('rc_a'), C); const r2 = (n) => Math.round(n * 100) / 100;
+      S.takeFinSnapshot('2026-03', 'eom', S.finSnapshotValues('2026-03', C));   // March closed on the sheet: Finance has seen it
+      const a = S.finFollowUps(C, C0);
+      const idle = a.items.filter(i => i.rule === 'earned-idle');
+      S.setFinLine('rc_a', 'fee', '2026-02', { accruedIn: '2026-02', accruedAmt: r2(L.fee['2026-02']) });   // Finance accrued February, nobody billed it
+      S.setFinLine('rc_a', 'fee', '2026-03', { accruedIn: '2026-03' });                                     // March acknowledged, too recent to chase
+      S.setFinLine('rc_a', 'fee', '2026-01', { hold: true });                                               // January held as bill TBD
+      const b = S.finFollowUps(C, C0);
+      const rec2 = S.getProject('rc_a'); rec2.assumptions.feeShare.broker = ''; S.saveProject(rec2, { force: true });
+      S.takeFinSnapshot('2026-04', 'final', S.finSnapshotValues('2026-04', C));
+      S.setFinLine('rc_a', 'fee', '2026-04', { accruedAmt: r2(L.fee['2026-04']) - 1000 });
+      const c = S.finFollowUps(C, C0);
+      S.setFinLine('rc_a', 'fee', '2026-04', { note: 'scope trimmed' });
+      const d = S.finFollowUps(C, C0);
+      const em = S.finFollowUpEmail('Emily Sobel', b.items, { deadline: '2026-05-22T17:00', by: 'Test Admin' });
+      const n = S.markFinAsked(b.items, { leader: 'Emily Sobel', to: 'esobel@savills.us' });
+      const e = S.finFollowUps(C, C0);
+      S.setRealIdentity({ username: 'lead.only@savills.us', name: 'A Leader' });
+      let refused = ''; try { S.markFinAsked(b.items, {}); } catch (x) { refused = x.message; }
+      asAdmin();
+      return sq(idle.map(i => i.ym).join(), '2026-01,2026-02', 'January and February have nothing recorded 30+ days after month end; March was closed with an EOM snapshot, April is too fresh') && sq(idle[0].since, 104, 'days since the month end') &&
+             sq(idle.map(i => i.since >= 60 ? 'two' : 'one').join(), 'two,two', 'the ask hardens after two months') && sq(r2(idle[0].amount), r2(L.fee['2026-01']), 'the earned amount') &&
+             sq(idle[0].leader + '|' + idle[0].email + '|' + idle[0].audience, 'Emily Sobel|esobel@savills.us|leader', 'who to ask') && sq(a.counts['share-no-broker'] + a.counts['eom-moved'] + a.counts['accrued-unbilled'], 0, 'nothing else trips yet') &&
+             sq(b.items.map(i => i.rule + ':' + i.ym).join(), 'accrued-unbilled:2026-02', 'a held month and a fresh acknowledgement are quiet; the accrual with no billing after 60 days is not') && sq(b.items[0].since, 76, 'since the accrual month end') &&
+             sq(c.counts['share-no-broker'], 1, 'a fee share with no broker') && sq(c.items.find(i => i.rule === 'share-no-broker').amount < 0, true, 'carries its minus') &&
+             sq(c.counts['eom-moved'], 1, 'EOM moved from Final with no note') && sq(c.items.find(i => i.rule === 'eom-moved').amount, -1000, 'by the difference') && sq(c.items.find(i => i.rule === 'eom-moved').audience, 'finance', 'a Finance item') &&
+             sq(d.counts['eom-moved'], 0, 'a note settles it') &&
+             sq(em.subject, 'PPM revenue follow-up · 1 item · due Fri, May 22', 'subject') && sq(/Hi Emily,/.test(em.html) && /Recon A/.test(em.html) && /Friday, May 22, 2026/.test(em.html) && /Open Revenue Projections/.test(em.html), true, 'the email names the leader, the project, the deadline and the link') &&
+             sq(/Accrued since February 2026/.test(em.text), true, 'the plain text carries the ask') &&
+             sq(n, 1, 'one item marked asked') && sq(!!e.items[0].asked && e.items[0].asked.to, 'esobel@savills.us', 'and the list remembers') &&
+             sq(/admin/i.test(refused), true, 'a leader cannot mark the book');
+    });
   })();
 
   /* ============================================================
