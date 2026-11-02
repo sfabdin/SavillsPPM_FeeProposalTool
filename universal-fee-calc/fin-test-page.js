@@ -42,7 +42,7 @@
 
   /* ---------- state ---------- */
   const KEY = 'ufc_fin_test_v1';
-  const VIEWS = [['sheet', 'Monthly sheet', 'One month of work performed: earned, the three snapshots, the billing.'], ['unbilled', 'Unbilled schedule', 'Accrued less billed, month by month, to a running balance per line.']];
+  const VIEWS = [['sheet', 'Monthly sheet', 'One month of work performed: earned, the three snapshots, the billing.'], ['unbilled', 'Unbilled schedule', 'Accrued less billed, month by month, to a running balance per line.'], ['followups', 'Follow-ups', 'What tripped a rule, by revenue leader. Tick, preview, send.']];
   let VIEW = 'sheet', CYCLE = STORE.finYmPlus(NOW_KEY, -1), ASOF = CYCLE, TAB = 'all', LEADER = '', Q = '';
   try { const sv = JSON.parse(localStorage.getItem(KEY) || '{}'); if (/^\d{4}-\d{2}$/.test(sv.cycle || '')) CYCLE = sv.cycle; if (/^\d{4}-\d{2}$/.test(sv.asOf || '')) ASOF = sv.asOf; if (['all', 'fixed', 'timecard'].includes(sv.tab)) TAB = sv.tab; if (VIEWS.some(v => v[0] === sv.view)) VIEW = sv.view; } catch (e) {}
   if (ASOF > NOW_KEY) ASOF = NOW_KEY;
@@ -75,6 +75,7 @@
     const host = $('#fin'); if (!host) return;
     if (!admin()) { host.innerHTML = '<div class="panel"><h2>Admins only</h2><p class="sub">Financial Tracking is Finance\'s book.</p></div>'; return; }
     if (VIEW === 'unbilled') { host.innerHTML = viewsHtml() + unbilledHtml(); wireViews(host); wireUnbilled(host); return; }
+    if (VIEW === 'followups') { host.innerHTML = viewsHtml() + followUpsHtml(); wireViews(host); wireFollowUps(host); return; }
     const st = STORE.finCycleState(CYCLE);
     const rows = rowsNow();
     const fixed = rows.filter(r => !r.timecard), tcard = rows.filter(r => r.timecard);
@@ -181,6 +182,100 @@
     const save = (inp, patch) => { const [pid, line] = inp.dataset.key.split('|'); try { STORE.setFinOpening(pid, line, patch); flush(); } catch (e) { toast(e.message); } const y = window.scrollY; render(); window.scrollTo(0, y); };
     $$('.ft-open', host).forEach(inp => inp.addEventListener('change', () => save(inp, { amount: inp.value === '' ? null : Number(inp.value) })));
     $$('.ft-cmt', host).forEach(inp => inp.addEventListener('change', () => save(inp, { comment: inp.value })));
+  }
+  /* ---------- follow-ups: rules, ticks, one email per leader ---------- */
+  const FU = { rule: '', picked: null, preview: null, cc: '', deadline: '', edits: {} };
+  function defaultDeadline() {
+    const d = new Date(); d.setSeconds(0, 0); const dow = d.getDay(); let add = (5 - dow + 7) % 7;
+    if (add === 0 && d.getHours() >= 17) add = 7; d.setDate(d.getDate() + add); d.setHours(17, 0, 0, 0); return d;
+  }
+  const toLocalInput = (d) => { const p2 = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + 'T' + p2(d.getHours()) + ':' + p2(d.getMinutes()); };
+  const deadlineDate = () => { const d = FU.deadline ? new Date(FU.deadline) : null; return (d && !isNaN(d)) ? d : defaultDeadline(); };
+  const deadlineLabel = (d) => { try { return new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(d); } catch (e) { return d.toLocaleString(); } };
+  const splitAddrs = (v) => String(v || '').split(/[;,\s]+/).map(x => x.trim().toLowerCase()).filter(x => /@/.test(x));
+  const htmlToText = (h) => String(h || '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<\/(p|div|tr|h\d|li)>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\n{3,}/g, '\n\n').trim();
+  const recentlyAsked = (i) => !!(i.asked && (Date.now() - new Date(i.asked.at)) < 7 * 86400000);
+  const fuWho = () => { let by = '', login = ''; try { const u = STORE.getCurrentUser() || {}; login = u.username || ''; by = u.name || login; } catch (e) {} return { by, login }; };
+  function groupsOf(items) {
+    const g = {}; items.forEach(i => { const k = i.leaderId || i.leader || '—'; (g[k] = g[k] || { key: k, leader: i.leader || 'No revenue leader', email: i.email, items: [] }).items.push(i); });
+    return Object.values(g).sort((a, b) => a.leader.localeCompare(b.leader));
+  }
+  const mailFor = (grp, picked) => {
+    const gen = STORE.finFollowUpEmail(grp.leader, picked, { deadline: deadlineDate(), by: fuWho().by });
+    const e = FU.edits[grp.key]; if (!e) return Object.assign(gen, { edited: false });
+    return { subject: e.subject || gen.subject, html: e.html != null ? e.html : gen.html, text: htmlToText(e.html != null ? e.html : gen.html), count: gen.count, edited: true };
+  };
+  function followUpsHtml() {
+    const R = STORE.finFollowUps(CATALOG); const all = R.items;
+    if (!FU.picked) FU.picked = {};   // nothing ticked to start with: a send is deliberate
+    if (!FU.cc) FU.cc = fuWho().login;
+    let items = all; if (FU.rule) items = items.filter(i => i.rule === FU.rule);
+    if (LEADER) items = items.filter(i => i.leader === LEADER);
+    if (Q) { const q = Q.toLowerCase(); items = items.filter(i => ((i.pj.client || '') + ' ' + (i.pj.name || '') + ' ' + i.projectId).toLowerCase().includes(q)); }
+    const groups = groupsOf(items); const leaders = [...new Set(all.map(i => i.leader).filter(Boolean))].sort();
+    if (!FU.preview || !groups.some(g => g.key === FU.preview)) FU.preview = groups.length ? groups[0].key : null;
+    const pickedAll = all.filter(i => FU.picked[i.id] && i.email); const sendGroups = groupsOf(pickedAll).filter(g => g.email);
+    const dl = deadlineDate(); const authed = !!(Box && Box.enabled && Box.notify && (!Box.isAuthed || Box.isAuthed()));
+    let h = '<div class="ft-rules">' + Object.keys(STORE.FIN_RULES).map(k => { const r = STORE.FIN_RULES[k]; return '<button type="button" class="ft-rule' + (FU.rule === k ? ' on' : '') + '" data-rule="' + k + '"><b>' + esc(r.label) + '</b><span>' + esc(r.hint) + '</span><div class="k">' + R.counts[k] + '</div></button>'; }).join('') + '</div>';
+    h += '<div class="ft-filt"><input type="search" id="ft-q" placeholder="Search client, project or ID" value="' + esc(Q) + '"><select id="ft-leader"><option value="">All revenue leaders</option>' + leaders.map(l => '<option value="' + esc(l) + '"' + (l === LEADER ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
+      '<span class="sub grow">' + all.length + ' item' + (all.length === 1 ? '' : 's') + ' · ' + groupsOf(all).length + ' leader' + (groupsOf(all).length === 1 ? '' : 's') + (FU.rule ? ' · showing one rule, click it again for all' : '') + '. Nothing is ticked to start with: tick a leader\'s whole list with the box on their row, or item by item. Items asked in the last week say so.</span></div>';
+    h += '<div class="ft-sendbar"><label>Due by<input type="datetime-local" id="ft-due" value="' + esc(toLocalInput(dl)) + '" step="900"></label><label>Cc<input type="text" id="ft-cc" value="' + esc(FU.cc) + '" placeholder="addresses separated by ;"></label>' +
+      '<span class="sub grow">Every email says <b>' + esc(deadlineLabel(dl)) + '</b>. Change it and all of them rebuild, reworded ones too.</span>' +
+      '<button type="button" class="btn btn-primary" id="ft-send"' + (authed && sendGroups.length ? '' : ' disabled') + '>Send ' + pickedAll.length + ' follow-up' + (pickedAll.length === 1 ? '' : 's') + ' · ' + sendGroups.length + ' email' + (sendGroups.length === 1 ? '' : 's') + '</button>' + (authed ? '' : '<span class="sub">Sign in to Box to send; the preview still works.</span>') + '</div>';
+    if (!groups.length) h += '<div class="panel ft-panel"><p class="sub">Nothing trips a rule' + (FU.rule || LEADER || Q ? ' for this filter' : '') + '. The sheet is caught up.</p></div>';
+    groups.forEach(g => {
+      const n = g.items.filter(i => FU.picked[i.id]).length;
+      h += '<div class="ft-grp' + (g.key === FU.preview ? ' sel' : '') + '" data-grp="' + esc(g.key) + '"><label><input type="checkbox" data-grpall="' + esc(g.key) + '"' + (n && n === g.items.filter(i => i.email).length ? ' checked' : '') + (g.email ? '' : ' disabled') + '></label><b>' + esc(g.leader) + '</b><span class="sub">' + (g.email ? esc(g.email) : 'no address on the leader list') + ' · ' + g.items.length + ' item' + (g.items.length === 1 ? '' : 's') + (n ? ' · ' + n + ' ticked' : '') + (FU.edits[g.key] ? ' · <i>reworded</i>' : '') + '</span><span class="grow"></span><span class="sub">' + (g.key === FU.preview ? 'previewing below' : 'click to preview') + '</span></div>';
+      h += '<div class="panel ft-panel ft-fu"><div class="tw"><table class="cb-table ft-table"><thead><tr><th></th><th>Project</th><th>Month</th><th>What tripped</th><th class="money">Amount</th><th>Since</th><th>Suggested ask</th><th></th></tr></thead><tbody>' +
+        g.items.map(i => '<tr class="ft-row r-' + i.rule + (i.kind !== 'fee' ? ' ln-' + i.kind : '') + '" data-id="' + esc(i.id) + '"><td><input type="checkbox" data-pick="' + esc(i.id) + '"' + (FU.picked[i.id] ? ' checked' : '') + (i.email ? '' : ' disabled') + '></td>' +
+          '<td class="pj"><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(i.pid) + '"><b>' + esc(i.pj.client || '—') + ' — ' + esc(i.pj.name || 'Untitled') + '</b></a><div class="sub">' + esc([i.projectId, i.kind === 'fee' ? (STORE.finTimecard(i.p) ? 'time card' : 'fixed fee') : i.label].filter(Boolean).join(' · ')) + '</div></td>' +
+          '<td>' + esc(/^\d{4}-\d{2}$/.test(i.ym) ? ymLabel(i.ym) : i.ym) + '</td><td><span class="ft-pill r-' + i.rule + '">' + esc(i.ruleLabel) + '</span>' + (i.audience === 'finance' ? '<div class="sub">for Finance</div>' : '') + '</td>' +
+          '<td class="money">' + money(i.amount) + '</td><td class="sub">' + (i.since != null ? i.since + ' days' : '—') + (i.asked ? '<div>asked ' + esc(fmtStamp(i.asked.at)) + '</div>' : '') + '</td><td class="ask">' + esc(i.ask) + '</td>' +
+          '<td>' + (/^\d{4}-\d{2}$/.test(i.ym) && i.rule !== 'share-no-broker' ? '<button type="button" class="btn btn-ghost small" data-openfu="' + esc(i.pid + '|' + i.line + '|' + i.ym) + '">Open</button>' : '') + '</td></tr>').join('') + '</tbody></table></div></div>';
+    });
+    const pg = groups.find(g => g.key === FU.preview);
+    if (pg) {
+      const picked = pg.items.filter(i => FU.picked[i.id]); const list = picked.length ? picked : pg.items; const m = mailFor(pg, list);
+      h += '<div class="panel ft-panel ft-mail"><div class="ft-mailhead"><b>Preview · to ' + esc(pg.leader) + (pg.email ? ' &lt;' + esc(pg.email) + '&gt;' : '') + (FU.cc ? ' · cc ' + esc(FU.cc) : '') + '</b><span class="sub">' + (picked.length ? picked.length + ' ticked item' + (picked.length === 1 ? '' : 's') : 'nothing ticked yet, showing all ' + pg.items.length) + (m.edited ? ' · reworded by hand' : '') + '</span><span class="grow"></span>' + (m.edited ? '<button type="button" class="btn btn-ghost small" id="ft-unedit">Back to the generated wording</button>' : '<span class="sub">Click into the email to reword it for this leader only.</span>') + '</div>' +
+        '<label class="ft-subj">Subject<input type="text" id="ft-subj" value="' + esc(m.subject) + '"></label><div class="ft-mailprev" id="ft-mailprev" contenteditable="true" spellcheck="false">' + m.html + '</div></div>';
+    }
+    h += '<div class="ft-legend"><span class="sub">Rules: a past month with nothing recorded after 30 days; an accrual with no billing after 60 days and no hold; an EOM figure that moved from the Final snapshot with no note; a fee share with no broker named. Finance items stay on the list for Finance and are not emailed unless ticked.</span></div>';
+    return h;
+  }
+  function wireFollowUps(host) {
+    $$('.ft-rule', host).forEach(b => b.addEventListener('click', () => { FU.rule = FU.rule === b.dataset.rule ? '' : b.dataset.rule; render(); }));
+    $('#ft-q', host).addEventListener('input', e => { Q = e.target.value; render(); const q = $('#ft-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } });
+    $('#ft-leader', host).addEventListener('change', e => { LEADER = e.target.value; render(); });
+    $('#ft-due', host).addEventListener('change', e => { const d = new Date(e.target.value); if (isNaN(d)) return; FU.deadline = e.target.value; FU.edits = {}; render(); });
+    $('#ft-cc', host).addEventListener('change', e => { FU.cc = e.target.value; render(); });
+    $$('[data-pick]', host).forEach(cb => cb.addEventListener('change', () => { FU.picked[cb.dataset.pick] = cb.checked; const y = window.scrollY; render(); window.scrollTo(0, y); }));
+    $$('[data-grpall]', host).forEach(cb => cb.addEventListener('change', (e) => { e.stopPropagation(); const R = STORE.finFollowUps(CATALOG); R.items.forEach(i => { if ((i.leaderId || i.leader || '—') === cb.dataset.grpall && i.email && (!cb.checked || (i.audience === 'leader' && !recentlyAsked(i)))) FU.picked[i.id] = cb.checked; }); const y = window.scrollY; render(); window.scrollTo(0, y); }));
+    $$('.ft-grp', host).forEach(g => g.addEventListener('click', (e) => { if (e.target.closest('input')) return; FU.preview = g.dataset.grp; const y = window.scrollY; render(); window.scrollTo(0, y); }));
+    $$('[data-openfu]', host).forEach(b => b.addEventListener('click', () => { const [pid, line, k] = b.dataset.openfu.split('|'); CYCLE = k; remember(); openLine(pid + '|' + line + '|' + k); }));
+    const prev = $('#ft-mailprev', host), subj = $('#ft-subj', host);
+    if (prev) { prev.addEventListener('input', () => { const e = FU.edits[FU.preview] = FU.edits[FU.preview] || {}; e.html = prev.innerHTML; }); }
+    if (subj) { subj.addEventListener('input', () => { const e = FU.edits[FU.preview] = FU.edits[FU.preview] || {}; e.subject = subj.value; }); }
+    const un = $('#ft-unedit', host); if (un) un.addEventListener('click', () => { delete FU.edits[FU.preview]; render(); });
+    const send = $('#ft-send', host); if (send) send.addEventListener('click', sendFollowUps);
+  }
+  function sendFollowUps() {
+    const B = Box; if (!(B && B.enabled && B.notify)) { toast('Sign in to Box to send.'); return; }
+    const R = STORE.finFollowUps(CATALOG); const picked = R.items.filter(i => FU.picked[i.id] && i.email); const groups = groupsOf(picked).filter(g => g.email);
+    if (!groups.length) { toast('Tick at least one item for a leader with an address.'); return; }
+    const dl = deadlineDate(); const who = fuWho();
+    if (!confirm('Send ' + picked.length + ' follow-up' + (picked.length === 1 ? '' : 's') + ' as ' + groups.length + ' email' + (groups.length === 1 ? '' : 's') + ' (' + groups.map(g => g.leader).join(', ') + ')?\n\nEach leader gets only their own items, due ' + deadlineLabel(dl) + '.')) return;
+    let sent = 0;
+    try {
+      groups.forEach(g => {
+        const m = mailFor(g, g.items);
+        B.notify({ event: 'fin-followup', to: [g.email], cc: splitAddrs(FU.cc), subject: m.subject, html: m.html, text: m.text, data: { leaderId: g.key, leader: g.leader, items: g.items.length, ids: g.items.map(i => i.id), deadline: dl.toISOString(), edited: m.edited } });
+        STORE.markFinAsked(g.items, { leader: g.leader, to: g.email, deadline: dl.toISOString(), edited: m.edited }); sent++;
+      });
+      flush(); if (B.flushNotify) B.flushNotify().catch(() => {});
+      toast(sent + ' follow-up email' + (sent === 1 ? '' : 's') + ' queued.', 'ok');
+      FU.picked = null; FU.edits = {};
+    } catch (e) { toast('Could not send: ' + (e.message || e)); }
+    render();
   }
   async function exportUnbilled() {
     await window.UFC_Vendor.excel();
@@ -328,5 +423,5 @@
     document.addEventListener('ufc:revenue-updated', () => render());
   }
   if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(start, start); else start();
-  window.UFC_FinTest = { render, openLine, exportEom, exportUnbilled };
+  window.UFC_FinTest = { render, openLine, exportEom, exportUnbilled, sendFollowUps, FU };
 })();

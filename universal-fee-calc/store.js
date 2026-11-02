@@ -4009,9 +4009,9 @@
   const finKey = (pid, line, ym) => pid + '|' + line + '|' + ym;
   const finYmPlus = (k, n) => { const [y, m] = String(k).split('-').map(Number); const d = new Date(y, m - 1 + n, 1); return reconYmOf(d.getFullYear(), d.getMonth() + 1); };
   const finNowYm = () => { const d = new Date(); return reconYmOf(d.getFullYear(), d.getMonth() + 1); };
-  function finDb() { const r = readRevenue(); const f = r.fin || {}; return { lines: f.lines || {}, cycles: f.cycles || {}, opening: f.opening || {} }; }
+  function finDb() { const r = readRevenue(); const f = r.fin || {}; return { lines: f.lines || {}, cycles: f.cycles || {}, opening: f.opening || {}, asked: f.asked || {} }; }
   function finEdit(fn) {
-    const rev = readRevenue(); rev.fin = rev.fin || {}; rev.fin.lines = rev.fin.lines || {}; rev.fin.cycles = rev.fin.cycles || {}; rev.fin.opening = rev.fin.opening || {};
+    const rev = readRevenue(); rev.fin = rev.fin || {}; rev.fin.lines = rev.fin.lines || {}; rev.fin.cycles = rev.fin.cycles || {}; rev.fin.opening = rev.fin.opening || {}; rev.fin.asked = rev.fin.asked || {};
     const res = fn(rev.fin); writeRevenue(rev); return res;
   }
   function finLine(pid, line, ym) { return finDb().lines[finKey(pid, line, ym)] || null; }
@@ -4180,6 +4180,92 @@
     const totals = { opening: out.reduce((t, r) => t + r.opening, 0), closing: out.reduce((t, r) => t + r.closing, 0), byMonth: {} };
     months.forEach(m => { totals.byMonth[m] = { net: out.reduce((t, r) => t + r.byMonth[m].net, 0), ytd: out.reduce((t, r) => t + r.byMonth[m].ytd, 0) }; });
     return { asOf: end, start, months, rows: out, totals };
+  }
+  /* ---------- follow-ups: the rules Finance runs over the sheet ---------- */
+  const FIN_RULES = {
+    'earned-idle': { label: 'Earned, nothing accrued or billed', hint: 'a past month, 30+ days, no record and no EOM taken', audience: 'leader' },
+    'accrued-unbilled': { label: 'Accrued, not billed', hint: '60+ days, no "bill TBD" hold', audience: 'leader' },
+    'eom-moved': { label: 'EOM moved from Final', hint: 'with no note on the line', audience: 'finance' },
+    'share-no-broker': { label: 'Fee share with no broker named', hint: 'this year', audience: 'leader' },
+  };
+  const finMonthName = (ym) => { const [y, m] = String(ym).split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); };
+  /** Everything that trips a rule, one item per line-month, with who to ask
+      and what to ask. `opts.today` fixes the clock for tests. Looks back
+      twelve months; finished rules (billed, held, nothing earned) are quiet. */
+  function finFollowUps(catalog, opts) {
+    const o = opts || {}; const cat = catalog || (typeof window !== 'undefined' && window.RATES_CATALOG);
+    const today = o.today ? new Date(o.today) : new Date(); today.setHours(0, 0, 0, 0);
+    const nowYm = reconYmOf(today.getFullYear(), today.getMonth() + 1); const floor = finYmPlus(nowYm, -12);
+    const daysSinceEnd = (ym) => { const [y, m] = String(ym).split('-').map(Number); return Math.floor((today - new Date(y, m, 0)) / 86400000); };
+    const asked = finDb().asked; const items = [];
+    const push = (rule, p, line, kind, label, ym, amount, since, ask) => {
+      const pj = p.project || {}; const lead = resolveLeader(pj.leadId || pj.lead); const id = rule + '|' + p.id + '|' + line + '|' + ym;
+      items.push({ id, rule, ruleLabel: FIN_RULES[rule].label, audience: FIN_RULES[rule].audience, pid: p.id, p, pj, line, kind, label, ym, amount: Math.round(amount * 100) / 100, since, ask,
+        leader: lead ? lead.displayName : (pj.lead || ''), leaderId: lead ? lead.id : '', email: lead ? (lead.username || '') : '', projectId: pj.salesforceId || pj.projectNumber || '', asked: asked[id] || null });
+    };
+    (o.projects || finProjects()).forEach(p => {
+      const L = reconLinesFor(p, cat); const tc = finTimecard(p);
+      (L.all || []).forEach(Lx => {
+        if (Lx.kind === 'share' && Lx.id === 'share' && !String(((p.assumptions || {}).feeShare || {}).broker || '').trim()) {
+          const yr = nowYm.slice(0, 4); const total = Object.keys(Lx.byMonth || {}).filter(k => k.slice(0, 4) === yr).reduce((t, k) => t + Lx.byMonth[k], 0);
+          if (Math.abs(total) >= 0.5) push('share-no-broker', p, Lx.id, Lx.kind, Lx.label, yr, total, null, 'The fee share has no broker named. Add the broker on the calculator so the sheet and the unbilled schedule carry the name.');
+        }
+        if (Lx.kind !== 'fee') return;   // the fee line carries the accrual and billing; its shares and pass-throughs follow it
+        Object.keys(Lx.byMonth || {}).sort().forEach(ym => {
+          const earned = Lx.byMonth[ym]; if (Math.abs(earned) < 0.5 || ym >= nowYm || ym < floor) return;
+          const w = finWorking(p.id, Lx.id, ym, earned, { timecard: tc, now: nowYm });
+          if (w.status === 'billed' || w.status === 'hold' || w.status === 'none') return;
+          // Finance has looked at a month once it has a record, or once the cycle's EOM snapshot is taken (that is the accrual going into the books).
+          const seen = w.set || !!finSnapshot(ym, 'eom');
+          if (!seen) { const d = daysSinceEnd(ym); if (d >= 30) push('earned-idle', p, Lx.id, Lx.kind, Lx.label, ym, earned, d, d >= 60 ? 'Two months with nothing accrued or billed against this. Confirm the schedule, or move it in Revenue Projections.' : 'Did the work happen in ' + finMonthName(ym) + '? If it did, Finance will accrue it; if it has moved, update Revenue Projections.'); }
+          else if (w.billedAmt == null) { const d = daysSinceEnd(w.accruedIn); if (d >= 60) push('accrued-unbilled', p, Lx.id, Lx.kind, Lx.label, ym, w.accruedAmt, d, 'Accrued since ' + finMonthName(w.accruedIn) + ' and not billed. Is there a reason not to bill, or should it be held as bill TBD?'); }
+        });
+      });
+    });
+    Object.keys(finDb().cycles).sort().forEach(cycle => {
+      const fin = finSnapshot(cycle, 'final'); if (!fin) return;
+      finRows(cycle, cat, { now: nowYm, projects: o.projects }).forEach(r => {
+        if (r.dEomFinal == null || Math.abs(r.dEomFinal) < 0.5 || r.work.note) return;
+        push('eom-moved', r.p, r.line, r.kind, r.label, cycle, r.dEomFinal, Math.floor((today - new Date(fin.at)) / 86400000), 'EOM is ' + (r.dEomFinal < 0 ? 'down' : 'up') + ' $' + Math.round(Math.abs(r.dEomFinal)).toLocaleString() + ' from the Final number with no note. Say why on the line.');
+      });
+    });
+    const rank = { 'earned-idle': 0, 'accrued-unbilled': 1, 'eom-moved': 2, 'share-no-broker': 3 };
+    items.sort((a, b) => (a.leader || 'zzz').localeCompare(b.leader || 'zzz') || rank[a.rule] - rank[b.rule] || (b.since || 0) - (a.since || 0) || (a.pj.client || '').localeCompare(b.pj.client || ''));
+    const counts = {}; Object.keys(FIN_RULES).forEach(k => { counts[k] = items.filter(i => i.rule === k).length; });
+    return { items, counts, today: today.toISOString().slice(0, 10) };
+  }
+  /** One follow-up email per revenue leader, in the house shell. */
+  function finFollowUpEmail(leader, items, opts) {
+    const o = opts || {}; const first = String(leader || '').split(' ')[0] || 'there';
+    const dl = o.deadline ? new Date(o.deadline) : null;
+    const when = dl && !isNaN(dl) ? new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(dl) : '';
+    const short = dl && !isNaN(dl) ? new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(dl) : '';
+    const n = items.length; const F = MAIL_FONT;
+    const money = (v) => (v < 0 ? '−' : '') + '$' + Math.round(Math.abs(v)).toLocaleString();
+    const rows = items.map(i => '<tr><td style="padding:7px 10px;border-bottom:1px solid #EFEDE7;font-family:' + F + ';font-size:13px"><b>' + escHtml((i.pj.client ? i.pj.client + ' — ' : '') + (i.pj.name || 'Untitled')) + '</b>' + (i.projectId ? '<br><span style="color:#79828C;font-size:11.5px">' + escHtml(i.projectId) + '</span>' : '') + '</td>' +
+      '<td style="padding:7px 10px;border-bottom:1px solid #EFEDE7;font-family:' + F + ';font-size:13px;white-space:nowrap">' + escHtml(/^\d{4}-\d{2}$/.test(i.ym) ? finMonthName(i.ym) : i.ym) + '</td>' +
+      '<td style="padding:7px 10px;border-bottom:1px solid #EFEDE7;font-family:' + F + ';font-size:13px;text-align:right;white-space:nowrap">' + money(i.amount) + '</td>' +
+      '<td style="padding:7px 10px;border-bottom:1px solid #EFEDE7;font-family:' + F + ';font-size:13px">' + escHtml(i.ruleLabel) + (i.since != null ? ' · ' + i.since + ' days' : '') + '<br><span style="color:#4f5668">' + escHtml(i.ask) + '</span></td></tr>').join('');
+    const table = '<table role="presentation" width="100%" style="border-collapse:collapse;margin:6px 0 4px;font-family:' + F + '"><tr>' + ['Project', 'Month', 'Amount', 'What we need'].map((h, k) => '<th style="text-align:' + (k === 2 ? 'right' : 'left') + ';padding:6px 10px;border-bottom:2px solid #25273A;font-family:' + F + ';font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#79828C">' + h + '</th>').join('') + '</tr>' + rows + '</table>';
+    const paras = ['Hi ' + escHtml(first) + ',',
+      'Finance is closing the month and ' + (n === 1 ? 'one line on your projects needs' : n + ' lines on your projects need') + ' an answer' + (when ? ' by <b>' + escHtml(when) + '</b>' : '') + ':',
+      table,
+      'Reply to this email with the answer, or update Revenue Projections and Finance will pick it up at the next flash.'];
+    const html = noticeHtml('Revenue follow-up · ' + n + ' item' + (n === 1 ? '' : 's'), paras, { href: o.link || appPageUrl('Revenue Projections.html'), label: 'Open Revenue Projections' }, (o.by ? 'Sent by ' + o.by + ' from Financial Tracking. ' : '') + 'Each item is one line on the monthly sheet; the leader owns the answer, Finance owns the books.', { wide: true });
+    const text = 'Hi ' + first + ',\n\nFinance is closing the month and ' + n + ' line' + (n === 1 ? '' : 's') + ' on your projects need' + (n === 1 ? 's' : '') + ' an answer' + (when ? ' by ' + when : '') + ':\n\n' +
+      items.map(i => '- ' + (i.pj.client ? i.pj.client + ' — ' : '') + (i.pj.name || 'Untitled') + ' · ' + (/^\d{4}-\d{2}$/.test(i.ym) ? finMonthName(i.ym) : i.ym) + ' · ' + money(i.amount) + ' · ' + i.ruleLabel + (i.since != null ? ' · ' + i.since + ' days' : '') + '\n  ' + i.ask).join('\n') +
+      '\n\nReply with the answer, or update Revenue Projections and Finance will pick it up at the next flash.\n' + (o.link || appPageUrl('Revenue Projections.html'));
+    return { subject: 'PPM revenue follow-up · ' + n + ' item' + (n === 1 ? '' : 's') + (short ? ' · due ' + short : ''), html, text, count: n };
+  }
+  /** Remember that these items were asked, so the list can say so and the
+      next round does not re-tick them straight away. */
+  function markFinAsked(items, opts) {
+    assertReconAdmin(); const o = opts || {}; const who = reconWho(); const at = new Date().toISOString();
+    return finEdit(f => {
+      (items || []).forEach(i => { f.asked[i.id] = { at, by: who.by, byName: who.byName, to: o.to || '', deadline: o.deadline || '' }; });
+      logActivity('fin-followup', null, { leader: o.leader || '', to: o.to || '', items: (items || []).length, names: [...new Set((items || []).map(i => (i.pj || {}).name || ''))].filter(Boolean).join(', '), deadline: o.deadline || '', edited: !!o.edited });
+      return (items || []).length;
+    });
   }
   /** The cycle's state for the stepper. */
   function finCycleState(cycle) {
@@ -4453,7 +4539,7 @@
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, isSmallWorks, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
     INTAKE_TO, INTAKE_FIELDS, priorBookedForClient, intakeStatus, setReadyToBill, readyToBillOf, buildInvoiceRequest, markReadyToBillSubmitted,
-    FIN_STATUS, FIN_FLAGS, finKey, finYmPlus, finLine, setFinLine, finWorking, finCycle, finSnapshot, takeFinSnapshot, finProjects, finTimecard, finRows, finSnapshotValues, finCycleState, finOpening, setFinOpening, finUnbilled,
+    FIN_STATUS, FIN_FLAGS, finKey, finYmPlus, finLine, setFinLine, finWorking, finCycle, finSnapshot, takeFinSnapshot, finProjects, finTimecard, finRows, finSnapshotValues, finCycleState, finOpening, setFinOpening, finUnbilled, FIN_RULES, finFollowUps, finFollowUpEmail, markFinAsked,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,

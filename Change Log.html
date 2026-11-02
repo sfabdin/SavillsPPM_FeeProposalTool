@@ -209,6 +209,7 @@
     'staff-titles': 'Titles filled', 'staff-rename': 'Projects renamed',
     'staff-map': 'Mapping', 'staff-gap-dismiss': 'Gap dismissed', 'staff-gap-restore': 'Gap restored',
     'clockify-email': 'Clockify email', 'ready-to-bill': 'Ready to bill', 'invoice-request': 'Invoice request',
+    'fin-line': 'Financial Tracking (TEST) line', 'fin-snapshot': 'Financial Tracking (TEST) snapshot', 'fin-opening': 'Unbilled opening balance', 'fin-export': 'Financial Tracking (TEST) export', 'fin-followup': 'Revenue follow-up',
   };
   /* Which badge an action wears. Grouped by what the action DOES, not by which
      module raised it — a reader cares that money moved, not that it moved in
@@ -221,7 +222,8 @@
     : /^open$/.test(a) ? 'open'
     : /^(maintenance|vocab|import|activity-migrate|ledger-migrate|cycle-open|cycle-deadline|cycle-name|cycle-period|cycle-lock|cycle-reopen|cycle-review|cycle-delete|report-years|pt-months-cleanup|recon-lock|recon-reopen|recon-flash)$/.test(a) ? 'system'
     : /^(staff-|clockify-email$)/.test(a) ? 'staff'
-    : /^(ready-to-bill|invoice-request)$/.test(a) ? 'ledger'
+    : /^(ready-to-bill|invoice-request|fin-line|fin-opening|fin-followup)$/.test(a) ? 'ledger'
+    : /^(fin-snapshot|fin-export)$/.test(a) ? 'system'
     : /^(ledger-|plan-adjust$|schedule-shift$|reconcile-commit$)/.test(a) ? 'ledger'
     : 'edit';
   let search = '', who = '', action = '', rangeDays = 30, limit = 200, noise = false;
@@ -451,6 +453,14 @@
       : 'Sent the Clockify status email to <b>' + (m.to || 0) + '</b> address' + ((m.to || 0) === 1 ? '' : 'es') + ' — ' + (m.behind || 0) + ' of ' + (m.people || 0) + ' people behind' + (m.attached ? ', workbook attached' : '');
     if (a === 'ready-to-bill') return (m.ready ? 'Marked <b>' : 'Cleared the ready-to-bill mark on <b>') + esc(ymLabelSafe(m.ym)) + '</b>' + (m.ready ? ' ready to bill' : '');
     if (a === 'invoice-request') return 'Submitted <b>' + esc(ymLabelSafe(m.ym)) + '</b> for invoicing' + (m.amount != null ? ' — $' + Math.round(m.amount).toLocaleString() : '') + (m.lines ? ' · ' + m.lines + ' line' + (m.lines === 1 ? '' : 's') + ' in the request' : '');
+    if (a === 'fin-line') { const ln = m.line === 'fee' ? 'fee' : m.line === 'share' ? 'fee share' : 'pass-through'; if (m.cleared) return 'Cleared Finance\'s record on the <b>' + ln + '</b> line for ' + esc(ymLabelSafe(m.ym));
+      const bits = []; if (m.billedAmt != null) bits.push('billed $' + Math.round(m.billedAmt).toLocaleString() + (m.billedIn ? ' in ' + ymLabelSafe(m.billedIn) : '') + (m.invoice ? ' · ' + m.invoice : '')); else if (m.accruedAmt != null) bits.push('accrued $' + Math.round(m.accruedAmt).toLocaleString() + (m.accruedIn ? ' in ' + ymLabelSafe(m.accruedIn) : ''));
+      if (m.hold) bits.push('bill TBD'); if (m.flag) bits.push(m.flag === 'cr' ? 'discuss with CR' : 'awaiting invoice approval');
+      return 'Recorded the <b>' + ln + '</b> line for ' + esc(ymLabelSafe(m.ym)) + (bits.length ? ' — ' + esc(bits.join(' · ')) : ''); }
+    if (a === 'fin-snapshot') return (m.replaced ? 'Retook' : 'Took') + ' the <b>' + esc(m.kind || '') + '</b> snapshot for ' + esc(ymLabelSafe(m.ym)) + ' work performed' + (m.lines ? ' · ' + m.lines + ' line-months frozen' : '');
+    if (a === 'fin-opening') return m.cleared ? 'Cleared the unbilled schedule\'s opening balance and comment' : 'Unbilled schedule — ' + [m.amount != null ? 'opening balance $' + Math.round(m.amount).toLocaleString() : '', m.comment ? 'comment “' + esc(m.comment) + '”' : ''].filter(Boolean).join(' · ');
+    if (a === 'fin-export') return 'Exported the ' + (m.kind === 'unbilled' ? 'unbilled schedule' : 'EOM file') + ' for ' + esc(ymLabelSafe(m.ym)) + (m.lines ? ' · ' + m.lines + ' lines' : '');
+    if (a === 'fin-followup') return 'Sent a revenue follow-up to <b>' + esc(m.leader || m.to || '') + '</b> — ' + (m.items || 0) + ' item' + ((m.items || 0) === 1 ? '' : 's') + (m.names ? ' · ' + esc(m.names) : '') + (m.edited ? ' (reworded by hand)' : '');
 
     const n = (m.changes || []).length;
     return n ? ('Changed ' + n + ' field' + (n === 1 ? '' : 's')) : 'Saved changes';
