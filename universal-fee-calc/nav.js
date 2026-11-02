@@ -41,6 +41,8 @@
     // ── 4 · Track the money (admin) ──
     { href: 'Revenue Reconciliation.html',   label: 'Financial Tracking',  group: 'Track the money', admin: true,
       desc: 'Finance\'s monthly book, built from the fee tool: a status on every fee, pass-through and fee-share line, the monthly flash, and a lock per month — a project edit that moves a locked month is flagged red.' },
+    { href: 'Financial Tracking (TEST).html', label: 'Financial Tracking (TEST)', group: 'Track the money', admin: true,
+      desc: 'The rework in progress: Finance\'s working sheet by work-performed month — earned locked, accrued and billed with their own months and amounts, Flash / Final / EOM snapshots, fee shares as their own rows. Keeps its own records; the original page is untouched.' },
     { href: 'Profitability.html',            label: 'Profitability Analysis', group: 'Track the money', admin: true,
       desc: 'Revenue with Clockify burn (hours × cost rate) laid against it — margin per project, per month.' },
     // ── Keep it clean — everyone owns their own data ──

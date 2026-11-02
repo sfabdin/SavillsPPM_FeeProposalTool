@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Savills PPM Fee &amp; Revenue System">
+<title>Savills PPM · Financial Tracking (TEST)</title>
+<link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Book.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Bold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<link rel="stylesheet" href="universal-fee-calc/confirmed-book.css">
+<link rel="stylesheet" href="universal-fee-calc/revenue-reconciliation.css">
+<link rel="stylesheet" href="universal-fee-calc/fin-test.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div class="title-block">
+      <h1><a href="Fee Generator.html">Financial Tracking <span style="color:var(--sav-red)">(TEST)</span></a></h1>
+      <p class="tagline">Finance's working sheet, one month of <b>work performed</b> at a time: the revenue leader's earned figure locked, then prior EOM, Flash, Final and EOM side by side with the deltas, the billing with its invoice and date, and what is accrued but not yet billed. Take the three snapshots from the stepper as the billing month runs. The original <a href="Revenue Reconciliation.html">Financial Tracking</a> page is untouched; this one keeps its own records.</p>
+    </div>
+  </header>
+
+  <div class="identity-bar">
+    <div class="id-who">
+      <span class="id-label">Viewing as</span>
+      <select id="id-user"></select>
+      <span class="id-role" id="id-role"></span>
+      <span class="id-note" id="id-note"></span>
+    </div>
+  </div>
+
+  <section id="fin" class="cb-pane"></section>
+
+  <div class="foot">
+    <strong>How this works.</strong> &nbsp; <b>Earned</b> is the revenue leader's number from Revenue Projections and is never edited here. <b>Accrued</b> is what Finance recognises for the month, with its own month and amount; <b>Billed</b> is the invoice, with its own month, amount, number and date. The two can differ on purpose. Status follows those lanes: not yet billed, awaiting invoice approval, discuss with CR, accrued · bill TBD (a hold), billed. The <b>EOM</b> column is the working accrual; <b>Flash</b>, <b>Final</b> and <b>EOM</b> are frozen copies of it taken from the stepper, and last month's EOM snapshot is this month's <b>Prior EOM</b>. Fee shares are their own negative rows with the broker named. <b>Export EOM file</b> writes the sheet in Finance's layout.
+  </div>
+
+</div>
+
+<script>window.UFC_NEEDS = ['revenue'];</script>
+<script src="universal-fee-calc/vendor-lazy.js"></script>
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/cache-store.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/confirmed-book.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/ui.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/fin-test-page.js"></script>
+<script src="universal-fee-calc/guide.js"></script>
+<script src="universal-fee-calc/confirm-widget.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+</body>
+</html>
