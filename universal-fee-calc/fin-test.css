@@ -4,6 +4,25 @@
    (confirmed-book.css, revenue-reconciliation.css); this adds the
    cycle stepper, the sheet's status colours and the three-lane pop-up.
    ============================================================ */
+.ft-view { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; border: 2px solid var(--sav-navy); margin: 18px 0 0; }
+.ft-view button { font-family: var(--font-display); text-align: left; background: #fff; border: 0; padding: 12px 18px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; color: var(--sav-navy); }
+.ft-view button + button { border-left: 2px solid var(--sav-navy); }
+.ft-view button b { font-weight: 900; font-size: 17px; letter-spacing: -.01em; }
+.ft-view button small { font-family: var(--font-body); font-size: 12px; color: var(--sav-steel); }
+.ft-view button.on { background: var(--sav-navy); color: #fff; } .ft-view button.on small { color: rgba(255,255,255,.75); }
+/* the unbilled schedule */
+.ft-sum { display: flex; flex: 1; border: 2px solid var(--sav-navy); min-width: 0; }
+.ft-sum > div { flex: 1; padding: 8px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ft-sum > div + div { border-left: 2px solid var(--sav-navy); }
+.ft-sum small { font-family: var(--font-display); font-weight: 800; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--sav-steel); }
+.ft-sum b { font-family: var(--font-display); font-weight: 800; font-size: 18px; white-space: nowrap; }
+.ft-sum .now { background: var(--sav-navy); } .ft-sum .now small { color: rgba(255,255,255,.75); } .ft-sum .now b { color: #fff; }
+.ft-filt .grow { flex: 1; min-width: 240px; }
+.ft-ub td.money { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ft-ub input.ft-open { font: inherit; font-weight: 700; font-size: 12.5px; width: 100px; text-align: right; padding: 4px 6px; border: 1px solid rgba(37,39,58,.25); background: #fff; }
+.ft-ub td.cmt { min-width: 220px; } .ft-ub input.ft-cmt { font: inherit; font-size: 12px; width: 100%; box-sizing: border-box; padding: 4px 6px; border: 1px solid rgba(37,39,58,.18); background: #fff; }
+.ft-ub input.ft-cmt::placeholder { color: #8a8f9c; font-style: italic; }
+.ft-ub tr.ft-row.ln-share input.ft-cmt, .ft-ub tr.ft-row.ln-share input.ft-open { color: var(--sav-red); }
 .ft-bar { display: flex; align-items: stretch; gap: 16px; flex-wrap: wrap; margin: 18px 0 10px; }
 .ft-cycle label { display: block; font-family: var(--font-display); font-weight: 800; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--sav-steel); margin-bottom: 4px; }
 .ft-cycle select { font: inherit; font-weight: 700; font-size: 15px; padding: 7px 10px; border: 1px solid rgba(37,39,58,.25); background: #fff; }
@@ -71,4 +90,4 @@
 .ft-sibs { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .ft-sib { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 9px; border: 1px solid rgba(37,39,58,.2); background: #fff; cursor: pointer; }
 .ft-sib.ln-share { color: var(--sav-red); } .ft-sib.ln-pass { color: var(--sav-teal, #238291); }
-@media (max-width: 900px) { .ft-lanes { grid-template-columns: 1fr; } .ft-steps { flex-direction: column; } .ft-step + .ft-step { border-left: 0; border-top: 2px solid var(--sav-navy); } }
+@media (max-width: 900px) { .ft-lanes { grid-template-columns: 1fr; } .ft-steps, .ft-sum { flex-direction: column; } .ft-sum > div + div { border-left: 0; border-top: 2px solid var(--sav-navy); } .ft-view { grid-template-columns: 1fr; } .ft-view button + button { border-left: 0; border-top: 2px solid var(--sav-navy); } .ft-step + .ft-step { border-left: 0; border-top: 2px solid var(--sav-navy); } }

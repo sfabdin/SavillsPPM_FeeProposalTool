@@ -42,9 +42,13 @@
 
   /* ---------- state ---------- */
   const KEY = 'ufc_fin_test_v1';
-  let CYCLE = STORE.finYmPlus(NOW_KEY, -1), TAB = 'all', LEADER = '', Q = '';
-  try { const sv = JSON.parse(localStorage.getItem(KEY) || '{}'); if (/^\d{4}-\d{2}$/.test(sv.cycle || '')) CYCLE = sv.cycle; if (['all', 'fixed', 'timecard'].includes(sv.tab)) TAB = sv.tab; } catch (e) {}
-  const remember = () => { try { localStorage.setItem(KEY, JSON.stringify({ cycle: CYCLE, tab: TAB })); } catch (e) {} };
+  const VIEWS = [['sheet', 'Monthly sheet', 'One month of work performed: earned, the three snapshots, the billing.'], ['unbilled', 'Unbilled schedule', 'Accrued less billed, month by month, to a running balance per line.']];
+  let VIEW = 'sheet', CYCLE = STORE.finYmPlus(NOW_KEY, -1), ASOF = CYCLE, TAB = 'all', LEADER = '', Q = '';
+  try { const sv = JSON.parse(localStorage.getItem(KEY) || '{}'); if (/^\d{4}-\d{2}$/.test(sv.cycle || '')) CYCLE = sv.cycle; if (/^\d{4}-\d{2}$/.test(sv.asOf || '')) ASOF = sv.asOf; if (['all', 'fixed', 'timecard'].includes(sv.tab)) TAB = sv.tab; if (VIEWS.some(v => v[0] === sv.view)) VIEW = sv.view; } catch (e) {}
+  if (ASOF > NOW_KEY) ASOF = NOW_KEY;
+  const remember = () => { try { localStorage.setItem(KEY, JSON.stringify({ view: VIEW, cycle: CYCLE, asOf: ASOF, tab: TAB })); } catch (e) {} };
+  const viewsHtml = () => '<div class="ft-view" role="tablist">' + VIEWS.map(([k, l, d]) => '<button type="button" role="tab" data-view="' + k + '" class="' + (VIEW === k ? 'on' : '') + '"><b>' + l + '</b><small>' + d + '</small></button>').join('') + '</div>';
+  const wireViews = (host) => $$('.ft-view [data-view]', host).forEach(b => b.addEventListener('click', () => { VIEW = b.dataset.view; remember(); render(); }));
 
   const leaderName = (p) => { const pj = p.project || {}; const l = STORE.resolveLeader && STORE.resolveLeader(pj.leadId || pj.lead); return l ? l.displayName : (pj.lead || ''); };
   function cycleOptions() {
@@ -70,6 +74,7 @@
   function render() {
     const host = $('#fin'); if (!host) return;
     if (!admin()) { host.innerHTML = '<div class="panel"><h2>Admins only</h2><p class="sub">Financial Tracking is Finance\'s book.</p></div>'; return; }
+    if (VIEW === 'unbilled') { host.innerHTML = viewsHtml() + unbilledHtml(); wireViews(host); wireUnbilled(host); return; }
     const st = STORE.finCycleState(CYCLE);
     const rows = rowsNow();
     const fixed = rows.filter(r => !r.timecard), tcard = rows.filter(r => r.timecard);
@@ -80,7 +85,7 @@
     const step = (kind, n, label, hint) => { const s = st[kind]; const on = !st.flash ? kind === 'flash' : !st.final ? kind === 'final' : kind === 'eom';
       return '<div class="ft-step' + (s ? ' done' : on ? ' now' : '') + '"><b>' + n + ' ' + label + '</b><small>' + (s ? 'taken ' + esc(fmtStamp(s.at)) + (s.byName ? ' · ' + esc(s.byName) : '') : hint) + '</small>' +
         '<button type="button" class="btn ' + (s ? 'btn-ghost' : 'btn-primary') + ' small" data-snap="' + kind + '">' + (s ? 'Retake' : 'Take ' + label) + '</button></div>'; };
-    let h = '<div class="ft-bar">' +
+    let h = viewsHtml() + '<div class="ft-bar">' +
       '<div class="ft-cycle"><label for="ft-cycle">Work performed</label><select id="ft-cycle">' + cycleOptions().map(k => '<option value="' + k + '"' + (k === CYCLE ? ' selected' : '') + '>' + ymLong(k) + '</option>').join('') + '</select><div class="sub">billed in ' + esc(ymLong(billingYm)) + (st.lockedAt ? ' · <b>locked</b>' : '') + '</div></div>' +
       '<div class="ft-steps">' + step('flash', '①', 'Flash', 'early in ' + MONTHS[+billingYm.slice(5) - 1]) + step('final', '②', 'Final', 'the approval number') + step('eom', '③', 'EOM', 'at month end') + '</div>' +
       '<div class="ft-actions"><button type="button" class="btn btn-primary" id="ft-export">⤓ Export EOM file</button></div></div>';
@@ -123,7 +128,85 @@
     h += '<div class="panel ft-panel"><div class="tw"><table class="cb-table ft-table">' + head + '<tbody>' + body + '</tbody></table></div>' +
       '<div class="ft-legend"><span><i class="s-confirm"></i>Not yet billed · requires confirmation</span><span><i class="s-approval"></i>Awaiting invoice approval</span><span><i class="s-cr"></i>Discuss with CR</span><span><i class="s-billed"></i>Billed</span><span><i class="s-hold"></i>Accrued · bill TBD</span><span><i class="s-planned"></i>Planned · month not reached</span><span class="grow"></span><span class="sub">Yellow = what you type this cycle. Everything else is a snapshot or derived.</span></div></div>';
     host.innerHTML = h;
-    wire(host, st);
+    wireViews(host); wire(host, st);
+  }
+
+  /* ---------- the unbilled schedule ---------- */
+  function unbilledNow() {
+    const U = STORE.finUnbilled(ASOF, CATALOG);
+    let rows = U.rows;
+    if (LEADER) rows = rows.filter(r => r.leader === LEADER);
+    if (Q) { const q = Q.toLowerCase(); rows = rows.filter(r => ((r.pj.client || '') + ' ' + (r.pj.name || '') + ' ' + r.broker + ' ' + r.projectId).toLowerCase().includes(q)); }
+    return Object.assign({}, U, { rows, all: U.rows });
+  }
+  const monthEnd = (k) => { const [y, m] = k.split('-').map(Number); return m + '/' + new Date(y, m, 0).getDate() + '/' + y; };
+  const act = (n) => Math.abs(n) < 0.5 ? '<span class="d0">·</span>' : '<span class="' + (n < 0 ? 'dneg' : 'dpos') + '">' + (n < 0 ? '−' : '+') + Math.round(Math.abs(n)).toLocaleString() + '</span>';
+  const bal = (n, strong) => { const t = (n < 0 ? '−' : '') + Math.round(Math.abs(n)).toLocaleString(); return strong ? '<b>' + t + '</b>' : (Math.abs(n) < 0.5 ? '<span class="d0">0</span>' : t); };
+  function unbilledHtml() {
+    const U = unbilledNow(); const rows = U.rows; const year = ASOF.slice(0, 4); const prev = Number(year) - 1;
+    const leaders = [...new Set(U.all.map(r => r.leader).filter(Boolean))].sort();
+    const opts = []; for (let k = year + '-01'; k <= NOW_KEY; k = STORE.finYmPlus(k, 1)) opts.push(k);
+    const T = { opening: sum(rows, r => r.opening), closing: sum(rows, r => r.closing), acc: sum(rows, r => U.months.reduce((t, m) => t + r.byMonth[m].acc, 0)), bill: sum(rows, r => U.months.reduce((t, m) => t + r.byMonth[m].bill, 0)) };
+    let h = '<div class="ft-bar">' +
+      '<div class="ft-cycle"><label for="ft-asof">Balances at</label><select id="ft-asof">' + opts.map(k => '<option value="' + k + '"' + (k === ASOF ? ' selected' : '') + '>' + monthEnd(k) + '</option>').join('') + '</select><div class="sub">opening balance at 12/31/' + prev + '</div></div>' +
+      '<div class="ft-sum"><div><small>Opening · 12/31/' + prev + '</small><b>' + money(T.opening) + '</b></div><div><small>Accrued ' + year + ' to date</small><b>' + money(T.acc) + '</b></div><div><small>Billed ' + year + ' to date</small><b>' + money(T.bill) + '</b></div><div class="now"><small>Unbilled at ' + esc(monthEnd(ASOF)) + '</small><b>' + money(T.closing) + '</b></div></div>' +
+      '<div class="ft-actions"><button type="button" class="btn btn-primary" id="ft-ub-export">⤓ Export schedule</button></div></div>';
+    h += '<div class="ft-filt"><input type="search" id="ft-q" placeholder="Search client, project, broker or ID" value="' + esc(Q) + '"><select id="ft-leader"><option value="">All revenue leaders</option>' + leaders.map(l => '<option value="' + esc(l) + '"' + (l === LEADER ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>' +
+      '<span class="sub grow">' + rows.length + ' line' + (rows.length === 1 ? '' : 's') + ' with a balance or activity this year. Nothing is retyped: the opening balance is typed once from last year\'s schedule, each month is the sheet\'s accruals less its billings.</span></div>';
+    const last = U.months[U.months.length - 1];
+    const head = '<thead><tr><th>Project</th><th class="money">Balance<small>12/31/' + prev + '</small></th>' + U.months.map(m => '<th class="money">' + MONTHS[+m.slice(5) - 1] + '</th><th class="money' + (m === last ? ' eom' : '') + '">YTD<small>' + monthEnd(m) + '</small></th>').join('') + '<th>Comment</th></tr></thead>';
+    const rowHtml = (r) => {
+      const sub = r.kind !== 'fee';
+      const proj = sub ? '<td class="pj sub-pj">↳ ' + (r.kind === 'share' ? 'fee share · <b>' + esc(r.broker || 'broker') + '</b>' : esc(r.label)) + '</td>'
+        : '<td class="pj"><a href="Universal Fee Calculator.html?id=' + encodeURIComponent(r.pid) + '"><b>' + esc(r.pj.client || '—') + ' — ' + esc(r.pj.name || 'Untitled') + '</b></a><div class="sub">' + esc([r.projectId, r.leader, r.timecard ? 'time card' : ''].filter(Boolean).join(' · ')) + '</div></td>';
+      return '<tr class="ft-row' + (sub ? ' ln-' + r.kind : '') + '" data-key="' + esc(r.key) + '">' + proj +
+        '<td class="money open"><input type="number" step="1" class="ft-open" data-key="' + esc(r.key) + '" value="' + (r.openingSet ? Math.round(r.opening) : '') + '" placeholder="0" title="Accrued and not yet billed at 12/31/' + prev + ' — typed once from last year\'s schedule"></td>' +
+        U.months.map(m => { const c = r.byMonth[m]; return '<td class="money">' + act(c.net) + '</td><td class="money' + (m === last ? ' eom' : '') + '">' + bal(c.ytd, m === last) + '</td>'; }).join('') +
+        '<td class="cmt"><input type="text" class="ft-cmt" data-key="' + esc(r.key) + '" value="' + esc(r.comment) + '" placeholder="' + esc(r.autoComment) + '"></td></tr>';
+    };
+    let body = rows.length ? rows.map(rowHtml).join('') : '<tr><td colspan="' + (3 + U.months.length * 2) + '" class="sub">No balances or activity in ' + year + (LEADER || Q ? ' for this filter' : '') + '. Type the opening balances from last year\'s schedule, or work a month on the sheet.</td></tr>';
+    const gross = rows.filter(r => r.kind !== 'share'), share = rows.filter(r => r.kind === 'share');
+    const tot = (label, list, cls) => '<tr class="' + (cls || 'ft-sub') + '"><td>' + label + ' <span class="sub">· ' + list.length + ' line' + (list.length === 1 ? '' : 's') + '</span></td><td class="money">' + bal(sum(list, r => r.opening)) + '</td>' +
+      U.months.map(m => '<td class="money">' + act(sum(list, r => r.byMonth[m].net)) + '</td><td class="money' + (m === last ? ' eom' : '') + '">' + bal(sum(list, r => r.byMonth[m].ytd), m === last) + '</td>').join('') + '<td></td></tr>';
+    body += tot('Unbilled · all lines', rows, 'ft-tot') + tot('of which · gross revenue', gross) + tot('of which · fee share out', share, 'ft-sub ft-share');
+    h += '<div class="panel ft-panel"><div class="tw"><table class="cb-table ft-table ft-ub">' + head + '<tbody>' + body + '</tbody></table></div>' +
+      '<div class="ft-legend"><span><span class="dpos">+</span> accrued in the month</span><span><span class="dneg">−</span> billed in the month</span><span>YTD = the running balance at the month end</span><span class="grow"></span><span class="sub">A grey comment is derived from the line; type over it to keep your own.</span></div></div>';
+    return h;
+  }
+  function wireUnbilled(host) {
+    $('#ft-asof', host).addEventListener('change', e => { ASOF = e.target.value; remember(); render(); });
+    $('#ft-q', host).addEventListener('input', e => { Q = e.target.value; render(); const q = $('#ft-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } });
+    $('#ft-leader', host).addEventListener('change', e => { LEADER = e.target.value; render(); });
+    $('#ft-ub-export', host).addEventListener('click', () => exportUnbilled().catch(e => toast('Export failed: ' + (e.message || e))));
+    const save = (inp, patch) => { const [pid, line] = inp.dataset.key.split('|'); try { STORE.setFinOpening(pid, line, patch); flush(); } catch (e) { toast(e.message); } const y = window.scrollY; render(); window.scrollTo(0, y); };
+    $$('.ft-open', host).forEach(inp => inp.addEventListener('change', () => save(inp, { amount: inp.value === '' ? null : Number(inp.value) })));
+    $$('.ft-cmt', host).forEach(inp => inp.addEventListener('change', () => save(inp, { comment: inp.value })));
+  }
+  async function exportUnbilled() {
+    await window.UFC_Vendor.excel();
+    if (typeof ExcelJS === 'undefined') { toast('Excel library not loaded.'); return; }
+    const U = STORE.finUnbilled(ASOF, CATALOG); const year = ASOF.slice(0, 4); const prev = Number(year) - 1;
+    const NAVY = 'FF25273A', WHITE = 'FFFFFFFF', RED = 'FFCE181E'; const fmt = '#,##0;[Red]-#,##0;"-"';
+    const wb = new ExcelJS.Workbook(); wb.creator = 'Savills PPM · Financial Tracking (TEST)';
+    const ws = wb.addWorksheet(MONTHS[+ASOF.slice(5) - 1] + ' ' + year + ' Unbilled Sched', { views: [{ state: 'frozen', ySplit: 4, xSplit: 3 }] });
+    const ncol = 4 + U.months.length * 2;
+    ws.getCell('B1').value = 'P&PM — Schedule of Unbilled Fees'; ws.getCell('B1').font = { name: 'Calibri', bold: true, size: 14, color: { argb: NAVY } };
+    ws.getCell('B2').value = 'Balances at ' + ymLong(ASOF).replace(/^(\w+) /, (m, w) => w + ' ' + new Date(+year, +ASOF.slice(5), 0).getDate() + ', '); ws.getCell('B2').font = { name: 'Calibri', bold: true };
+    const h3 = ws.addRow(['Project ID', 'Client', 'Project', 'Balance'].concat(...U.months.map(m => [MONTHS_LONG[+m.slice(5) - 1], 'YTD']), ['Comments']));
+    const h4 = ws.addRow(['', '', '', new Date(prev, 11, 31)].concat(...U.months.map(m => ['', new Date(+m.slice(0, 4), +m.slice(5), 0)]), ['']));
+    [h3, h4].forEach(r => r.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; c.alignment = { horizontal: 'center' }; }));
+    h4.eachCell((c, i) => { if (i >= 4) c.numFmt = 'm/d/yyyy'; });
+    const put = (vals, opts) => { const x = ws.addRow(vals); x.eachCell((c, i) => { if (i >= 4 && i < ncol) c.numFmt = fmt; if (opts && opts.bold) c.font = { name: 'Calibri', bold: true }; if (opts && opts.red) c.font = { name: 'Calibri', bold: !!opts.bold, color: { argb: RED } }; if (opts && opts.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } }; }); return x; };
+    U.rows.forEach(r => put([r.projectId, r.pj.client || '', (r.pj.name || '') + (r.kind === 'share' ? ' — FEE SHARE (' + r.broker + ')' : r.kind === 'pass' ? ' — ' + r.label : ''), r.opening].concat(...U.months.map(m => [r.byMonth[m].net || null, r.byMonth[m].ytd]), [r.comment || r.autoComment]), { red: r.kind === 'share' }));
+    const tot = (label, list, o) => put(['', label, '', sum(list, r => r.opening)].concat(...U.months.map(m => [sum(list, r => r.byMonth[m].net), sum(list, r => r.byMonth[m].ytd)]), ['']), Object.assign({ bold: true, fill: 'FFEEE8E3' }, o || {}));
+    ws.addRow([]);
+    const t = tot('Unbilled — all lines', U.rows); t.eachCell(c => { c.font = { name: 'Calibri', bold: true, color: { argb: WHITE } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }; });
+    tot('Gross revenue', U.rows.filter(r => r.kind !== 'share')); tot('Fee share', U.rows.filter(r => r.kind === 'share'), { red: true });
+    ws.columns = [{ width: 12 }, { width: 24 }, { width: 46 }, { width: 13 }].concat(...U.months.map(() => [{ width: 11 }, { width: 12 }]), [{ width: 44 }]);
+    const buf = await wb.xlsx.writeBuffer(); const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Savills PPM - ' + ASOF.slice(5) + '.' + year.slice(2) + ' Unbilled Schedule.xlsx'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    try { STORE.logSystem && STORE.logSystem('fin-export', { ym: ASOF, kind: 'unbilled', lines: U.rows.length }); } catch (e) {}
   }
 
   function wire(host, st) {
@@ -245,5 +328,5 @@
     document.addEventListener('ufc:revenue-updated', () => render());
   }
   if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(start, start); else start();
-  window.UFC_FinTest = { render, openLine, exportEom };
+  window.UFC_FinTest = { render, openLine, exportEom, exportUnbilled };
 })();

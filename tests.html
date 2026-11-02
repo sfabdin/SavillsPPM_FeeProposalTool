@@ -1412,6 +1412,33 @@
              sq(f2.dPriorFlash + '|' + f2.dFinalFlash + '|' + f2.dEomFinal, '0|-1000|0', 'the deltas') &&
              sq(!!st.flash && !!st.final && !st.eom && !!st.priorEom, true, 'the stepper knows what has been taken');
     });
+    test('Fin (TEST) · unbilled schedule', 'the schedule is derived from the lines: an opening balance typed once, each month\'s accruals less billings, a running balance, fee shares as negatives, and a comment that is typed or derived', () => {
+      const p = setup(); const L = S.reconLinesFor(p, C); const r2 = (n) => Math.round(n * 100) / 100;
+      const jan = r2(L.fee['2026-01']), feb = r2(L.fee['2026-02']), mar = r2(L.fee['2026-03']), apr = r2(L.fee['2026-04']);
+      const shJan = r2(L.out.find(x => x.id === 'share').byMonth['2026-01']);
+      S.setFinOpening('rc_a', 'fee', { amount: 5000 });
+      S.setFinLine('rc_a', 'fee', '2026-01', { billedIn: '2026-02', billedAmt: jan + 5000, invoice: 'INV-1', billedDate: '2026-02-20' });   // January's work and the carry-in billed in February
+      S.setFinLine('rc_a', 'fee', '2026-02', { accruedIn: '2026-03', note: 'milestone slipped a month' });                              // February's work accrued in March
+      S.setFinLine('rc_a', 'fee', '2025-11', { accruedIn: '2025-11', accruedAmt: 900, billedIn: '2026-01', billedAmt: 900 });           // old work: the accrual is history, the billing lands in January
+      const U = S.finUnbilled('2026-04', C, { now: '2026-05' });
+      const fee = U.rows.find(r => r.line === 'fee'), share = U.rows.find(r => r.kind === 'share');
+      const m = (k) => fee.byMonth[k];
+      const pre = S.finUnbilled('2026-03', C, { now: '2026-05' }).rows.find(r => r.line === 'fee');
+      S.setFinOpening('rc_a', 'fee', { comment: 'bill TBD, PO pending' });
+      const typed = S.finUnbilled('2026-04', C, { now: '2026-05' }).rows.find(r => r.line === 'fee');
+      const cleared = (S.setFinOpening('rc_a', 'fee', { amount: null, comment: '' }), S.finOpening('rc_a', 'fee'));
+      return sq(U.months.join(), '2026-01,2026-02,2026-03,2026-04', 'January to the cutoff') &&
+             sq(fee.opening + '|' + fee.openingSet, '5000|true', 'the opening balance as typed') &&
+             sq(m('2026-01').acc + '|' + m('2026-01').bill + '|' + m('2026-01').ytd, jan + '|900|' + r2(5000 + jan - 900), 'January: accrued the month, billed the old work') &&
+             sq(m('2026-02').acc + '|' + m('2026-02').bill, '0|' + r2(jan + 5000), 'February: nothing accrued (it moved to March), the January work and the carry-in billed') &&
+             sq(m('2026-02').ytd, r2(5000 + jan - 900 - jan - 5000), 'the balance after February is the old billing, a minus') &&
+             sq(m('2026-03').acc, r2(feb + mar), 'March: its own work plus February\'s') && sq(m('2026-04').acc, apr, 'April: its own') &&
+             sq(r2(fee.closing), r2(-900 + feb + mar + apr), 'the closing balance is the running total') && sq(r2(U.totals.closing), r2(fee.closing + U.rows.filter(r => r.line !== 'fee').reduce((t, r) => t + r.closing, 0)), 'the total adds every line') &&
+             sq(!!share && r2(share.byMonth['2026-01'].acc), shJan, 'the fee share row carries its minus') && sq(share.broker, 'CBRE', 'named to the broker') && sq(share.closing < 0, true, 'and stays negative') &&
+             sq(fee.autoComment, 'milestone slipped a month', 'the latest note is the derived comment') && sq(typed.comment, 'bill TBD, PO pending', 'a typed comment is kept') &&
+             sq(pre.months === undefined && pre.byMonth['2026-03'] && !pre.byMonth['2026-04'], true, 'an earlier cutoff stops at its month') &&
+             sq(cleared, null, 'clearing both fields drops the record');
+    });
   })();
 
   /* ============================================================
