@@ -4117,6 +4117,70 @@
     [0, 1, 2].forEach(n => finRows(finYmPlus(ym, n), catalog).forEach(r => { vals[r.key] = r.eom; }));
     return vals;
   }
+  /** The unbilled schedule's own line: the opening balance Finance types
+      from history (what was accrued and not yet billed at the prior year
+      end) and the comment they keep on the line. */
+  function finOpening(pid, line) { return finDb().opening[pid + '|' + line] || null; }
+  function setFinOpening(pid, line, patch) {
+    assertReconAdmin();
+    const key = pid + '|' + line; const x = patch || {}; const who = reconWho();
+    return finEdit(f => {
+      const c = Object.assign({}, f.opening[key] || {});
+      if ('amount' in x) { const n = (x.amount == null || x.amount === '') ? null : Number(x.amount); if (n == null || !isFinite(n)) delete c.amount; else c.amount = n; }
+      if ('comment' in x) { const t = String(x.comment || '').trim(); if (t) c.comment = t; else delete c.comment; }
+      const empty = c.amount == null && !c.comment;
+      if (empty) delete f.opening[key];
+      else { c.at = new Date().toISOString(); c.by = who.by; c.byName = who.byName; f.opening[key] = c; }
+      const p = getProject(pid);
+      logActivity('fin-opening', pid, { name: (p && p.project && p.project.name) || '', client: (p && p.project && p.project.client) || '', line, amount: c.amount, comment: c.comment, cleared: empty });
+      return empty ? null : c;
+    });
+  }
+  /** The schedule of unbilled fees through `asOf` (YYYY-MM): per line, the
+      opening balance, each month of the year's accruals less billings, the
+      running balance, and a comment. Derived from the same line-months the
+      sheet shows — an accrual lands in its accrued month, a billing in its
+      billed month; months before the year are history (the opening
+      balance), months after the cutoff are not reached. */
+  function finUnbilled(asOf, catalog, opts) {
+    const o = opts || {}; const cat = catalog || (typeof window !== 'undefined' && window.RATES_CATALOG);
+    const end = String(asOf); const start = end.slice(0, 4) + '-01';
+    const months = []; for (let k = start; k <= end; k = finYmPlus(k, 1)) months.push(k);
+    const db = finDb(); const out = [];
+    (o.projects || finProjects()).forEach(p => {
+      const pj = p.project || {}; const L = reconLinesFor(p, cat); const tc = finTimecard(p);
+      const lead = resolveLeader(pj.leadId || pj.lead);
+      (L.all || []).forEach(Lx => {
+        const lk = p.id + '|' + Lx.id; const op = db.opening[lk] || {};
+        const yms = new Set(Object.keys(Lx.byMonth || {}).filter(k => Math.abs(Lx.byMonth[k]) >= 0.005));
+        Object.keys(db.lines).forEach(k => { const i = k.lastIndexOf('|'); if (k.slice(0, i) === lk) yms.add(k.slice(i + 1)); });
+        const acc = {}, bill = {}; const notes = []; let lastBill = null; let lastOpen = null;
+        [...yms].sort().forEach(ym => {
+          const w = finWorking(p.id, Lx.id, ym, (Lx.byMonth || {})[ym] || 0, { timecard: tc, now: o.now });
+          if (w.accruedIn >= start && w.accruedIn <= end && Math.abs(w.accruedAmt) >= 0.005) acc[w.accruedIn] = (acc[w.accruedIn] || 0) + w.accruedAmt;
+          if (w.billedIn && w.billedAmt != null && w.billedIn >= start && w.billedIn <= end) { bill[w.billedIn] = (bill[w.billedIn] || 0) + w.billedAmt; if (!lastBill || w.billedIn >= lastBill.ym) lastBill = { ym: w.billedIn, date: w.billedDate, invoice: w.invoice }; }
+          if (ym <= end) { if (w.note) notes.push({ ym, note: w.note }); if (w.status !== 'billed' && w.status !== 'none' && w.status !== 'planned' && w.accruedIn <= end) lastOpen = w; }
+        });
+        const opening = op.amount != null ? op.amount : 0;
+        if (Math.abs(opening) < 0.005 && !Object.keys(acc).length && !Object.keys(bill).length && !op.comment) return;
+        let run = opening; const byMonth = {};
+        months.forEach(m => { const a = acc[m] || 0, b = bill[m] || 0; run = Math.round((run + a - b) * 100) / 100; byMonth[m] = { acc: a, bill: b, net: Math.round((a - b) * 100) / 100, ytd: run }; });
+        let auto = '';
+        if (Math.abs(run) < 0.5 && lastBill) auto = 'Billed ' + (lastBill.date || lastBill.ym) + (lastBill.invoice ? ' · ' + lastBill.invoice : '');
+        else if (notes.length) auto = notes[notes.length - 1].note;
+        else if (lastOpen) auto = lastOpen.statusLabel;
+        else if (Math.abs(run) >= 0.5 && Math.abs(opening) >= 0.5 && !Object.keys(acc).length && !Object.keys(bill).length) auto = 'Carried from ' + (Number(end.slice(0, 4)) - 1);
+        out.push({ p, pj, pid: p.id, line: Lx.id, kind: Lx.kind, label: Lx.label, key: lk, timecard: tc, leader: lead ? lead.displayName : (pj.lead || ''), projectId: pj.salesforceId || pj.projectNumber || '',
+          broker: Lx.kind === 'share' ? String(((p.assumptions || {}).feeShare || {}).broker || Lx.label.replace(/^Fee share · /, '')) : '',
+          opening, openingSet: op.amount != null, byMonth, closing: run, comment: op.comment || '', autoComment: auto, at: op.at || null, byName: op.byName || '' });
+      });
+    });
+    const kindRank = { fee: 0, pass: 1, share: 2 };
+    out.sort((a, b) => (a.pj.client || '').localeCompare(b.pj.client || '') || (a.pj.name || '').localeCompare(b.pj.name || '') || (kindRank[a.kind] - kindRank[b.kind]) || a.line.localeCompare(b.line));
+    const totals = { opening: out.reduce((t, r) => t + r.opening, 0), closing: out.reduce((t, r) => t + r.closing, 0), byMonth: {} };
+    months.forEach(m => { totals.byMonth[m] = { net: out.reduce((t, r) => t + r.byMonth[m].net, 0), ytd: out.reduce((t, r) => t + r.byMonth[m].ytd, 0) }; });
+    return { asOf: end, start, months, rows: out, totals };
+  }
   /** The cycle's state for the stepper. */
   function finCycleState(cycle) {
     const c = finCycle(cycle) || {};
@@ -4389,7 +4453,7 @@
     enumerateMonths, computeMonthsByPhase,
     getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, isSmallWorks, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
     INTAKE_TO, INTAKE_FIELDS, priorBookedForClient, intakeStatus, setReadyToBill, readyToBillOf, buildInvoiceRequest, markReadyToBillSubmitted,
-    FIN_STATUS, FIN_FLAGS, finKey, finYmPlus, finLine, setFinLine, finWorking, finCycle, finSnapshot, takeFinSnapshot, finProjects, finTimecard, finRows, finSnapshotValues, finCycleState,
+    FIN_STATUS, FIN_FLAGS, finKey, finYmPlus, finLine, setFinLine, finWorking, finCycle, finSnapshot, takeFinSnapshot, finProjects, finTimecard, finRows, finSnapshotValues, finCycleState, finOpening, setFinOpening, finUnbilled,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,
     getMaintenance, setMaintenance, getReportYears, getReportYearsSetting, setReportYears, runDataCleanups,
     leaderById, resolveLeader, leaderDisplay, splitLeaderText,
