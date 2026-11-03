@@ -256,7 +256,10 @@ td.vpos { color:#1f7a44; }   /* actual > expected (over-run) shown neutral-green
 .view-switch button.on { background:var(--sav-navy); color:#fff; border-color:var(--sav-navy); }
 .view-switch .vs-note { font-size:11.5px; color:var(--sav-steel); margin-left:8px; }
 body.leader-view .admin-only, body.leader-view #fresh-strip, body.leader-view #shift-pending-bar { display:none !important; }
+/* the TEAM view: the module, scoped — the plumbing and the admin tools stay out of sight */
+body.team-view .admin-only, body.team-view #shift-pending-bar, body.team-view .tab-entry[data-tab=sources], body.team-view .tab-mapping, body.team-view .zone-tag, body.team-view #email-clockify, body.team-view #rt-export, body.team-view #rt-import, body.team-view #import-anchor { display:none !important; }
 .leader-tabs .tab.active { border-bottom-color:var(--sav-teal); }
+.tabs[hidden], .view-switch[hidden] { display:none !important; }   /* the author rule above beat the hidden attribute; the classic leader row showed on every view */
 /* leader view pieces */
 .lv-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin:4px 0 14px; }
 .lv-head h2 { font-family:var(--font-display); font-weight:900; font-size:20px; color:var(--sav-navy); margin:2px 0 6px; }

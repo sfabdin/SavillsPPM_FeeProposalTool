@@ -31,8 +31,8 @@
     // ── 2 · Plan the people (admin) ──
     { href: 'Staffing Matrix.html',          label: 'Staffing, Bandwidth & Clockify', group: 'Plan the people', admin: true,
       desc: 'Who is working on what and how loaded they are — allocations, bandwidth, Clockify time against plan, and contract-vs-staffing checks.' },
-    { href: 'Staffing & Bandwidth (Preview).html', label: 'Staffing, Bandwidth & Clockify · preview', group: 'Plan the people', admin: true,
-      desc: 'A proposed redesign, read-only: My team, Bandwidth, Data room. The current page stays live.' },
+    { href: 'Staffing & Bandwidth (TEST).html', label: 'Staffing & Bandwidth (TEST)', group: 'Plan the people',
+      desc: 'The same module in the order the work happens — Allocations, Staffing, Tracking — with the data up top. A revenue leader sees it scoped to their team from the org chart.' },
     // ── 3 · Commit the number ──
     { href: 'Revenue Projections.html',      label: 'Revenue Projections', group: 'Commit the number',
       desc: 'Monthly revenue outlook across the whole portfolio — booked plus probability-weighted pipeline.' },

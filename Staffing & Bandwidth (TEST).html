@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Savills PPM Fee &amp; Revenue System">
+<title>Savills PPM · Staffing & Bandwidth (TEST) — Savills PPM · Staffing, Bandwidth &amp; Clockify</title>
+<link rel="icon" type="image/svg+xml" href="design-system/assets/favicon.svg">
+<link rel="stylesheet" href="design-system/colors_and_type.css">
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Book.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="design-system/fonts/gotham/Gotham-Bold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="universal-fee-calc/styles.css">
+<link rel="stylesheet" href="universal-fee-calc/staffing-matrix.css">
+<link rel="stylesheet" href="universal-fee-calc/staffing-test.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
+    <div class="title-block">
+      <h1><a href="Fee Generator.html">Staffing &amp; Bandwidth <span style="color:var(--sav-red)">(TEST)</span></a></h1>
+      <p class="tagline">The same module, in the order the work happens: <b>enter</b> the allocations, <b>see</b> the staffing by project and by person, <b>check</b> it against the contract and Clockify. A revenue leader gets the same three views scoped to their team from the org chart and the projects they lead. The original <a href="Staffing Matrix.html">Staffing, Bandwidth &amp; Clockify</a> page is untouched.</p>
+    </div>
+  </header>
+
+  <div class="view-switch" id="view-switch" hidden>
+    <span class="vs-label">View</span>
+    <button type="button" data-view="lead" class="on" title="The full module — every project, every person, allocations, data sources, mapping">Leadership</button>
+    <button type="button" data-view="team" title="The same three views, scoped to a leader's team from the org chart and to the projects they lead or their people are on. Pick a person in “Viewing as” to preview theirs.">Revenue leader · team</button>
+    <button type="button" data-view="leader" title="The older leader view: their own projects — time vs plan, their allocations, their mapping.">My projects (classic)</button>
+    <span class="vs-note">A revenue leader opening this page gets the team view: their people, their projects, nothing else. Nothing in any view changes a fee.</span>
+  </div>
+
+  <div class="identity-bar">
+    <span class="id-label">Viewing as</span>
+    <select id="id-user"></select>
+    <span class="id-role" id="id-role"></span>
+    <span class="id-note" id="id-note"></span>
+  </div>
+
+  <!-- Row 1 · the dates: every view reads this window -->
+  <div class="controls st-dates">
+    <div class="ctl">
+      <label>Window start</label>
+      <div style="display:flex;gap:4px;align-items:stretch">
+        <button class="btn btn-ghost" id="win-prev" title="Previous month" style="padding:4px 10px;border-width:1px">◀</button>
+        <select id="win-start"></select>
+        <button class="btn btn-ghost" id="win-next" title="Next month" style="padding:4px 10px;border-width:1px">▶</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label>Months</label>
+      <select id="win-len">
+        <option value="1">1 · single month</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="6">6</option>
+        <option value="12" selected>12</option>
+        <option value="18">18</option>
+        <option value="24">24</option>
+      </select>
+    </div>
+    <div class="ctl grow"></div>
+    <div class="ctl" style="align-self:center"><span class="note-txt" id="store-note"></span></div>
+    <div class="ctl admin-only">
+      <label>&nbsp;</label>
+      <button class="btn btn-secondary" id="export-snapshot-btn" title="Download every view on this page as one .xlsx — Compare, By Project, By Person, Allocations, Contract vs Staffing, Leaves, Insights, Clockify Reporting, Mapping and raw Actuals. Static values, not live formulas.">⬇ Export All Views</button>
+    </div>
+  </div>
+
+  <!-- Row 2 · the data: what feeds the page, and the settings that are set once -->
+  <div class="st-data">
+    <div id="fresh-strip"></div>
+    <div class="st-databar">
+      <span class="st-dblabel">Data</span>
+      <button type="button" class="st-link admin-only" data-go="sources">⛁ Data Sources</button>
+      <button type="button" class="st-link admin-only" data-go="mapping">🔗 Mapping</button>
+      <span class="grow"></span>
+      <details class="st-settings admin-only">
+        <summary>⚙ Settings</summary>
+        <div class="st-settings-pop">
+          <div class="ctl">
+            <label>Group</label>
+            <select id="grp-view" title="Show one practice group across every view — its people (group set per person on the Mapping tab) and the contract roles tagged to that group in the fee tool. Mapping always shows everyone."></select>
+          </div>
+          <div class="ctl">
+            <label>Hrs / mo @ 100%</label>
+            <input type="number" id="month-hrs" min="80" max="220" step="1">
+          </div>
+          <div class="ctl">
+            <label>&nbsp;</label>
+            <label class="chk"><input type="checkbox" id="inc-pursuit" checked> Include pursuits / opportunities</label>
+          </div>
+          <div class="st-gloss">
+            <div><b style="color:#0E7C7B">① Plan (matrix)</b> — who we <b>plan</b> to staff: names and allocation % entered in this tool. Expected hours = <span id="gloss-hrs">173.33</span> hrs/mo × capacity% × allocation%.</div>
+            <div><b style="color:#79828C">② Contract (fee tool)</b> — what the signed fee matrix <b>priced</b>: titles and hours, no names. Flows in from the linked fee-tool project — <b>Mapping</b> controls that link.</div>
+            <div><b style="color:#b39b00">③ Actual (Clockify)</b> — what actually got <b>logged</b>, split into billable / macro / Time Off.</div>
+            <div style="margin-top:4px">Healthy = ③ tracks ①, and both stay inside ②. ▲ over plan · ▼ under · ● on plan (±10%).</div>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- Row 3 · the three views, in the order the work happens (built by staffing-test.js) -->
+  <div class="st-tiles" id="st-tiles"></div>
+  <div class="st-subtabs" id="st-subtabs"></div>
+
+  <div class="tabs st-hidden" id="tabs">
+    <span class="zone-tag">Review</span>
+    <button class="tab active" data-tab="actuals">Compare · Plan / Contract / Actual</button>
+    <button class="tab" data-tab="projects">By Project <span class="cnt" id="cnt-proj"></span></button>
+    <button class="tab" data-tab="people">By Person <span class="cnt" id="cnt-ppl"></span></button>
+    <button class="tab" data-tab="insights">Insights</button>
+    <button class="tab" data-tab="compliance">Clockify Reporting</button>
+    <span class="zone-tag zone-manage">Manage</span>
+    <button class="tab tab-entry" data-tab="allocations">Allocations <span class="cnt" id="cnt-alloc"></span></button>
+    <button class="tab tab-entry" data-tab="sources">Data Sources</button>
+    <span class="grow"></span>
+    <button class="tab tab-mapping" data-tab="mapping">🔗 Mapping</button>
+  </div>
+
+  <!-- Revenue leader view: three tabs over the leader's own projects (staffing-leader.js) -->
+  <div class="tabs leader-tabs" id="leader-tabs" hidden>
+    <span class="zone-tag">My projects</span>
+    <button class="tab active" data-ltab="time">Time vs Plan</button>
+    <button class="tab" data-ltab="allocs">My allocations</button>
+    <button class="tab" data-ltab="map">Mapping</button>
+  </div>
+  <section class="panel" id="p-lead-time"></section>
+  <section class="panel" id="p-lead-allocs"></section>
+  <section class="panel" id="p-lead-map"></section>
+
+  <section class="panel active" id="p-actuals"></section>
+  <section class="panel" id="p-projects"></section>
+  <section class="panel" id="p-people"></section>
+  <section class="panel" id="p-allocations"></section>
+  <section class="panel" id="p-insights"></section>
+  <section class="panel" id="p-compliance"></section>
+  <section class="panel" id="p-sources"></section>
+  <section class="panel" id="p-mapping"></section>
+
+</div>
+
+<!-- allocation add/edit modal -->
+<div class="modal-ov" id="mail-modal">
+  <div class="modal wide">
+    <div class="mh"><h3 id="mm-title">Email Clockify status</h3><button id="mm-close" aria-label="Close">&times;</button></div>
+    <div class="mm-tabs" role="tablist"><button class="on" data-mm="digest" role="tab">Status digest</button><button data-mm="nudges" role="tab">Nudges <span id="mm-nudge-n" class="mm-count"></span></button></div>
+    <div class="mm-body" id="mm-body"></div>
+    <div class="mf"><span class="note-txt grow" id="mm-note"></span><button class="btn btn-secondary" id="mm-cancel">Cancel</button><button class="btn btn-primary" id="mm-send">Send</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="alloc-modal">
+  <div class="modal">
+    <div class="mh"><h3 id="am-title">Allocation</h3><button id="am-close">&times;</button></div>
+    <div class="mb">
+      <div class="fld full"><label>Person</label><input id="am-person" list="am-people" placeholder="Type a name — new or existing"></div>
+      <datalist id="am-people"></datalist>
+      <div class="fld"><label>Project</label><input id="am-project" list="am-projects" placeholder="Project name"></div>
+      <datalist id="am-projects"></datalist>
+      <div class="fld"><label>Client</label><input id="am-client" list="am-clients" placeholder="Client"></div>
+      <datalist id="am-clients"></datalist>
+      <div class="fld"><label>Status</label><select id="am-status"><option>Active</option><option>Pursuit</option></select></div>
+      <div class="fld"><label>Type</label><select id="am-type"><option>Awarded</option><option>Opportunity</option></select></div>
+      <div class="fld"><label>Start month</label><input id="am-start" type="month"></div>
+      <div class="fld"><label>End month</label><input id="am-end" type="month"></div>
+      <div class="fld"><label>Allocation %</label><input id="am-pct" type="number" min="0" max="100" step="5"></div>
+      <div class="fld full" id="am-contract" hidden></div>
+      <div class="fld full"><label>Comment / decision note</label><textarea id="am-note" rows="2" placeholder="e.g. Offboard when Fanatics FBG completes; MG to weigh in"></textarea></div>
+    </div>
+    <div class="mf">
+      <button class="btn btn-ghost" id="am-cancel">Cancel</button>
+      <button class="btn btn-primary" id="am-save">Save allocation</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="clockify-file" accept=".csv,text/csv" style="display:none">
+<input type="file" id="matrix-file" accept=".xlsx,.csv" style="display:none">
+
+<script src="universal-fee-calc/vendor-lazy.js"></script>
+<script src="universal-fee-calc/rates-catalog.js"></script>
+<script src="universal-fee-calc/cache-store.js"></script>
+<script src="universal-fee-calc/store.js"></script>
+<script src="universal-fee-calc/confirmed-book.js"></script>
+<script src="universal-fee-calc/box-adapter.js"></script>
+<script src="universal-fee-calc/boot.js"></script>
+<script src="universal-fee-calc/ui.js"></script>
+<script src="universal-fee-calc/sync-status.js"></script>
+<script src="universal-fee-calc/staff.js"></script>
+<script src="universal-fee-calc/staffing-export.js"></script>
+<script src="universal-fee-calc/staffing-roundtrip.js"></script>
+<script src="universal-fee-calc/staffing-leader.js"></script>
+<script src="universal-fee-calc/confirm-widget.js"></script>
+<script src="universal-fee-calc/nav.js"></script>
+<script src="universal-fee-calc/staffing-page.js"></script>
+<script src="universal-fee-calc/staffing-test.js"></script>
+</body>
+</html>
