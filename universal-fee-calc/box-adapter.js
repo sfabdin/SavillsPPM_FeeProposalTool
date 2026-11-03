@@ -1126,6 +1126,32 @@
     const drop = JSON.parse(txt); drop._fileId = f.id;
     return drop;
   };
+  /** The org-chart drop (org-latest.json, written by api/org-daily or by hand
+      through writeOrgDrop): current employees with reporting lines by email. */
+  Box.pullOrgDrop = async function () {
+    const f = await findByName('main', 'org-latest.json');
+    if (!f) return null;
+    const res = await boxFetch('/files/' + f.id + '/content');
+    if (!res.ok) throw new Error('org drop pull failed: ' + res.status);
+    const txt = await res.text(); if (!txt.trim()) return null;
+    const drop = JSON.parse(txt); drop._fileId = f.id;
+    return drop;
+  };
+  /** Write the org drop with the signed-in session — the on-demand pull when
+      the server-side Box app is not configured. Creates or replaces. */
+  Box.writeOrgDrop = async function (drop) {
+    if (!BOX_CONFIG.enabled) throw new Error('Box is off');
+    const token = await ensureToken(); if (!token) throw new Error('not signed in to Box');
+    const body = JSON.stringify(drop); const name = 'org-latest.json';
+    const existing = await findByName('main', name);
+    const form = new FormData();
+    form.append('attributes', JSON.stringify(existing ? { name } : { name, parent: { id: await folderFor('main') } }));
+    form.append('file', new Blob([body], { type: 'application/json' }), name);
+    const url = existing ? 'https://upload.box.com/api/2.0/files/' + existing.id + '/content' : 'https://upload.box.com/api/2.0/files/content';
+    const res = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+    if (!res.ok) throw new Error('Box refused org-latest.json: HTTP ' + res.status);
+    return { name, replaced: !!existing };
+  };
   /** Push the revenue book now — a lock or a status should reach Box before the tab closes. */
   Box.flushRevenue = async function () { clearTimeout(_revTimer); await revenuePushNow(); };
   /** Pull-if-changed + row-level merge + hydrate — so a tab left open all day
