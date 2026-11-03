@@ -561,12 +561,93 @@
   let _viewGroup = null;
   function setViewGroup(line) { _viewGroup = groupList().includes(line) ? line : null; }
   function viewGroup() { return _viewGroup; }
+  /* A TEAM in view — a revenue leader's reports from the org chart (see
+     setOrg / teamPeople). Composes with the group: both must agree. A set
+     of project ids narrows the fee projects the same way. */
+  let _viewTeam = null, _viewProjects = null;
+  function setViewTeam(ids) { _viewTeam = ids ? new Set(ids) : null; }
+  function viewTeam() { return _viewTeam ? [..._viewTeam] : null; }
+  function setViewProjects(feeIds) { _viewProjects = feeIds ? new Set(feeIds) : null; }
+  function viewProjects() { return _viewProjects ? [..._viewProjects] : null; }
+  function projectInView(feeId) { return !_viewProjects || _viewProjects.has(String(feeId)); }
   /** Is this person (record or id) in the group being viewed? Hours under an
       id with no roster record (unmatched Clockify names) belong to no group. */
   function inView(p) {
+    if (_viewTeam) { const id = (p && typeof p === 'object') ? p.id : p; if (!_viewTeam.has(id)) return false; }
     if (!_viewGroup) return true;
     const person = (p && typeof p === 'object') ? p : readDb().people[p];
     return !!person && personGroup(person) === _viewGroup;
+  }
+
+  // ---------- the org chart (BambooHR drop) ----------
+  /* db.org = { pulledAt, source, takenAt, count, people: { email: { id, name,
+     email, title, department, division, location, supervisorEmail,
+     supervisor, status, hireDate } } }. Written by setOrg from
+     org-latest.json (api/org-daily, or the Pull button on Data Sources);
+     lives in staff.json with everything else so every admin and leader sees
+     the same tree. */
+  function orgDb() { const o = readDb().org; return (o && o.people) ? o : { pulledAt: '', source: '', takenAt: '', count: 0, people: {} }; }
+  function orgAt() { return orgDb().pulledAt || ''; }
+  function setOrg(drop) {
+    const d = drop || {}; const people = {}; const low = (v) => String(v || '').trim().toLowerCase();
+    (d.people || []).forEach(p => {
+      const e = low(p.email); if (!e) return;
+      people[e] = { id: String(p.id || ''), name: cleanName(p.name), email: e, title: String(p.title || '').trim(), department: String(p.department || '').trim(), division: String(p.division || '').trim(), location: String(p.location || '').trim(),
+        supervisorEmail: low(p.supervisorEmail), supervisor: String(p.supervisor || '').trim(), status: String(p.status || '').trim(), hireDate: String(p.hireDate || '').slice(0, 10) };
+    });
+    const db = readDb();
+    db.org = { pulledAt: String(d.pulledAt || ''), source: String(d.source || 'bamboohr'), takenAt: new Date().toISOString(), count: Object.keys(people).length, people };
+    writeDb(db); _orgMatch = null;
+    try { const S2 = window.UFC_Store; if (S2 && S2.logSystem) S2.logSystem('staff-org', { pulledAt: db.org.pulledAt, people: db.org.count, source: db.org.source }); } catch (e) {}
+    return db.org;
+  }
+  function orgPerson(email) { return orgDb().people[String(email || '').trim().toLowerCase()] || null; }
+  function orgPeople() { return Object.values(orgDb().people).sort((a, b) => a.name.localeCompare(b.name)); }
+  /** Everyone under a person, however many levels down (depth 1 = direct). Cycles are cut. */
+  function orgTeam(email) {
+    const root = String(email || '').trim().toLowerCase(); if (!root) return [];
+    const byBoss = {}; Object.values(orgDb().people).forEach(p => { if (p.supervisorEmail) (byBoss[p.supervisorEmail] = byBoss[p.supervisorEmail] || []).push(p); });
+    const out = []; const seen = new Set([root]);
+    const walk = (e, depth) => { (byBoss[e] || []).sort((a, b) => a.name.localeCompare(b.name)).forEach(p => { if (seen.has(p.email)) return; seen.add(p.email); out.push(Object.assign({ depth }, p)); walk(p.email, depth + 1); }); };
+    walk(root, 1); return out;
+  }
+  /** The people with reports — who can have a team view. */
+  function orgManagers() { const n = {}; Object.values(orgDb().people).forEach(p => { if (p.supervisorEmail) n[p.supervisorEmail] = (n[p.supervisorEmail] || 0) + 1; }); return Object.keys(n).map(e => Object.assign({ reports: n[e] }, orgPerson(e) || { email: e, name: e })).sort((a, b) => b.reports - a.reports); }
+  /** Org record → roster person: by the address the roster reaches them at
+      (typed, Clockify's, the directory's, or the firm's pattern), else by name. */
+  let _orgMatch = null;
+  function orgMatch() {
+    const stamp = (readDb().meta || {}).updatedAt + '|' + orgAt();
+    if (_orgMatch && _orgMatch.stamp === stamp) return _orgMatch;
+    const roster = listPeople(); const byEmail = {}; roster.forEach(p => { const e = personEmail(p).email; if (e && !byEmail[e]) byEmail[e] = p.id; });
+    const byOrgEmail = {}, byPerson = {}, unmatched = [];
+    Object.values(orgDb().people).forEach(op => {
+      let pid = byEmail[op.email];
+      if (!pid) { const hit = roster.find(p => !p.isPool && namesMatch(p.name, op.name)); if (hit) pid = hit.id; }
+      if (pid) { byOrgEmail[op.email] = pid; byPerson[pid] = op.email; } else unmatched.push(op);
+    });
+    const rosterUnmatched = roster.filter(p => !byPerson[p.id] && !p.isPool && p.active !== false);
+    return (_orgMatch = { stamp, byOrgEmail, byPerson, unmatched, rosterUnmatched });
+  }
+  /** A leader's team as roster people: the leader, then everyone under them
+      in the org chart who is on the roster. */
+  function teamPeople(email) {
+    const m = orgMatch(); const e = String(email || '').trim().toLowerCase();
+    const lead = orgPerson(e); const members = orgTeam(e);
+    const ids = []; const seen = new Set();
+    const add = (op) => { const pid = m.byOrgEmail[op.email]; if (pid && !seen.has(pid)) { seen.add(pid); ids.push(pid); } };
+    if (lead) add(lead); else { const self = listPeople().find(p => personEmail(p).email === e); if (self) { seen.add(self.id); ids.push(self.id); } }
+    members.forEach(add);
+    return { email: e, leader: lead, org: members, ids, offRoster: members.filter(op => !m.byOrgEmail[op.email]) };
+  }
+  /** The fee projects a leader's view covers: the ones they lead, plus every
+      project one of their people is allocated to. */
+  function teamProjects(email, user) {
+    const t = teamPeople(email); const ids = new Set();
+    try { const S2 = window.UFC_Store; const u = user || (S2 && S2.getCurrentUser && S2.getCurrentUser()); (S2.listProjects() || []).forEach(p => { if (S2.userOwnsProject(p, u)) ids.add(String(p.id)); }); } catch (e) {}
+    const team = new Set(t.ids);
+    readDb().allocations.forEach(a => { if (a.feeId && team.has(a.personId)) ids.add(String(a.feeId)); });
+    return [...ids];
   }
   /** Is this fee-tool role in the viewed group — by the service line of the
       project group it sits in, the same rule Revenue Projections filters on. */
@@ -3324,6 +3405,7 @@
     listPeople, getPerson, savePerson, monthHours, setMonthHours, capacityHours,
     // practice group
     DEFAULT_GROUP, groupList, personGroup, setPersonGroup, setViewGroup, viewGroup, inView,
+    setViewTeam, viewTeam, setViewProjects, viewProjects, projectInView, orgDb, orgAt, setOrg, orgPerson, orgPeople, orgTeam, orgManagers, orgMatch, teamPeople, teamProjects,
     // allocations
     listAllocations, saveAllocation, deleteAllocation, personIdForName,
     distinctProjects, distinctClients, allocationWindow, defaultWindow,

@@ -2522,6 +2522,34 @@
     if (state.winStart) renderAll();
   }
 
+  /* The org-chart drop: org-latest.json (api/org-daily, or the Pull button
+     on Data Sources). Committed into the staffing store the first time a
+     page sees a newer one, like the Clockify drop. */
+  async function takeOrgDrop() {
+    const Box = window.UFC_Box; if (!(Box && Box.enabled && Box.pullOrgDrop)) return;
+    const drop = await Box.pullOrgDrop(); if (!drop || !drop.pulledAt) return;
+    if (!(drop.pulledAt > (S.orgAt() || ''))) return;
+    const org = S.setOrg(drop);
+    toast('Org chart refreshed from BambooHR (' + new Date(org.pulledAt).toLocaleString() + '): ' + org.count + ' people.', 'ok');
+    if (state.winStart) renderAll();
+  }
+  /** The on-demand pull: our proxy asks BambooHR, the browser writes the
+      drop to Box with its own session, the store takes it. */
+  async function pullOrgNow(btn) {
+    const orig = btn ? btn.textContent : ''; if (btn) { btn.disabled = true; btn.textContent = 'Pulling…'; }
+    try {
+      const r = await fetch('/api/org', { headers: await apiHeaders() });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((j.error || ('HTTP ' + r.status)) + (j.detail ? ' — ' + j.detail : ''));
+      const drop = j.drop || {};
+      const Box = window.UFC_Box; if (Box && Box.enabled && Box.writeOrgDrop && !(j.box && j.box.fileId)) { try { await Box.writeOrgDrop(drop); } catch (e) { console.warn('org drop write', e); } }
+      const org = S.setOrg(drop);
+      toast('Org chart pulled: ' + org.count + ' people, ' + (drop.withSupervisor || 0) + ' with a manager.', 'ok');
+      renderAll();
+    } catch (e) { toast('Org pull failed — ' + (e.message || e)); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+  }
+
   /* ---------- staff.json sync (Box) — makes the matrix + notes a shared,
      living document instead of per-browser state ---------- */
   function setStoreNote(mode, extra) {
@@ -2556,6 +2584,7 @@
       try { const c = S.applyCleanupSeeds ? S.applyCleanupSeeds() : []; if (c.length) { const r = c[0]; toast(`Allocations cleanup applied: ${r.merges} people merged, ${r.renames} project names folded, ${r.deletes} duplicate rows removed, ${r.ended} row ended.`, 'ok'); if (state.winStart) renderAll(); } } catch (e) { console.warn('cleanup seeds', e); }
       // The daily Clockify drop: a newer file than the last one taken is committed here, once, through the Import button's own code.
       takeClockifyDrop().catch(e => console.warn('clockify drop', e));
+      takeOrgDrop().catch(e => console.warn('org drop', e));
       // Live refresh: when the tab regains focus (and every 3 min) check the file's
       // etag; if a teammate saved, hydrate + re-render — mappings flow to everyone.
       const refresh = async () => {
@@ -2676,7 +2705,16 @@
     html += `<div id="import-anchor"></div>` + importCard(has, am);
     if (state.clockifyReport) html += reportBlock(state.clockifyReport);
 
+    // ---- the org chart: who reports to whom, from BambooHR ----
+    { const o = S.orgDb(); const m = S.orgMatch(); const oAge = ageDays(o.pulledAt); const oDot = oAge == null ? 'bad' : oAge <= 7 ? 'ok' : oAge <= 30 ? 'warn' : 'bad';
+      const mgrs = S.orgManagers().slice(0, 8);
+      html += `<div class="import-card" id="org-card"><h3>④ Org chart <span class="vmini">(BambooHR)</span></h3><p>Who reports to whom. A revenue leader's team view — their people's allocations, bandwidth and Clockify hours — is built from this tree, matched to the roster by work email, then by name.</p>
+        <div class="note-txt">${o.pulledAt ? `${dot(oDot)}<b>${o.count}</b> people with a work email, pulled ${esc(agoTxt(o.pulledAt))} <span class="vmini">· ${new Date(o.pulledAt).toLocaleString()}</span> · <b>${Object.keys(m.byOrgEmail).length}</b> matched to the roster, <b>${m.unmatched.length}</b> in the org chart but not on the roster, <b>${m.rosterUnmatched.length}</b> on the roster but not in the org chart.` : `${dot('bad')}No org chart yet. The daily pull (<code>api/org-daily</code>) writes <code>org-latest.json</code> into Box every morning once <code>BAMBOO_SUBDOMAIN</code> and <code>BAMBOO_API_KEY</code> are set; or pull it now.`}
+          <button class="btn btn-secondary" id="org-pull" style="margin-left:10px">⟳ Pull org chart now</button></div>
+        ${o.pulledAt ? `<div class="vmini" style="padding:8px 0 0">Largest teams: ${mgrs.map(x => `<b>${esc(x.name)}</b> ${x.reports}`).join(' · ') || '—'}${m.rosterUnmatched.length ? `<br>On the roster, not in the org chart: ${m.rosterUnmatched.slice(0, 12).map(p => esc(p.name)).join(', ')}${m.rosterUnmatched.length > 12 ? ' and ' + (m.rosterUnmatched.length - 12) + ' more' : ''} — a typed email on the roster (Clockify Reporting → nudges) is how a name is matched when the names differ.` : ''}</div>` : ''}
+      </div>`; }
     $('#p-sources').innerHTML = html;
+    { const b = $('#org-pull'); if (b) b.onclick = () => pullOrgNow(b); }
     wireImport();
     wireGoto('#p-sources');
     const mr = $('#src-reimport'); if (mr) mr.onclick = () => $('#matrix-file').click();
