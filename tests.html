@@ -1541,13 +1541,15 @@
       const cleared = ST.inView('stp_ghost');
       const loop = ST.orgTeam('loopa@savills.us');
       const logged = trail('staff-org').length;
+      const scope = ST.teamScope('esobel@savills.us', { username: 'esobel@savills.us', name: 'Emily Sobel', role: 'member' });
       return sq(org.count, 7, 'everyone with a work email is kept, lower-cased') && sq(!!ST.orgPerson('lpark@savills.us'), true, 'addresses are case-insensitive') &&
              sq(team.map(p => p.name + ':' + p.depth).join(), 'Jane Tester:1,Omar Reyes:2,Lee Park:3', 'the whole chain under the leader, depth by depth') &&
              sq(ST.orgTeam('selse@savills.us').length, 0, 'no reports, no team') && sq(ST.orgManagers()[0].email, 'esobel@savills.us', 'managers are ranked by their reports') &&
              sq(t.ids.join(), 'stp_jane,stp_omar,stp_lee', 'matched to the roster: Jane by the pattern address, Omar by the typed roster email, Lee by name') && sq(t.offRoster.length, 0, 'nobody off the roster') &&
              sq(m.unmatched.map(p => p.name).join(), 'Emily Sobel,Someone Else,Loop A,Loop B', 'org people with no roster record') && sq(m.rosterUnmatched.map(p => p.name).join(), 'Not In Bamboo', 'roster people with no org record') &&
              sq(inTeam, true, 'the team scope keeps the team and drops everyone else') && sq(allocsInView, 'og_1', 'allocations follow the people') && sq(cleared, true, 'clearing the scope shows everyone again') &&
-             sq(loop.length, 1, 'a reporting loop is cut') && sq(logged, 1, 'the pull is on the trail');
+             sq(loop.length, 1, 'a reporting loop is cut') && sq(logged, 1, 'the pull is on the trail') &&
+             sq(scope.people.join(), 'stp_jane,stp_omar,stp_lee', 'the team view\'s people are the org team') && sq(scope.projects.length, 0, 'and no fee projects until one is led or allocated');
     });
     test('Staffing · trail', 'staffing someone onto a project is recorded', () => {
       freshTrail();

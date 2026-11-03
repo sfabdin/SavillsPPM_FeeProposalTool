@@ -131,8 +131,14 @@
      fee project.
      ============================================================ */
   const VIEW_KEY = 'ufc_staff_view_v1';
-  let viewMode = 'lead';                      // 'lead' (the full module) | 'leader'
+  let viewMode = 'lead';                      // 'lead' (the full module) | 'team' (the module, scoped to a leader's team) | 'leader' (My projects)
   const LEADER = () => window.UFC_StaffLeader;
+  /** The TEAM view: the whole module narrowed to what the org chart says is
+      this person's team and to the projects they lead or their people are
+      on (UFC_Staff.teamScope). Null when there is nothing to scope to. */
+  function teamFor(user) {
+    try { const u = user || STORE.getCurrentUser(); if (!u || !u.username) return null; const sc = S.teamScope(u.username, u); return (sc.people.length || sc.projects.length) ? sc : null; } catch (e) { return null; }
+  }
   function leaderCapable(user) {
     try {
       const u = user || STORE.getCurrentUser();
@@ -146,16 +152,20 @@
   function resolveView() {
     if (staffAccessOk()) {
       let m = null; try { m = new URLSearchParams(location.search).get('view'); } catch (e) {}
-      if (m !== 'leader' && m !== 'lead') { try { m = localStorage.getItem(VIEW_KEY); } catch (e) { m = null; } }
-      viewMode = m === 'leader' ? 'leader' : 'lead';
+      if (m !== 'leader' && m !== 'lead' && m !== 'team') { try { m = localStorage.getItem(VIEW_KEY); } catch (e) { m = null; } }
+      viewMode = (m === 'leader' || m === 'team') ? m : 'lead';
       return viewMode;
     }
+    if (teamFor()) { viewMode = 'team'; return 'team'; }
     if (leaderCapable()) { viewMode = 'leader'; return 'leader'; }
     return null;
   }
   function applyView() {
-    const leader = viewMode === 'leader';
+    const leader = viewMode === 'leader', team = viewMode === 'team';
     document.body.classList.toggle('leader-view', leader);
+    document.body.classList.toggle('team-view', team);
+    if (team) { const sc = teamFor(); S.setViewTeam(sc ? sc.people : []); S.setViewProjects(sc ? sc.projects : []); if (/^(sources|mapping)$/.test(state.tab)) state.tab = 'allocations'; }
+    else { S.setViewTeam(null); S.setViewProjects(null); }
     const sw = $('#view-switch'); if (sw) { sw.hidden = !staffAccessOk(); $$('#view-switch [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === viewMode)); }
     const tabs = $('#tabs'), ltabs = $('#leader-tabs');
     if (tabs) tabs.hidden = leader; if (ltabs) ltabs.hidden = !leader;
@@ -164,7 +174,7 @@
   function setupViewSwitch() {
     $$('#view-switch [data-view]').forEach(b => b.onclick = () => {
       if (!staffAccessOk()) return;
-      viewMode = b.dataset.view === 'leader' ? 'leader' : 'lead';
+      viewMode = (b.dataset.view === 'leader' || b.dataset.view === 'team') ? b.dataset.view : 'lead';
       try { localStorage.setItem(VIEW_KEY, viewMode); } catch (e) {}
       applyView(); renderAll();
     });
@@ -1559,6 +1569,7 @@
   function allocFeeChoices() {
     let list = STORE.listProjects().filter(p => !(STORE.isChangeOrder && STORE.isChangeOrder(p)) && !(STORE.isDeadPursuit && STORE.isDeadPursuit(p)) && (p.project || {}).name);
     if (viewMode === 'leader' && LEADER()) { const ids = LEADER().scope().feeIds; list = list.filter(p => ids.has(p.id)); }
+    if (viewMode === 'team') { const ids = new Set(S.viewProjects() || []); list = list.filter(p => ids.has(String(p.id))); }
     const out = list.map(p => ({ id: p.id, p, name: p.project.name, client: p.project.client || '', label: (p.project.client ? p.project.client + ' — ' : '') + p.project.name }));
     // Two fee records with the same client and name (it happens): tell them
     // apart in the list by project number or status, so a pick is unambiguous.
@@ -2786,7 +2797,7 @@
   function renderCounts() {
     const allocs = S.listAllocations().filter(a => S.inView(a.personId));
     $('#cnt-alloc').textContent = '(' + allocs.length + ')';
-    $('#cnt-proj').textContent = '(' + (state.group ? new Set(allocs.map(a => a.project).filter(Boolean)).size : S.distinctProjects().length) + ')';
+    $('#cnt-proj').textContent = '(' + ((state.group || viewMode === 'team') ? new Set(allocs.map(a => a.project).filter(Boolean)).size : S.distinctProjects().length) + ')';
     $('#cnt-ppl').textContent = '(' + S.listPeople().filter(S.inView).length + ')';
   }
   /* Re-rendering a tab replaces its HTML, which used to throw the page back
@@ -2903,7 +2914,7 @@
 
   function init() {
     if (!resolveView()) { renderDenied(); return; }
-    window.__UFC_STAFF_HOOKS__ = { months, openAllocModal, renderAll, setLeaderTab, state };
+    window.__UFC_STAFF_HOOKS__ = { months, openAllocModal, renderAll, setLeaderTab, setTab, state, viewMode: () => viewMode, teamFor };
     wireMatrixImport();
     wireStaffSync().then(() => {
       buildWindowOptions();

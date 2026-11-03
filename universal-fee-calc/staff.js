@@ -567,7 +567,7 @@
   let _viewTeam = null, _viewProjects = null;
   function setViewTeam(ids) { _viewTeam = ids ? new Set(ids) : null; }
   function viewTeam() { return _viewTeam ? [..._viewTeam] : null; }
-  function setViewProjects(feeIds) { _viewProjects = feeIds ? new Set(feeIds) : null; }
+  function setViewProjects(feeIds) { _viewProjects = feeIds ? new Set(feeIds.map(String)) : null; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; }
   function viewProjects() { return _viewProjects ? [..._viewProjects] : null; }
   function projectInView(feeId) { return !_viewProjects || _viewProjects.has(String(feeId)); }
   /** Is this person (record or id) in the group being viewed? Hours under an
@@ -640,15 +640,20 @@
     members.forEach(add);
     return { email: e, leader: lead, org: members, ids, offRoster: members.filter(op => !m.byOrgEmail[op.email]) };
   }
-  /** The fee projects a leader's view covers: the ones they lead, plus every
-      project one of their people is allocated to. */
-  function teamProjects(email, user) {
-    const t = teamPeople(email); const ids = new Set();
-    try { const S2 = window.UFC_Store; const u = user || (S2 && S2.getCurrentUser && S2.getCurrentUser()); (S2.listProjects() || []).forEach(p => { if (S2.userOwnsProject(p, u)) ids.add(String(p.id)); }); } catch (e) {}
-    const team = new Set(t.ids);
-    readDb().allocations.forEach(a => { if (a.feeId && team.has(a.personId)) ids.add(String(a.feeId)); });
-    return [...ids];
+  /** What a leader's team view covers. People: their org team, plus anyone
+      allocated to a project they lead. Projects: the ones they lead (the
+      same wall as Revenue Projections), plus every project one of their
+      people is allocated to. Either side can be empty; both empty means
+      there is no team view for this person. */
+  function teamScope(email, user) {
+    const t = teamPeople(email); const ids = new Set(t.ids); const feeIds = new Set();
+    try { const S2 = window.UFC_Store; const u = user || (S2 && S2.getCurrentUser && S2.getCurrentUser()); (S2.listProjects() || []).forEach(p => { if (!(S2.isChangeOrder && S2.isChangeOrder(p)) && S2.userOwnsProject(p, u)) feeIds.add(String(p.id)); }); } catch (e) {}
+    const al = readDb().allocations;
+    al.forEach(a => { if (a.feeId && feeIds.has(String(a.feeId)) && a.personId) ids.add(a.personId); });
+    al.forEach(a => { if (a.feeId && ids.has(a.personId)) feeIds.add(String(a.feeId)); });
+    return { email: t.email, people: [...ids], projects: [...feeIds], team: t };
   }
+  function teamProjects(email, user) { return teamScope(email, user).projects; }
   /** Is this fee-tool role in the viewed group — by the service line of the
       project group it sits in, the same rule Revenue Projections filters on. */
   function feeRoleInView(p, r) {
@@ -1138,6 +1143,7 @@
     try { const S2 = window.UFC_Store; const raw = S2 && S2.allProjectsRaw ? S2.allProjectsRaw() : null; if (raw !== _feeRaw) { _feeRaw = raw; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; } } catch (e) {}
     if (_feeRecords) return _feeRecords;
     try { const S2 = window.UFC_Store; _feeRecords = (S2 && S2.listProjects) ? S2.listProjects() : []; } catch (e) { _feeRecords = []; }
+    if (_viewProjects) _feeRecords = _feeRecords.filter(p => _viewProjects.has(String(p.id)));   // a team view: only the projects in scope exist
     return _feeRecords;
   }
   function feeIndex() {
@@ -3405,7 +3411,7 @@
     listPeople, getPerson, savePerson, monthHours, setMonthHours, capacityHours,
     // practice group
     DEFAULT_GROUP, groupList, personGroup, setPersonGroup, setViewGroup, viewGroup, inView,
-    setViewTeam, viewTeam, setViewProjects, viewProjects, projectInView, orgDb, orgAt, setOrg, orgPerson, orgPeople, orgTeam, orgManagers, orgMatch, teamPeople, teamProjects,
+    setViewTeam, viewTeam, setViewProjects, viewProjects, projectInView, orgDb, orgAt, setOrg, orgPerson, orgPeople, orgTeam, orgManagers, orgMatch, teamPeople, teamScope, teamProjects,
     // allocations
     listAllocations, saveAllocation, deleteAllocation, personIdForName,
     distinctProjects, distinctClients, allocationWindow, defaultWindow,
