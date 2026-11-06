@@ -1346,6 +1346,14 @@
              sq(S.getProject(gone.id).project.status, 'submitted', 'the dropped record is untouched') &&
              sq((S.listActivity ? S.listActivity() : []).filter(e => e.action === 'smallworks-import').length, 1, 'one trail entry for the run');
     });
+    test('Access · tool grant', 'a member named in TOOL_GRANTS may open that one admin page and no other; admins open everything', () => {
+      const brianna = { username: 'bsheppardking@savills.us', name: 'Brianna King', role: 'member' };
+      const other = { username: 'nobody@savills.us', name: 'No Body', role: 'member' };
+      const admin = { username: 'sabdin@savills.us', name: 'Sarah Abdin', role: 'admin' };
+      return sq(S.canUseTool('Import Small Works.html', brianna), true, 'the grant opens the page') && sq(S.canUseTool('/Import Small Works.html?x=1', brianna), true, 'by file name however the link spells it') &&
+             sq(S.canUseTool('Data Repair.html', brianna), false, 'and no other admin page') && sq(S.canUseTool('Import Small Works.html', other), false, 'a login with no grant is refused') &&
+             sq(S.canUseTool('Data Repair.html', admin), true, 'an admin opens everything') && sq(S.isAdmin(brianna), false, 'a grant does not make an admin');
+    });
     test('Access · delegate', 'a login named in LEADER_ACCESS sees every project a given leader leads, current and future, and nothing else', () => {
       freshDb(); asAdmin();
       const tonya = S.saveProject(base({ id: 'ac_t', project: { name: 'Tonya One', client: 'Acme', status: 'active', lead: 'Tonya Williams' } }), { force: true });
