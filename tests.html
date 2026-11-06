@@ -66,6 +66,7 @@
 <script src="universal-fee-calc/box-adapter.js"></script>
 <script src="universal-fee-calc/vendor-lazy.js"></script>
 <script src="universal-fee-calc/bulk-excel.js"></script>
+<script src="universal-fee-calc/smallworks-import.js"></script>
 <script src="universal-fee-calc/staffing-roundtrip.js"></script>
 <script src="universal-fee-calc/staffing-leader.js"></script>
 <script src="universal-fee-calc/bench-data.js"></script>
@@ -1305,6 +1306,45 @@
              sq(manual.indexOf('#FFF36B') >= 0 && manual.indexOf('Please confirm') >= 0, true, 'the manual preview still highlights and asks to confirm') &&
              sq(em.subject, 'PPM Project Intake - Intake E', 'subject') && sq(em.to.join(), S.INTAKE_TO, 'to the intake mailbox') &&
              sq(id, 'spy', 'queued through Box.notify') && sq(n.event, 'project-intake', 'as a project-intake message') && sq((n.cc || []).indexOf('esobel@savills.us') >= 0, true, 'the revenue leader in copy') && sq(n.data.projectId, 'in_e', 'carrying the project id');
+    });
+    test('Small Works · export reconciled', 'the Smartsheet export is read by header, the money becomes pass-through lines with the 10% as Savills revenue, every row is matched to the book by Project ID and classified, the reviewer\'s edits win, and apply writes exactly the ticked rows', () => {
+      freshDb(); asAdmin(); const SW = window.UFC_SmallWorks;
+      const old = S.saveProject(base({ project: { name: 'SMALLWORKS - DC_Bowen_7th Floor', client: 'JPMC', status: 'submitted', rating: 2, notes: 'Project ID: P-0001 · PMWeb: EA10318' }, timeline: { startYear: 2026, startMonth: 8, endYear: 2026, endMonth: 8 }, roles: [], passthrough: { enabled: true, lines: [{ id: 'a', label: 'Contractor WO', cost: 70000, markupPct: 10, mode: 'billed', monthly: { '2026-08': 70000 } }] }, source: { origin: 'smallworks' } }), { force: true });
+      const same = S.saveProject(base({ project: { name: 'JPMC Coat Racks (renamed by a leader)', client: 'JPMC', status: 'closed', rating: 1, smallWorksId: 'P-0013' }, timeline: { startYear: 2026, startMonth: 6, endYear: 2026, endMonth: 6 }, roles: [], passthrough: { enabled: true, lines: [{ id: 'a', label: 'Managed vendor', cost: 7558.8, markupPct: 10, mode: 'managed', monthly: { '2026-06': 7558.8 } }] } }), { force: true });
+      const gone = S.saveProject(base({ project: { name: 'SMALLWORKS - NY_Somewhere_Dropped', client: 'JPMC', status: 'submitted', rating: 4, smallWorksId: 'P-0099' }, timeline: { startYear: 2026, startMonth: 9, endYear: 2026, endMonth: 9 }, roles: [] }), { force: true });
+      const H = ['Row ID', 'Location & Project Name', 'Project ID', 'Region', 'PMWeb ID', '9.10 Projections', 'Committed?', 'Billed?', 'Status', 'Anticipated Billing Month', 'Projected Close Out Date', 'Anticipated Billing', 'Actual Billing', 'Paid to Vendor', 'Fee', '% Likelyhood Over 50%'];
+      const rows = { headers: H, values: [
+        ['CA001', 'DC_Bowen_7th Floor', 'P-0001', 'MA', 'EA10318', true, true, true, 'Close-out ongoing', '8- October 2026', '', 74465.6, 74465.6, 67696, 6769.6, true],
+        ['CA013', 'OH_Polaris_Coat Racks', 'P-0013', 'MW', 'WE1', true, true, true, 'Completed', '4- June 2026', '', 755.88, 755.88, 0, 755.88, true],
+        ['CA088', 'NJ_NOC 5_Pantry Refresh', 'P-0088', 'TRI', 'EA2', true, true, false, 'Procurement underway', '11- January 2027', '', 799132.4, 726484, 660440, 66044, true],
+        ['CA057', 'NY_Cancelled Job', 'P-0057', 'MAN', '', false, false, false, 'Cancelled', '7- September 2026', '', '', '', '', '', true],
+        ['CA061', 'DE_NCC2_Door', 'P-0061', 'MA', '', true, false, false, 'Preconstruction', '', '2026-12-15', 6015.1, '', '', 6015.1, true],
+        ['CA074', 'NY_No Fee Job', 'P-0074', 'MAN', '', true, true, false, 'Close-out Ongoing', '8- October 2026', '', 11573, 11573, 11573, 0, false],
+        ['CA120', 'TX_Not Priced', 'P-0120', 'SE', '', false, false, false, 'Scope Under Review', '', '', '', '', '', '', false],
+        ['CA121', 'TX_Twice', 'P-0088', 'SE', '', false, false, false, 'Scope Under Review', '9- November 2026', '', 100, '', '', 10, false],
+      ] };
+      const parsed = SW.parseRows(rows); const by = {}; parsed.entries.forEach(e => { by[e.id] = by[e.id] || e; });
+      const plan = SW.buildPlan(parsed); const it = {}; plan.items.forEach(i => { it[i.entry.id] = it[i.entry.id] || i; });
+      const kinds = plan.items.map(i => i.entry.id + ':' + i.kind).join();
+      it['P-0088'].edits = { ym: '2027-02', fee: 60000 };
+      it['P-0074'].picked = false;
+      const out = SW.applyPlan(plan, { file: 'export.xlsx' });
+      const p1 = S.getProject(old.id), p88 = S.listProjects().find(p => (p.project || {}).smallWorksId === 'P-0088'), p61 = S.listProjects().find(p => (p.project || {}).smallWorksId === 'P-0061');
+      const l88 = p88.passthrough.lines; const inv88 = SW.invoiceOf(l88), rev88 = SW.revenueOf(l88);
+      return sq(parsed.missing.length, 0, 'every needed column found') && sq(by['P-0001'].ym + '|' + by['P-0061'].ym, '2026-10|2026-12', 'the month from the picklist, else the close-out date') &&
+             sq(by['P-0001'].lines.map(l => l.mode + ':' + l.cost + ':' + l.markupPct).join(), 'billed:67696:10', 'invoice above the fee → a billed line at cost + 10%') && sq(by['P-0001'].revenue + '|' + by['P-0001'].invoice, '6769.6|74465.6', 'the 10% is the revenue, the invoice is cost + fee') &&
+             sq(by['P-0061'].lines.map(l => l.mode + ':' + l.cost).join(), 'managed:60151', 'invoice equal to the fee → a managed line Savills invoices the fee on') &&
+             sq(by['P-0074'].lines[0].markupPct + '|' + by['P-0074'].issues.join(), '0|invoice with no fee', 'an invoice with no fee is flagged') &&
+             sq(by['P-0001'].status + '|' + by['P-0088'].status + '|' + by['P-0057'].status + '|' + by['P-0061'].status, 'closed|active|lost|active', 'billed → closed, committed → active, cancelled → lost') && sq(by['P-0088'].rating, 1, 'active is rated 1') &&
+             sq(kinds, 'P-0001:close,P-0013:same,P-0088:new,P-0057:skip,P-0061:new,P-0074:new,P-0120:skip,P-0088:skip', 'matched and classified') &&
+             sq(it['P-0001'].existing.id, old.id, 'matched by the legacy note') && sq(it['P-0013'].existing.id + '|' + it['P-0013'].target.project.name + '|' + /named/.test(it['P-0013'].issues.join()), same.id + '|JPMC Coat Racks (renamed by a leader)|true', 'matched by the id on the record; a leader\'s rename is kept and noted') && sq(it['P-0001'].changes.map(c => c.field).join(), 'month,status,rating,lines', 'the fields that move') &&
+             sq(plan.missing.length + '|' + plan.missing[0].existing.id, '1|' + gone.id, 'a book record the export dropped is listed, not touched') &&
+             sq(out.created + '|' + out.updated + '|' + out.closed + '|' + out.cancelled + '|' + out.skipped, '2|0|1|0|5', 'exactly the ticked rows are written') &&
+             sq(p1.project.status + '|' + p1.timeline.startMonth + '|' + p1.project.smallWorksId + '|' + p1.project.sheet.actualBilling, 'closed|10|P-0001|74465.6', 'the closed record carries the sheet\'s month, id and billing') &&
+             sq(p88.timeline.startYear + '-' + p88.timeline.startMonth + '|' + (Math.abs(rev88 - 60000) < 0.05) + '|' + (Math.abs(inv88 - (733088.4 + 60000)) < 0.05), '2027-2|true|true', 'the reviewer\'s month and fee went in to the cent: the markup rescaled, the invoice is cost plus the new fee') && sq(Object.keys(l88[0].monthly).join(), '2027-02', 'the line sits in the edited month') &&
+             sq(!!p61 && p61.project.name, 'SMALLWORKS - DE_NCC2_Door', 'new records take the SMALLWORKS prefix') && sq(S.listProjects().some(p => (p.project || {}).smallWorksId === 'P-0074'), false, 'the held-back row was not written') &&
+             sq(S.getProject(gone.id).project.status, 'submitted', 'the dropped record is untouched') &&
+             sq((S.listActivity ? S.listActivity() : []).filter(e => e.action === 'smallworks-import').length, 1, 'one trail entry for the run');
     });
     test('Access · delegate', 'a login named in LEADER_ACCESS sees every project a given leader leads, current and future, and nothing else', () => {
       freshDb(); asAdmin();
