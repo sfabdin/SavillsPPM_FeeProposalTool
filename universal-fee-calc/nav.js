@@ -239,7 +239,8 @@
       try {
         const S = window.UFC_Store; if (!S || !S.getCurrentUser) return;
         const admin = S.isAdmin(S.getCurrentUser());
-        panel.querySelectorAll('a[data-admin="1"]').forEach(a => { a.dataset.roleHidden = admin ? '0' : '1'; });
+        // an admin page a member holds a grant for (store.canUseTool) shows for them too
+        panel.querySelectorAll('a[data-admin="1"]').forEach(a => { let ok = admin; if (!ok && S.canUseTool) { try { ok = S.canUseTool(decodeURIComponent(a.getAttribute('href') || '')); } catch (e3) {} } a.dataset.roleHidden = ok ? '0' : '1'; });
         // Executive Reporting reveals ONLY for the sees-all-projects list
         // (the store's rule for data visibility) - tool admins stay hidden.
         let seesAll = false;

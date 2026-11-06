@@ -3519,6 +3519,21 @@
   };
   function leaderAccessRules(login) { return LEADER_ACCESS[String(login || '').trim().toLowerCase()] || null; }
 
+  /* Per-TOOL grants: a member who may open one admin page without being an
+     admin anywhere else. Keyed by the page's file name, as the menu links it.
+     Brianna King runs the JPMC small-works reconciliation (November 2026). */
+  const TOOL_GRANTS = {
+    'Import Small Works.html': ['bsheppardking@savills.us'],
+  };
+  /** May this person open the page? Admins always; otherwise the grant list. */
+  function canUseTool(page, user) {
+    const u = user || getCurrentUser();
+    if (isAdmin(u)) return true;
+    const list = TOOL_GRANTS[String(page || '').replace(/^.*\//, '').split('?')[0]] || [];
+    const login = String((u && u.username) || '').trim().toLowerCase();
+    return !!login && list.map(x => String(x).toLowerCase()).includes(login);
+  }
+
   /* These logins may use the "Viewing as" impersonation switch to preview
      other people's restricted views. Everyone else never sees the control. */
   const SUPERUSERS = new Set([
@@ -4588,7 +4603,7 @@
     recordAdjustment, shiftSchedule, clearStaffingShift, billingSeries, revenueSeries, isDeadPursuit,
     approveChangeOrder, detachChangeOrder, changeOrderDelta, changeOrderRoleDiff, revisedContract, clientRollup,
     enumerateMonths, computeMonthsByPhase,
-    getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, isSmallWorks, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects,
+    getCurrentUser, isAdmin, adminEmails, bookWatcherEmails, marketingEmails, noticeHtml, emailFonts, completenessOf, isFinished, isSmallWorks, COMPLETENESS_FIELDS, buildCompletenessDigest, publishCompletenessDigest, seesAllProjects, userOwnsProject, visibleProjects, canUseTool, TOOL_GRANTS,
     INTAKE_TO, INTAKE_FIELDS, priorBookedForClient, intakeStatus, setReadyToBill, readyToBillOf, buildInvoiceRequest, markReadyToBillSubmitted,
     FIN_STATUS, FIN_FLAGS, finKey, finYmPlus, finLine, setFinLine, finWorking, finCycle, finSnapshot, takeFinSnapshot, finProjects, finTimecard, finRows, finSnapshotValues, finCycleState, finOpening, setFinOpening, finUnbilled, FIN_RULES, finFollowUps, finFollowUpEmail, markFinAsked, finAnnual,
     setRealIdentity, isSuperuser, canImpersonate, setImpersonation, clearImpersonation, getImpersonation, impersonationRoster, displayNameForLogin, getRealIdentity,

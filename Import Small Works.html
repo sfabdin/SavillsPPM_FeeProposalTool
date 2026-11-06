@@ -51,7 +51,7 @@
   <h1>Import Small Works · JPMC</h1>
   <div class="sub">Drop the monthly Excel export of <em>INTERNAL - Macro Fee Tracking</em> (in Smartsheet: File → Export → Microsoft Excel). Every row is matched to the book by its <strong>Project ID</strong> and reconciled: the anticipated billing month, the contractor work order and managed-vendor amounts as pass-through lines, the <strong>Fee</strong> as Savills revenue, billed and cancelled as closed and lost. Nothing is written until you approve the list below; edit a month, a fee or a cost first if the sheet is behind.</div>
 
-  <div id="gate">Import Small Works is for admins only. Sign in with an admin Box account to continue.</div>
+  <div id="gate">Import Small Works is for admins and the small-works team. Sign in with your Savills Box account; if you run the Macro Fee Tracking sheet and still see this, ask an admin to add you to the tool&rsquo;s grant list.</div>
 
   <div id="app" style="display:none;">
     <div class="card">
@@ -170,8 +170,8 @@
     } catch (e) { $('#commit-msg').innerHTML = '<div class="msg err">' + esc(e.message || e) + '</div>'; }
   }
   function ready(){
-    const admin = STORE.isAdmin && STORE.isAdmin();
-    if (!admin){ $('#gate').style.display='block'; return; }
+    const ok = STORE.canUseTool ? STORE.canUseTool('Import Small Works.html') : (STORE.isAdmin && STORE.isAdmin());
+    if (!ok){ $('#gate').style.display='block'; return; }
     $('#app').style.display='block';
     $('#pick').onclick = () => $('#file').click();
     $('#file').onchange = () => { const f = $('#file').files[0]; $('#file').value = ''; if (f) load(f); };
