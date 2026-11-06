@@ -3510,6 +3510,15 @@
   };
   function groupAccessRules(login) { return GROUP_ACCESS[String(login || '').trim().toLowerCase()] || null; }
 
+  /* Per-user DELEGATE visibility: a member ALSO sees every project led by one
+     of these revenue leaders (by leader id from the directory) — current and
+     future, without a grant on each record. Ashley Conroy: all of Tonya
+     Williams's projects (November 2026). */
+  const LEADER_ACCESS = {
+    'aconroy@savills.us': ['tmwilliams'],
+  };
+  function leaderAccessRules(login) { return LEADER_ACCESS[String(login || '').trim().toLowerCase()] || null; }
+
   /* These logins may use the "Viewing as" impersonation switch to preview
      other people's restricted views. Everyone else never sees the control. */
   const SUPERUSERS = new Set([
@@ -4517,6 +4526,9 @@
     // Explicit per-project access grant — match the signed-in user's Box email.
     const grant = accessGrantList(p);
     if (grant.length && u.username && grant.includes(String(u.username).trim().toLowerCase())) return true;
+    // Delegate visibility (e.g. Ashley sees every project Tonya leads).
+    const dl = leaderAccessRules(u.username);
+    if (dl) { const l = resolveLeader(pj.leadId || pj.lead); if (l && dl.includes(l.id)) return true; }
     // Group-based visibility (e.g. Benay sees every Change Management group).
     const rules = groupAccessRules(u.username);
     if (rules && (p.groups || []).some(g => rules.some(rx => rx.test((g && g.name) || '')))) return true;
