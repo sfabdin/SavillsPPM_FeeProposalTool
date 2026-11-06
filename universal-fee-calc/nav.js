@@ -64,7 +64,7 @@
     { href: 'Data Repair.html',              label: 'Data Repair',         group: 'Admin', admin: true,
       desc: 'Scan-and-fix for known data damage — duplicates, stale renames, sparse months. Preview first, then repair.' },
     { href: 'Import Small Works.html',       label: 'Import Small Works',  group: 'Admin', admin: true,
-      desc: 'One-time import of the small-works project book.' },
+      desc: 'Drop the monthly Excel export of the JPMC Macro Fee Tracking sheet: every row reconciled to the book by Project ID, reviewed and approved before anything is written.' },
     { href: 'Maintainers Runbook.html',      label: 'Maintainer’s Runbook', group: 'Admin', admin: true,
       desc: 'Deep technical reference — architecture, data flow, and the exact fee math. The migration guide, roadmap and readiness report live in the repo under docs/.' },
     // ── 5 · Report — leadership only. Gated on the sees-all-projects list

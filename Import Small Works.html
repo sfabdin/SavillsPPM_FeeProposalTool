@@ -11,7 +11,7 @@
 <link rel="preload" href="design-system/fonts/gotham/Gotham-Bold.woff2" as="font" type="font/woff2" crossorigin>
 <style>
   body { margin:0; font-family:var(--font-body,Arial,sans-serif); color:var(--sav-navy,#25273A); background:#f3f3f0; }
-  .wrap { max-width:1100px; margin:0 auto; padding:36px 28px 80px; }
+  .wrap { max-width: 1680px; margin:0 auto; padding:36px 28px 80px; }
   h1 { font-family:var(--font-display); font-weight:800; font-size:26px; margin:0 0 4px; }
   .sub { color:#79828C; font-size:13px; margin-bottom:24px; max-width:760px; line-height:1.6; }
   .card { background:#fff; border:1px solid rgba(37,39,58,0.12); padding:22px 24px; margin-bottom:20px; }
@@ -23,7 +23,8 @@
   .stat { display:inline-block; margin-right:28px; }
   .stat b { font-family:var(--font-display); font-size:22px; display:block; }
   .stat span { font-size:11px; color:#79828C; text-transform:uppercase; letter-spacing:0.08em; }
-  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:12px; }
+  table { width:100%; min-width:1380px; border-collapse:collapse; margin-top:14px; font-size:12px; }
+  td.sheet { font-size:11px; color:#4f5668; white-space:nowrap; } td.sheet b { color:var(--sav-navy); }
   th,td { text-align:left; padding:6px 9px; border-bottom:1px solid rgba(37,39,58,0.1); }
   th { font-family:var(--font-display); font-size:9.5px; letter-spacing:0.07em; text-transform:uppercase; color:#79828C; }
   td.num { text-align:right; font-variant-numeric:tabular-nums; }
@@ -33,34 +34,57 @@
   .msg.ok { background:#e8f3ec; color:#1f7a44; } .msg.err { background:#fbe9ea; color:#b3151b; }
   .note { font-size:12px; color:#79828C; line-height:1.6; }
   code { background:#EEE8E3; padding:1px 5px; font-size:11px; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin:12px 0 4px; }
+  .chip { font-family:var(--font-display); font-size:11px; font-weight:700; padding:5px 10px; border:1px solid rgba(37,39,58,0.25); background:#fff; cursor:pointer; }
+  .chip.on { background:var(--sav-navy); color:#fff; border-color:var(--sav-navy); }
+  .k { display:inline-block; font-family:var(--font-display); font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; padding:2px 7px; }
+  .k.new { background:#E4F1E9; color:#1E7A4C; } .k.update { background:#FFF6CC; color:#7a5a00; } .k.close { background:#D6E7F5; color:#1F3B5A; } .k.cancel { background:#FBE9EA; color:#b3151b; } .k.same { background:#f0efec; color:#79828C; } .k.skip { background:#f0efec; color:#b3151b; } .k.missing { background:#f0efec; color:#79828C; }
+  td input, td select { font:inherit; font-size:12px; padding:3px 5px; border:1px solid rgba(37,39,58,0.22); background:#fff; }
+  td input[type=number] { width:92px; text-align:right; } td input[type=month] { width:128px; }
+  td.chg { font-size:11px; color:#4f5668; max-width:260px; white-space:normal; } td.iss { font-size:11px; color:#b3151b; max-width:220px; white-space:normal; }
+  tr.off td { opacity:.55; }
   #gate { display:none; background:#fff; border:1px solid rgba(37,39,58,0.12); padding:40px; text-align:center; font-size:15px; color:#79828C; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Import Small Works · JPMC</h1>
-  <div class="sub">One-time bulk load of the JPMC Small Works projects from the legacy <em>INTERNAL - Macro Fee Tracking</em> workbook. Each becomes its own pass-through-only project (<strong>SMALLWORKS - </strong>name, client JPMC). Contractor WO → billed line (client pays cost + 10%); Managed Vendor → managed line (direct bill, Savills invoices the 10% fee only). Cancelled and zero-value rows are excluded. Existing projects with the same name are skipped — safe to re-run.</div>
+  <div class="sub">Drop the monthly Excel export of <em>INTERNAL - Macro Fee Tracking</em> (in Smartsheet: File → Export → Microsoft Excel). Every row is matched to the book by its <strong>Project ID</strong> and reconciled: the anticipated billing month, the contractor work order and managed-vendor amounts as pass-through lines, the <strong>Fee</strong> as Savills revenue, billed and cancelled as closed and lost. Nothing is written until you approve the list below; edit a month, a fee or a cost first if the sheet is behind.</div>
 
   <div id="gate">Import Small Works is for admins only. Sign in with an admin Box account to continue.</div>
 
   <div id="app" style="display:none;">
     <div class="card">
-      <h2>1 · Review</h2>
-      <div id="stats"></div>
-      <div style="max-height:420px; overflow:auto;"><table id="preview"></table></div>
+      <h2>1 · The export</h2>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="file" accept=".xlsx" style="display:none">
+        <button class="btn" id="pick">⤒ Choose the Excel export…</button>
+        <span class="note" id="file-note">Nothing loaded yet.</span>
+      </div>
+      <div id="stats" style="margin-top:14px"></div>
+      <div id="parse-msg"></div>
     </div>
-    <div class="card">
-      <h2>2 · Import</h2>
-      <div class="note">Writes the projects into your store; they sync to Box while you're signed in. Financials are stamped on save. Re-running skips any name already present.</div>
-      <div style="margin-top:14px; display:flex; gap:12px; align-items:center;">
-        <button class="btn go" id="commit">Import <span id="commit-n"></span> projects</button>
+    <div class="card" id="review" style="display:none">
+      <h2>2 · Review and approve</h2>
+      <div class="note">Tick what goes in. <b>New</b> creates a project, <b>Update</b> moves its month, fee or lines, <b>Close</b> marks it billed and closed, <b>Cancel</b> marks it lost. Unchanged rows are left alone. A month, fee, cost or status typed here goes in instead of the sheet's.</div>
+      <div class="chips" id="chips"></div>
+      <div style="max-height:560px; overflow:auto;"><table id="plan"></table></div>
+      <div id="missing" class="note" style="margin-top:12px"></div>
+    </div>
+    <div class="card" id="apply" style="display:none">
+      <h2>3 · Apply</h2>
+      <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+        <button class="btn go" id="commit">Apply</button>
+        <span class="note" id="commit-note"></span>
         <a class="btn ghost" href="Projects Index.html">Open Projects Index →</a>
+        <a class="btn ghost" href="Financial Tracking (TEST).html">Financial Tracking (TEST) →</a>
       </div>
       <div id="commit-msg"></div>
     </div>
   </div>
 </div>
 
+<script src="universal-fee-calc/vendor-lazy.js"></script>
 <script src="universal-fee-calc/rates-catalog.js"></script>
 <script src="universal-fee-calc/cache-store.js"></script>
 <script src="universal-fee-calc/store.js"></script>
@@ -69,70 +93,94 @@
 <script src="universal-fee-calc/boot.js"></script>
 <script src="universal-fee-calc/ui.js"></script>
 <script src="universal-fee-calc/sync-status.js"></script>
-<script src="universal-fee-calc/smallworks-data.js"></script>
+<script src="universal-fee-calc/smallworks-import.js"></script>
 <script>
 (function(){
   'use strict';
-  const STORE = window.UFC_Store;
-  const $ = (s) => document.querySelector(s);
-  const fmt = (n) => '$' + Math.round(n).toLocaleString();
-  const RECS = window.SMALLWORKS_RECORDS || [];
-  const MON = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const STORE = window.UFC_Store, SW = window.UFC_SmallWorks;
+  const $ = (s) => document.querySelector(s), $$ = (s) => Array.from(document.querySelectorAll(s));
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = (n) => (n < 0 ? '−' : '') + '$' + Math.round(Math.abs(n)).toLocaleString();
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const ymL = (k) => k ? MON[+k.slice(5) - 1] + ' ' + k.slice(0, 4) : '—';
+  const KINDS = [['all', 'Everything'], ['new', 'New'], ['update', 'Update'], ['close', 'Close'], ['cancel', 'Cancel'], ['same', 'Unchanged'], ['skip', 'Skipped'], ['missing', 'Not in export']];
+  let PLAN = null, FILTER = 'all', FILE = '';
 
-  // Client-billed + Savills revenue per record (billed: cost×1.1 client / 0.1 rev; managed: 0.1 fee both)
-  function calc(rec){
-    let client=0, rev=0;
-    (rec.passthrough.lines||[]).forEach(l=>{
-      const c=+l.cost||0, mk=(+l.markupPct||0)/100;
-      rev += c*mk;
-      client += (l.mode==='managed') ? c*mk : c*(1+mk);
-    });
-    return { client, rev };
+  async function load(file) {
+    $('#file-note').textContent = 'Reading ' + file.name + '…'; $('#parse-msg').innerHTML = '';
+    try {
+      const rows = await SW.readWorkbook(file); FILE = file.name;
+      const parsed = SW.parseRows(rows);
+      if (parsed.missing.length) throw new Error('The export is missing the column' + (parsed.missing.length === 1 ? '' : 's') + ' ' + parsed.missing.map(k => SW.HEADERS[k][0]).join(', ') + '. Export the grid with every column shown.');
+      PLAN = SW.buildPlan(parsed); FILTER = 'all';
+      $('#file-note').textContent = file.name + ' · sheet "' + rows.sheet + '" · ' + parsed.entries.length + ' rows';
+      renderStats(); renderPlan(); $('#review').style.display = ''; $('#apply').style.display = ''; $('#commit-msg').innerHTML = '';
+    } catch (e) { $('#file-note').textContent = 'Could not read ' + file.name; $('#parse-msg').innerHTML = '<div class="msg err">' + esc(e.message || e) + '</div>'; }
   }
-
+  function renderStats() {
+    const c = PLAN.counts; const st = (n, l) => '<div class="stat"><b>' + n + '</b><span>' + l + '</span></div>';
+    $('#stats').innerHTML = st(PLAN.items.length, 'rows') + st(c.new || 0, 'new') + st(c.update || 0, 'updates') + st(c.close || 0, 'to close') + st(c.cancel || 0, 'to cancel') + st(c.same || 0, 'unchanged') + st(c.skip || 0, 'skipped') + st(c.missing || 0, 'not in export') + st(fmt(PLAN.revenue), 'Savills revenue on the sheet');
+  }
+  function renderPlan() {
+    const all = PLAN.items.concat(PLAN.missing);
+    $('#chips').innerHTML = KINDS.map(([k, l]) => { const n = k === 'all' ? all.length : (PLAN.counts[k] || 0); return (n || k === 'all') ? '<button type="button" class="chip' + (FILTER === k ? ' on' : '') + '" data-k="' + k + '">' + l + ' ' + n + '</button>' : ''; }).join('');
+    $$('#chips .chip').forEach(b => b.onclick = () => { FILTER = b.dataset.k; renderPlan(); });
+    const list = all.filter(i => FILTER === 'all' || i.kind === FILTER);
+    let h = '<tr><th><input type="checkbox" id="pick-all" title="Tick or untick everything shown"></th><th>Kind</th><th>Project</th><th>Sheet says</th><th>Book status</th><th>Month</th><th class="num">Contractor WO</th><th class="num">Managed vendor</th><th class="num">Fee · Savills</th><th class="num">Invoice</th><th>Changes</th><th>Issues</th></tr>';
+    list.forEach(i => {
+      const e = i.entry; const ex = i.existing; const pj = (ex && ex.project) || {};
+      if (!i.target) { h += '<tr class="off"><td></td><td><span class="k ' + i.kind + '">' + i.kind + '</span></td><td><b>' + esc(e ? e.id : pj.smallWorksId || '') + '</b> ' + esc(e ? e.name : (pj.name || '').replace(/^SMALLWORKS - /, '')) + '</td><td>' + esc(e ? e.status : '') + '</td><td>' + esc(pj.status || '') + '</td><td>' + (ex && ex.timeline ? ymL(ex.timeline.startYear + '-' + String(ex.timeline.startMonth).padStart(2, '0')) : (e && e.ym ? ymL(e.ym) : '—')) + '</td><td class="num"></td><td class="num"></td><td class="num">' + (e ? fmt(e.fee) : '') + '</td><td class="num"></td><td class="chg"></td><td class="iss">' + esc(i.issues.join(' · ')) + '</td></tr>'; return; }
+      const t = SW.withEdits(i); const L = t.passthrough.lines; const wo = (L.find(l => l.mode === 'billed') || {}).cost || 0, mv = (L.find(l => l.mode === 'managed') || {}).cost || 0;
+      const ym = t.timeline ? t.timeline.startYear + '-' + String(t.timeline.startMonth).padStart(2, '0') : '';
+      h += '<tr class="' + (i.picked ? '' : 'off') + '" data-key="' + esc(i.key) + '"><td><input type="checkbox" data-pick="' + esc(i.key) + '"' + (i.picked ? ' checked' : '') + '></td><td><span class="k ' + i.kind + '">' + i.kind + '</span></td>' +
+        '<td><b>' + esc(e.id) + '</b> ' + esc(e.name) + (ex ? '<div class="note">in the book' + (pj.status ? ' as ' + esc(STORE.STATUS_LABELS[pj.status] || pj.status) : '') + '</div>' : '') + '</td>' +
+        '<td class="sheet"><b>' + esc(e.status || '—') + '</b><br>' + (e.billed ? 'billed' : e.committed ? 'committed' : 'not committed') + (e.likely ? ' · >50%' : '') + (e.actual ? '<br>billed ' + fmt(e.actual) : '') + (e.paid ? ' · paid ' + fmt(e.paid) : '') + '</td>' +
+        '<td><select data-edit="status" data-key="' + esc(i.key) + '">' + Object.keys(STORE.STATUS_LABELS).map(k => '<option value="' + k + '"' + (t.project.status === k ? ' selected' : '') + '>' + esc(STORE.STATUS_LABELS[k]) + '</option>').join('') + '</select></td>' +
+        '<td><input type="month" data-edit="ym" data-key="' + esc(i.key) + '" value="' + esc(ym) + '"></td>' +
+        '<td class="num"><input type="number" step="1" data-edit="wo" data-key="' + esc(i.key) + '" value="' + Math.round(wo) + '"></td><td class="num"><input type="number" step="1" data-edit="mv" data-key="' + esc(i.key) + '" value="' + Math.round(mv) + '"></td>' +
+        '<td class="num"><input type="number" step="1" data-edit="fee" data-key="' + esc(i.key) + '" value="' + Math.round(SW.revenueOf(L)) + '"></td><td class="num">' + fmt(SW.invoiceOf(L)) + '</td>' +
+        '<td class="chg">' + i.changes.map(c => esc(c.field) + ': ' + esc(c.field === 'month' ? ymL(c.from) + ' → ' + ymL(c.to) : (c.from == null ? '—' : c.from) + ' → ' + c.to)).join('<br>') + (Object.keys(i.edits).length ? '<br><b>edited here</b>' : '') + '</td>' +
+        '<td class="iss">' + esc(i.issues.join(' · ')) + '</td></tr>';
+    });
+    $('#plan').innerHTML = h;
+    const find = (key) => all.find(i => i.key === key);
+    $$('#plan [data-pick]').forEach(cb => cb.onchange = () => { find(cb.dataset.pick).picked = cb.checked; renderPlan(); });
+    const pa = $('#pick-all'); if (pa) pa.onchange = () => { list.forEach(i => { if (i.target) i.picked = pa.checked; }); renderPlan(); };
+    $$('#plan [data-edit]').forEach(inp => inp.onchange = () => {
+      const i = find(inp.dataset.key); const f = inp.dataset.edit; const v = inp.value;
+      if (v === '' || v == null) delete i.edits[f]; else i.edits[f] = (f === 'status' || f === 'ym') ? v : Number(v);
+      if (!i.picked && i.kind === 'same') i.picked = true;
+      const y = window.scrollY; renderPlan(); window.scrollTo(0, y);
+    });
+    const miss = PLAN.missing;
+    $('#missing').innerHTML = miss.length ? '<b>' + miss.length + ' small-works project' + (miss.length === 1 ? '' : 's') + ' in the book ' + (miss.length === 1 ? 'is' : 'are') + ' not in this export</b> (still open in the book): ' + miss.map(m => esc((m.existing.project || {}).smallWorksId || '') + ' ' + esc((m.existing.project || {}).name || '').replace(/^SMALLWORKS - /, '')).join(' · ') + '. Nothing happens to them here; cancel or close them on the calculator if the sheet dropped them on purpose.' : '';
+    const picked = PLAN.items.filter(i => i.picked && i.target); const by = {}; picked.forEach(i => { by[i.kind] = (by[i.kind] || 0) + 1; });
+    $('#commit').textContent = picked.length ? 'Apply ' + picked.length + ' · ' + ['new', 'update', 'close', 'cancel', 'same'].filter(k => by[k]).map(k => by[k] + ' ' + (k === 'same' ? 'edited' : k)).join(', ') : 'Nothing ticked';
+    $('#commit').disabled = !picked.length;
+    $('#commit-note').textContent = picked.length ? 'Writes ' + picked.length + ' project' + (picked.length === 1 ? '' : 's') + ' to the book; they sync to Box while you are signed in.' : '';
+  }
+  function apply() {
+    const picked = PLAN.items.filter(i => i.picked && i.target);
+    if (!picked.length) return;
+    if (!confirm('Apply ' + picked.length + ' change' + (picked.length === 1 ? '' : 's') + ' to the book?\n\n' + picked.slice(0, 12).map(i => i.kind + ' · ' + i.entry.id + ' ' + i.entry.name).join('\n') + (picked.length > 12 ? '\n… and ' + (picked.length - 12) + ' more' : ''))) return;
+    try {
+      const out = SW.applyPlan(PLAN, { file: FILE });
+      $('#commit-msg').innerHTML = '<div class="msg ok">Done — ' + out.created + ' created, ' + out.updated + ' updated, ' + out.closed + ' closed, ' + out.cancelled + ' cancelled. They sync to Box now; Financial Tracking and Revenue Projections read them on their next open.</div>';
+      $('#review').style.display = 'none'; $('#commit').disabled = true; $('#commit').textContent = 'Applied'; $('#commit-note').textContent = 'Load next month\'s export to reconcile again.';
+    } catch (e) { $('#commit-msg').innerHTML = '<div class="msg err">' + esc(e.message || e) + '</div>'; }
+  }
   function ready(){
     const admin = STORE.isAdmin && STORE.isAdmin();
     if (!admin){ $('#gate').style.display='block'; return; }
     $('#app').style.display='block';
-    const existing = new Set(STORE.listProjects().map(p => (p.project&&p.project.name)||''));
-    let totClient=0, totRev=0, newN=0, dupN=0;
-    let rows = '<tr><th>Project</th><th>Period</th><th>Lines</th><th class="num">Client billed</th><th class="num">Savills rev</th><th>State</th></tr>';
-    RECS.forEach(rec=>{
-      const {client, rev}=calc(rec); totClient+=client; totRev+=rev;
-      const dup = existing.has(rec.project.name); if(dup) dupN++; else newN++;
-      const t=rec.timeline;
-      const lines=(rec.passthrough.lines||[]).map(l=>`<span class="tag ${l.mode==='managed'?'m':'b'}">${l.mode==='managed'?'Managed':'Billed'} ${fmt(+l.cost||0)}</span>`).join(' ');
-      rows += `<tr><td>${rec.project.name.replace(/^SMALLWORKS - /,'')}</td><td>${MON[t.startMonth]} ${t.startYear}</td><td>${lines}</td><td class="num">${fmt(client)}</td><td class="num">${fmt(rev)}</td><td>${dup?'<span style="color:#b3151b">exists — skip</span>':'<span style="color:#0a6463">new</span>'}</td></tr>`;
-    });
-    $('#preview').innerHTML = rows;
-    $('#stats').innerHTML =
-      `<div class="stat"><b>${RECS.length}</b><span>Projects</span></div>`+
-      `<div class="stat"><b>${newN}</b><span>New</span></div>`+
-      `<div class="stat"><b>${dupN}</b><span>Already exist</span></div>`+
-      `<div class="stat"><b>${fmt(totClient)}</b><span>Client billed</span></div>`+
-      `<div class="stat"><b>${fmt(totRev)}</b><span>Savills revenue</span></div>`;
-    $('#commit-n').textContent = newN;
-    $('#commit').disabled = newN===0;
-
-    $('#commit').addEventListener('click', ()=>{
-      const have = new Set(STORE.listProjects().map(p => (p.project&&p.project.name)||''));
-      let added=0, skipped=0;
-      RECS.forEach(rec=>{
-        if (have.has(rec.project.name)){ skipped++; return; }
-        // fresh copy without id so the store assigns one + stamps financials
-        const clone = JSON.parse(JSON.stringify(rec));
-        delete clone.id;
-        STORE.saveProject(clone);
-        have.add(rec.project.name); added++;
-      });
-      $('#commit-msg').innerHTML = `<div class="msg ok">Imported ${added} project${added===1?'':'s'}${skipped?` · skipped ${skipped} already present`:''}. They'll sync to Box now — open the Projects Index to confirm.</div>`;
-      $('#commit').disabled = true;
-    });
+    $('#pick').onclick = () => $('#file').click();
+    $('#file').onchange = () => { const f = $('#file').files[0]; $('#file').value = ''; if (f) load(f); };
+    $('#commit').onclick = apply;
   }
-
   if (window.ufcReady && window.ufcReady.then) window.ufcReady.then(ready); else document.addEventListener('DOMContentLoaded', ready);
 })();
 </script>
+
 <script src="universal-fee-calc/confirm-widget.js"></script>
 <script src="universal-fee-calc/nav.js"></script>
 </body>
