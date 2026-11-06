@@ -1306,6 +1306,19 @@
              sq(em.subject, 'PPM Project Intake - Intake E', 'subject') && sq(em.to.join(), S.INTAKE_TO, 'to the intake mailbox') &&
              sq(id, 'spy', 'queued through Box.notify') && sq(n.event, 'project-intake', 'as a project-intake message') && sq((n.cc || []).indexOf('esobel@savills.us') >= 0, true, 'the revenue leader in copy') && sq(n.data.projectId, 'in_e', 'carrying the project id');
     });
+    test('Access · delegate', 'a login named in LEADER_ACCESS sees every project a given leader leads, current and future, and nothing else', () => {
+      freshDb(); asAdmin();
+      const tonya = S.saveProject(base({ id: 'ac_t', project: { name: 'Tonya One', client: 'Acme', status: 'active', lead: 'Tonya Williams' } }), { force: true });
+      const tonya2 = S.saveProject(base({ id: 'ac_t2', project: { name: 'Tonya Two', client: 'Beta', status: 'draft', leadId: 'tmwilliams' } }), { force: true });
+      const other = S.saveProject(base({ id: 'ac_o', project: { name: 'Someone Else', client: 'Acme', status: 'active', lead: 'Emily Sobel' } }), { force: true });
+      const ashley = { username: 'aconroy@savills.us', name: 'Ashley Conroy', role: 'member' };
+      const stranger = { username: 'nobody@savills.us', name: 'No Body', role: 'member' };
+      const seen = S.visibleProjects([tonya, tonya2, other], ashley).map(p => p.id).join();
+      const none = S.visibleProjects([tonya, tonya2, other], stranger).length;
+      return sq(S.userOwnsProject(tonya, ashley) && S.userOwnsProject(tonya2, ashley), true, 'by name or by id, the delegate sees the leader\'s projects') &&
+             sq(S.userOwnsProject(other, ashley), false, 'and not another leader\'s') && sq(seen, 'ac_t,ac_t2', 'the wall agrees') && sq(none, 0, 'a login with no rule sees nothing') &&
+             sq(S.isAdmin(ashley), false, 'a delegate is still a member');
+    });
     test('Ready to bill', 'a month is marked on the project record by whoever can edit it, reads back with who and when, and clears', () => {
       setup();
       S.setRealIdentity({ username: 'esobel@savills.us', name: 'Emily Sobel' });   // a leader, not an admin
