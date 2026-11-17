@@ -131,7 +131,8 @@
      specific leader with "Viewing as". Nothing in either view writes a
      fee project.
      ============================================================ */
-  const VIEW_KEY = 'ufc_staff_view_v1';
+  // the TEST page keeps its own View choice: an admin who once picked the classic leader view on the original page still opens the TEST page on Leadership
+  const VIEW_KEY = 'ufc_staff_view_v1' + (/\(TEST\)/i.test(decodeURIComponent(location.pathname || '')) ? ':test' : '');
   /* SHOW AS % OR HOURS. One toggle in the dates row; every view reads it.
      A percentage is of the person's own capacity (part-timers against
      theirs), so hours = capacity hours × %. Project FTE × the month's hours
