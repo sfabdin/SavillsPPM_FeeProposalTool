@@ -190,14 +190,14 @@
     }
     if (!rows.length) html += `<div class="empty">No allocations on your projects yet — add one; it is filed under the fee project you pick.</div>`;
     else {
-      html += `<table class="dt"><thead><tr><th>Client</th><th>Project</th><th>Person</th><th class="num" title="Total allocation across all projects this month">Load ${esc(st.ymLabel(now))}</th><th>Status</th><th>Window</th><th class="num">Alloc</th><th>Note</th><th></th></tr></thead><tbody>`;
+      html += `<table class="dt"><thead><tr><th>Client</th><th>Project</th><th>Person</th><th class="num" title="Total allocation across all projects this month">Load ${esc(st.ymLabel(now))}</th><th>Status</th><th>Window</th><th class="num">${H().hrsMode && H().hrsMode() ? 'Alloc · h/mo' : 'Alloc'}</th><th>Note</th><th></th></tr></thead><tbody>`;
       rows.forEach(a => {
         const person = st.getPerson(a.personId) || { name: a.personName || a.personId };
         const load = Math.round(st.personLoad(a.personId, now) || 0);
         html += `<tr><td>${esc(a.client || '—')}</td><td class="pname">${esc(st.projectLabel(a.project, a.client).name)}</td><td>${esc(person.name)}</td>
-          <td class="num" style="color:${load > 100 ? 'var(--sav-red)' : 'inherit'}">${load}%</td>
+          <td class="num" style="color:${load > 100 ? 'var(--sav-red)' : 'inherit'}">${H().allocU ? H().allocU(person, load) : load + '%'}</td>
           <td><span class="badge ${a.status === 'Pursuit' || a.type === 'Opportunity' ? 'pursuit' : 'active'}">${esc(a.status || '')}</span></td>
-          <td>${esc(a.start ? st.ymLabel(a.start) : '—')} – ${esc(a.end ? st.ymLabel(a.end) : 'open')}</td><td class="num">${a.pct}%</td><td class="vmini">${ctTag(a)}${esc(a.note || '')}</td>
+          <td>${esc(a.start ? st.ymLabel(a.start) : '—')} – ${esc(a.end ? st.ymLabel(a.end) : 'open')}</td><td class="num">${H().allocU ? H().allocU(person, a.pct) : a.pct + '%'}</td><td class="vmini">${ctTag(a)}${esc(a.note || '')}</td>
           <td><span class="row-act"><button data-edit="${esc(a.id)}">Edit</button><button class="del" data-del="${esc(a.id)}">Del</button></span></td></tr>`;
       });
       html += `</tbody></table>`;
