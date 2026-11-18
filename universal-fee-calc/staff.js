@@ -821,7 +821,20 @@
     // setProjectMapping → clockify, setTitleMapping, setUserExclusion,
     // flagMapping) must be listed here — a key missing from this union is
     // silently dropped on every merge, not just when it clashes.
-    out.actuals = Object.assign({}, remote.actuals || {}, local.actuals || {});
+    /* ACTUALS are not edited by hand: every row comes from one import (the
+       daily drop, a CSV, the API), which REPLACES the months it covers. Two
+       copies of staff.json can therefore hold the same hours under different
+       keys — a project folded to its fee name in one copy and not the other,
+       a Clockify user mapped to a different person, a person merged away —
+       and a key-wise union would keep both and show the hours twice. So the
+       side with the newer import wins wholesale, and its import stamps come
+       with it. (November 2026: a stale tab doubled a month this way.) */
+    const rImp = (remote.meta || {}).clockifyImportedAt || '', lImp = (local.meta || {}).clockifyImportedAt || '';
+    const actualsFrom = lImp > rImp ? local : remote;
+    out.actuals = Object.assign({}, actualsFrom.actuals || {});
+    // hours left under a person merged away (Data Repair, mergePeople) belong to nobody the views can show
+    const mergedAway = Object.assign({}, (remote.meta || {}).mergedPeople || {}, (local.meta || {}).mergedPeople || {});
+    Object.keys(out.actuals).forEach(k => { const pid = k.split('|')[0]; if (mergedAway[pid] || tombs['person:' + pid]) { const to = mergedAway[pid] && mergedAway[pid].into; if (to && out.people[to]) { const nk2 = to + k.slice(pid.length); out.actuals[nk2] = Math.round(((out.actuals[nk2] || 0) + out.actuals[k]) * 10) / 10; } delete out.actuals[k]; } });
     const rMap = remote.mappings || {}, lMap = local.mappings || {};
     const unionUserX = () => {
       const merged = Object.assign({}, rMap.userX || {});
@@ -881,6 +894,8 @@
     const rMeta = remote.meta || {}, lMeta = local.meta || {};
     const localNewer = (lMeta.updatedAt || '') >= (rMeta.updatedAt || '');
     out.meta = localNewer ? Object.assign({}, rMeta, lMeta) : Object.assign({}, lMeta, rMeta);
+    // the Clockify stamps travel with the actuals they describe, whichever side wrote its meta last
+    { const am = actualsFrom.meta || {}; ['clockifyImportedAt', 'clockifyMonths', 'clockifyDropAt', 'clockifyDropTakenAt'].forEach(k => { if (am[k] !== undefined) out.meta[k] = am[k]; else delete out.meta[k]; }); }
     // Last-worked days merge per person, newest wins — never one side's whole map.
     out.meta.lastWorked = Object.assign({}, rMeta.lastWorked || {});
     Object.entries(lMeta.lastWorked || {}).forEach(([pid, d]) => { if (!out.meta.lastWorked[pid] || d > out.meta.lastWorked[pid]) out.meta.lastWorked[pid] = d; });
@@ -1946,6 +1961,9 @@
      committed once and an older one never. */
   function clockifyDropAt() { return (readDb().meta || {}).clockifyDropAt || ''; }
   function markClockifyDrop(pulledAt) { const db = readDb(); db.meta.clockifyDropAt = String(pulledAt || ''); db.meta.clockifyDropTakenAt = new Date().toISOString(); writeDb(db); }
+  /** Forget which drop was taken, so the next look at Box commits today's
+      again — the repair when a merge or a stale tab has left the hours wrong. */
+  function resetClockifyDrop() { const db = readDb(); delete db.meta.clockifyDropAt; delete db.meta.clockifyDropTakenAt; writeDb(db); logStaff('staff-actuals', { mode: 'retake', months: '', written: 0, skipped: 0 }); }
   /** personId → 'YYYY-MM-DD' of the last day they logged time for (from the
       actuals pull; the lateness pull tops it up). */
   function lastWorkedDays() {
@@ -3426,7 +3444,7 @@
     // clockify
     analyzeClockify, commitClockify, clearActuals,
     getMappings, setUserMapping, setProjectMapping, setTitleMapping, setPersonAlias, personForContractName, tokenScore,
-    clockifyDropAt, markClockifyDrop,
+    clockifyDropAt, markClockifyDrop, resetClockifyDrop,
     titleFamily, costRateForTitle, personCostRate, contractRates, personContractRate, behindMonths, isBehind, missingCost, projectLabel, projectLabelText, allocContractDrift, macroHours, isMacroProject, isTimeOffProject, isLeaveProject, leaveStatus, profitability,
     setLateness, getLateness, setUserExclusion, userExcluded, applyClockifyTitles, personEmail, setPersonEmail,
     parseCsvRows: parseCsv,

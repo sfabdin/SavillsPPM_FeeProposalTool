@@ -2179,6 +2179,25 @@
       return after.rows.some(r => r.person.id === 'stp_nh') || 'still not measured after hours arrived';
     });
 
+    test('Staffing · merge', 'actual hours follow the newer import wholesale, never a union of two copies\' keys, and hours under a merged-away person land on the survivor', () => {
+      const sq = (p, q, label) => (p === q) ? true : label + ': ' + JSON.stringify(p) + ' ≠ ' + JSON.stringify(q);
+      const mk = (imp, actuals, extra) => Object.assign({ schemaVersion: 7, people: { p_a: { id: 'p_a', name: 'Ada' }, p_b: { id: 'p_b', name: 'Bo' } }, allocations: [], actuals, mappings: { users: {}, clockify: {} }, deleted: {}, meta: Object.assign({ monthHours: 172, clockifyImportedAt: imp, clockifyMonths: ['2026-10'], clockifyDropAt: imp, updatedAt: imp }, extra || {}) });
+      // Box has the folded project name; a stale tab still has the old one — the same 40 hours under two keys
+      const remote = mk('2026-11-17T10:00:00Z', { 'p_a|Acme — Lobby|2026-10': 40 });
+      const stale = mk('2026-11-01T10:00:00Z', { 'p_a|Lobby (old name)|2026-10': 40 }, { updatedAt: '2026-11-18T09:00:00Z' });   // the tab wrote its meta later, but imported earlier
+      const m1 = ST.mergeStaffDb(remote, stale);
+      const sum = (db) => Object.values(db.actuals).reduce((t, v) => t + v, 0);
+      // the other way round: the local tab imported later (a CSV drop) and wins
+      const fresh = mk('2026-11-18T08:00:00Z', { 'p_a|Acme — Lobby|2026-10': 42 });
+      const m2 = ST.mergeStaffDb(remote, fresh);
+      // a person merged away: their hours move to the survivor instead of vanishing or doubling
+      const r3 = mk('2026-11-17T10:00:00Z', { 'p_a|Acme — Lobby|2026-10': 40, 'p_b|Acme — Lobby|2026-10': 5 }, { mergedPeople: { p_b: { into: 'p_a', at: '2026-11-17T11:00:00Z' } } }); r3.deleted['person:p_b'] = '2026-11-17T11:00:00Z';
+      const m3 = ST.mergeStaffDb(r3, mk('2026-11-01T10:00:00Z', {}));
+      return sq(Object.keys(m1.actuals).join(), 'p_a|Acme — Lobby|2026-10', 'the newer import\'s keys only') && sq(sum(m1), 40, 'forty hours, not eighty') &&
+             sq(m1.meta.clockifyImportedAt + '|' + m1.meta.clockifyDropAt, '2026-11-17T10:00:00Z|2026-11-17T10:00:00Z', 'the import stamps travel with the hours, even though the stale tab wrote its meta later') &&
+             sq(Object.keys(m2.actuals).join() + '|' + sum(m2) + '|' + m2.meta.clockifyImportedAt, 'p_a|Acme — Lobby|2026-10|42|2026-11-18T08:00:00Z', 'a newer local import wins the same way') &&
+             sq(Object.keys(m3.actuals).join() + '|' + m3.actuals['p_a|Acme — Lobby|2026-10'], 'p_a|Acme — Lobby|2026-10|45', 'a merged-away person\'s hours land on the survivor once') && sq(!!m3.people.p_b, false, 'and the duplicate stays gone');
+    });
     test('Staffing · merge', 'a merge keeps lateness, and any field it has never heard of', () => {
       // mergeStaffDb built its result from defaultDb() and copied only the keys
       // it knew; lateness was wiped on every refresh, and the next new field

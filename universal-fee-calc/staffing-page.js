@@ -1162,8 +1162,8 @@
       const findBox = (id, q, list, chip, unlockKey, ph) => `<span class="cmp-find">${chip ? `<span class="lock-chip" title="Locked — click × to clear">🔒 ${esc(chip)}<button type="button" data-unlock="${unlockKey}" aria-label="Clear">×</button></span>` : `<input type="search" id="${id}" list="${id}-list" placeholder="${ph}" value="${esc(q)}" autocomplete="off"><datalist id="${id}-list">${list.map(v => typeof v === 'string' ? `<option value="${esc(v)}">` : `<option value="${esc(v.value)}" label="${esc(v.label)}">`).join('')}</datalist>`}</span>`;
       // Suggestions carry the fee name (what people know) with the matrix name as the value that locks.
       const projSuggest = projList;
-      const findProject = findBox('var-project-q', state.varProjectQ, projSuggest, projFilter ? S.projectLabel(projFilter).name : '', 'project', 'Project… Enter locks');
-      const findPerson = findBox('var-person-q', state.varPersonQ, pplList.map(x => x.name), lockedPerson, 'person', 'Person… Enter locks');
+      const findProject = findBox('var-project-q', state.varProjectQ, projSuggest, projFilter ? S.projectLabel(projFilter).name : '', 'project', 'Project or client…');
+      const findPerson = findBox('var-person-q', state.varPersonQ, pplList.map(x => x.name), lockedPerson, 'person', 'Person…');
       // Contract only applies when grouped by project (the contract has no names)
       let totContract = 0; const contractByProj = {};
       (byPerson ? [...new Set(rows.map(r => r.project))] : projNames).forEach(pn => { const cl = (rows.find(r => r.project === pn) || {}).client || ''; const cp = S.contractPlan(pn, ms, cl); if (cp) { contractByProj[pn] = cp; totContract += cpTot(cp); } });
@@ -1345,10 +1345,11 @@
       const el = $('#' + id); if (!el) return;
       el.oninput = () => { clearTimeout(cmpFindTimer); const v = el.value; cmpFindTimer = setTimeout(() => { state[qKey] = v; cmpRefocus = { id, pos: el.selectionStart }; renderActuals(); }, 140); };
       el.onkeydown = (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); clearTimeout(cmpFindTimer); const hit = resolve(el.value); if (hit) { state[lockKey] = hit; state[qKey] = ''; cmpRefocus = null; renderActuals(); } else toast('No ' + (lockKey === 'varProject' ? 'project' : 'person') + ' matches “' + el.value + '”.'); }
+        // Enter keeps the text as the live filter — a client name keeps every project of that client on screen (it used to lock to the first match)
+        if (e.key === 'Enter') { e.preventDefault(); clearTimeout(cmpFindTimer); state[qKey] = el.value; state[lockKey] = ''; cmpRefocus = { id, pos: el.value.length }; renderActuals(); }
         if (e.key === 'Escape') { el.value = ''; state[qKey] = ''; renderActuals(); }
       };
-      el.onchange = () => { const v = el.value, list = lockKey === 'varProject' ? S.distinctProjects().flatMap(x => [x, S.projectLabel(x).name]) : S.listPeople().filter(S.inView).map(x => x.name); if (list.some(x => x.toLowerCase() === v.trim().toLowerCase())) { clearTimeout(cmpFindTimer); state[lockKey] = resolve(v); state[qKey] = ''; cmpRefocus = null; renderActuals(); } };
+      el.onchange = () => { clearTimeout(cmpFindTimer); state[qKey] = el.value; cmpRefocus = { id, pos: el.value.length }; renderActuals(); };   // a pick from the list is just text too
     };
     wire('var-project-q', 'varProjectQ', 'varProject', resolveProject);
     wire('var-person-q', 'varPersonQ', 'varPerson', resolvePerson);
@@ -1418,6 +1419,7 @@
       <div class="imp-actions" style="margin-top:12px">
         <button class="btn btn-secondary" id="pull-api">⟳ Pull from Clockify (API)</button>
         <button class="btn btn-ghost" id="pull-box">Pull file from Box</button>
+        <button class="btn btn-ghost" id="retake-drop" title="Forget which nightly drop this book took and commit today's again — it replaces every month the drop covers. The repair when two browsers show different hours.">↻ Re-take today's drop</button>
         <span class="note-txt" id="pull-note">API pull uses the aggregated summary report for the current window — one small request, never raw entries.</span>
       </div>
     </div>`;
@@ -1497,6 +1499,7 @@
     });
     const note = $('#pull-note');
     const setNote = (msg, bad) => { if (note) { note.textContent = msg; note.style.color = bad ? '#8f2418' : ''; } };
+    { const rt = $('#retake-drop'); if (rt) rt.onclick = async () => { if (!confirm('Re-take today\'s Clockify drop?\n\nEvery month the drop covers is replaced with the drop\'s hours — the same thing the nightly take does. Use this when two browsers show different hours.')) return; rt.disabled = true; try { S.resetClockifyDrop(); state.drop = null; await takeClockifyDrop(); if (!(S.readDb().meta || {}).clockifyDropTakenAt) toast('No drop in Box to take — pull from the API or drop a CSV instead.'); } catch (e) { toast('Could not re-take the drop: ' + (e.message || e)); } finally { rt.disabled = false; renderAll(); } }; }
     const pa = $('#pull-api');
     if (pa) pa.onclick = async () => {
       const ms = months();
