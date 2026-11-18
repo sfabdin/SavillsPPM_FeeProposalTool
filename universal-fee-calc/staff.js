@@ -310,6 +310,7 @@
     db.schemaVersion = SCHEMA;
     db.meta = db.meta || {};
     db.meta.updatedAt = new Date().toISOString();
+    bumpRev();
     _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null;
     decorate(db); delete db.__decorated;
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser && window.UFC_Store.getCurrentUser(); if (u && u.username) db.meta.updatedBy = u.username; } catch (e) {}
@@ -928,6 +929,45 @@
       && !Object.keys((db.mappings || {}).users || {}).length
       && !Object.keys(db.deleted || {}).length;
   }
+
+  /* ===== One set of numbers for everyone =====
+     Two browsers in the same meeting showed two sets of hours (November 2026):
+     each had merged Box's copy into its own, and whatever was only in that
+     browser survived the merge. The merge exists for one reason — an edit
+     saved here that never reached Box (offline, a failed push, a closed tab)
+     must not be lost. So that is now the only time it runs. The marker below
+     records the local stamp that last landed in Box; a browser whose local
+     copy is at that stamp holds nothing Box lacks, and on open (and every
+     refresh) it takes Box's file WHOLESALE. Only a browser with an unpushed
+     edit merges — and then pushes the result, so it is at the marker too. */
+  const PUSHED_KEY = 'ufc_staff_pushed_v1', REV_KEY = 'ufc_staff_rev_v1';
+  /* A local write counter, not a timestamp: two writes can share a
+     millisecond (the tests proved it), and Box's stamp is rewritten by the
+     model normalisation that runs on every take. The counter lives in this
+     browser only and is never part of staff.json. */
+  function currentRev() { let r = 0; try { r = parseInt(localStorage.getItem(REV_KEY) || '0', 10) || 0; } catch (e) {} return r; }
+  function bumpRev() { const r = currentRev() + 1; try { localStorage.setItem(REV_KEY, String(r)); } catch (e) {} return r; }
+  function markPushed(rev) { try { if (rev == null) localStorage.removeItem(PUSHED_KEY); else localStorage.setItem(PUSHED_KEY, String(rev)); } catch (e) {} }
+  /** True when this browser's copy carries an edit that has not landed in Box. */
+  function hasUnpushedEdits(db) {
+    db = db || readDb();
+    if (!db || !db.meta || !db.meta.updatedAt) return false;        // nothing ever edited here
+    if (isPristineSeed(db)) return false;
+    let pushed = null; try { pushed = localStorage.getItem(PUSHED_KEY); } catch (e) {}
+    return pushed !== String(currentRev());
+  }
+  /** Take Box's staff.json: wholesale when nothing here is unpushed, merged
+      otherwise. Returns 'replaced' | 'merged' | null (nothing usable came). */
+  function adoptRemote(remote) {
+    if (!remote || !remote.people || !remote.allocations) return null;
+    if (hasUnpushedEdits()) { mergeFromRemote(remote); return 'merged'; }
+    hydrateFromRemote(remote);
+    markPushed(currentRev());        // what is here now IS Box's copy (plus the normalisation every browser applies alike)
+    return 'replaced';
+  }
+  /** Send the current copy through the push hook now (after a merge that
+      carried unpushed edits, so this browser lands at the marker too). */
+  function pushNow() { if (_push) { try { _push(readDb()); return true; } catch (e) { console.warn('staff push failed', e); } } return false; }
 
   function mergeFromRemote(remote) {
     const local = readDb();
@@ -3422,7 +3462,7 @@
     // month utils
     ymLabel, ymAdd, monthsBetween, currentYM, isPastYM, ymCmp,
     // store
-    readDb, reseedMatrix, resetAll, exportJson, attachRemote, hydrateFromRemote,
+    readDb, reseedMatrix, resetAll, exportJson, attachRemote, hydrateFromRemote, adoptRemote, hasUnpushedEdits, markPushed, currentRev, pushNow,
     mergeStaffDb, mergeFromRemote,
     parseMatrixFile, importMatrix, applyRoundTrip,
     // roster

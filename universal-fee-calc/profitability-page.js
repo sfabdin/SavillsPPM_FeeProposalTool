@@ -236,7 +236,7 @@
         /* This page WRITES too (the fee-link cell), and it had no remote
            attached — the link lived in this browser only, and this page's own
            next load replaced it with Box's copy. */
-        if (Box.uploadStaff && S.attachRemote) S.attachRemote((db) => { Box.uploadStaff(db).catch(e => console.warn('staff push failed', e)); });
+        if (Box.uploadStaff && S.attachRemote) S.attachRemote((db) => { const stamp = S.currentRev ? S.currentRev() : null; Box.uploadStaff(db).then(() => { if (S.markPushed) S.markPushed(stamp); }).catch(e => console.warn('staff push failed', e)); });
       }
     } catch (e) {}
     setStoreNote();

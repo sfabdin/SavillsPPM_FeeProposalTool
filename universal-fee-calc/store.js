@@ -458,9 +458,43 @@
   const cacheGet = (k) => (window.UFC_Cache ? window.UFC_Cache.get(k) : localStorage.getItem(k));
   const cacheSet = (k, v) => { if (window.UFC_Cache) { window.UFC_Cache.set(k, v); return; } localStorage.setItem(k, v); };
   let _dbCache = null, _dbRaw = null;
+  /* Even the raw-string compare got too expensive once the book passed a
+     megabyte: localStorage.getItem copies the whole string on every call,
+     and the staffing pages read the book thousands of times per render —
+     the copy alone was 12 of a 14-second load. So the compare now runs only
+     when something COULD have changed the stored text:
+       · a write from this tab — every writer here primes the cache, and any
+         other writer (the test harness, an adapter, a future caller) goes
+         through localStorage.setItem, which is wrapped below to flag it;
+       · a write from another tab — the storage event;
+       · time — as a last resort the stored text is re-compared at most once
+         every 1.5s, so nothing that slips past the two hooks above stays
+         stale for longer than that.
+     The contract for callers is unchanged. */
+  let _dbDirty = true, _dbChecked = 0;
+  const DB_REVALIDATE_MS = 1500;
+  function invalidateDbCache() { _dbDirty = true; }
+  function primeDbCache(db, raw) { _dbCache = db; _dbRaw = raw; _dbDirty = false; _dbChecked = Date.now(); }
+  try { window.addEventListener('storage', (e) => { if (!e || !e.key || e.key === KEY) _dbDirty = true; }); } catch (e) {}
+  try {
+    // Wrapped on the instance, not the prototype: a page (or the test
+    // harness) may already have put its own methods on the instance, and
+    // those have to stay in the chain.
+    const ls = window.localStorage;
+    if (ls && !ls.__ufcDbHook) {
+      const oSet = ls.setItem, oRem = ls.removeItem, oClr = ls.clear;
+      ls.setItem = function (k) { if (k === KEY) _dbDirty = true; return oSet.apply(ls, arguments); };
+      ls.removeItem = function (k) { if (k === KEY) _dbDirty = true; return oRem.apply(ls, arguments); };
+      ls.clear = function () { _dbDirty = true; return oClr.apply(ls, arguments); };
+      ls.__ufcDbHook = true;
+    }
+  } catch (e) {}
   function readDb() {
     try {
+      const now = Date.now();
+      if (_dbCache && !_dbDirty && (now - _dbChecked) < DB_REVALIDATE_MS) return _dbCache;
       const raw = cacheGet(KEY);
+      _dbDirty = false; _dbChecked = now;
       if (!raw) { _dbCache = null; _dbRaw = null; return defaultDb(); }
       if (_dbCache && raw === _dbRaw) return _dbCache;
       const parsed = JSON.parse(raw);
@@ -526,7 +560,7 @@
   function writeDbLocal(db) {
     db.schemaVersion = SCHEMA;
     const raw = JSON.stringify(db);
-    if (safeSet(KEY, raw, 'the project book')) { _dbCache = db; _dbRaw = raw; }
+    if (safeSet(KEY, raw, 'the project book')) primeDbCache(db, raw);
   }
 
   function writeDb(db) {
@@ -539,7 +573,7 @@
       cacheSet(KEY, raw);
       // Prime the cache with what we just wrote, so the next read is free
       // instead of re-parsing our own output.
-      _dbCache = db; _dbRaw = raw;
+      primeDbCache(db, raw);
     }
     catch (e) {
       _dbCache = null; _dbRaw = null;   // storage rejected it — don't trust the cache
@@ -927,7 +961,8 @@
   function hydrateFromRemote(db) {
     if (!db || !db.projects) return;
     db.schemaVersion = SCHEMA;
-    safeSet(KEY, JSON.stringify(db), 'the project book');
+    const raw = JSON.stringify(db);
+    if (safeSet(KEY, raw, 'the project book')) primeDbCache(db, raw); else invalidateDbCache();
   }
 
   /* ===== studio.json store (retired Revenue Studio) — SEPARATE file in Box =====
@@ -1601,7 +1636,7 @@
     safeSet(REVENUE_KEY, JSON.stringify(r), 'the revenue book');
     try { document.dispatchEvent(new CustomEvent('ufc:revenue-updated')); } catch (e) {}
   }
-  function invalidateRevenueCache() { /* nothing derived is cached any more */ }
+  function invalidateRevenueCache() { _dbDirty = true; /* nothing else derived is cached any more */ }
 
   const reconYmOf = (y, m) => y + '-' + String(m).padStart(2, '0');
   /** A project's lines by month (padded 'YYYY-MM'), from the same series
@@ -4594,7 +4629,7 @@
     exportDb, importDb, downloadJson,
     FLASH_LABELS, captureSnapshot, getSnapshots, 
     RECON_LINES, RECON_STATUSES, reconLinesFor, reconLineInfo, reconYears, reconYear, reconMonth, isReconLocked, reconCell,
-    setReconStatus, settleReconAccrual, setReconNote, setReconAssignment, reconAssignment, lockReconMonth, reopenReconMonth, reconProjectFlags, invalidateRevenueCache,
+    setReconStatus, settleReconAccrual, setReconNote, setReconAssignment, reconAssignment, lockReconMonth, reopenReconMonth, reconProjectFlags, invalidateRevenueCache, invalidateDbCache,
     projectFinancials, getTierRateFromCatalog, monthlySeries,
     computeFinancials, restampFinancials, passThroughMonths, passThroughLines, ptLineDistribution, ptActive, clientBillOf,
     isChangeOrder, isApprovedChangeOrder, approvedChangeOrders, approvedChangeOrdersIndex, createChangeOrder,

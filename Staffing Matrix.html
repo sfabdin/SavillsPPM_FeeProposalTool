@@ -11,6 +11,7 @@
 <link rel="preload" href="design-system/fonts/gotham/Gotham-Bold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="universal-fee-calc/styles.css">
 <link rel="stylesheet" href="universal-fee-calc/staffing-matrix.css">
+<link rel="stylesheet" href="universal-fee-calc/staffing-test.css">
 </head>
 <body>
 <div class="wrap">
@@ -19,15 +20,16 @@
     <img class="logo" src="design-system/assets/savills_logo.png" alt="Savills">
     <div class="title-block">
       <h1><a href="Fee Generator.html">Staffing, Bandwidth &amp; Clockify</a></h1>
-      <p class="tagline">Who is working on what, how loaded they are, and how planned hours compare to what Clockify says actually happened.</p>
+      <p class="tagline">In the order the work happens: <b>enter</b> the allocations, <b>see</b> the staffing by project and by person, <b>check</b> it against the contract and Clockify. A revenue leader gets the same three views scoped to their team from the org chart and the projects they lead.</p>
     </div>
   </header>
 
   <div class="view-switch" id="view-switch" hidden>
     <span class="vs-label">View</span>
     <button type="button" data-view="lead" class="on" title="The full module — every project, every person, allocations, data sources, mapping">Leadership</button>
-    <button type="button" data-view="leader" title="What a revenue leader sees: their own projects — time vs plan, their allocations, their mapping. Pick a person in “Viewing as” to preview theirs.">Revenue leader</button>
-    <span class="vs-note">A revenue leader opening this page gets the leader view and nothing else. Nothing in either view changes a fee.</span>
+    <button type="button" data-view="team" title="The same three views, scoped to a leader's team from the org chart and to the projects they lead or their people are on. Pick a person in “Viewing as” to preview theirs.">Revenue leader · team</button>
+    <button type="button" data-view="leader" title="The older leader view: their own projects — time vs plan, their allocations, their mapping.">My projects (classic)</button>
+    <span class="vs-note">A revenue leader opening this page gets the team view: their people, their projects, nothing else. Nothing in any view changes a fee.</span>
   </div>
 
   <div class="identity-bar">
@@ -37,7 +39,8 @@
     <span class="id-note" id="id-note"></span>
   </div>
 
-  <div class="controls">
+  <!-- Row 1 · the dates: every view reads this window -->
+  <div class="controls st-dates">
     <div class="ctl">
       <label>Window start</label>
       <div style="display:flex;gap:4px;align-items:stretch">
@@ -62,42 +65,55 @@
       <label>Show as</label>
       <div class="seg-view" id="unit-view" title="Every allocation figure on this page as a percentage of the person&rsquo;s capacity, or as the hours per month that means"><button type="button" data-unit="pct">%</button><button type="button" data-unit="hrs">Hours</button></div>
     </div>
-    <div class="ctl admin-only">
-      <label>Group</label>
-      <select id="grp-view" title="Show one practice group across every tab — its people (group set per person on the Mapping tab) and the contract roles tagged to that group in the fee tool. Mapping always shows everyone."></select>
-    </div>
-    <div class="ctl admin-only">
-      <label>Hrs / mo @ 100%</label>
-      <input type="number" id="month-hrs" min="80" max="220" step="1">
-    </div>
     <div class="ctl grow"></div>
     <div class="ctl" style="align-self:center"><span class="note-txt" id="store-note"></span></div>
-    <div class="ctl admin-only">
-      <label>&nbsp;</label>
-      <label class="chk"><input type="checkbox" id="inc-pursuit" checked> Include pursuits / opportunities</label>
-    </div>
-    <div class="ctl admin-only">
-      <label>&nbsp;</label>
-      <details class="gloss">
-        <summary>❓ ①②③</summary>
-        <div class="gloss-pop">
-          <div><b style="color:#0E7C7B">① Plan (matrix)</b> — who we <b>plan</b> to staff: names and allocation % entered in this tool. Expected hours = <span id="gloss-hrs">173.33</span> hrs/mo × capacity% × allocation%.</div>
-          <div><b style="color:#79828C">② Contract (fee tool)</b> — what the signed fee matrix <b>priced</b>: titles and hours, no names. Flows in from the linked fee-tool project — <b>Mapping</b> controls that link.</div>
-          <div><b style="color:#b39b00">③ Actual (Clockify)</b> — what actually got <b>logged</b>, split into billable / macro / Time Off.</div>
-          <div style="margin-top:4px">Healthy = ③ tracks ①, and both stay inside ②. ▲ over plan · ▼ under · ● on plan (±10%).</div>
-        </div>
-      </details>
-    </div>
     <div class="ctl admin-only">
       <label>&nbsp;</label>
       <button class="btn btn-secondary" id="export-snapshot-btn" title="Download every view on this page as one .xlsx — Compare, By Project, By Person, Allocations, Contract vs Staffing, Leaves, Insights, Clockify Reporting, Mapping and raw Actuals. Static values, not live formulas.">⬇ Export All Views</button>
     </div>
   </div>
 
-  <!-- Freshness strip — the age of every feed, visible from every tab -->
-  <div id="fresh-strip"></div>
+  <!-- Row 2 · the data: what feeds the page, and the settings that are set once -->
+  <div class="st-data">
+    <div id="fresh-strip"></div>
+    <div class="st-databar">
+      <span class="st-dblabel">Data</span>
+      <button type="button" class="st-link admin-only" data-go="sources">⛁ Data Sources</button>
+      <button type="button" class="st-link admin-only" data-go="mapping">🔗 Mapping</button>
+      <span id="st-sync" class="st-sync"></span>
+      <button type="button" class="st-link" id="refresh-box" title="Pull staff.json from Box again. Everyone who presses this reads the same file — the only edits kept from this browser are ones that have not reached Box yet, and those are saved.">⟳ Refresh from Box</button>
+      <span class="grow"></span>
+      <details class="st-settings admin-only">
+        <summary>⚙ Settings</summary>
+        <div class="st-settings-pop">
+          <div class="ctl">
+            <label>Group</label>
+            <select id="grp-view" title="Show one practice group across every view — its people (group set per person on the Mapping tab) and the contract roles tagged to that group in the fee tool. Mapping always shows everyone."></select>
+          </div>
+          <div class="ctl">
+            <label>Hrs / mo @ 100%</label>
+            <input type="number" id="month-hrs" min="80" max="220" step="1">
+          </div>
+          <div class="ctl">
+            <label>&nbsp;</label>
+            <label class="chk"><input type="checkbox" id="inc-pursuit" checked> Include pursuits / opportunities</label>
+          </div>
+          <div class="st-gloss">
+            <div><b style="color:#0E7C7B">① Plan (matrix)</b> — who we <b>plan</b> to staff: names and allocation % entered in this tool. Expected hours = <span id="gloss-hrs">173.33</span> hrs/mo × capacity% × allocation%.</div>
+            <div><b style="color:#79828C">② Contract (fee tool)</b> — what the signed fee matrix <b>priced</b>: titles and hours, no names. Flows in from the linked fee-tool project — <b>Mapping</b> controls that link.</div>
+            <div><b style="color:#b39b00">③ Actual (Clockify)</b> — what actually got <b>logged</b>, split into billable / macro / Time Off.</div>
+            <div style="margin-top:4px">Healthy = ③ tracks ①, and both stay inside ②. ▲ over plan · ▼ under · ● on plan (±10%).</div>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
 
-  <div class="tabs" id="tabs">
+  <!-- Row 3 · the three views, in the order the work happens (built by staffing-test.js) -->
+  <div class="st-tiles" id="st-tiles"></div>
+  <div class="st-subtabs" id="st-subtabs"></div>
+
+  <div class="tabs st-hidden" id="tabs">
     <span class="zone-tag">Review</span>
     <button class="tab active" data-tab="actuals">Compare · Plan / Contract / Actual</button>
     <button class="tab" data-tab="projects">By Project <span class="cnt" id="cnt-proj"></span></button>
@@ -186,5 +202,6 @@
 <script src="universal-fee-calc/confirm-widget.js"></script>
 <script src="universal-fee-calc/nav.js"></script>
 <script src="universal-fee-calc/staffing-page.js"></script>
+<script src="universal-fee-calc/staffing-test.js"></script>
 </body>
 </html>
