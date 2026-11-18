@@ -16,12 +16,13 @@
         BOX_FOLDER_ID (optional)          (api/_boxserver.js)
    ============================================================ */
 import { fetchOrg, BambooError } from './_bamboo.js';
-import { boxToken, writeDrop, cronAuthorized } from './_boxserver.js';
+import { boxToken, writeDrop, cronAuthorized, jobStatus } from './_boxserver.js';
 
 export const config = { maxDuration: 60 };
 const DROP_NAME = 'org-latest.json';
 
 export default async function handler(req, res) {
+  if (jobStatus(req, res, { bamboo: !!(process.env.BAMBOO_API_KEY && process.env.BAMBOO_SUBDOMAIN), __names: { bamboo: 'BAMBOO_API_KEY / BAMBOO_SUBDOMAIN' } })) return;
   if (!cronAuthorized(req, res)) return;
   try {
     const tok = await boxToken();

@@ -2716,7 +2716,15 @@
   /** Project names still without a fee project — rows parked under an old matrix name. */
   function unlinkedProjects() { return S.legacyProjects().map(g => g.name); }
 
+  async function askJobStatus() {
+    if (state.jobStatus || state.jobAsking) return;
+    state.jobAsking = true;
+    try { const r = await fetch('/api/clockify-daily?status=1', { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); state.jobStatus = await r.json(); }
+    catch (e) { state.jobStatus = { error: String(e.message || e) }; }
+    finally { state.jobAsking = false; if (state.tab === 'sources') renderSources(); }
+  }
   function renderSources() {
+    askJobStatus();
     const meta = S.readDb().meta || {};
     const has = S.hasActuals();
     const am = S.actualsMeta();
@@ -2778,7 +2786,14 @@
 
     {
       const d = state.drop; const taken = (S.readDb().meta || {}).clockifyDropAt;
-      html += `<div class="note-txt" style="margin:0 0 14px;padding:8px 12px;background:${d ? '#eaf6ee' : '#f4f4f3'};border-left:3px solid ${d ? '#1f7a44' : '#c9cdd3'}">⏰ <b>Daily pull:</b> ${d ? `Clockify was pulled automatically at ${esc(new Date(d.pulledAt).toLocaleString())}${taken === d.pulledAt ? ' and is in this book' : ' · <b>not yet committed here</b> (reload to take it)'}.` : 'no automatic pull has landed yet — the scheduled job writes clockify-latest.json to Box each morning once it is configured (see the Runbook). Until then, pull by hand below.'}</div>`;
+      const js = state.jobStatus;   // from /api/clockify-daily?status=1 — booleans only
+      const jsTxt = !js ? '' : js.error ? ` <span class="vmini">(could not ask the job: ${esc(js.error)})</span>`
+        : js.ready ? ' Every variable the job needs is set in Vercel, so look at the cron log there (Deployments → Functions → /api/clockify-daily) — the run itself is failing.'
+        : ` <b>The job cannot run: Vercel is missing ${esc(js.missing.join(', '))}.</b> Set them under Settings → Environment Variables, redeploy, and the next 10:00 UTC run (or a manual call with the cron secret) writes the file.`;
+      const stale = d && calDays(d.pulledAt) > 1;
+      html += `<div class="note-txt" style="margin:0 0 14px;padding:8px 12px;background:${d && !stale ? '#eaf6ee' : d ? '#fdf6e3' : '#fbe9e7'};border-left:3px solid ${d && !stale ? '#1f7a44' : d ? '#e8b563' : '#c0392b'}">⏰ <b>Nightly pull:</b> ${d
+        ? `clockify-latest.json in Box was written ${esc(agoTxt(d.pulledAt))} <span class="vmini">· ${esc(new Date(d.pulledAt).toLocaleString())}</span>${taken === d.pulledAt ? ' and is in this book' : ' · <b>not yet committed here</b> (reload to take it)'}.${stale ? ' <b>The job has not written a newer file since</b> — it runs at 10:00 UTC daily; if it stopped, the Vercel cron log says why.' : ''}`
+        : `<b>no file has ever landed in Box</b> — the scheduled job (api/clockify-daily, 10:00 UTC daily) has never completed, so the hours on this page are from the last manual pull${(S.actualsMeta().importedAt ? ' (' + esc(agoTxt(S.actualsMeta().importedAt)) + ')' : '')}.`}${jsTxt}${!d || stale ? ' Until it runs, pull by hand below.' : ''}</div>`;
     }
     html += `<div id="import-anchor"></div>` + importCard(has, am);
     if (state.clockifyReport) html += reportBlock(state.clockifyReport);
