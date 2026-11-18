@@ -568,7 +568,9 @@
   let _viewTeam = null, _viewProjects = null;
   function setViewTeam(ids) { _viewTeam = ids ? new Set(ids) : null; }
   function viewTeam() { return _viewTeam ? [..._viewTeam] : null; }
-  function setViewProjects(feeIds) { _viewProjects = feeIds ? new Set(feeIds.map(String)) : null; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; }
+  function setViewProjects(feeIds) {
+    if (feeIds) { const set = new Set(feeIds.map(String)); try { [...set].forEach(id => { const par = feeParentId(id); if (par) set.add(par); coChildren(par || id).forEach(c => set.add(c)); }); } catch (e) {} feeIds = [...set]; }
+    _viewProjects = feeIds ? new Set(feeIds.map(String)) : null; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; }
   function viewProjects() { return _viewProjects ? [..._viewProjects] : null; }
   function projectInView(feeId) { return !_viewProjects || _viewProjects.has(String(feeId)); }
   /** Is this person (record or id) in the group being viewed? Hours under an
@@ -1159,8 +1161,8 @@
     db.allocations.forEach(a => {
       if (!includePursuit && (a.status === 'Pursuit' || a.type === 'Opportunity')) return;
       if (!inView(a.personId)) return;
-      const key = allocKey(a);
-      const b = byProj[key] || (byProj[key] = { key, project: a.project || '—', client: a.client || '', people: new Set(), status: a.status, type: a.type, byMonth: {}, allocs: [] });
+      const key = rollKey(allocKey(a));            // a change order's people are the project's people
+      const b = byProj[key] || (byProj[key] = { key, project: key === allocKey(a) ? (a.project || '—') : describeKey(key).label, client: a.client || '', people: new Set(), status: a.status, type: a.type, byMonth: {}, allocs: [] });
       b.people.add(a.personId); b.allocs.push(a);
       if (a.client) b.client = a.client;
       months.forEach(ym => { if (allocActiveIn(a, ym)) b.byMonth[ym] = (b.byMonth[ym] || 0) + (a.pct || 0) / 100; });
@@ -1185,7 +1187,7 @@
   // silently keep pointing at old data.
   if (typeof document !== 'undefined') {
     document.addEventListener('ufc:remote-updated', (e) => {
-      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; }
+      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; _coMap = null; _univ = null; }
     });
   }
   /** Fee-tool project records, parsed ONCE per page load — UFC_Store.getProject
@@ -1195,7 +1197,7 @@
     // The store hands back the SAME projects object until the book changes,
     // so an identity check is a free staleness test — a record saved a moment
     // ago (a new pursuit, a test fixture) is seen on the very next call.
-    try { const S2 = window.UFC_Store; const raw = S2 && S2.allProjectsRaw ? S2.allProjectsRaw() : null; if (raw !== _feeRaw) { _feeRaw = raw; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; } } catch (e) {}
+    try { const S2 = window.UFC_Store; const raw = S2 && S2.allProjectsRaw ? S2.allProjectsRaw() : null; if (raw !== _feeRaw) { _feeRaw = raw; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; _coMap = null; _univ = null; } } catch (e) {}
     if (_feeRecords) return _feeRecords;
     try { const S2 = window.UFC_Store; _feeRecords = (S2 && S2.listProjects) ? S2.listProjects() : []; } catch (e) { _feeRecords = []; }
     if (_viewProjects) _feeRecords = _feeRecords.filter(p => _viewProjects.has(String(p.id)));   // a team view: only the projects in scope exist
@@ -1440,9 +1442,12 @@
   }
   /** Clockify project names that feed a key (fee id, label or key accepted). */
   function clockifyNamesFor(ref) {
-    const key = keyForRef(ref); if (!key) return [];
-    const fromActuals = [...(actualsIndex().names[key] || [])];
-    const pinned = Object.entries((readDb().mappings || {}).clockify || {}).filter(([, v]) => v && (((v.feeIds || (v.feeId ? [v.feeId] : [])).some(id => 'fee:' + id === key)) || (v.internal && 'int:' + v.internal === key))).map(([k, v]) => v.name || k);
+    const key0 = keyForRef(ref); if (!key0) return [];
+    // a project answers for its change orders too: hours mapped to CO#2 are the project's hours
+    const { kind, id } = keyParts(key0);
+    const keys = kind === 'fee' ? [key0, ...coChildren(id).map(c => 'fee:' + c)] : [key0];
+    const fromActuals = []; keys.forEach(key => fromActuals.push(...(actualsIndex().names[key] || [])));
+    const pinned = Object.entries((readDb().mappings || {}).clockify || {}).filter(([, v]) => v && (((v.feeIds || (v.feeId ? [v.feeId] : [])).some(id => keys.includes('fee:' + id))) || (v.internal && keys.includes('int:' + v.internal)))).map(([k, v]) => v.name || k);
     const seen = new Set(); const out = [];
     [...fromActuals, ...pinned].forEach(n => { const nk2 = nkey(n); if (seen.has(nk2)) return; seen.add(nk2); out.push(n); });
     return out.sort();
@@ -1456,10 +1461,64 @@
       via, pinned, ignored, unmapped }. The admin Mapping tab's main table. */
   /** A record and its change orders are one job for mapping purposes. */
   function sameJob(idA, idB) {
-    const recs = feeRecords(); const a = recs.find(p => p.id === idA), b = recs.find(p => p.id === idB);
-    const parent = (p) => (p && p.changeOrder && p.changeOrder.parentId) || (p && p.id);
-    return !!(a && b && parent(a) === parent(b));
+    const a = feeParentId(idA) || idA, b = feeParentId(idB) || idB;
+    return !!(idA && idB && a === b);
   }
+  /* ===== Change orders roll into their project =====
+     A change order is not a second job: its hours are the project's hours
+     and its fee is part of the project's fee. Fanatics Miramar (November
+     2026) showed what happens otherwise — the Clockify project was mapped
+     to CO#2, so the Tracking view had a "CO#2" card drowning in hours and
+     no Miramar card at all. The link is the calculator's own
+     changeOrder.parentId when the record was created as a change order;
+     most were not, so the name decides: "<project> - CO#2", "<project> CO
+     02 - Extension", "<project> (CO 01 - ...)" roll into the same client's
+     record named <project> (exact, else the one record whose name is that
+     stem or begins with it). A CO-shaped name with no such parent stays its
+     own project — rolling up to a guess would be worse than not rolling. */
+  const CO_RE = /\bCO\s*#?\s*\d+/i;
+  let _coMap = null, _coMapRaw = null;
+  function coStem(name, client) {
+    let n = String(name || '');
+    const m = CO_RE.exec(n); if (!m || m.index === 0) return '';
+    n = n.slice(0, m.index);
+    const c = String(client || '').trim();
+    if (c && n.toLowerCase().startsWith(c.toLowerCase())) { const rest = n.slice(c.length); if (/^\s*[-–—:]\s*/.test(rest)) n = rest.replace(/^\s*[-–—:]\s*/, ''); }
+    n = n.replace(/[\s\-–—(:+&,]+$/, '').trim();
+    return n;
+  }
+  function coParentMap() {
+    const S2 = window.UFC_Store;
+    const fr = feeRecords();                                 // refreshes every cache when the book moved (and is nulled on the book's own event)
+    if (_coMap && fr === _coMapRaw) return _coMap;
+    let all = []; try { all = (S2 && S2.listProjects) ? S2.listProjects() : []; } catch (e) {}   // the WHOLE book: a team view must still see a change order's parent
+    const byId = {}; all.forEach(p => { byId[p.id] = p; });
+    const map = {};
+    const rank = { active: 0, won: 1, negotiation: 2, submitted: 2, draft: 2, hold: 2, '': 3, closed: 4, lost: 5 };
+    const cands = all.filter(p => !(p.changeOrder && p.changeOrder.parentId) && !CO_RE.test((p.project || {}).name || ''));
+    all.forEach(p => {
+      const pj = p.project || {};
+      if (p.changeOrder && p.changeOrder.parentId) { if (byId[p.changeOrder.parentId]) map[p.id] = p.changeOrder.parentId; return; }
+      const stem = coStem(pj.name, pj.client); if (!stem) return;
+      const sk = projKey(stem); if (sk.length < 6) return;
+      const same = cands.filter(c => nkey((c.project || {}).client) === nkey(pj.client));
+      let hits = same.filter(c => projKey((c.project || {}).name) === sk);
+      if (!hits.length) hits = same.filter(c => { const k = projKey((c.project || {}).name); return k.startsWith(sk) || (k.length >= 10 && sk.startsWith(k)); });
+      if (!hits.length) return;
+      hits.sort((a, b) => (rank[(a.project || {}).status || ''] ?? 3) - (rank[(b.project || {}).status || ''] ?? 3));
+      const keys = new Set(hits.map(c => projKey((c.project || {}).name)));
+      if (keys.size > 1 && projKey((hits[0].project || {}).name) !== sk) return;   // several different stems could own it — leave it alone
+      map[p.id] = hits[0].id;
+    });
+    _coMap = map; _coMapRaw = fr;
+    return map;
+  }
+  /** The project a change-order record rolls into; null for a project in its own right. */
+  function feeParentId(id) { if (!id) return null; const m = coParentMap(); return m[id] && m[id] !== id ? m[id] : null; }
+  /** The change-order records that roll into a project (in view). */
+  function coChildren(id) { const m = coParentMap(); return Object.keys(m).filter(k => m[k] === id); }
+  /** A key with any change order rolled into its project. */
+  function rollKey(key) { const { kind, id } = keyParts(key); if (kind !== 'fee') return key; const par = feeParentId(id); return par ? 'fee:' + par : key; }
   function clockifyProjectRows(extraNames) {
     const AX = actualsIndex(); const hours = {};
     const db = readDb();
@@ -1542,11 +1601,12 @@
       variance per month and totals. opts.project accepts a key, fee id or label. */
   function varianceMatrix(months, opts) {
     const db = readDb();
-    const wantKey = opts && opts.project ? keyForRef(opts.project) : null;
+    const wantKey = opts && opts.project ? rollKey(keyForRef(opts.project)) : null;
     const wantPerson = opts && opts.person;
     const pairs = {};
+    // change orders roll into their project: one row per person per PROJECT
     db.allocations.forEach(a => {
-      const key = allocKey(a);
+      const key = rollKey(allocKey(a));
       if (wantKey && key !== wantKey) return;
       if (wantPerson && a.personId !== wantPerson) return;
       if (!inView(a.personId)) return;
@@ -1554,7 +1614,13 @@
       pairs[a.personId + '|' + key] = { personId: a.personId, key, client: a.client };
     });
     const AX = actualsIndex();
-    Object.entries(AX.byKey).forEach(([key, people]) => {
+    const actRolled = {};   // rolled key → person → ym → hours
+    Object.entries(AX.byKey).forEach(([key0, people]) => {
+      const key = rollKey(key0);
+      const kp = actRolled[key] || (actRolled[key] = {});
+      Object.entries(people).forEach(([personId, byYm]) => { const pp = kp[personId] || (kp[personId] = {}); Object.entries(byYm).forEach(([ym, h]) => { pp[ym] = (pp[ym] || 0) + h; }); });
+    });
+    Object.entries(actRolled).forEach(([key, people]) => {
       if (wantKey && key !== wantKey) return;
       Object.entries(people).forEach(([personId, byYm]) => {
         if (wantPerson && personId !== wantPerson) return;
@@ -1568,8 +1634,8 @@
       const person = db.people[pr.personId] || { id: pr.personId, name: pr.personId };
       const d = describeKey(pr.key);
       const cap = capacityHours(person);
-      const mine = db.allocations.filter(a => a.personId === pr.personId && allocKey(a) === pr.key);
-      const act = (AX.byKey[pr.key] || {})[pr.personId] || {};
+      const mine = db.allocations.filter(a => a.personId === pr.personId && rollKey(allocKey(a)) === pr.key);
+      const act = (actRolled[pr.key] || {})[pr.personId] || {};
       const byMonth = {}; let eTot = 0, aTot = 0;
       months.forEach(ym => {
         const e = mine.reduce((s2, a) => s2 + (allocActiveIn(a, ym) ? cap * (a.pct || 0) / 100 : 0), 0);
@@ -1675,6 +1741,59 @@
     return { rows: rows.sort((a, b) => b.actual - a.actual || a.person.name.localeCompare(b.person.name)), clockifyNames: names, matrixNames: names };
   }
 
+  /** SAVILLS REVENUE for one record inside a window: the billed fee by month
+      less any fee share (broker / co-party). A share paid ON TOP by the
+      client leaves the fee whole. Pass-through is not revenue here — it is
+      vendor money passing through. null when the record has no fee months
+      in the window (or the catalog is not loaded). */
+  function savillsRevenue(p, inWin, cat) {
+    const S2 = window.UFC_Store;
+    cat = cat || ((typeof window !== 'undefined') && window.RATES_CATALOG);
+    if (!p || !(cat && cat.hydrated)) return null;
+    try {
+      const series = S2.monthlySeries(p, cat, _viewGroup ? { serviceLine: _viewGroup } : undefined) || [];
+      if (!series.length) return null;
+      const bill = {}; try { (S2.revenueSeries(p, cat) || []).forEach(b => { bill[b.year + '-' + b.month] = b; }); } catch (e) {}
+      const feeByMonth = {}, revByMonth = {}; let feeTotal = 0, revTotal = 0, any = false;
+      series.forEach(m => {
+        const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (inWin && !inWin.has(ym)) return;
+        any = true;
+        feeByMonth[ym] = (feeByMonth[ym] || 0) + m.amount; feeTotal += m.amount;
+        const b = bill[m.year + '-' + m.month];
+        const onTop = !!(b && (b.invoice - (b.passClient || 0)) > b.net + 0.005);
+        const keep = (b && b.net && !onTop) ? Math.max(0, (b.net - (b.broker || 0)) / b.net) : 1;
+        const rev = m.amount * keep;
+        revByMonth[ym] = (revByMonth[ym] || 0) + rev; revTotal += rev;
+      });
+      return any && Math.abs(feeTotal) > 0.005 ? { feeByMonth, feeTotal, revByMonth, revTotal } : null;   // $0 months are not revenue
+    } catch (e) { return null; }
+  }
+  /** Everything with Savills revenue in the window — the universe Tracking
+      must show whether or not anyone is allocated or has logged an hour.
+      One entry per PROJECT (change orders rolled in), dead pursuits out. */
+  let _univ = null, _univKey = null;
+  function revenueUniverse(months) {
+    const S2 = window.UFC_Store; const recs = feeRecords();
+    const cat = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    const key = months.join(',') + '|' + (_viewGroup || '') + '|' + recs.length + '|' + (cat && cat.hydrated ? 'cat' : 'nocat');   // an empty answer before the catalog loads must not stick
+    if (_univ && _univKey === key && _univRaw === recs) return _univ;
+    const inWin = new Set(months);
+    const out = {};
+    recs.forEach(p => {
+      if (S2 && S2.isDeadPursuit && S2.isDeadPursuit(p)) return;
+      const par = feeParentId(p.id) || p.id;
+      const rv = savillsRevenue(p, inWin);
+      if (!rv || !(rv.revTotal > 0.5)) return;
+      const e = out[par] || (out[par] = { feeId: par, key: 'fee:' + par, revTotal: 0, feeTotal: 0, changeOrders: [] });
+      e.revTotal += rv.revTotal; e.feeTotal += rv.feeTotal;
+      if (par !== p.id) e.changeOrders.push(p.id);
+    });
+    const list = Object.values(out).map(e => { const d = describeKey(e.key); return Object.assign(e, { label: d.label, name: d.name, client: d.client }); })
+      .sort((a, b) => a.label.localeCompare(b.label));
+    _univ = list; _univKey = key; _univRaw = recs;
+    return list;
+  }
+  let _univRaw = null;
   function contractPlan(ref, months, client) {
     const links = matchFeeProjects(ref, client);
     if (!links.length) return null;
@@ -1683,38 +1802,29 @@
     const inWin = new Set(months);
     const agg = { byMonth: {}, roleAgg: {}, total: 0 }; let any = false;
     let feeByMonth = null, feeTotal = 0, anyFee = false, revByMonth = null, revTotal = 0;
-    links.forEach(link => {
-      const p = feeRecords().find(x => x.id === link.id);
-      if (!addPlanOfRecord(p, inWin, agg)) return;
-      any = true;
+    // a project and its change orders are one contract: every record rolls in
+    const ids = []; links.forEach(link => { const par = feeParentId(link.id) || link.id; [par, ...coChildren(par)].forEach(id => { if (!ids.includes(id)) ids.push(id); }); });
+    const coIds = [];
+    ids.forEach(id => {
+      const p = feeRecords().find(x => x.id === id);
+      if (!p) return;
+      const staffed = addPlanOfRecord(p, inWin, agg);
+      if (staffed) any = true;
+      if (feeParentId(id)) coIds.push(id);
       // billed fee $ by month (net of discounts/locks), and SAVILLS REVENUE —
-      // the fee less the broker's share (plus, whole-project, the fee earned on
-      // pass-through) — which is what the hours actually earn and the yardstick
-      // the dollars view compares them to
-      if (cat && cat.hydrated) {
-        try {
-          const series = S2.monthlySeries(p, cat, _viewGroup ? { serviceLine: _viewGroup } : undefined) || [];
-          const bill = {}; try { (S2.revenueSeries(p, cat) || []).forEach(b => { bill[b.year + '-' + b.month] = b; }); } catch (e) {}
-          if (series.length) {
-            feeByMonth = feeByMonth || {}; revByMonth = revByMonth || {};
-            series.forEach(m => {
-              const ym = m.year + '-' + String(m.month).padStart(2, '0'); if (!inWin.has(ym)) return;
-              feeByMonth[ym] = (feeByMonth[ym] || 0) + m.amount; feeTotal += m.amount; anyFee = true;
-              const b = bill[m.year + '-' + m.month];
-              // a share ON TOP is paid by the client, not out of the fee: the fee is kept whole
-              const onTop = !!(b && (b.invoice - (b.passClient || 0)) > b.net + 0.005);
-              const keep = (b && b.net && !onTop) ? Math.max(0, (b.net - (b.broker || 0)) / b.net) : 1;
-              let rev = m.amount * keep;
-              if (!_viewGroup && b) rev += (b.passClient || 0) - (b.passCost || 0);
-              revByMonth[ym] = (revByMonth[ym] || 0) + rev; revTotal += rev;
-            });
-          }
-        } catch (e) {}
+      // the fee less any fee share — which is what the hours actually earn and
+      // the yardstick the dollars view compares them to
+      const rv = savillsRevenue(p, inWin, cat);
+      if (rv) {
+        feeByMonth = feeByMonth || {}; revByMonth = revByMonth || {};
+        Object.entries(rv.feeByMonth).forEach(([ym, v]) => { feeByMonth[ym] = (feeByMonth[ym] || 0) + v; }); feeTotal += rv.feeTotal;
+        Object.entries(rv.revByMonth).forEach(([ym, v]) => { revByMonth[ym] = (revByMonth[ym] || 0) + v; }); revTotal += rv.revTotal;
+        anyFee = true; any = true;
       }
     });
     if (!any) return null;
     const roles = Object.values(agg.roleAgg).map(r => ({ title: r.title, fteMonths: Math.round(r.fteMonths * 100) / 100, hours: Math.round(r.hours * 10) / 10 })).sort((a, b) => b.hours - a.hours);
-    return { byMonth: agg.byMonth, total: Math.round(agg.total * 10) / 10, roles, feeProjects: links, feeByMonth: anyFee ? feeByMonth : null, feeTotal: Math.round(feeTotal), revByMonth: anyFee ? revByMonth : null, revTotal: Math.round(revTotal) };
+    return { byMonth: agg.byMonth, total: Math.round(agg.total * 10) / 10, roles, feeProjects: links, changeOrders: coIds, feeByMonth: anyFee ? feeByMonth : null, feeTotal: Math.round(feeTotal), revByMonth: anyFee ? revByMonth : null, revTotal: Math.round(revTotal) };
   }
 
   function actualsMeta() { const m = readDb().meta || {}; return { importedAt: m.clockifyImportedAt, rows: Object.keys(readDb().actuals).length, months: m.clockifyMonths || [] }; }
@@ -3462,6 +3572,7 @@
     // month utils
     ymLabel, ymAdd, monthsBetween, currentYM, isPastYM, ymCmp,
     // store
+    feeParentId, coChildren, rollKey, coStem, savillsRevenue, revenueUniverse,
     readDb, reseedMatrix, resetAll, exportJson, attachRemote, hydrateFromRemote, adoptRemote, hasUnpushedEdits, markPushed, currentRev, pushNow,
     mergeStaffDb, mergeFromRemote,
     parseMatrixFile, importMatrix, applyRoundTrip,
