@@ -302,7 +302,7 @@
     db.schemaVersion = SCHEMA;
     safeSet(JSON.stringify(db));
     _dbCache = db;
-    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; _cpMemo = null;   // fee-tool project list may have changed too
     ensureModel(db);
     return true;
   }
@@ -311,7 +311,7 @@
     db.meta = db.meta || {};
     db.meta.updatedAt = new Date().toISOString();
     bumpRev();
-    _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null;
+    _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; _cpMemo = null;
     decorate(db); delete db.__decorated;
     try { const u = window.UFC_Store && window.UFC_Store.getCurrentUser && window.UFC_Store.getCurrentUser(); if (u && u.username) db.meta.updatedBy = u.username; } catch (e) {}
     safeSet(JSON.stringify(db));
@@ -976,7 +976,7 @@
     const merged = isPristineSeed(local) ? remote : mergeStaffDb(remote, local);
     safeSet(JSON.stringify(merged));
     _dbCache = merged;
-    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null;   // fee-tool project list may have changed too
+    _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; _cpMemo = null;   // fee-tool project list may have changed too
     ensureModel(merged);
     return merged;
   }
@@ -1187,7 +1187,7 @@
   // silently keep pointing at old data.
   if (typeof document !== 'undefined') {
     document.addEventListener('ufc:remote-updated', (e) => {
-      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; _coMap = null; _univ = null; }
+      if (e.detail && e.detail.projects) { _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; _coMap = null; _univ = null; _cpMemo = null; }
     });
   }
   /** Fee-tool project records, parsed ONCE per page load — UFC_Store.getProject
@@ -1197,7 +1197,7 @@
     // The store hands back the SAME projects object until the book changes,
     // so an identity check is a free staleness test — a record saved a moment
     // ago (a new pursuit, a test fixture) is seen on the very next call.
-    try { const S2 = window.UFC_Store; const raw = S2 && S2.allProjectsRaw ? S2.allProjectsRaw() : null; if (raw !== _feeRaw) { _feeRaw = raw; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; _coMap = null; _univ = null; } } catch (e) {}
+    try { const S2 = window.UFC_Store; const raw = S2 && S2.allProjectsRaw ? S2.allProjectsRaw() : null; if (raw !== _feeRaw) { _feeRaw = raw; _feeIndex = null; _feeRecords = null; _sfIndex = null; _ckCache = null; _actIdx = null; _labelCache = null; _tlCache = null; _coMap = null; _univ = null; _cpMemo = null; } } catch (e) {}
     if (_feeRecords) return _feeRecords;
     try { const S2 = window.UFC_Store; _feeRecords = (S2 && S2.listProjects) ? S2.listProjects() : []; } catch (e) { _feeRecords = []; }
     if (_viewProjects) _feeRecords = _feeRecords.filter(p => _viewProjects.has(String(p.id)));   // a team view: only the projects in scope exist
@@ -1794,7 +1794,24 @@
     return list;
   }
   let _univRaw = null;
+  /* Memoised: the Tracking view asks for every project's plan on every
+     keystroke of its search box, and each answer walks the fee record's
+     months through the catalog. Inputs are the fee records (identity),
+     the mappings (every staff write clears it), the window, the group and
+     whether the catalog is loaded — so the memo is safe and the view is
+     fluid. */
+  let _cpMemo = null, _cpMemoRecs = null;
   function contractPlan(ref, months, client) {
+    const recs = feeRecords();
+    if (_cpMemoRecs !== recs) { _cpMemo = {}; _cpMemoRecs = recs; }
+    const cat0 = (typeof window !== 'undefined') && window.RATES_CATALOG;
+    const mk = String(ref) + '|' + (months || []).join(',') + '|' + (client || '') + '|' + (_viewGroup || '') + '|' + (cat0 && cat0.hydrated ? 1 : 0);
+    if (Object.prototype.hasOwnProperty.call(_cpMemo, mk)) return _cpMemo[mk];
+    const out = contractPlanRaw(ref, months, client);
+    _cpMemo[mk] = out;
+    return out;
+  }
+  function contractPlanRaw(ref, months, client) {
     const links = matchFeeProjects(ref, client);
     if (!links.length) return null;
     const S2 = window.UFC_Store;
