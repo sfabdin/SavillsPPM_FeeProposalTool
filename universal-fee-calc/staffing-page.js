@@ -2660,8 +2660,11 @@
      drives, when it last moved, and the one control that refreshes it. The
      Clockify import card lives here now; Compare just reads the result. ---------- */
   function ageDays(iso) { return iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : null; }
+  /** Calendar days, in the reader's own time zone — a stamp from yesterday
+      afternoon is "yesterday", not "today", even when it is under 24 hours old. */
+  function calDays(iso) { if (!iso) return null; const d = new Date(iso), n = new Date(); if (isNaN(d)) return null; return Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000); }
   function agoTxt(iso) {
-    const d = ageDays(iso);
+    const d = calDays(iso);
     if (d == null) return 'never';
     if (d === 0) return 'today';
     if (d === 1) return 'yesterday';
@@ -2696,7 +2699,7 @@
       <table class="dt" style="margin-bottom:18px"><thead><tr><th>Feed</th><th>What it drives</th><th>Last updated</th><th>Status</th><th>Refresh</th></tr></thead><tbody>
       ${row('③ Clockify actuals',
         'Compare, Clockify Reporting, Insights — every &ldquo;what actually happened&rdquo; number.',
-        has ? `${esc(agoTxt(am.importedAt))}${am.importedAt ? ` <span class="vmini">· ${new Date(am.importedAt).toLocaleString()}</span>` : ''}<div class="vmini">${am.rows.toLocaleString()} rows · ${(am.months || []).length} month${(am.months || []).length === 1 ? '' : 's'}${(am.months || []).length ? ' · ' + esc(S.ymLabel(am.months[0]) + ' – ' + S.ymLabel(am.months[am.months.length - 1])) : ''}</div>` : '<span style="color:#8f2418">never loaded</span>',
+        has ? `imported ${esc(agoTxt(am.importedAt))}${am.importedAt ? ` <span class="vmini">· ${new Date(am.importedAt).toLocaleString()}${state.drop && state.drop.pulledAt ? ' · drop pulled ' + new Date(state.drop.pulledAt).toLocaleString() : ''}</span>` : ''}<div class="vmini">${am.rows.toLocaleString()} rows · ${(am.months || []).length} month${(am.months || []).length === 1 ? '' : 's'}${(am.months || []).length ? ' · ' + esc(S.ymLabel(am.months[0]) + ' – ' + S.ymLabel(am.months[am.months.length - 1])) : ''}</div>` : '<span style="color:#8f2418">never loaded</span>',
         dot(aDot) + (aAge == null ? 'missing' : aAge <= 7 ? 'fresh' : aAge <= 21 ? 'aging' : 'stale'),
         '<a href="#import-anchor" style="font-weight:700">Import card below ↓</a>')}
       ${row('① Allocations <span class="vmini">(maintained in this tool)</span>',
@@ -2808,7 +2811,7 @@
         <span class="fs-age">${age}</span>
       </button>`;
       el.innerHTML =
-        cell('sources', '③ Clockify actuals', aDot, aAge == null ? 'not loaded' : 'updated ' + esc(agoTxt(am.importedAt)), (am.months || []).length ? (am.months || []).length + ' months of hours' : 'Compare runs blind without them') +
+        cell('sources', '③ Clockify actuals', aDot, aAge == null ? 'not loaded' : 'imported ' + esc(agoTxt(am.importedAt)) + (am.importedAt ? ' · ' + new Date(am.importedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''), (am.months || []).length ? (am.months || []).length + ' months of hours' : 'Compare runs blind without them') +
         cell('allocations', '① Allocations', 'ok', meta.updatedAt ? 'edited ' + esc(agoTxt(meta.updatedAt)) : 'no edits recorded', meta.updatedBy ? 'by ' + esc(meta.updatedBy) : 'maintained in this tool') +
         cell('mapping', '② Fee-tool links', unlinked ? 'warn' : 'ok', unlinked ? unlinked + ' unlinked' : 'all linked', unlinked ? 'no ② Contract line for those' : 'contract lines flowing') +
         cell('compliance', '⏱ Entry gaps', gapDot, gapTxt, gapAge);
