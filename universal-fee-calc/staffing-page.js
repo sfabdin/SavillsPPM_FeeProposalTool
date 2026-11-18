@@ -1076,6 +1076,7 @@
   function renderActuals() {
     const has = S.hasActuals();
     let html = '';
+    let cmpParts = null;   // { beforeHtml, toolbarHtml, sig } when the view has a toolbar to keep
     if (!has) {
       const meta = S.actualsMeta();
       html += `<div class="note-txt" style="margin:0 0 12px;padding:10px 14px;background:#fdf6e3;border-left:3px solid #e8b563">③ Actuals aren't loaded${meta.importedAt ? '' : ' yet'} — the comparison below shows ① Plan vs ② Contract only. <a href="#" data-goto-tab="sources" style="font-weight:700">Load them in Data Sources →</a></div>`;
@@ -1132,8 +1133,11 @@
       rows = rows.filter(r => !r.unmapped);
       // Type-to-search narrows live; Enter (or a pick from the list) locks it as a chip.
       const pq = String(state.varProjectQ || '').trim().toLowerCase(), qq = String(state.varPersonQ || '').trim().toLowerCase();
-      if (pq) rows = rows.filter(r => (r.project + ' ' + (r.client || '') + ' ' + S.projectLabel(r.project, r.client).name).toLowerCase().includes(pq));
-      if (qq) rows = rows.filter(r => String(r.person.name || '').toLowerCase().includes(qq));
+      // every word typed has to appear somewhere — "fanatics mir" finds "Fanatics — Miramar Commerce Warehouse"
+      const words = (q) => q.split(/\s+/).filter(Boolean);
+      const hasAll = (hay, q) => { const h = hay.toLowerCase(); return words(q).every(w => h.includes(w)); };
+      if (pq) rows = rows.filter(r => hasAll(r.project + ' ' + (r.client || '') + ' ' + S.projectLabel(r.project, r.client).name, pq));
+      if (qq) rows = rows.filter(r => hasAll(String(r.person.name || ''), qq));
       // Dollars mode: ①③ become hours × the person's internal COST rate (by title)
       if (dollars) rows = rows.map(r => { const k = rateOf(r.person, r.project); const bm = {}; ms.forEach(m => { const c = r.byMonth[m]; bm[m] = { e: c.e * k, a: c.a * k }; }); return { ...r, expected: r.expected * k, actual: r.actual * k, variance: r.variance * k, byMonth: bm }; });
       const byPerson = state.varGroup === 'person';
@@ -1162,7 +1166,7 @@
         univ.forEach(u => {
           if (byProj[u.label]) return;
           if (projFilter && S.rollKey(S.keyForRef(projFilter)) !== u.key) return;
-          if (pq && !(u.label + ' ' + (u.client || '')).toLowerCase().includes(pq)) return;
+          if (pq && !hasAll(u.label + ' ' + (u.client || ''), pq)) return;
           byProj[u.label] = []; unstaffed.add(u.label);
         });
       }
@@ -1209,6 +1213,7 @@
         const bg = bridgeGapsCached();
         if (bg.length) html += `<div class="note-txt" style="margin:0 0 10px;padding:8px 12px;background:#e7f0ee;border-left:3px solid var(--sav-teal)">🤝 <b>${bg.length}</b> contract role${bg.length === 1 ? ' isn’t' : 's aren’t'} fully staffed in the matrix — <a href="#" data-goto-tab="allocations" style="font-weight:700">review &amp; confirm in Allocations →</a></div>`;
       }
+      const beforeHtml = html; html = '';
       html += `<div class="toolbar">
         <div class="seg-toggle" role="group" aria-label="Group by">
           <button type="button" class="seg-btn ${!byPerson ? 'active' : ''}" data-group="project">By Project</button>
@@ -1220,6 +1225,7 @@
         ${!byPerson ? `<label class="chk" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" id="var-showmacro" ${state.showMacro ? 'checked' : ''}> Include Macro / Time Off</label>` : ''}
         <button type="button" class="seg-btn" id="cmp-expand-all" style="border:1px solid rgba(37,39,58,0.25)">Expand all</button>
         <span class="grow"></span><span class="note-txt">${dollars ? (atContract ? '② = Savills revenue — the fee less the fee share. ③ = hours × the CONTRACTED rate each person’s title bills at on that project (blended rate when the title is not on the contract). ③ above ② means the hours spent are worth more than the revenue earned: over-servicing. Realization = ② ÷ ③.' : '② = Savills revenue — the fee less the fee share. ③ = hours × the internal COST rate for each person’s title. Every project total compares ③ against ②; ① is the matrix plan priced at cost, kept as a reference row. Profitable = ③ below ②.') : `▲ over plan · ▼ under plan · ● on plan (±10%) — ① who we PLAN to staff (names) · ② what the CONTRACT is priced at (titles, no names) · ③ what actually got logged. Expected = ${S.monthHours()} hrs/mo × cap% × allocation%.`}</span></div>`;
+      cmpParts = { beforeHtml, toolbarHtml: html, sig: [byPerson, dollars, atContract, canDollars, !!projFilter, !!state.varPerson, S.distinctProjects().length, S.listPeople().filter(S.inView).length].join('|') }; html = '';
       html += `<div class="legend" style="margin:-4px 0 10px"><span><span class="sw" style="background:#cfe6e4"></span>on plan (85–110%)</span><span><span class="sw" style="background:#fce7c2"></span>over plan${dollars ? ' / over the fee' : ''}</span><span><span class="sw" style="background:#eef4f4"></span>under plan</span><span><span class="sw" style="background:#f4f2ef"></span>logged with no plan</span><span>·&nbsp; nothing either way</span><span style="margin-left:auto">${dollars ? 'Each cell: what the hours cost (hours × cost rate), over what was planned. Project totals read against the fee billed, and a Margin row shows fee − cost by month.' : 'Each cell: the hours that happened, over what was planned.'}</span></div>`;
       html += compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars, basis);
 
@@ -1330,9 +1336,21 @@
         </div>`;
       }
     }
-    $('#p-actuals').innerHTML = html;
+    /* The toolbar holds the search boxes. Rebuilding it on every keystroke
+       threw the typist out of the box (focus, caret and the suggestion
+       list all went with the old element), so it is kept in place while
+       its shape is unchanged and only the parts around it are redrawn. */
+    const panel = $('#p-actuals');
+    const keepToolbar = !!(cmpParts && panel.querySelector('#cmp-toolbar') && panel.dataset.cmpSig === cmpParts.sig);
+    if (keepToolbar) {
+      $('#cmp-before').innerHTML = cmpParts.beforeHtml;
+      $('#cmp-after').innerHTML = html;
+    } else if (cmpParts) {
+      panel.innerHTML = `<div id="cmp-before">${cmpParts.beforeHtml}</div><div id="cmp-toolbar">${cmpParts.toolbarHtml}</div><div id="cmp-after">${html}</div>`;
+      panel.dataset.cmpSig = cmpParts.sig;
+    } else { panel.innerHTML = html; delete panel.dataset.cmpSig; }
     wireImport();
-    wireCompareFind();
+    wireCompareFind(keepToolbar);
     $$('#p-actuals [data-group]').forEach(b => b.onclick = () => { state.varGroup = b.dataset.group; renderActuals(); });
     $$('#p-actuals [data-unit]').forEach(b => b.onclick = () => { state.varUnit = b.dataset.unit; renderActuals(); });
     $$('#p-actuals [data-rate]').forEach(b => b.onclick = () => { state.varRate = b.dataset.rate; renderActuals(); });
@@ -1357,12 +1375,14 @@
      (or picking from the list) locks the best match as a chip, so you can
      lock a project, then type a person and lock that too. × clears a lock. */
   let cmpFindTimer = null, cmpRefocus = null;
-  function wireCompareFind() {
+  function wireCompareFind(kept) {
     const resolveProject = (q) => { const list = S.distinctProjects(); const lq = q.trim().toLowerCase(); if (!lq) return ''; const fee = (x) => S.projectLabel(x).name.toLowerCase(); return list.find(x => x.toLowerCase() === lq || fee(x) === lq) || list.find(x => x.toLowerCase().includes(lq) || fee(x).includes(lq)) || ''; };
     const resolvePerson = (q) => { const list = S.listPeople().filter(S.inView); const lq = q.trim().toLowerCase(); if (!lq) return ''; const hit = list.find(x => x.name.toLowerCase() === lq) || list.find(x => x.name.toLowerCase().includes(lq)); return hit ? hit.id : ''; };
     const wire = (id, qKey, lockKey, resolve) => {
       const el = $('#' + id); if (!el) return;
-      el.oninput = () => { clearTimeout(cmpFindTimer); const v = el.value; cmpFindTimer = setTimeout(() => { state[qKey] = v; cmpRefocus = { id, pos: el.selectionStart }; renderActuals(); }, 140); };
+      if (el.dataset.wired) return;   // the box survived the render: its handlers are live and its text is the filter
+      el.dataset.wired = '1';
+      el.oninput = () => { clearTimeout(cmpFindTimer); cmpFindTimer = setTimeout(() => { if (state[qKey] === el.value) return; state[qKey] = el.value; cmpRefocus = { id, pos: el.selectionStart }; renderActuals(); }, 160); };
       el.onkeydown = (e) => {
         // Enter keeps the text as the live filter — a client name keeps every project of that client on screen (it used to lock to the first match)
         if (e.key === 'Enter') { e.preventDefault(); clearTimeout(cmpFindTimer); state[qKey] = el.value; state[lockKey] = ''; cmpRefocus = { id, pos: el.value.length }; renderActuals(); }
@@ -1373,7 +1393,8 @@
     wire('var-project-q', 'varProjectQ', 'varProject', resolveProject);
     wire('var-person-q', 'varPersonQ', 'varPerson', resolvePerson);
     $$('#p-actuals [data-unlock]').forEach(b => b.onclick = () => { state[b.dataset.unlock === 'project' ? 'varProject' : 'varPerson'] = ''; renderActuals(); });
-    if (cmpRefocus) { const el = $('#' + cmpRefocus.id); if (el) { el.focus(); try { el.setSelectionRange(cmpRefocus.pos, cmpRefocus.pos); } catch (e) {} } cmpRefocus = null; }
+    if (cmpRefocus && !kept) { const el = $('#' + cmpRefocus.id); if (el) { el.focus(); try { el.setSelectionRange(cmpRefocus.pos, cmpRefocus.pos); } catch (e) {} } }
+    cmpRefocus = null;
   }
   function compareChart(ms, planM, conM, actM, macroM, ptoM, projFilter, dollars, basis) {
     const W = Math.max(560, ms.length * 110), H = 210, padL = 48, padT = 14, padB = 30, padR = 8;
