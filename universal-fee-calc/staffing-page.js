@@ -1153,6 +1153,19 @@
           if (state.showMacro) byProj['Macro / Time Off'] = combined;
         }
       }
+      // EVERYTHING with Savills revenue in the window is on this list — a
+      // project nobody has allocated or logged against still has a fee to
+      // earn, and leaving it off made the view look complete when it wasn't.
+      const unstaffed = new Set();
+      if (!byPerson && !qq && !state.varPerson) {
+        let univ = []; try { univ = S.revenueUniverse(ms); } catch (e) { console.warn('revenue universe', e); }
+        univ.forEach(u => {
+          if (byProj[u.label]) return;
+          if (projFilter && S.rollKey(S.keyForRef(projFilter)) !== u.key) return;
+          if (pq && !(u.label + ' ' + (u.client || '')).toLowerCase().includes(pq)) return;
+          byProj[u.label] = []; unstaffed.add(u.label);
+        });
+      }
       const projNames = Object.keys(byProj).sort((a, b) => byPerson ? (S.getPerson(a) || { name: a }).name.localeCompare((S.getPerson(b) || { name: b }).name) : a.localeCompare(b));
       const totExp = rows.reduce((s, r) => s + r.expected, 0), totAct = rows.reduce((s, r) => s + r.actual, 0);
 
@@ -1228,12 +1241,15 @@
       projNames.forEach(pn => {
         const list = byProj[pn].sort((a, b) => b.actual - a.actual);
         const pe = list.reduce((s, r) => s + r.expected, 0), pa = list.reduce((s, r) => s + r.actual, 0);
-        const pL = byPerson ? null : S.projectLabel(pn, list[0].client || '');
+        const first = list[0] || {};
+        const pL = byPerson ? null : S.projectLabel(pn, first.client || '');
         const cardTitle = byPerson ? (S.getPerson(pn) || { name: pn }).name : pL.name;
-        const cardSub = byPerson ? ((S.getPerson(pn) || {}).title || '') : (list[0].client || pL.client || '');
+        const cardSub = byPerson ? ((S.getPerson(pn) || {}).title || '') : (first.client || pL.client || '');
+        const bare = unstaffed.has(pn);   // revenue in the window, but nobody allocated and no hours logged
         // planned in the fee tool, but no Clockify project lands here yet — the hours cannot arrive
         const noCk = !byPerson && pL.feeId && !S.clockifyNamesFor(pL.key).length;
         const noCkTag = noCk ? ' <span class="badge" style="background:#fbe9e7;color:#8f2418;font-weight:800" title="No Clockify project is mapped to this fee project — logged hours cannot land here. Map one on the Mapping tab.">no Clockify project mapped</span>' : '';
+        const bareTag = bare ? ' <span class="badge" style="background:#fff3cd;color:#7a5a00;font-weight:800" title="This project has Savills revenue in the window but no one is allocated to it and no Clockify hours have landed on it. Allocate people on the Allocations tab; map its Clockify project on Mapping.">revenue · no one allocated · no hours</span>' : '';
         const rowLabel = (r) => byPerson ? pLbl(r.project, r.client) : esc(r.person.name);
         const cp = byPerson ? null : contractByProj[pn];
         // Dollars: the yardstick is the FEE — what the client pays — not the
@@ -1256,6 +1272,8 @@
         // Trust marker: a pinned Mapping link and a fuzzy auto-match look the
         // same everywhere else — say which one this ② number is riding on.
         const autoMatched = cp && (cp.feeProjects || []).some(f => f.via !== 'mapped');
+        const coN = cp && cp.changeOrders ? cp.changeOrders.length : 0;
+        const coTag = coN ? ` <span class="badge" style="background:#e7eef0;color:var(--sav-navy);font-weight:700" title="${esc(cp.changeOrders.map(id => (S.projectLabel(id) || {}).name || id).join(' · '))}">+ ${coN} change order${coN === 1 ? '' : 's'}</span>` : '';
         const linkBadge = cp ? (autoMatched
           ? ` <span title="Fee link is auto-matched by name — confirm it in Mapping" style="color:#8a6d00;cursor:help">≈ auto</span>`
           : ` <span title="Fee link confirmed in Mapping" style="color:#0E7C7B;cursor:help">🔗</span>`) : '';
@@ -1278,10 +1296,11 @@
           : (cp ? refRow(dollars ? '② Savills revenue $' : '② Contract (titles)', (m) => cpM(cp, m), cpTot(cp), pa, '') : '');
         html += `<details class="cmp-card" style="background:#fff;border:1px solid rgba(37,39,58,0.12);margin-bottom:12px">
           <summary style="display:flex;justify-content:space-between;align-items:center;padding:11px 16px;cursor:pointer">
-            <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span>${noCkTag}</div>
+            <div class="pname" style="font-size:14px">${esc(cardTitle)} <span class="note-txt">· ${esc(cardSub)}</span>${noCkTag}${bareTag}${coTag}</div>
             <div class="note-txt">${summaryLine}</div>
           </summary>
           <div style="border-top:1px solid rgba(37,39,58,0.1)">
+          ${bare ? '<div class="note-txt" style="padding:8px 16px;color:#7a5a00">No one is allocated to this project and no Clockify hours have landed on it — the revenue below is being earned by nobody on record.</div>' : ''}
           <div class="cmp-scroll"><table class="dt cmp-table">${cmpHead(byPerson ? 'Project' : 'Person')}<tbody>${b}${totRow}${refRows}
           </tbody></table></div>
           ${contractTbl}
