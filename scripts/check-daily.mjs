@@ -38,6 +38,10 @@ ck('a lateness failure does not sink the drop', lateFail.actuals.rows === 2 && /
 // the handler's gate
 const res = () => { const r = { code: 0, body: null, headers: {} }; r.status = (c) => { r.code = c; return r; }; r.json = (b) => { r.body = b; return r; }; r.setHeader = () => {}; return r; };
 process.env.CRON_SECRET = 's3cret';
+// the status mode: booleans only, no secret needed, never a value
+{ const r = res(); const keep = process.env.CRON_SECRET; delete process.env.CRON_SECRET; delete process.env.CLOCKIFY_API_KEY; await handler({ query: { status: '1' }, headers: {} }, r);
+  ck('?status=1 answers without the secret and names what is missing', r.code === 200 && r.body.ready === false && r.body.missing.some(m => /CLOCKIFY_API_KEY/.test(m)) && r.body.missing.some(m => /CRON_SECRET/.test(m)), JSON.stringify(r.body));
+  ck('?status=1 never carries a value', !/s3cret|k3y/.test(JSON.stringify(r.body))); process.env.CRON_SECRET = keep; }
 let r1 = res(); await handler({ headers: {} }, r1); ck('no secret → 401', r1.code === 401);
 let r2 = res(); await handler({ headers: { authorization: 'Bearer wrong' } }, r2); ck('wrong secret → 401', r2.code === 401);
 delete process.env.CLOCKIFY_API_KEY; let r3 = res(); await handler({ headers: { authorization: 'Bearer s3cret' } }, r3); ck('right secret, Clockify not configured → 501 with the fix', r3.code === 501 && /CLOCKIFY_API_KEY/.test(r3.body.detail));

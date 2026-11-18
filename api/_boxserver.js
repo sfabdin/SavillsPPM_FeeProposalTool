@@ -44,6 +44,24 @@ export async function writeDrop(tok, name, drop) {
   const j = await r.json(); const f = (j.entries && j.entries[0]) || {};
   return { fileId: f.id || (existing && existing.id) || '', folderId, replaced: !!existing, name };
 }
+/** GET ?status=1 — what the scheduled job would need, as booleans only, so
+    the Data Sources tab can say WHICH variable is missing instead of "the
+    job never ran". Never a value, never the secret. */
+export function jobStatus(req, res, extra) {
+  const q = (req && req.query) || {};
+  if (!('status' in q)) return false;
+  const e = process.env;
+  const configured = Object.assign({
+    box: !!(e.BOX_CCG_CLIENT_ID && e.BOX_CCG_CLIENT_SECRET && e.BOX_ENTERPRISE_ID),
+    cronSecret: !!e.CRON_SECRET,
+  }, extra || {});
+  const names = Object.assign({ box: 'BOX_CCG_CLIENT_ID / BOX_CCG_CLIENT_SECRET / BOX_ENTERPRISE_ID', cronSecret: 'CRON_SECRET' }, (extra && extra.__names) || {});
+  delete configured.__names;
+  const missing = Object.keys(configured).filter(k => !configured[k]).map(k => names[k] || k);
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({ ok: true, configured, missing, ready: missing.length === 0 });
+  return true;
+}
 export function cronAuthorized(req, res) {
   const secret = process.env.CRON_SECRET;
   if (!secret) { res.status(501).json({ error: 'not configured', detail: 'Set CRON_SECRET in Vercel env vars; Vercel sends it on scheduled runs.' }); return false; }

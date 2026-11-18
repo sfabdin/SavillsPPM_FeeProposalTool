@@ -30,13 +30,14 @@
                                                the app's folder id
    ============================================================ */
 import { buildDrop, ClockifyError } from './_clockify.js';
-import { boxToken, writeDrop, cronAuthorized } from './_boxserver.js';
+import { boxToken, writeDrop, cronAuthorized, jobStatus } from './_boxserver.js';
 
 export const config = { maxDuration: 60 };
 
 const DROP_NAME = 'clockify-latest.json';
 
 export default async function handler(req, res) {
+  if (jobStatus(req, res, { clockify: !!(process.env.CLOCKIFY_API_KEY && process.env.CLOCKIFY_WORKSPACE_ID), __names: { clockify: 'CLOCKIFY_API_KEY / CLOCKIFY_WORKSPACE_ID' } })) return;
   if (!cronAuthorized(req, res)) return;
   const key = process.env.CLOCKIFY_API_KEY, ws = process.env.CLOCKIFY_WORKSPACE_ID;
   if (!key || !ws) { res.status(501).json({ error: 'not configured', detail: 'Set CLOCKIFY_API_KEY and CLOCKIFY_WORKSPACE_ID.' }); return; }
