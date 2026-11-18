@@ -1773,6 +1773,34 @@
       return (merged.allocations.length === 1 && !!merged.people.p1) || 'remote was not adopted: ' + JSON.stringify(Object.keys(merged.people));
     });
 
+    test('Staffing · merge', 'Box\'s copy is taken wholesale when this browser has nothing unpushed, merged only when it does — and the merge is pushed', () => {
+      const remote = (upd) => ({ people: { p1: { id: 'p1', name: 'Real Person', capacityPct: 100, active: true } },
+        allocations: [{ id: 'al_r1', personId: 'p1', project: 'Real Job', start: '2026-01', end: '2026-06', pct: 50, updatedAt: '2026-08-01T00:00:00.000Z' }],
+        actuals: {}, mappings: { users: {}, clockify: {} }, deleted: {}, meta: { updatedAt: upd, monthHours: 172 } });
+      // 1 · a browser that has never edited: wholesale, and it is now "at Box".
+      ST.resetAll(); localStorage.removeItem('ufc_staff_pushed_v1');
+      if (ST.adoptRemote(remote('2026-08-01T00:00:00.000Z')) !== 'replaced') return 'a never-edited browser did not take Box wholesale';
+      if (ST.hasUnpushedEdits()) return 'after a wholesale take the browser still reads as unpushed';
+      // 2 · an edit here, pushed (the hook marks it): the NEXT Box copy wins wholesale, even though the local row is newer.
+      const pushed = []; ST.attachRemote(() => pushed.push(ST.currentRev()));   // what the page's hook captures
+      ST.saveAllocation({ id: 'al_local', personId: 'p1', personName: 'Real Person', project: 'Local Job', start: '2026-02', end: '2026-03', pct: 20 });
+      if (!ST.hasUnpushedEdits()) return 'a fresh edit does not read as unpushed';
+      ST.markPushed(pushed[pushed.length - 1]);
+      if (ST.hasUnpushedEdits()) return 'marking the pushed stamp did not clear it';
+      const how2 = ST.adoptRemote(remote('2026-08-02T00:00:00.000Z'));
+      if (how2 !== 'replaced') return 'a browser with everything pushed merged instead of taking Box: ' + how2;
+      if (ST.listAllocations().some(a => a.id === 'al_local')) return 'a row Box does not hold survived a wholesale take (the two-sets-of-numbers bug)';
+      // 3 · an edit here NOT pushed: merged, so it is not lost — and pushNow sends the merge.
+      ST.saveAllocation({ id: 'al_unpushed', personId: 'p1', personName: 'Real Person', project: 'Offline Job', start: '2026-02', end: '2026-03', pct: 20 });
+      const how3 = ST.adoptRemote(remote('2026-08-03T00:00:00.000Z'));
+      if (how3 !== 'merged') return 'an unpushed edit was thrown away: ' + how3;
+      if (!ST.listAllocations().some(a => a.id === 'al_unpushed')) return 'the merge lost the unpushed row';
+      const n = pushed.length; ST.pushNow();
+      if (pushed.length !== n + 1) return 'pushNow did not go through the push hook';
+      ST.attachRemote(null);
+      return true;
+    });
+
     /* Step 6 — the engine's edge cases */
     const cleanStaff = () => { ST.resetAll(); localStorage.setItem('savills-ppm-activity-db:v1', JSON.stringify({ schemaVersion: 1, shards: {}, dirty: [] })); };
 

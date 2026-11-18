@@ -132,7 +132,7 @@
      fee project.
      ============================================================ */
   // the TEST page keeps its own View choice: an admin who once picked the classic leader view on the original page still opens the TEST page on Leadership
-  const VIEW_KEY = 'ufc_staff_view_v1' + (/\(TEST\)/i.test(decodeURIComponent(location.pathname || '')) ? ':test' : '');
+  const VIEW_KEY = 'ufc_staff_view_v2';          // v2: one page again (the TEST shell became the page), so everyone starts from the full module once
   /* SHOW AS % OR HOURS. One toggle in the dates row; every view reads it.
      A percentage is of the person's own capacity (part-timers against
      theirs), so hours = capacity hours × %. Project FTE × the month's hours
@@ -2598,17 +2598,23 @@
       const remote = await Box.pullStaff();                 // resolves staff.json in the shared folder
       // MERGE rather than replace: anything saved locally but not yet pushed
       // (offline, failed push, another tab) survives the reconnect.
-      if (remote) { if (S.mergeFromRemote) S.mergeFromRemote(remote); else S.hydrateFromRemote(remote); }
-      else await Box.uploadStaff(S.readDb());               // first run: seed staff.json from local
+      // Box's copy is THE copy: taken wholesale unless this browser holds an
+      // edit that never reached Box, in which case the two are merged and the
+      // result pushed, so everyone in the room reads the same file.
+      let adopted = null;
+      if (remote) { adopted = S.adoptRemote ? S.adoptRemote(remote) : (S.mergeFromRemote ? S.mergeFromRemote(remote) : S.hydrateFromRemote(remote)); }
+      else { await Box.uploadStaff(S.readDb()); S.markPushed && S.markPushed(S.currentRev()); }   // first run: seed staff.json from local
       let t = null, pushing = false;
       S.attachRemote((db) => {
         clearTimeout(t); pushing = true;
+        const stamp = S.currentRev ? S.currentRev() : null;      // this write's local revision — marked pushed once Box has it
         t = setTimeout(async () => {
-          try { Box.emitSync && Box.emitSync('syncing', 'staff.json'); await Box.uploadStaff(db); Box.emitSync && Box.emitSync('synced', ''); setStoreNote('box'); toast('Saved — synced to Box ✓'); }
-          catch (e) { Box.emitSync && Box.emitSync('error', 'staff.json: ' + e.message); setStoreNote('error', e.message); }
+          try { Box.emitSync && Box.emitSync('syncing', 'staff.json'); await Box.uploadStaff(db); S.markPushed && S.markPushed(stamp); Box.emitSync && Box.emitSync('synced', ''); setStoreNote('box'); toast('Saved — synced to Box ✓'); renderSyncState(); }
+          catch (e) { Box.emitSync && Box.emitSync('error', 'staff.json: ' + e.message); setStoreNote('error', e.message); renderSyncState(); }
           finally { pushing = false; }
         }, 1200);
       });
+      if (adopted === 'merged' && S.pushNow) S.pushNow();
       setStoreNote('box');
       // Mapping decisions shipped as code — applied once, here, after the merge
       // and with the push hook attached, so they land in Box like any edit.
@@ -2629,8 +2635,9 @@
         try {
           const r = await Box.pullStaffIfChanged();
           if (r) {
-            // Merge, so a teammate's refresh can't wipe edits this tab hasn't pushed.
-            if (S.mergeFromRemote) S.mergeFromRemote(r); else S.hydrateFromRemote(r);
+            // Box's copy wholesale; merged only when this tab has edits it hasn't pushed.
+            const how = S.adoptRemote ? S.adoptRemote(r) : (S.mergeFromRemote ? S.mergeFromRemote(r) : S.hydrateFromRemote(r));
+            if (how === 'merged' && S.pushNow) S.pushNow();
             renderAll();
             toast('Refreshed — a teammate saved changes to staff.json.');
           }
@@ -2638,6 +2645,22 @@
       };
       document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
       setInterval(refresh, 180000);
+      // The button: a fresh pull of staff.json on demand, so a room can line up on one file.
+      const rb = $('#refresh-box');
+      if (rb) rb.onclick = async () => {
+        if (pushing) { toast('Saving first — try again in a moment.'); return; }
+        rb.disabled = true; const orig = rb.textContent; rb.textContent = 'Pulling…';
+        try {
+          const r = await Box.pullStaff();
+          if (!r) { toast('No staff.json in Box yet.'); return; }
+          const how = S.adoptRemote ? S.adoptRemote(r) : S.mergeFromRemote(r);
+          if (how === 'merged' && S.pushNow) S.pushNow();
+          renderAll();
+          toast(how === 'replaced' ? 'Refreshed from Box — this browser now shows exactly what Box holds.' : 'Refreshed from Box — your unsaved edits were kept and are being saved.');
+        } catch (e) { toast('Refresh failed: ' + e.message); }
+        finally { rb.disabled = false; rb.textContent = orig; }
+      };
+      renderSyncState();
     } catch (e) { setStoreNote('error', e.message); }
   }
 
@@ -2817,6 +2840,21 @@
         cell('compliance', '⏱ Entry gaps', gapDot, gapTxt, gapAge);
       wireGoto('#fresh-strip');
     } catch (e) { console.error('freshness strip', e); el.innerHTML = ''; }
+    renderSyncState();
+  }
+  /** The data bar's one-line answer to "are we looking at the same numbers?" */
+  function renderSyncState() {
+    const el = $('#st-sync'); if (!el) return;
+    try {
+      const meta = S.readDb().meta || {};
+      const unpushed = S.hasUnpushedEdits ? S.hasUnpushedEdits() : false;
+      const when = meta.updatedAt ? new Date(meta.updatedAt) : null;
+      const stamp = when ? (calDays(meta.updatedAt) === 0 ? 'today ' : agoTxt(meta.updatedAt) + ' ') + when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'never';
+      el.className = 'st-sync ' + (unpushed ? 'pending' : 'same');
+      el.innerHTML = unpushed
+        ? '<span class="st-sync-dot"></span>This browser has edits still being saved to Box'
+        : '<span class="st-sync-dot"></span>Same as Box · staff.json saved ' + esc(stamp) + (meta.updatedBy ? ' by ' + esc(String(meta.updatedBy).split('@')[0]) : '');
+    } catch (e) { el.textContent = ''; }
   }
 
   function renderCounts() {

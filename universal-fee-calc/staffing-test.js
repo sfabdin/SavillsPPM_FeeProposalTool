@@ -1,7 +1,7 @@
 /* ============================================================
-   SAVILLS PPM · STAFFING & BANDWIDTH (TEST) — the shell
+   SAVILLS PPM · STAFFING, BANDWIDTH & CLOCKIFY — the shell
    ------------------------------------------------------------
-   The same module as the Staffing Matrix page (staffing-page.js renders
+   The module itself is staffing-page.js (it renders
    every view, unchanged), put in the order the work happens:
 
      1 · Allocations   enter — who is on what, at what percent, when
