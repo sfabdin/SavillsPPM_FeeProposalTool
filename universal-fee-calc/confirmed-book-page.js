@@ -431,8 +431,10 @@
         : '<input type="text" value="' + esc(c.name || '') + '" data-name="' + esc(y) + '" placeholder="' + esc(C.bookTitle(c)) + '" aria-label="Book name" style="font:inherit;font-weight:700;font-size:13px;padding:4px 6px;border:1px solid rgba(37,39,58,.25);width:210px"> <button class="btn btn-ghost small" data-savename="' + esc(y) + '">Save</button>' +
         '<div class="mono" style="margin-top:4px">confirmed-' + esc(y) + '.json</div>';
       const periodCell = c.lockedAt ? esc(C.periodLabel(c) || '—') : '<input type="month" value="' + esc(c.period || '') + '" data-period="' + esc(y) + '" aria-label="Period month" style="font:inherit;font-size:12px;padding:4px 6px;border:1px solid rgba(37,39,58,.25)"> <button class="btn btn-ghost small" data-saveperiod="' + esc(y) + '">Save</button>';
+      const unanswered = c.lockedAt && C.unansweredCarried ? C.unansweredCarried(c) : [];
       const act = c.lockedAt
-        ? '<button class="btn btn-ghost small" data-reopen="' + esc(y) + '">Reopen</button> '
+        ? '<button class="btn btn-ghost small" data-reopen="' + esc(y) + '">Reopen</button> ' +
+          (unanswered.length ? '<button class="btn btn-ghost small" data-resend="' + esc(y) + '" title="Email the lock notice again to the ' + unanswered.length + ' carried-in leader' + (unanswered.length === 1 ? '' : 's') + ' who have neither confirmed late nor acknowledged: ' + esc(unanswered.map(C.leaderName).join(', ')) + '">Re-send lock notices (' + unanswered.length + ')</button> ' : '')
         : '<button class="btn small btn-secondary" data-lock="' + esc(y) + '">Lock book</button> ' +
           (Object.keys(c.confirmations || {}).length ? '' : '<button class="btn btn-ghost small" data-delete="' + esc(y) + '" title="Nobody has confirmed into this book yet — it can be deleted outright">Delete</button> ');
       return '<tr><td>' + nameCell + '</td><td>' + periodCell + '</td><td>' + state + '</td><td>' + dl + '</td>' +
@@ -557,9 +559,20 @@
       try { res = C.lockCycle(y); } catch (e) { toast(e.message); return; }
       toast('“' + C.bookTitle(c) + '” locked — ' + plural(res.carried.length, 'leader') + ' carried in.', 'ok');
       if (Box && Box.flushConfirm) Box.flushConfirm().catch(() => {});
+      // the lock notices: one per carried leader, handed to Box now, and said so if any could not go
+      if (Box && Box.flushNotify) Box.flushNotify().then(() => { const left = Box.notifyOutbox ? Box.notifyOutbox().length : 0; if (left) toast(left + ' lock notice' + (left === 1 ? '' : 's') + ' could not be handed to Box yet — they go on the next reload, or use Re-send lock notices.', 'warn'); }).catch(() => {});
       announce(); render();
       try { if (await snapshotLocked(y)) toast('Revenue Diff snapshot saved for “' + C.bookTitle(c) + '”.', 'info'); }
       catch (e) { toast('Locked, but the Revenue Diff snapshot could not be saved: ' + (e.message || e)); }
+    }));
+    host.querySelectorAll('button[data-resend]').forEach(b => b.addEventListener('click', async () => {
+      const y = b.dataset.resend; const c = C.getCycle(y); const who = C.unansweredCarried(c).map(C.leaderName);
+      if (!window.confirm('Re-send the “locked without your confirmation” notice for “' + C.bookTitle(c) + '” to:\n\n' + who.join('\n') + '\n\nEach gets the same email the lock sends, marked re-sent.')) return;
+      let sent;
+      try { sent = C.resendLockNotices(y); } catch (e) { toast(e.message); return; }
+      try { if (Box && Box.flushNotify) await Box.flushNotify(); } catch (e) {}
+      const left = Box && Box.notifyOutbox ? Box.notifyOutbox().length : 0;
+      toast(sent.length + ' lock notice' + (sent.length === 1 ? '' : 's') + ' sent' + (left ? ' — ' + left + ' still waiting to upload to Box (sign in and reload to retry).' : ' and handed to Box.'), left ? 'warn' : 'ok');
     }));
     host.querySelectorAll('button[data-reopen]').forEach(b => b.addEventListener('click', () => {
       const y = b.dataset.reopen; const title = C.bookTitle(C.getCycle(y));

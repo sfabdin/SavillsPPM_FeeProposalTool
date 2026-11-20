@@ -1769,8 +1769,18 @@
   const NOTIFY_ALWAYS_CC = [];
   Box.notifyAlwaysCc = () => NOTIFY_ALWAYS_CC.slice();
   let _notifyFolderId = null, _notifyFlushing = null;
-  const readOutbox = () => { try { return JSON.parse(localStorage.getItem(NOTIFY_OUTBOX_KEY) || '[]') || []; } catch (e) { return []; } };
-  const writeOutbox = (q) => { try { localStorage.setItem(NOTIFY_OUTBOX_KEY, JSON.stringify(q.slice(-50))); } catch (e) {} };
+  /* The outbox lives in memory for the life of the page and is mirrored to
+     localStorage so it survives a reload; a full localStorage (the project
+     book alone is over a megabyte) can no longer drop an email on the floor. */
+  let _outboxMem = null;
+  const readOutbox = () => {
+    if (_outboxMem) return _outboxMem.slice();
+    try { _outboxMem = JSON.parse(localStorage.getItem(NOTIFY_OUTBOX_KEY) || '[]') || []; } catch (e) { _outboxMem = []; }
+    return _outboxMem.slice();
+  };
+  const writeOutbox = (q) => { _outboxMem = q.slice(-50); try { localStorage.setItem(NOTIFY_OUTBOX_KEY, JSON.stringify(_outboxMem)); } catch (e) {} };
+  const dropFromOutbox = (id) => writeOutbox(readOutbox().filter(x => x.id !== id));
+  Box.notifyOutbox = () => readOutbox();
   const cleanEmails = (v) => [].concat(v || []).map(s => String(s || '').trim().toLowerCase()).filter(s => /^[^\s@]+@[^\s@]+$/.test(s));
   /** A named subfolder of the shared folder — found, else created; the id
       is remembered per browser. The notifications folder and the
@@ -1849,20 +1859,32 @@
     flushNotifyOutbox().catch(() => {});
     return item.id;
   };
+  /* November 2026: locking a book queues one notice per carried leader in a
+     single tick. The flush that the FIRST notice started had already taken
+     its copy of the queue (one item); after uploading it, it wrote that copy
+     back — and wiped the seven notices queued behind it. Only the first
+     leader alphabetically (Benay) was emailed. So: the queue is re-read for
+     every upload, an item is removed from the LIVE queue by id, a flush that
+     was asked for while one was running runs again when it ends, and a
+     failed item is left where it is instead of taking the rest down. */
+  let _notifyAgain = false;
   async function flushNotifyOutbox() {
-    if (_notifyFlushing) return _notifyFlushing;
+    if (_notifyFlushing) { _notifyAgain = true; return _notifyFlushing; }
     if (!getToken()) return;
     _notifyFlushing = (async () => {
-      let q = readOutbox(); if (!q.length) return;
-      const folder = await resolveNotifyFolderId();
-      for (const item of q.slice()) {
+      let folder = null;
+      const tried = new Set();
+      for (let pass = 0; pass < 60; pass++) {
+        const next = readOutbox().find(x => !tried.has(x.id)); if (!next) return;
+        tried.add(next.id);
         try {
-          const res = await uploadNewFile(folder, 'notify-' + item.id + '.json', JSON.stringify(item));
-          if (res.ok || res.status === 409) { q = q.filter(x => x.id !== item.id); writeOutbox(q); }   // 409 = already there
-          else if (res.status === 401 || res.status === 403) break;
-        } catch (e) { break; }
+          folder = folder || await resolveNotifyFolderId();
+          const res = await uploadNewFile(folder, 'notify-' + next.id + '.json', JSON.stringify(next));
+          if (res.ok || res.status === 409) dropFromOutbox(next.id);          // 409 = already there
+          else if (res.status === 401 || res.status === 403) return;         // not signed in: everything waits for the next flush
+        } catch (e) { return; }                                                // offline: same
       }
-    })().finally(() => { _notifyFlushing = null; });
+    })().finally(() => { _notifyFlushing = null; if (_notifyAgain) { _notifyAgain = false; flushNotifyOutbox().catch(() => {}); } });
     return _notifyFlushing;
   }
   /* Standing files the scheduled flows read — notify-status.json for the

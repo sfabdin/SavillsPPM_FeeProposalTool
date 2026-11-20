@@ -630,6 +630,41 @@
 
   /** Lock the book. Leaders who never confirmed are carried in from the live
       book, flagged, so the confirmed book is still whole. */
+  /** The notice a carried-in leader gets when a book is locked without them.
+      One builder, so a re-send says exactly what the lock said. */
+  function missedNotice(c, id, records, now, actorName, resend) {
+    const email = leaderEmail(id); if (!email) return null;
+    const title = bookTitle(c); const n = bookFor(id, records).length; const lockedOn = c.lockedAt || now;
+    return { event: 'book-locked-missed', at: new Date().toISOString(), to: [email], cc: adminEmails(), data: { cycle: c.id || c.cycle, leaderId: id, resend: !!resend },
+      subject: '“' + title + '” was locked without your confirmation' + (resend ? ' (re-sent)' : ''),
+      text: actorName + ' locked “' + title + '” on ' + fmtDay(lockedOn) + ' without your confirmation. Your ' + n + ' projects were carried in flagged “not confirmed”. Confirm late with a reason in the Monthly Confirmed Book before the next book opens; after that you can only acknowledge the miss.',
+      html: noticeHtml('“' + title + '” was locked without your confirmation', [
+        (resend ? '<i>Re-sent: this notice did not reach you when the book was locked.</i> ' : '') + escH(actorName || 'An admin') + ' locked <b>“' + escH(title) + '”</b> on ' + escH(fmtDay(lockedOn)) + '. Your ' + n + ' project' + (n === 1 ? '' : 's') + ' were carried into the book as they stood and flagged <b>“not confirmed”</b>.',
+        'Until the next book opens you can still confirm it late with a short reason — the locked figures stay as they are; your name, time and reason are stamped on them. Once the next book has opened you can only acknowledge the missed confirmation, and invoicing may be delayed for lack of reporting compliance.'],
+        { href: pageUrl('Monthly Confirmed Book.html'), label: 'Confirm late now' }) };
+  }
+  /** Leaders a locked book carried in who have still neither confirmed late
+      nor acknowledged the miss — the ones a re-send goes to. */
+  function unansweredCarried(c) {
+    return (c.carried || []).filter(id => id !== UNASSIGNED && !(c.confirmations || {})[id] && !(c.acknowledgements || {})[id]);
+  }
+  /** Send the lock notice again to every carried leader who has not answered
+      — for a lock whose notices never went out. Returns the ids mailed. */
+  function resendLockNotices(ym, o) {
+    o = o || {};
+    if (!isLeadership()) throw new Error('Only a leadership admin can re-send lock notices.');
+    const db = readDb(); const c = db.cycles[ym];
+    if (!c) throw new Error('No such book.');
+    if (!c.lockedAt) throw new Error('“' + bookTitle(c) + '” is not locked.');
+    const records = o.records || S().listProjects();
+    const sent = [];
+    unansweredCarried(c).forEach(id => {
+      const m = missedNotice(c, id, records, c.lockedAt, c.lockedByName || 'An admin', true);
+      if (m && sendNotice(m)) sent.push(id);
+    });
+    S().logSystem('cycle-lock-resend', { cycle: ym, name: c.name, to: sent.map(leaderName) });
+    return sent;
+  }
   function lockCycle(ym, opts) {
     const st = S(); const o = opts || {};
     if (!isLeadership()) throw new Error('Only a leadership admin can lock a book.');
@@ -656,15 +691,8 @@
     {
       const title = bookTitle(c);
       carried.filter(id => id !== UNASSIGNED).forEach(id => {
-        const email = leaderEmail(id); if (!email) return;
-        const n = bookFor(id, records).length;
-        sendNotice({ event: 'book-locked-missed', at: now, to: [email], cc: adminEmails(), data: { cycle: ym, leaderId: id },
-          subject: '“' + title + '” was locked without your confirmation',
-          text: a.name + ' locked “' + title + '” on ' + fmtDay(now) + ' without your confirmation. Your ' + n + ' projects were carried in flagged “not confirmed”. Confirm late with a reason in the Monthly Confirmed Book before the next book opens; after that you can only acknowledge the miss.',
-          html: noticeHtml('“' + title + '” was locked without your confirmation', [
-            escH(a.name || 'An admin') + ' locked <b>“' + escH(title) + '”</b> on ' + escH(fmtDay(now)) + '. Your ' + n + ' project' + (n === 1 ? '' : 's') + ' were carried into the book as they stood and flagged <b>“not confirmed”</b>.',
-            'Until the next book opens you can still confirm it late with a short reason — the locked figures stay as they are; your name, time and reason are stamped on them. Once the next book has opened you can only acknowledge the missed confirmation, and invoicing may be delayed for lack of reporting compliance.'],
-            { href: pageUrl('Monthly Confirmed Book.html'), label: 'Confirm late now' }) });
+        const m = missedNotice(c, id, records, now, a.name, false);
+        if (m) sendNotice(m);
       });
       sendNotice({ event: 'book-locked', at: now, to: adminEmails(), data: { cycle: ym, carried: carried.length, carriedProjects },
         subject: '“' + title + '” locked — ' + Object.keys(c.confirmations).length + ' confirmed, ' + carried.length + ' carried in',
@@ -971,7 +999,7 @@
     ymShort, ymLong, monthName, isYm, daysUntil, pastDeadline, defaultDeadline, nextYm, fmtDay, fmtDayTime, fmtStamp,
     bookTitle, periodLabel, bookYear, normalize,
     leadersOf, isActiveRecord, bookFor, expectedLeaders, leaderName, myLeaderId, feeInYear, isLeadership,
-    getCycle, listCycles, openCycles, currentCycle, latestLocked, supersededBy, publishStatus, createCycle, setDeadline, setName, setPeriod, confirm, acknowledgeMissed, lockCycle, reopenCycle, reviewLate,
+    getCycle, listCycles, openCycles, currentCycle, latestLocked, supersededBy, publishStatus, createCycle, setDeadline, setName, setPeriod, confirm, acknowledgeMissed, lockCycle, reopenCycle, resendLockNotices, unansweredCarried, reviewLate,
     statusFor, projectStatus, widgetState,
     asProjectsDb, bookRecords, changeOrderIndex, cycleSummary,
     mergeCycle, hydrateCycle, serialize, deleteCycle, pruneMissing,
