@@ -90,6 +90,7 @@
   // Never let a test fixture email anyone: the Box outbox is a spy here.
   window.__notices = []; window.__notifyStatus = null;
   if (window.UFC_Box) {
+    window.UFC_Box.__realNotify = window.UFC_Box.notify;   // the Box notify test needs the real queue
     window.UFC_Box.notify = (m) => { window.__notices.push(m); return 'spy'; };
     window.UFC_Box.writeNotifyStatus = (s) => { window.__notifyStatus = s; };
   }
@@ -3606,6 +3607,39 @@
       if (!chJ || !chJ.fields.some(f => f.field === 'Intake · RSF' && f.to === '12,000')) return 'Juliet diff: ' + JSON.stringify(chJ && chJ.fields);
       if (!chI || !chI.fields.some(f => f.field === 'Intake · Payer terms' && f.from === 'Net 45' && f.to === 'Net 60')) return 'Intake Tower diff: ' + JSON.stringify(chI && chI.fields);
       return true;
+    });
+
+    /* Locking a book queues one notice per carried leader in ONE tick. The
+       flush the first notice started used to hold a stale copy of the queue
+       and write it back after its upload — erasing every notice queued behind
+       it. November 2026: one leader of eight was emailed. */
+    testAsync('Box notify', 'notices queued in one tick all reach Box, in order, and the outbox empties', async () => {
+      if (!Box || !Box.notify) return 'box adapter not loaded';
+      const realFetch = window.fetch; const uploads = [];
+      window.fetch = async (url, opts) => {
+        const u = String(url); opts = opts || {};
+        if (/upload\.box\.com\/api\/2\.0\/files\/content/.test(u)) {
+          uploads.push(JSON.parse(await opts.body.get('file').text()));
+          await new Promise(r => setTimeout(r, 5));                       // a real upload yields — the race needs that
+          return new Response(JSON.stringify({ entries: [{ id: '1' }] }), { status: 201, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+      };
+      try {
+        Box.config.testMode = true; Box.setTestToken('test-token');
+        localStorage.setItem('ufc_notify_folder_id', '999'); localStorage.removeItem('ufc_notify_outbox_v1');
+        const notify = Box.__realNotify || Box.notify;
+        const ids = ['benay', 'brianna', 'fred', 'kristen'].map(x => notify({ event: 'book-locked-missed', to: [x + '@savills.us'], subject: 'locked · ' + x, text: 't' }));
+        if (ids.some(i => !i)) return 'notify refused one: ' + JSON.stringify(ids);
+        await Box.flushNotify();
+        await new Promise(r => setTimeout(r, 40));                        // the re-run a mid-flight request asks for
+        const subs = uploads.map(u => u.subject).join('|');
+        if (subs !== 'locked · benay|locked · brianna|locked · fred|locked · kristen') return 'uploaded: ' + (subs || 'nothing') + ' — the stale-snapshot flush sent only the first';
+        return Box.notifyOutbox().length === 0 || 'outbox still holds ' + Box.notifyOutbox().length;
+      } finally {
+        window.fetch = realFetch; Box.config.testMode = false;
+        try { sessionStorage.removeItem('ufc_box_devtoken'); localStorage.removeItem('ufc_notify_folder_id'); localStorage.removeItem('ufc_notify_outbox_v1'); } catch (e) {}
+      }
     });
 
     /* The Box fake: an upload that meets a 412 must pull, merge newest-wins per
